@@ -552,7 +552,7 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
     mutating_try("install")?;
     let env = env_type.unwrap_or("uv".into()); // uv | venv | conda
     let repo = get_repo_dir();
-    let emit = |msg: &str| { let _ = app.emit("setup-output", msg.to_string()); let _ = app.emit("setup-phase", serde_json::json!({"label": msg})); };
+    let emit = |msg: &str| { let _ = app.emit("setup-output", msg.to_string()); };
     // hardware-aware header (driver warning surfaces before 20min install)
     let gpu = get_gpu_info_sync();
     let plan = build_install_plan(&gpu);
@@ -595,43 +595,20 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
         emit("[*] Repository cloned.\n");
     }
     emit(&format!("[*] Installing env={} via setup.py (streaming)…\n", env));
-    // ── env creation (uv/venv/conda) — ponytail: setup.py will pick hardware-aware wheels from setup_config.json
+    // ponytail: don't pre-create env here — setup.py does `uv venv --seed` itself and fails if dir already exists.
+    // If Tauri pre-creates env_uv then setup.py's `uv venv --seed env_uv` hits "already exists at env_uv".
+    // Let setup.py own env creation; we only ensure envs.json is updated after success.
     let env_path = match env.as_str() {
         "conda" => repo.join("env_conda"),
         "venv" => repo.join("env_venv"),
         _ => repo.join("env_uv"),
     };
-    if !env_path.exists() {
-        emit(&format!("[*] Creating {} env at {}\n", env, env_path.display()));
-        use tauri_plugin_shell::ShellExt;
-        let res: Result<(), String> = match env.as_str() {
-            "conda" => {
-                let (mut r, _) = app.shell().command("conda").args(["create","-p", &env_path.to_string_lossy(), "python=3.11", "-y"]).spawn().map_err(|e| format!("conda not found: {}", e))?;
-                use tauri_plugin_shell::process::CommandEvent; while let Some(ev)=r.recv().await { match ev{ CommandEvent::Stdout(b)|CommandEvent::Stderr(b)=>emit(&String::from_utf8_lossy(&b)), _=>{}}}
-                Ok(())
-            },
-            "venv" => {
-                // try py -3.11 then python
-                let py = if std::process::Command::new("py").args(["-3.11","--version"]).output().map(|o| o.status.success()).unwrap_or(false) { "py".to_string() } else { "python".to_string() };
-                let pya: Vec<String> = if py=="py" { vec!["-3.11".into(), "-m".into(), "venv".into(), env_path.to_string_lossy().to_string()] } else { vec!["-m".into(), "venv".into(), env_path.to_string_lossy().to_string()] };
-                let (mut r, _) = app.shell().command(&py).args(pya).spawn().map_err(|e| e.to_string())?;
-                use tauri_plugin_shell::process::CommandEvent; while let Some(ev)=r.recv().await { match ev{ CommandEvent::Stdout(b)|CommandEvent::Stderr(b)=>emit(&String::from_utf8_lossy(&b)), _=>{}}}
-                Ok(())
-            },
-            _ => { // uv
-                let (mut r, _) = app.shell().command("uv").args(["venv", &env_path.to_string_lossy(), "--python", "3.11"]).spawn().map_err(|e| format!("uv not found: {}", e))?;
-                use tauri_plugin_shell::process::CommandEvent; while let Some(ev)=r.recv().await { match ev{ CommandEvent::Stdout(b)|CommandEvent::Stderr(b)=>emit(&String::from_utf8_lossy(&b)), _=>{}}}
-                Ok(())
-            }
-        };
-        if let Err(e) = res { emit(&format!("[warn] env creation: {}\n", e)); }
-        // record envs.json
-        let envs_file = get_envs_file();
-        let mut envs: serde_json::Value = std::fs::read_to_string(&envs_file).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::json!({"envs":{}, "active": null}));
-        if envs.get("envs").is_none() { envs["envs"] = serde_json::json!({}); }
-        envs["envs"][&env] = serde_json::json!({"name": env, "type": env, "path": env_path.to_string_lossy().to_string()});
-        envs["active"] = serde_json::Value::String(env.clone());
-        let _ = atomic_write(&envs_file, &serde_json::to_string_pretty(&envs).unwrap());
+    // If a Tauri pre-create left env_uv behind, setup.py's `uv venv --seed env_uv` fails with
+    // "already exists at env_uv". Remove any existing env so setup.py can recreate cleanly
+    // (fresh install has no env yet, so this is a no-op for the normal case).
+    if env_path.exists() {
+        emit(&format!("[*] Removing existing env at {} so setup.py can recreate (clean install)…\n", env_path.display()));
+        let _ = std::fs::remove_dir_all(&env_path);
     }
     // run setup.py with the env's python (hardware-aware: setup.py reads setup_config.json + GPU)
     {
