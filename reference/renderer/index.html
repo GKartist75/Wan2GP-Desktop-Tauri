@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280">
+<title>Wan2GP Desktop Launcher</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="style.css">
+<style>html,body{background:#1A1A1A}.screen{display:none;position:absolute;inset:0;flex-direction:column}.screen.active{display:flex}#splash{align-items:center;justify-content:center;background:#242424;gap:6px}.splash-error{margin-top:16px;padding:10px 16px;background:#FDEBEC;color:#9F2F2D;font-size:0.75rem;border-radius:6px;max-width:400px;text-align:left;white-space:pre-wrap;word-break:break-all;line-height:1.4;display:none}.splash-error:not(.hidden){display:block}#splash .brand-mark{font-family:'Instrument Serif','Georgia',serif;font-size:3.5rem;font-weight:400;line-height:1;letter-spacing:-0.04em;color:#E8E6E1}#splash .brand-mark span{color:#666}#splash .brand-sub{font-family:'Instrument Serif','Georgia',serif;font-size:.9375rem;color:#A0A0A0;letter-spacing:.15em;text-transform:uppercase;margin-bottom:36px}.splash-status{font-size:.6875rem;color:#666;font-family:'Geist Mono','SF Mono',monospace}.hidden{display:none!important}</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Splash -->
+  <div id="splash" class="screen active">
+    <div class="brand-mark">GK<span> Artist</span></div>
+    <div class="brand-sub">DeepBeepMeep Wan2GP Desktop Launcher</div>
+    <p class="splash-status"><span class="dot">&#9679;</span> <span id="splashStatus">Checking installation...</span></p>
+    <div id="splashError" class="splash-error hidden"></div>
+  </div>
+
+  <!-- Settings Overlay -->
+  <div id="settingsOverlay" class="settings-overlay"></div>
+
+  <!-- Settings Panel -->
+  <div id="settingsPanel" class="settings-panel">
+    <div class="settings-topbar">
+      <button class="btn-icon" id="settingsBackBtn" aria-label="Close settings">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <h2>Manage</h2>
+    </div>
+    <div class="settings-tabs">
+      <button class="settings-tab active" data-tab="general">General</button>
+      <button class="settings-tab" data-tab="launch">Launch</button>
+      <button class="settings-tab" data-tab="about">About</button>
+      <button class="settings-tab" data-tab="updates">Updates</button>
+      <button class="settings-tab" data-tab="autotune">⚡ Auto-Tune</button>
+    </div>
+    <div class="settings-scroll">
+      <div class="settings-tab-content active" data-tab="general">
+        <div class="settings-section">
+          <h3>GitHub Token</h3>
+          <div class="token-field">
+            <input type="password" id="githubTokenInput" class="input" placeholder="ghp_...">
+            <button class="btn btn-primary small" id="tokenSaveBtn">Save</button>
+            <button class="btn btn-ghost small" id="tokenClearBtn">Clear</button>
+          </div>
+          <p class="token-hint">Optional — avoids GitHub API rate limits for auto-updates and changelog. Create a <a href="#" id="tokenDocsLink">classic token</a> with <code>repo</code> scope.</p>
+        </div>
+        <div class="settings-section">
+          <h3>HuggingFace Token</h3>
+          <div class="token-field">
+            <input type="password" id="hfTokenInput" class="input" placeholder="hf_...">
+            <button class="btn btn-primary small" id="hfTokenSaveBtn">Save</button>
+            <button class="btn btn-ghost small" id="hfTokenClearBtn">Clear</button>
+          </div>
+          <p class="token-hint">Optional — needed for gated models. Saved to <code>desktop-config.json</code> and passed as <code>HF_TOKEN</code> to Wan2GP on launch.</p>
+        </div>
+        <div class="settings-section">
+          <h3>Claude / Anthropic API Key</h3>
+          <div class="token-field">
+            <input type="password" id="claudeApiKeyInput" class="input" placeholder="sk-ant-...">
+            <button class="btn btn-primary small" id="claudeApiKeySaveBtn">Save</button>
+            <button class="btn btn-ghost small" id="claudeApiKeyClearBtn">Clear</button>
+          </div>
+          <p class="token-hint">Optional — lets Claude Code connect without a Max/Pro <em>subscription</em> (a Console API key takes precedence over an OAuth login for CLI sessions). It is <strong>not free</strong>: the key needs an Anthropic Console account with <strong>API credits / billing enabled</strong> (pay-as-you-go, billed per token — buy credits in the Console first). Saved locally and passed as <code>ANTHROPIC_API_KEY</code> to Wan2GP on launch. Leave blank to use OAuth (<code>claude auth login --claudeai</code>, which requires Max/Pro).</p>
+        </div>
+        <div class="settings-section">
+          <h3>Default Browser</h3>
+          <p class="token-hint">Used when launching Wan2GP in your browser ("Launch in Browser" opens the OS default).</p>
+          <div class="browser-list" id="browserList"></div>
+          <button class="btn btn-ghost small" id="browserRefreshBtn" style="margin-top:8px">Refresh</button>
+        </div>
+        <div class="settings-section">
+          <h3>Floating Terminal Default</h3>
+          <p class="token-hint">Where the console opens when launching Wan2GP in Desktop. "Minimised" keeps it closed until you toggle it.</p>
+          <div class="browser-list" id="termDockList">
+            <div class="browser-row"><label class="browser-opt"><input type="radio" name="termDock" value="bottom" checked> Bottom</label></div>
+            <div class="browser-row"><label class="browser-opt"><input type="radio" name="termDock" value="left"> Left</label></div>
+            <div class="browser-row"><label class="browser-opt"><input type="radio" name="termDock" value="top"> Top</label></div>
+            <div class="browser-row"><label class="browser-opt"><input type="radio" name="termDock" value="right"> Right</label></div>
+            <div class="browser-row"><label class="browser-opt"><input type="radio" name="termDock" value="minimised"> Minimised</label></div>
+          </div>
+        </div>
+        <div class="settings-section">
+          <h3>Electron GPU</h3>
+          <p class="token-hint">Disable hardware acceleration for the launcher window to free VRAM for Wan2GP generation. Requires restart to take effect.</p>
+          <label class="toggle-row"><input type="checkbox" id="electronGpuToggle"> <span>Enable GPU acceleration</span></label>
+        </div>
+        <div class="settings-section">
+          <h3>Desktop</h3>
+          <label class="toggle-row"><input type="checkbox" id="autoStartToggle"> <span>Auto-start with Windows</span></label>
+          <p class="token-hint">Launch Wan2GP Desktop automatically when you log in.</p>
+          <label class="toggle-row" style="margin-top:8px"><input type="checkbox" id="followSystemThemeToggle"> <span>Follow system theme</span></label>
+          <p class="token-hint">Automatically switch between dark and light themes based on your Windows setting. Disables manual theme toggle.</p>
+          <label class="toggle-row" style="margin-top:8px"><input type="checkbox" id="notificationsToggle" checked> <span>Desktop notifications</span></label>
+          <p class="token-hint">Show a notification when Wan2GP server is ready or stops.</p>
+          <label class="toggle-row" style="margin-top:8px"><input type="checkbox" id="pulsebarToggle"> <span>Floating progress bar</span></label>
+          <p class="token-hint">Always-on-top mini bar showing live generation progress, driven by the launch log.</p>
+          <label class="toggle-row" style="margin-top:8px"><input type="checkbox" id="autoUpdateToggle"> <span>Check for updates on launch</span></label>
+          <p class="token-hint">When on, the launcher quietly checks for a new version on startup and notifies you — it never downloads or installs anything automatically. Off = only check manually via "Check for updates".</p>
+        </div>
+        <div class="settings-section">
+          <h3>Queue Notifier</h3>
+          <p class="token-hint">Send Wan2GP generation events to Telegram, Discord, WhatsApp, IFTTT or Google Chat via <a href="#" id="notifAppriseLink">Apprise</a> — fired from the live launch log (no extra plugin needed).</p>
+          <label class="toggle-row"><input type="checkbox" id="notifEnabled"> <span>Enable notifier</span></label>
+          <label class="toggle-row" style="margin-top:6px"><input type="checkbox" id="notifOnComplete" checked> <span>On completion</span></label>
+          <label class="toggle-row" style="margin-top:6px"><input type="checkbox" id="notifOnFail" checked> <span>On failure</span></label>
+          <label class="toggle-row" style="margin-top:6px"><input type="checkbox" id="notifOnProgress"> <span>On progress (every N%)</span></label>
+          <div class="field-row" style="margin-top:6px">
+            <label class="field-label">Progress step</label>
+            <input type="number" id="notifProgressStep" min="1" max="100" value="25" class="input-small">
+          </div>
+          <div class="field-row" style="margin-top:8px">
+            <label class="field-label">Apprise URL</label>
+            <input type="text" id="notifUrl" class="input-wide" placeholder="discord://token / tgram://token:chatid / etc.">
+          </div>
+          <p class="token-hint">Examples: <code>discord://webhook</code>, <code>tgram://token:chatid</code>, <code>wx://</code> (WhatsApp), <code>ifttt://key/event</code>, <code>gchat://webhook</code>.</p>
+          <div style="margin-top:10px;display:flex;gap:8px">
+            <button class="btn btn-primary small" id="notifSaveBtn">Save</button>
+            <button class="btn btn-ghost small" id="notifTestBtn">Send test</button>
+            <button class="btn btn-ghost small" id="notifEnsureBtn">Install Apprise</button>
+          </div>
+          <p class="token-hint" id="notifStatus" style="margin-top:8px"></p>
+        </div>
+        <div class="settings-section">
+          <h3>Xet Storage (hf_xet)</h3>
+          <p class="token-hint" id="xetStatusLine">Speeds up HuggingFace model downloads with delta compression. Status: <span id="xetStatus">checking...</span></p>
+          <button class="btn btn-primary small" id="xetInstallBtn">Install hf_xet</button>
+        </div>
+        <div class="settings-section">
+          <h3>GGUF CUDA Kernel</h3>
+          <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the FP16/BF16 multiply policy; <em>Stream-K</em> (default on) enables CUDA-graph-safe Stream-K; <em>BF16→FP16</em> restores the legacy path; <em>Disable</em> turns the GGUF CUDA kernels off entirely.</p>
+          <label class="toggle-row"><input type="checkbox" id="ggufEnabled"> <span>Enable GGUF CUDA kernels</span></label>
+          <div class="token-field" style="margin-top:8px">
+            <label class="token-hint" style="display:block;margin-bottom:4px">Matmul mode</label>
+            <select id="ggufMatmulMode" class="input">
+              <option value="auto">auto (wheel default)</option>
+              <option value="fast">fast</option>
+              <option value="low_vram">low_vram</option>
+            </select>
+          </div>
+          <label class="toggle-row" style="margin-top:8px"><input type="checkbox" id="ggufStreamK"> <span>Enable Stream-K (CUDA graphs)</span></label>
+          <label class="toggle-row"><input type="checkbox" id="ggufBf16Fp16"> <span>BF16 → FP16 (legacy cuBLAS path)</span></label>
+          <button class="btn btn-primary small" id="ggufSaveBtn" style="margin-top:8px">Save GGUF settings</button>
+        </div>
+        <div class="settings-section">
+          <h3>Repair Settings</h3>
+          <p class="token-hint">If saving settings in Wan2GP fails with <em>"Value: N is not in the list of choices: [0, 1]"</em>, a saved value is out of range for a dropdown (usually from an older version or imported settings). This scans <code>models/_settings.json</code> and all <code>*_settings.json</code> files and resets out-of-range values to valid ones. Originals are backed up as <code>*.bak-repair</code>.</p>
+          <button class="btn btn-primary small" id="repairSettingsBtn" style="margin-top:8px">Scan & Repair Settings</button>
+        </div>
+        <div class="settings-section">
+          <h3>uv Wheel Cache</h3>
+          <p class="token-hint">Wan2GP installs into a Python venv on the same drive as your install. <code>uv</code> keeps a wheel cache here (<code>.uv-cache</code>) so future updates are fast — it can grow to several GB. Free the space if you don't need to keep it.</p>
+          <p class="token-hint" id="uvCacheStatus" style="margin-top:8px">Checking cache…</p>
+          <div style="margin-top:10px;display:flex;gap:8px">
+            <button class="btn btn-ghost small" id="uvCacheSizeBtn">Calculate size</button>
+            <button class="btn btn-ghost small" id="uvCachePurgeBtn">Purge unused</button>
+            <button class="btn btn-ghost small" id="uvCacheRemoveBtn" style="color:var(--signal-red);border-color:var(--signal-red)">Remove cache</button>
+          </div>
+          <p class="token-hint" id="uvCacheResult" style="margin-top:8px"></p>
+        </div>
+        <div class="settings-section">
+          <h3 style="color:var(--signal-red)">Uninstall Wan2GP</h3>
+          <p class="token-hint">Removes the Wan2GP app, its Python environment, and all installed packages. Downloaded models can be kept. The Desktop launcher itself stays installed.</p>
+          <button class="btn btn-ghost small" id="uninstallBtn" style="margin-top:8px;color:var(--signal-red);border-color:var(--signal-red)">Uninstall Wan2GP…</button>
+        </div>
+      </div>
+      <div class="settings-tab-content" data-tab="launch">
+        <div class="settings-section">
+          <h3>Share Link</h3>
+          <label class="toggle-row"><input type="checkbox" id="shareToggle"> <span>Enable public share link (<code>--share</code>)</span></label>
+          <p class="token-hint">If you see the error "<em>When localhost is not accessible, a shareable link must be created</em>" when launching, that is Gradio's IPv4/IPv6 self-check failing — fix it first with <strong>Bind Address &rarr; localhost</strong> (below) or by adding <code>--server-name localhost</code> to Extra Launch Args. Only if that does not help, enable this to create a public Gradio tunnel (your server becomes reachable from the internet).</p>
+        </div>
+        <div class="settings-section">
+          <h3>Extra Launch Args</h3>
+          <div class="token-field">
+            <input type="text" id="launchArgsInput" class="input" placeholder="--profile 4 --attention sage2 --perc-reserved-mem-max 0.3">
+            <button class="btn btn-primary small" id="launchArgsSaveBtn">Save</button>
+          </div>
+          <div class="settings-section" style="margin-top:12px">
+            <h3>Server Port</h3>
+            <div class="token-field">
+              <input type="number" id="portInput" class="input" placeholder="7860" min="1024" max="65535" style="width:120px">
+              <button class="btn btn-primary small" id="portSaveBtn">Save</button>
+            </div>
+            <p class="token-hint">Port for the Wan2GP web interface. Default: <code>7860</code>. Changes apply on next launch.</p>
+          </div>
+          <div class="settings-section" style="margin-top:12px">
+            <h3>GPU Device</h3>
+            <div class="token-field">
+              <select id="gpuDeviceSelect" class="input" style="max-width:360px">
+                <option value="auto">Auto (let Wan2GP pick)</option>
+              </select>
+              <button class="btn btn-primary small" id="gpuDeviceSaveBtn">Save</button>
+            </div>
+            <p class="token-hint">On machines with multiple GPUs (integrated + dedicated, or dual NVIDIA), choose which one runs generation. Passed as <code>--gpu cuda:N</code> on launch. Changes apply on next launch.</p>
+          </div>
+          <div class="settings-section" style="margin-top:12px">
+            <h3>Bind Address</h3>
+            <div class="token-field">
+              <select id="serverNameSelect" class="input" style="max-width:360px">
+                <option value="localhost">localhost (recommended)</option>
+                <option value="127.0.0.1">127.0.0.1 (IPv4 only)</option>
+              </select>
+              <button class="btn btn-primary small" id="serverNameSaveBtn">Save</button>
+            </div>
+            <p class="token-hint">Address Wan2GP binds and connects to. <code>localhost</code> resolves to whatever your PC uses (IPv4 or IPv6) and matches Gradio's own startup check — use it if you saw "When localhost is not accessible…". <code>127.0.0.1</code> is a strict-IPv4 fallback for proxy/VPN setups. Changes apply on next launch.</p>
+          </div>
+          <p class="token-hint">Arguments passed to <code>wgp.py</code> on launch. See <a href="#" id="cliDocsLink">CLI docs</a> for all options. Changes apply on next launch.</p>
+          <details class="launch-args-help">
+            <summary>Common launch arguments</summary>
+            <table class="args-table">
+              <tr><td><code>--profile 4</code></td><td>Profile 1-5 (4=default, 5=min RAM)</td></tr>
+              <tr><td><code>--attention sage2</code></td><td>Attention: sdpa, flash, sage, sage2</td></tr>
+              <tr><td><code>--compile</code></td><td>Enable PyTorch compilation (needs Triton)</td></tr>
+              <tr><td><code>--fp16</code></td><td>Force fp16 instead of bf16</td></tr>
+              <tr><td><code>--perc-reserved-mem-max 0.3</code></td><td>% RAM for model swap cache (0-0.5)</td></tr>
+              <tr><td><code>--teacache 2.0</code></td><td>Speed multiplier 0, 1.5, 1.75, 2.0, 2.5</td></tr>
+              <tr><td><code>--preload 2000</code></td><td>MB of model to keep in VRAM</td></tr>
+              <tr><td><code>--listen</code></td><td>Accessible on local network</td></tr>
+              <tr><td><code>--share</code></td><td>HuggingFace share URL</td></tr>
+              <tr><td><code>--gpu cuda:1</code></td><td>Run on specific GPU</td></tr>
+              <tr><td><code>--seed 42</code></td><td>Default generation seed</td></tr>
+              <tr><td><code>--verbose 2</code></td><td>Log detail 0-2 (1=default, 2=debug)</td></tr>
+            </table>
+          </details>
+        </div>
+      </div>
+      <div class="settings-tab-content" data-tab="about">
+        <div class="settings-section">
+          <h3>Wan2GP Desktop Launcher</h3>
+          <p class="token-hint">Version <span id="settingsVersionNum">—</span></p>
+          <p class="token-hint">Desktop launcher for Wan2GP — the video generation AI toolkit.</p>
+          <button class="btn btn-ghost small" id="reportIssueBtn" style="margin-top:8px">🐞 Report an issue…</button>
+          <p class="token-hint" style="margin-top:6px">Bundles your system info, launch log, and crash diagnostics (if any) into a zip, opens it in Explorer, and opens a pre-filled GitHub issue.</p>
+        </div>
+      </div>
+
+      <!-- ═══════ Auto-Tune Tab ═══════ -->
+      <div class="settings-tab-content" data-tab="updates">
+        <div class="settings-section">
+          <h3>Updates</h3>
+          <p class="token-hint">Update Wan2GP core and the Desktop Launcher. Same actions as the Dashboard, also available here.</p>
+        </div>
+        <div class="settings-section">
+          <h3>Wan2GP (DeepBeepMeep)</h3>
+          <p class="token-hint">Update the Wan2GP core (models, kernels, app code) via <code>setup.py update</code> + git pull.</p>
+          <button class="btn btn-primary small" id="manageUpdateWan2gpBtn">↻ Update Wan2GP</button>
+          <p class="token-hint" id="manageUpdateWan2gpStatus" style="margin-top:6px"></p>
+        </div>
+        <div class="settings-section">
+          <h3>Desktop Launcher</h3>
+          <p class="token-hint">Check for a new Desktop Launcher release on GitHub.</p>
+          <button class="btn btn-primary small" id="manageUpdateDesktopBtn">↻ Check Desktop Updates</button>
+          <p class="token-hint" id="manageUpdateDesktopStatus" style="margin-top:6px"></p>
+        </div>
+      </div>
+      <div class="settings-tab-content" data-tab="autotune">
+        <div class="settings-section">
+          <h3>⚡ Performance Auto-Tune</h3>
+          <p class="token-hint">Detects your hardware and recommends optimal performance settings for Wan2GP. These settings are written directly to <code>wgp_config.json</code>.</p>
+        </div>
+
+        <!-- Not-installed banner (shown when Wan2GP repo is missing) -->
+        <div id="autotuneNotInstalled" class="hidden" style="padding:14px;border-radius:8px;background:var(--signal-yellow-bg);border:1px solid var(--signal-yellow);margin-bottom:12px">
+          <p style="font-size:0.75rem;color:var(--signal-yellow);margin:0"><strong>Wan2GP is not installed yet.</strong></p>
+          <p style="font-size:0.6875rem;color:var(--text-secondary);margin:6px 0 0">Auto-Tune requires a Wan2GP installation to detect your environment and save configuration. Please install Wan2GP first from the setup screen.</p>
+        </div>
+
+        <!-- Auto-Tune content (hidden when not installed) -->
+        <div id="autotuneContent">
+
+        <!-- Hardware Card -->
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-header">
+            <span class="card-title">Hardware</span>
+            <button class="btn btn-ghost small" id="autotuneDetectBtn" style="margin-left:auto">⟳ Detect</button>
+          </div>
+          <div id="autotuneHardwareInfo" style="padding:4px 12px 12px">
+            <p class="token-hint" style="margin:0">Click <strong>Detect</strong> to scan your system.</p>
+          </div>
+        </div>
+
+        <!-- Status / Result -->
+        <div id="autotuneStatus" class="hidden" style="padding:10px 14px;border-radius:8px;font-size:0.75rem;line-height:1.5;background:var(--bg-tertiary)"></div>
+
+        <!-- Unified Performance Settings (recommended + override + saved) -->
+        <div class="card" style="margin-bottom:12px;margin-top:12px">
+          <div class="card-header">
+            <span class="card-title">Performance Settings</span>
+            <button class="btn btn-primary small" id="memProfileApplyBtn" style="margin-left:auto">Apply Overrides</button>
+          </div>
+          <p class="token-hint" style="padding:4px 12px 0">Detect scans your hardware and calibrates these mmgp knobs in <code>wgp_config.json</code>. Each dropdown defaults to the <strong>recommended</strong> value — change any to override. <span class="tag-rec">rec</span> = recommended, <span class="tag-saved">saved</span> = currently written to disk.</p>
+          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px 0;font-size:0.6875rem;color:var(--text-secondary);cursor:pointer"
+                 title="Force the P5 minimum-compatibility profile — slower, but maximizes the chance generation works (e.g. a 10GB card that still crashes on P4+). Check and press Detect to re-seed these fields with P5 values.">
+            <input type="checkbox" id="autotuneFailsafeChk" style="accent-color:var(--signal-yellow)">
+            Prefer failsafe (P5 — maximum compatibility)
+          </label>
+          <div class="mem-grid" style="padding:8px 12px 0">
+            <div class="mem-field">
+              <label class="token-hint">Video Profile</label>
+              <select id="memVideoProfile" class="input">
+                <option value="">— unset —</option>
+                <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                <option value="3.5">3.5</option><option value="4">4</option><option value="4.5">4.5</option><option value="5">5</option>
+              </select>
+              <div class="mem-hint"><span id="recVideoProfile" class="tag-rec">rec: —</span><span id="savedVideoProfile" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint">Image Profile</label>
+              <select id="memImageProfile" class="input">
+                <option value="">— unset —</option>
+                <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                <option value="3.5">3.5</option><option value="4">4</option><option value="4.5">4.5</option><option value="5">5</option>
+              </select>
+              <div class="mem-hint"><span id="recImageProfile" class="tag-rec">rec: —</span><span id="savedImageProfile" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint">Audio Profile</label>
+              <select id="memAudioProfile" class="input">
+                <option value="">— unset —</option>
+                <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                <option value="3.5">3.5</option><option value="4">4</option><option value="4.5">4.5</option><option value="5">5</option>
+              </select>
+              <div class="mem-hint"><span id="recAudioProfile" class="tag-rec">rec: —</span><span id="savedAudioProfile" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint">VRAM Safety Coeff (0.1–1)</label>
+              <input type="number" id="memCoeff" class="input" min="0.1" max="1" step="0.05" placeholder="0.80">
+              <div class="mem-hint"><span id="recCoeff" class="tag-rec">rec: —</span><span id="savedCoeff" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint">VAE Config</label>
+              <select id="memVae" class="input">
+                <option value="">— unset —</option>
+                <option value="0">0 — auto</option><option value="1">1 — full/untiled</option>
+                <option value="2">2 — tiling 256</option><option value="3">3 — tiling 128</option>
+              </select>
+              <div class="mem-hint"><span id="recVae" class="tag-rec">rec: —</span><span id="savedVae" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint">Transformer Quant</label>
+              <select id="memQuant" class="input">
+                <option value="">— unset —</option>
+                <option value="none">none</option><option value="int8">int8</option>
+                <option value="fp8">fp8</option><option value="nvfp4">nvfp4</option>
+              </select>
+              <div class="mem-hint"><span id="recQuant" class="tag-rec">rec: —</span><span id="savedQuant" class="tag-saved">saved: —</span></div>
+            </div>
+          </div>
+          <div class="mem-hint" style="padding:10px 12px 0">
+            <span class="token-hint" style="font-weight:600">Profile matrix (reference)</span>
+          </div>
+          <table class="profile-matrix" style="margin:4px 12px 0">
+            <tr><th>VRAM \ RAM</th><th style="text-align:center">high<br><span class="tier-range">≥64GB</span></th><th style="text-align:center">low<br><span class="tier-range">≥32GB</span></th><th style="text-align:center">very low<br><span class="tier-range">&lt;32GB</span></th></tr>
+            <tr><td>high<br><span class="tier-range">≥24GB</span></td><td style="text-align:center;color:#6ee7b7">P1</td><td style="text-align:center">P3</td><td style="text-align:center;color:#67e8f9">P3+</td></tr>
+            <tr><td>low<br><span class="tier-range">12–23GB</span></td><td style="text-align:center">P2</td><td style="text-align:center">P4</td><td style="text-align:center;color:#f87171">P5</td></tr>
+            <tr><td>tight<br><span class="tier-range">&lt;12GB</span></td><td style="text-align:center">P4</td><td style="text-align:center;color:#67e8f9">P4+</td><td style="text-align:center;color:#f87171">P5</td></tr>
+          </table>
+          <div id="memProfileStatus" class="token-hint" style="padding:8px 12px 12px;min-height:1em"></div>
+        </div>
+      </div>
+      
+    </div>
+    </div>
+  </div>
+
+  <!-- Dashboard -->
+  <div id="dashboard" class="screen">
+    <div class="topbar">
+      <div class="topbar-left"></div>
+      <div class="topbar-center">
+        <div class="brand-mark-small">GK<span> Artist</span></div>
+        <span class="app-title">Wan2GP Desktop Launcher</span>
+        <span class="app-version" id="appVersionTag">v—</span>
+        <span id="runningLed" class="running-led" style="display:none">
+          <span class="led-dot" id="ledDot"></span>
+          <span class="led-text" id="ledText">Running</span>
+        </span>
+      </div>
+      <div class="topbar-right">
+        <div class="topbar-metrics" id="topbarMetrics">
+          <div class="metric" title="CPU"><span class="metric-label">CPU</span><canvas class="metric-spark" id="sparkCpu" width="44" height="18"></canvas><span class="metric-val" id="valCpu">—</span></div>
+          <div class="metric" title="GPU"><span class="metric-label">GPU</span><canvas class="metric-spark" id="sparkGpu" width="44" height="18"></canvas><span class="metric-val" id="valGpu">—</span></div>
+          <div class="metric" title="RAM used / total"><span class="metric-label">RAM</span><canvas class="metric-spark" id="sparkRam" width="44" height="18"></canvas><span class="metric-val" id="valRam">—</span></div>
+          <div class="metric" title="VRAM used / total"><span class="metric-label">VRAM</span><canvas class="metric-spark" id="sparkVram" width="44" height="18"></canvas><span class="metric-val" id="valVram">—</span></div>
+        </div>
+        <div id="wvControls" class="wv-controls" style="display:none">
+          <button class="btn-icon wv-btn" id="wvBackBtn" aria-label="Go back" disabled><svg viewBox="0 0 24 24" width="14" height="14"><polyline points="15 18 9 12 15 6"/></svg></button>
+          <button class="btn-icon wv-btn" id="wvFwdBtn" aria-label="Go forward" disabled><svg viewBox="0 0 24 24" width="14" height="14"><polyline points="9 18 15 12 9 6"/></svg></button>
+          <button class="btn-icon wv-btn" id="wvReloadBtn" aria-label="Reload"><svg viewBox="0 0 24 24" width="14" height="14"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>
+          <span class="wv-sep"></span>
+          <input type="range" id="zoomSlider" class="zoom-slider" min="25" max="200" value="100" title="Zoom">
+          <span class="zoom-label" id="zoomLabel">100%</span>
+          <span class="wv-sep"></span>
+          <button class="btn btn-ghost small" id="backToDashboardBtn">← Back to Dashboard</button>
+          <button class="btn-icon wv-btn" id="popoutBtn" title="Open in separate window">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </button>
+          <button class="btn-icon wv-btn" id="ftToggleBtn" title="Toggle floating terminal">⊞</button>
+        </div>
+        <button class="btn-icon" id="stopWangpBtn" title="Stop Wan2GP server" style="display:none">
+          <svg viewBox="0 0 24 24" width="14" height="14"><rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor"/></svg>
+        </button>
+        <button class="btn-icon" id="refreshBtn" title="Refresh dashboard &amp; metrics">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+        </button>
+        <button class="btn btn-ghost small" id="taskMgrBtn" title="Open Windows Task Manager">
+          <svg viewBox="0 0 24 24" width="14" height="14"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="9" x2="16" y2="9" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="13" x2="14" y2="13" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="17" x2="12" y2="17" stroke="currentColor" stroke-width="1.5"/></svg>
+        </button>
+        <button class="btn-icon theme-toggle" id="themeToggleBtn" title="Toggle dark/light mode">
+          <svg viewBox="0 0 24 24" class="sun-icon"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          <svg viewBox="0 0 24 24" class="moon-icon" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+        <button class="btn btn-ghost small" id="settingsBtn">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          Manage
+        </button>
+      </div>
+    </div>
+
+    <!-- Update banner -->
+    <div id="updateBanner" class="update-banner hidden">
+      <div class="update-info">
+        <span class="update-badge">UPDATE</span>
+        <span id="updateText">A new version is available</span>
+      </div>
+      <div class="update-actions" id="updateActions">
+        <button id="updateDownloadBtn" class="btn btn-primary small" title="Full 93 MB download — always works, fixes corrupted installs">Full Download</button>
+        <button id="updateDeltaBtn" class="btn btn-ghost small" title="Fast differential patch — smaller download, may fail if install is modified">Quick Update</button>
+        <button id="updateInstallBtn" class="btn btn-primary small hidden">Install & Restart</button>
+      </div>
+      <div id="updateProgress" class="update-progress hidden">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <span id="progressText" class="progress-text">0%</span>
+      </div>
+      <button id="updateDismissBtn" class="update-dismiss" aria-label="Dismiss update notification">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <!-- SageAttention sync banner (shown on RTX 40/50 with the broken fp8 wheel) -->
+    <div id="sageSyncBanner" class="update-banner sage-warn hidden">
+      <div class="update-info">
+        <span class="update-badge" style="background:var(--danger,#c0392b)">SAGE</span>
+        <span id="sageSyncText">Your SageAttention wheel (cu130torch2.9.0andhigher) has a known fp8 CUDA bug on RTX 40/50 that causes false out-of-memory errors and stalling. Click <b>Sync Kernels</b> to apply the stable build.</span>
+      </div>
+      <div class="sage-warn-actions">
+        <button id="sageSyncBtn" class="btn btn-primary small">Sync Kernels</button>
+        <button id="sageSyncDismissBtn" class="btn btn-ghost small">Dismiss</button>
+      </div>
+    </div>
+
+    <!-- Model-path warning banner (shown when checkpoints/LoRAs resolve under AppData) -->
+    <div id="modelsWarnBanner" class="update-banner models-warn hidden">
+      <div class="update-info">
+        <span class="update-badge" style="background:var(--warning,#d9a441)">MODELS</span>
+        <span id="modelsWarnText">Your Wan2GP main folder and checkpoints/LoRAs are inside a roaming AppData profile. Move them to a fast, dedicated drive (e.g. C:\Wan2GP and C:\Wan2GP-Models) for speed and to avoid profile bloat.</span>
+      </div>
+      <div class="models-warn-actions">
+        <button id="modelsWarnMigrateBtn" class="btn btn-primary small hidden">Migrate to new location</button>
+        <button id="modelsWarnDismissBtn" class="update-dismiss" aria-label="Dismiss">
+          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="dash-body" id="dashBody">
+      <!-- Left column: System, Paths, Model Folders, Active Environment -->
+      <div class="col-left">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">System</span>
+          </div>
+          <div class="spec-grid">
+            <div class="spec-row"><span class="spec-label">CPU</span><span class="spec-value" id="specCpu">—</span></div>
+            <div class="spec-row"><span class="spec-label">RAM</span><span class="spec-value" id="specRam">—</span> <span class="spec-free" id="specRamFree"></span></div>
+            <div class="spec-row"><span class="spec-label">GPU</span><span class="spec-value" id="specGpu">—</span></div>
+            <div class="spec-row"><span class="spec-label">VRAM</span><span class="spec-value" id="specVram">—</span> <span class="spec-free" id="specVramFree"></span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Paths &amp; Model Folders</span>
+          </div>
+          <div class="paths-grid">
+            <div class="spec-row spec-row-path"><span class="spec-label">Wan2GP install location</span><span class="spec-value path-val" id="pathAppData">—</span><span class="spec-value path-free" id="pathFreeSpace" style="font-size:0.6rem;color:var(--text-tertiary)"></span><button class="path-btn" id="openAppDataBtn" title="Open folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></svg></button><button class="path-btn" id="changeAppDataBtn" title="Move Wan2GP to another location"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button></div>
+            <div class="spec-row spec-row-path"><span class="spec-label">Checkpoints</span><span class="spec-value path-val" id="dashCkptPath">—</span><button class="path-btn" id="openCkptBtn" title="Open folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></svg></button><button class="path-btn" id="dashBrowseCkpt" title="Change checkpoints folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button></div>
+            <div class="spec-row spec-row-path"><span class="spec-label">LoRAs</span><span class="spec-value path-val" id="dashLoraPath">—</span><button class="path-btn" id="openLoraBtn" title="Open folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></svg></button><button class="path-btn" id="dashBrowseLora" title="Change LoRAs folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button></div>
+            <div class="spec-row spec-row-path"><span class="spec-label">Output</span><span class="spec-value path-val" id="dashOutputPath">—</span><button class="path-btn" id="openOutputBtn" title="Open folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></svg></button><button class="path-btn" id="dashBrowseOutput" title="Change output folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button></div>
+            <p class="path-hint">↻ After changing a folder above, <strong>stop and restart Wan2GP</strong> (and the launcher) — the new path is written to <code>wgp_config.json</code> immediately, but Wan2GP only reads it at startup, so the change won't take effect until the next launch.</p>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Active Environment</span>
+            <span class="env-type-tag" id="envType"></span>
+            <button class="env-unlink-btn" id="envUnlinkBtn" title="Uninstall active environment">unlink</button>
+            <button class="env-restore-btn" id="envRestoreBtn" title="Reinstall all packages from requirements.txt">restore</button>
+            <button class="btn btn-ghost small" id="checkPkgUpdatesBtn" title="Check PyPI for package updates" style="margin-left:auto;padding:1px 6px;font-size:0.55rem;line-height:1.4">↻ Check Updates</button>
+          </div>
+          <p class="token-hint" style="margin:6px 12px 0">↻ Check Updates queries PyPI for newer versions. Updating a single package (e.g. torch) can break the env (CUDA mismatch, black frames) — use <em>restore</em> to reinstall the tested <code>requirements.txt</code>.</p>
+          <div class="env-detail">
+            <div class="env-name-row">
+              <span class="env-name" id="envName">—</span>
+              <span class="env-name-hint hidden" id="envNameHint">restart launcher to install</span>
+            </div>
+            <div class="env-detail-error" id="envDetailError" style="display:none"></div>
+            <div class="env-specs" id="envSpecs">
+              <div class="spec-row"><span class="spec-label">Python</span><span class="spec-dot" id="dotPython"></span><span class="spec-value" id="specPython">—</span></div>
+              <div class="spec-row"><span class="spec-label">Torch</span><span class="spec-dot" id="dotTorch"></span><span class="spec-value" id="specTorch">—</span></div>
+              <div class="spec-row"><span class="spec-label">CUDA</span><span class="spec-dot" id="dotCuda"></span><span class="spec-value" id="specCuda">—</span></div>
+              <div class="spec-row"><span class="spec-label">Triton</span><span class="spec-dot" id="dotTriton"></span><span class="spec-value" id="specTriton">—</span></div>
+              <div class="spec-row"><span class="spec-label">Sage Attn</span><span class="spec-dot" id="dotSage"></span><span class="spec-value" id="specSage">—</span></div>
+              <div class="spec-row"><span class="spec-label">Flash Attn</span><span class="spec-dot" id="dotFlash"></span><span class="spec-value" id="specFlash">—</span></div>
+              <div class="spec-row"><span class="spec-label">Sparge Attn</span><span class="spec-value" id="specSparge">—</span></div>
+              <div class="spec-row"><span class="spec-label">Diffusers</span><span class="spec-dot" id="dotDiffusers"></span><span class="spec-value" id="specDiffusers">—</span></div>
+              <div class="spec-row"><span class="spec-label">Transformers</span><span class="spec-dot" id="dotTransformers"></span><span class="spec-value" id="specTransformers">—</span></div>
+              <div class="spec-row"><span class="spec-label">Gradio</span><span class="spec-dot" id="dotGradio"></span><span class="spec-value" id="specGradio">—</span></div>
+              <div class="spec-row"><span class="spec-label">Accelerate</span><span class="spec-dot" id="dotAccelerate"></span><span class="spec-value" id="specAccelerate">—</span></div>
+              <div class="spec-row"><span class="spec-label">onnxruntime</span><span class="spec-dot" id="dotOnnx"></span><span class="spec-value" id="specOnnx">—</span></div>
+              <div class="spec-row"><span class="spec-label">OpenCV</span><span class="spec-dot" id="dotOpencv"></span><span class="spec-value" id="specOpencv">—</span></div>
+              <div class="spec-row"><span class="spec-label">PEFT</span><span class="spec-dot" id="dotPeft"></span><span class="spec-value" id="specPeft">—</span></div>
+              <div class="spec-row"><span class="spec-label">hf_hub</span><span class="spec-dot" id="dotHfhub"></span><span class="spec-value" id="specHfhub">—</span></div>
+              <div class="spec-row"><span class="spec-label">bitsandbytes</span><span class="spec-dot" id="dotBits"></span><span class="spec-value" id="specBits">—</span></div>
+              <div class="spec-row"><span class="spec-label">NumPy</span><span class="spec-dot" id="dotNumpy"></span><span class="spec-value" id="specNumpy">—</span></div>
+              <div class="spec-row"><span class="spec-label">Tokenizers</span><span class="spec-dot" id="dotTokenizers"></span><span class="spec-value" id="specTokenizers">—</span></div>
+            </div>
+          </div>
+        <!-- GPU Kernel Wheels: profile-driven (RTX 20-50 show nunchaku/gguf,
+               RTX 50 adds lightx2v; GTX10/AMD/Apple show no section). -->
+          <div class="env-subsection" id="kernelWheelsSubsection" style="margin-top:10px">
+            <div class="subsection-header">
+              <span class="subsection-title">GPU Kernel Wheels</span>
+              <span class="env-type-tag" id="kernelProfileTag"></span>
+              <button class="btn btn-ghost small" id="syncKernelsBtn" title="Reinstall all kernel wheels for this GPU" style="margin-left:auto">↻ Sync</button>
+            </div>
+            <div class="env-specs" id="kernelWheels">
+              <div class="spec-row kernel-empty"><span class="spec-value">No kernel wheels for this GPU profile.</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="env-list" id="envList" style="margin-top:6px"></div>
+
+        <!-- Deepy mode selector + one-click activation. Reads/writes only
+             wgp_config.json (Wan2GP user data) — never Wan2GP source.
+             Backs the file up first. -->
+        <div class="card" id="deepyPrimeCard" style="margin-top:10px">
+          <div class="card-header">
+            <span class="card-title">Deepy (WanGP assistant)</span>
+          </div>
+          <p class="path-hint">Deepy is WanGP's conversational media assistant. Pick a mode — the launcher writes it into Wan2GP's config so the next launch applies it. <a id="deepyDocsLink" href="#" style="color:var(--accent)">What is Deepy? (docs)</a></p>
+          <div class="deepy-mode-row">
+            <label class="deepy-mode-opt"><input type="radio" name="deepyMode" value="disabled"> Disabled</label>
+            <label class="deepy-mode-opt"><input type="radio" name="deepyMode" value="zero"> Deepy Zero <span class="deepy-mode-sub">local model</span></label>
+            <label class="deepy-mode-opt"><input type="radio" name="deepyMode" value="prime"> Deepy Prime <span class="deepy-mode-sub">remote LLM</span></label>
+          </div>
+          <!-- Local model (Prompt Enhancer) selector — shown for Disabled/Zero,
+               hidden for Prime. Options are data-driven from services/deepy-config.js
+               (DEEPY_ENHANCER_OPTIONS). -->
+          <div id="deepyEnhancerWrap" style="margin-top:10px; display:none">
+            <div class="deepy-sub-label">Local model (Prompt Enhancer)</div>
+            <div id="deepyEnhancerOptions" class="deepy-enhancer-options"></div>
+            <p class="path-hint" id="deepyEnhancerHint" style="margin-top:6px"></p>
+            <p class="path-hint" style="margin-top:4px"><em>You can also change these settings any time inside Wan2GP itself (Configuration → Prompt Enhancer / Deepy).</em></p>
+          </div>
+          <div id="deepyPrimeOnly" style="display:none">
+            <div class="deepy-cost-note">
+              <span class="dot-ok">●</span> <strong>OpenCode</strong> — free, local models, no account.
+              <span class="dot-bad">●</span> <strong>Claude Code / Codex</strong> — paid (subscription or API credits).
+            </div>
+            <div id="deepyEngineOptions" class="deepy-engine-options"></div>
+            <!-- Guided LLM engine setup for Deepy Prime (Claude Code / Codex / OpenCode).
+                 Shown only when Deepy Prime is selected (this block lives inside
+                 #deepyPrimeOnly). Cards render generically from services/llm-engines.js. -->
+            <div class="card" id="llmEnginesCard" style="margin-top:12px">
+              <div class="card-header">
+                <span class="card-title">LLM Engines</span>
+                <button class="btn btn-ghost small" id="llmEnginesRefresh" title="Re-check engine status" style="margin-left:auto">↻ Refresh</button>
+              </div>
+              <p class="path-hint">Deepy Prime can use Claude Code, Codex, or OpenCode as its LLM engine. Install/enable them here, then pick the engine in Wan2GP's <code>Configuration → Prompt Enhancer / Deepy</code>.</p>
+              <div id="llmEnginesList" class="llm-engines-list"></div>
+            </div>
+          </div>
+          <div class="deepy-actions">
+            <button class="btn btn-primary" id="deepyApplyBtn" disabled>Apply</button>
+          </div>
+          <div id="deepyStatusMsg" class="pip-advanced-hint" style="margin-top:8px"></div>
+        </div>
+
+        <!-- Advanced pip install: open-ended, but spec-validated (no shell, no
+             injection). Any future LLM SDK works here with no code change. -->
+        <div class="pip-install-row" style="margin-top:6px">
+          <div class="pip-advanced-label">Advanced — install any pip package</div>
+          <div style="display:flex;gap:6px;width:100%">
+            <input type="text" id="pipInput" class="pip-input" placeholder="package (e.g. claude-agent-sdk==0.1.40)" spellcheck="false">
+            <button class="pip-install-btn" id="pipInstallBtn">pip install</button>
+          </div>
+          <div class="pip-cmd-preview" id="pipCmdPreview" style="display:none">
+            <code id="pipCmdText"></code>
+            <button class="pip-copy-btn" id="pipCmdCopy" title="Copy command">copy</button>
+          </div>
+          <div class="pip-advanced-hint">Pins allowed (==, &gt;=, ~=). Flags like <code>--index-url</code> and shell characters are blocked for safety. The exact command that runs is shown above — copy it to run in your own terminal.</div>
+        </div>
+      </div>
+
+      <!-- Right column: Actions, Updates, Console -->
+      <div class="col-right">
+        <button class="launch-btn launch-amber" id="browserBtn">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            Launch Wan2GP in Browser
+        </button>
+        <button class="launch-btn launch-muted" id="browserNoGpuBtn" style="margin-top:4px">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            Launch in Chrome (no GPU script)
+        </button>
+        <button class="launch-btn launch-term" id="termBtn" style="margin-top:4px">
+            <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            Launch in External Terminal
+        </button>
+        <div class="launch-hint" id="noGpuHint" style="display:none">Chrome not installed — this launches Chrome with minimal GPU use to free VRAM.</div>
+        <button class="launch-btn launch-green" id="appBtn" style="margin-top:4px">
+            <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="18" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            Launch Wan2GP in Desktop
+        </button>
+        <div class="launch-info hidden" id="launchInfo">
+          <div class="li-text">⏳ First launch loads models + compiles CUDA kernels — this will take some extra time. Subsequent starts are faster.</div>
+          <div class="li-bar"><div class="li-fill"></div></div>
+        </div>
+        <div class="launch-hint" id="notInstalledHint" style="display:none">Wan2GP is not installed — restart the Desktop launcher to install.</div>
+        <div class="action-grid-2">
+          <button class="action-item" id="updateBtn">
+            <svg viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+            Update Wan2GP (DeepBeepMeep)
+          </button>
+          <button class="action-item" id="updateCheckBtn">
+            <svg viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Check Desktop Updates
+          </button>
+          <!-- Desktop shortcut -->
+          <button class="action-item" id="desktopShortcutBtn">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="12" y1="8" x2="12" y2="16"/></svg>
+            Create Desktop Shortcut
+          </button>
+          <button class="action-item" id="autoTuneDashBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
+            ⚡ Auto-Tune
+          </button>
+        </div>
+
+        <!-- Wan2GP Changelog -->
+        <div class="card changelog-card">
+          <div class="card-header">
+            <span class="card-title">Wan2GP Updates</span>
+            <span class="local-commit">v<span id="wangpVersion"></span> <span id="localCommit"></span></span>
+          </div>
+          <div id="updatesList" class="changelog-list">
+            <div class="changelog-loading">Fetching latest updates...</div>
+          </div>
+          <div class="changelog-footer">
+            <a href="#" id="wangpCheckLink" class="changelog-link">↻ Check for updates</a>
+            <span class="changelog-sep">·</span>
+            <a href="#" id="changelogLink" class="changelog-link">Full changelog on GitHub →</a>
+            <span class="changelog-sep">·</span>
+            <a href="#" id="hfModelsLink" class="changelog-link">🤗 Models</a>
+          </div>
+        </div>
+
+        <!-- Desktop links bar (relocated from removed Desktop App info card) -->
+        <div class="links-bar">
+          <a href="#" id="desktopRepoLink" class="changelog-link">GKartist75/wan2gp-desktop →</a>
+          <span class="changelog-sep">·</span>
+          <a href="#" id="discussionsLink" class="changelog-link">💬 Discussions</a>
+          <span class="changelog-sep">·</span>
+          <a href="#" id="ytLink" class="changelog-link">▶ YouTube</a>
+        </div>
+
+        <!-- Terminal card - fills remaining space (sibling of Desktop App card) -->
+        <div class="card dash-term-card" id="dashTermCard" style="flex:1;display:flex;flex-direction:column;min-height:0">
+          <div class="card-header">
+            <span class="card-title">Console</span>
+            <div class="dash-term-actions">
+              <button class="term-btn-small active" id="dashTermFollowBtn">
+                <svg viewBox="0 0 24 24" style="width:10px;height:10px"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+                <span class="follow-text">Follow</span>
+              </button>
+            </div>
+          </div>
+          <div class="term-body dash-term-body" id="termBody" style="flex:1"></div>
+        </div>
+
+      </div>
+      </div>
+
+    <!-- Wan2GP embed for in-app launch. Rendered via Electron BrowserView (a compositor
+         layer above the DOM), so no DOM element lives here. The floating terminal and
+         Manage panel temporarily hide the BrowserView while open (see app.js). -->
+    <div id="webviewContainer" class="webview-container hidden"></div>
+
+  </div>
+
+  <!-- Installer -->
+  <div id="installer" class="screen">
+    <div class="install-card">
+      <div class="install-top">
+        <div class="brand-mark-small">GK<span> Artist</span></div>
+
+      </div>
+      <h2>Setting up Wan2GP</h2>
+      <p class="install-subtitle" id="installSubtitle">Detecting your hardware...</p>
+      <p class="install-info">This installs Wan2GP inside the Desktop app. Once installed, you can launch, update, change settings, and browse generated files — all from the Dashboard.</p>
+
+      <!-- Prerequisite help card (shown when a tool is missing) -->
+      <div id="prereqHelp" class="prereq-help hidden">
+        <div class="prereq-icon">⚠️</div>
+        <div class="prereq-body">
+          <div class="prereq-title" id="prereqTitle">Missing required tool</div>
+          <div class="prereq-text" id="prereqText"></div>
+          <div class="prereq-actions">
+            <button class="btn btn-primary small" id="prereqDownloadBtn">Download &amp; Install</button>
+            <button class="btn btn-ghost small" id="prereqManualBtn">How to install manually</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Environment type selector -->
+      <div class="env-type-select" id="envTypeSelect">
+        <label class="env-type-label">Environment:</label>
+        <div class="env-type-options">
+          <button class="env-type-btn" data-env="venv">venv <span class="env-type-desc">(bundled with Python)</span></button>
+          <button class="env-type-btn selected" data-env="uv">uv <span class="env-type-desc">(faster, requires install)</span></button>
+          <button class="env-type-btn" data-env="conda">conda <span class="env-type-desc">(Anaconda/Miniconda)</span></button>
+        </div>
+      </div>
+
+      <!-- Install Paths -->
+      <div class="install-paths">
+        <div class="install-path-row">
+          <span class="ipath-label">Wan2GP install location:</span>
+          <span class="ipath-val" id="installAppDataPath">—</span>
+          <button class="btn btn-ghost small" id="browseAppDataPath">Browse</button>
+          <button class="btn btn-ghost small" id="clearAppDataPath" title="Reset to default">✕</button>
+        </div>
+        <div id="installRootWarn" class="install-root-warn hidden"></div>
+        <p class="path-hint">Where the Wan2GP repo, Python venv/env, and settings live. Default <code>C:\Wan2GP</code> on a fast SSD with 50+ GB free. Keep it OUT of AppData so it isn't buried in a roaming profile. Always pick a <strong>folder</strong> — a bare drive root is not allowed.</p>
+        <div id="moveToPreferredWrap" class="migrate-note hidden">
+          <span class="migrate-warn">⚠ Your Wan2GP data is currently inside your roaming AppData profile (<code id="currentDataDirPath">…</code>).</span>
+          <button class="btn btn-primary small" id="moveToPreferredBtn">Migrate to new location</button>
+        </div>
+      </div>
+
+      <!-- Model Folders -->
+      <div class="install-paths model-folders">
+        <div class="install-path-row">
+          <span class="ipath-label">Checkpoints:</span>
+          <span class="ipath-val" id="installCkptsPath">(default)</span>
+          <button class="btn btn-ghost small" id="browseCkptsPath">Browse</button>
+          <button class="btn btn-ghost small" id="clearCkptsPath" title="Reset to default">✕</button>
+        </div>
+        <p class="path-hint">Folder with model ckpts/safetensors — first path is the default download dir.</p>
+        <div class="install-path-row">
+          <span class="ipath-label">LoRAs:</span>
+          <span class="ipath-val" id="installLorasPath">(default)</span>
+          <button class="btn btn-ghost small" id="browseLorasPath">Browse</button>
+          <button class="btn btn-ghost small" id="clearLorasPath" title="Reset to default">✕</button>
+        </div>
+        <p class="path-hint">Root folder for all LoRA subfolders (wan/, hunyuan/, etc.)</p>
+        <div class="install-path-row">
+          <span class="ipath-label">Output:</span>
+          <span class="ipath-val" id="installOutputPath">(default)</span>
+          <button class="btn btn-ghost small" id="browseOutputPath">Browse</button>
+          <button class="btn btn-ghost small" id="clearOutputPath" title="Reset to default">✕</button>
+        </div>
+        <p class="path-hint">Where generated videos/images/audio are saved.</p>
+        <p class="path-hint path-hint-warn">⚠ Model checkpoints &amp; LoRAs are large (tens–hundreds of GB). Store them on a fast, non-system drive — <strong>not</strong> in AppData/Roaming, which roams with your profile and can bloat or sync unexpectedly. Default <code>C:\Wan2GP-Models\ckpts</code> keeps them separate from the repo.</p>
+      </div>
+
+      <button id="installStartBtn">Install</button>
+
+      <!-- Hardware info -->
+      <div class="install-hw">
+        <div class="install-hw-row">
+          <span class="ihw-label">CPU:</span><span class="ihw-val" id="installCpu">—</span>
+          <span class="ihw-label">RAM:</span><span class="ihw-val" id="installRam">—</span>
+        </div>
+        <div class="install-hw-row">
+          <span class="ihw-label">GPU:</span><span class="ihw-val" id="installGpu">—</span>
+          <span class="ihw-label">VRAM:</span><span class="ihw-val" id="installVram">—</span>
+        </div>
+        <div class="install-hw-row install-profile" id="installProfileRow" style="display:none">
+          <span class="ihw-label">Profile:</span><span class="ihw-val profile-badge" id="installProfile">—</span>
+        </div>
+      </div>
+
+      <!-- GPU Profile Overview (mirrors setup_config.json gpu_profiles) -->
+      <div class="install-profile-overview" id="installProfileOverview" style="display:none">
+        <div class="ipo-header">GPU Profile Overview <span id="ipoProfile" class="ipo-profile-badge"></span></div>
+        <div class="ipo-grid">
+          <div class="ipo-row"><span class="ipo-k">Python</span><span class="ipo-v" id="ipoPython">—</span></div>
+          <div class="ipo-row"><span class="ipo-k">Torch / CUDA</span><span class="ipo-v" id="ipoTorch">—</span></div>
+          <div class="ipo-row"><span class="ipo-k">Triton</span><span class="ipo-v" id="ipoTriton">—</span></div>
+          <div class="ipo-row"><span class="ipo-k">Sage Attn</span><span class="ipo-v" id="ipoSage">—</span></div>
+          <div class="ipo-row"><span class="ipo-k">Sparge Attn</span><span class="ipo-v" id="ipoSparge">—</span></div>
+          <div class="ipo-row"><span class="ipo-k">Flash Attn</span><span class="ipo-v" id="ipoFlash">—</span></div>
+          <div class="ipo-row ipo-kernels"><span class="ipo-k">Kernel Wheels</span><span class="ipo-v" id="ipoKernels">—</span></div>
+        </div>
+      </div>
+
+      <!-- Expected packages -->
+      <div class="install-pkgs" id="installPkgs" style="display:none">
+        <div class="ipkgs-header">Will be installed for your hardware <span id="installPkgsProfile"></span></div>
+        <div class="ipkgs-list" id="installPkgsList"></div>
+      </div>
+
+      <!-- Expected kernel wheels (distinct, clearly labeled) -->
+      <div class="install-kernels" id="installKernels" style="display:none">
+        <div class="ipkgs-header">GPU Kernel Wheels <span id="installKernelsProfile"></span></div>
+        <div class="ikernels-list" id="installKernelsList"></div>
+      </div>
+
+      <!-- Resolved stack (pre-flight) -->
+      <div class="install-stack" id="installStack" style="display:none">
+        <div class="ipkgs-header">Resolved install stack</div>
+        <div class="istack-grid" id="installStackGrid"></div>
+        <div class="istack-warn" id="installStackWarn"></div>
+        <button class="btn btn-ghost small" id="validateInstallBtn" style="margin-top:8px;display:none">Validate installation</button>
+      </div>
+
+      <!-- Reinstall choice (shown when Wan2GP already installed) -->
+      <div id="reinstallChoice" class="reinstall-choice hidden">
+        <p class="reinstall-prompt">Wan2GP is already installed. What do you want to do?</p>
+        <div class="reinstall-buttons">
+          <button id="reinstallFreshBtn" class="btn btn-ghost">Reinstall (fresh)</button>
+          <button id="reinstallUpdateBtn" class="btn btn-primary">Update &amp; keep files</button>
+          <button id="reinstallSkipBtn" class="btn btn-ghost">Use existing &amp; go to Dashboard</button>
+        </div>
+      </div>
+
+      <div class="install-bottom">
+        <div class="install-task-col">
+          <div class="task-list" id="taskList">
+            <div class="task pending" data-id="clone"><span class="task-icon">&#9675;</span><span class="task-label">Clone Wan2GP repository</span><span class="task-status">pending</span></div>
+            <div class="task pending" data-id="venv"><span class="task-icon">&#9675;</span><span class="task-label">Create Python virtual environment</span><span class="task-status">pending</span></div>
+            <div class="task pending" data-id="torch"><span class="task-icon">&#9675;</span><span class="task-label">Install PyTorch + CUDA</span><span class="task-status">pending</span></div>
+            <div class="task pending" data-id="reqs"><span class="task-icon">&#9675;</span><span class="task-label">Install Python dependencies</span><span class="task-status">pending</span></div>
+            <div class="task pending" data-id="triton"><span class="task-icon">&#9675;</span><span class="task-label">Install Triton compiler</span><span class="task-status">pending</span></div>
+            <div class="task pending" data-id="sage"><span class="task-icon">&#9675;</span><span class="task-label">Install Sage Attention kernel</span><span class="task-status">pending</span></div>
+            <div class="task pending" data-id="flash"><span class="task-icon">&#9675;</span><span class="task-label">Install Flash Attention</span><span class="task-status">pending</span></div>
+            <div class="task pending" data-id="kernels"><span class="task-icon">&#9675;</span><span class="task-label">Install GPU kernels (nunchaku/GGUF)</span><span class="task-status">pending</span></div>
+            <div class="task pending" data-id="done"><span class="task-icon">&#9675;</span><span class="task-label">Finalize installation</span><span class="task-status">pending</span></div>
+          </div>
+        </div>
+        <div class="install-term-col">
+          <div class="install-term-header">
+            <span class="install-term-title">Console</span>
+            <div class="install-term-actions">
+              <button class="term-btn-small active" id="installFollowBtn">
+                <svg viewBox="0 0 24 24" style="width:10px;height:10px"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+                <span class="follow-text">Follow</span>
+              </button>
+            </div>
+          </div>
+
+            <div class="term-body" id="installTermBody" style="flex:1"></div>
+          </div>
+        </div>
+      </div>
+
+  </div>
+
+  <!-- Floating Terminal for Desktop (webview) mode -->
+  <div id="floatingTerminal" class="floating-term dock-bottom hidden">
+    <div class="floating-term-header">
+      <span class="floating-term-title">Console</span>
+      <div class="floating-term-actions">
+        <span id="ftServerStatus" class="ft-status" style="display:none">
+          <span class="ft-status-dot" id="ftStatusDot"></span>
+          <span id="ftStatusText">Stopped</span>
+        </span>
+        <button class="term-btn-small active" id="ftFollowBtn">
+          <svg viewBox="0 0 24 24" style="width:10px;height:10px"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
+          <span class="follow-text">Follow</span>
+        </button>
+        <div class="dock-btns">
+          <button class="dock-btn active" data-dock="bottom" title="Dock bottom">⬇</button>
+          <button class="dock-btn" data-dock="left" title="Dock left">⬅</button>
+          <button class="dock-btn" data-dock="top" title="Dock top">⬆</button>
+          <button class="dock-btn" data-dock="right" title="Dock right">➡</button>
+          <button class="dock-btn" data-dock="floating" title="Floating">⤢</button>
+        </div>
+        <button class="term-btn-small" id="ftCloseBtn">✕</button>
+      </div>
+    </div>
+    <div class="term-body" id="ftTermBody" style="flex:1"></div>
+    <div class="ft-search-row">
+      <input type="text" id="logSearch" class="ft-search" placeholder="Search logs...">
+      <button class="term-btn-small" id="logExportBtn" title="Export logs">Export</button>
+    </div>
+    <div class="floating-term-resize" id="ftResize"></div>
+  </div>
+
+  <!-- Migration folder chooser (data dir + model folders) -->
+  <div id="migrationModal" class="modal-overlay hidden">
+    <div class="modal migration-modal">
+      <div class="modal-header">
+        <span class="modal-title" id="migrationTitle">Move Wan2GP out of AppData</span>
+        <button class="modal-close" id="migrationCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <p class="modal-sub" id="migrationSub">Your Wan2GP data currently lives in your roaming AppData profile. Move it to a dedicated, fast drive — AppData is meant for small settings, not multi-GB model checkpoints (it can slow logins, trigger antivirus locks, and bloat your profile). Our recommended locations are pre-filled — change any of them if you like.</p>
+      <div class="migrate-row">
+        <label>Wan2GP data folder</label>
+        <div class="migrate-path">
+          <input type="text" id="migDataDir" readonly>
+          <button class="btn btn-ghost small" data-browse="dataDir">Browse</button>
+        </div>
+      </div>
+      <div class="migrate-row">
+        <label>Checkpoints</label>
+        <div class="migrate-path">
+          <input type="text" id="migCkpts" readonly>
+          <button class="btn btn-ghost small" data-browse="ckpts">Browse</button>
+        </div>
+      </div>
+      <div class="migrate-row">
+        <label>LoRAs</label>
+        <div class="migrate-path">
+          <input type="text" id="migLoras" readonly>
+          <button class="btn btn-ghost small" data-browse="loras">Browse</button>
+        </div>
+      </div>
+      <div class="migrate-row">
+        <label>Output</label>
+        <div class="migrate-path">
+          <input type="text" id="migOutput" readonly>
+          <button class="btn btn-ghost small" data-browse="output">Browse</button>
+        </div>
+      </div>
+      <p class="migrate-note-text">After moving, your model-folder paths in <code>wgp_config.json</code> are updated to these locations and the app restarts.</p>
+      <div id="migrationProgress" class="migrate-progress hidden">
+        <div class="migrate-progress-bar"><div id="migrationProgressFill" class="migrate-progress-fill"></div></div>
+        <span id="migrationProgressText" class="migrate-progress-text">Moving… 0%</span>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="migrationCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="migrationMoveBtn">Move &amp; restart</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- escape.js first: defines window.escHtml used by app.js. Loaded as a plain
+       script tag (NOT via preload require — the window is sandboxed, and
+       sandboxed preloads can only require whitelisted modules). Same module the
+       node --test suite requires, so escaping logic lives in one place. -->
+  <script src="../services/escape.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

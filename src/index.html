@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>wan2gp-tauri-spike</title>
+    <script type="module" src="/main.js" defer></script>
+  </head>
+  <body>
+    <main class="container">
+      <h1>wan2gp-tauri-spike</h1>
+      <p style="opacity:0.7">Isolated Tauri eval — does NOT touch <code>../wan2gp-desktop</code>. Delete this folder to abort.</p>
+
+      <div class="row" style="margin:12px 0">
+        <a href="https://tauri.app" target="_blank"><img src="/assets/tauri.svg" class="logo tauri" alt="Tauri" /></a>
+        <a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript" target="_blank"><img src="/assets/javascript.svg" class="logo vanilla" alt="JS" /></a>
+      </div>
+
+      <!-- 1. Template prove: invoke() works -->
+      <section style="border:1px solid #333; border-radius:8px; padding:12px; margin:12px 0; text-align:left">
+        <h3>1) IPC: greet (template)</h3>
+        <form class="row" id="greet-form">
+          <input id="greet-input" placeholder="Enter a name..." />
+          <button type="submit">Greet (invoke → Rust)</button>
+        </form>
+        <p id="greet-msg" style="min-height:1.2em"></p>
+        <small style="opacity:0.6">Electron equivalent: <code>ipcRenderer.invoke('greet')</code> → <code>invoke("greet")</code></small>
+      </section>
+
+      <!-- 2. Real wan2gp proof: GPU detect -->
+      <section style="border:1px solid #333; border-radius:8px; padding:12px; margin:12px 0; text-align:left">
+        <h3>2) System: detect_gpu (real)</h3>
+        <p style="margin:4px 0; opacity:0.8">Mirrors <code>wan2gp-desktop/main.js getGpuInfo()</code> — runs <code>nvidia-smi</code> via Rust <code>std::process::Command</code>.</p>
+        <div class="row"><button id="btn-gpu">Detect GPU</button><button id="btn-status">Get Status</button></div>
+        <pre id="gpu-out" style="background:#1a1a1a; color:#a0ffa0; padding:8px; border-radius:6px; overflow:auto; min-height:3em; max-height:200px"></pre>
+        <small style="opacity:0.6">No shell plugin needed for read-only probe. Write ops (install/launch) would use <code>tauri-plugin-shell</code>.</small>
+      </section>
+
+      <!-- 3. Frontend reuse note -->
+      <section style="border:1px solid #333; border-radius:8px; padding:12px; margin:12px 0; text-align:left">
+        <h3>3) Frontend reuse</h3>
+        <p>Your <code>reference/renderer/</code> (961 HTML + 1046 CSS + 3332 JS) runs as-is in WebView2.</p>
+        <p style="opacity:0.7">Try: copy <code>reference/renderer/index.html</code> over <code>src/index.html</code> and <code>reference/renderer/style.css</code> over <code>src/styles.css</code> — then replace <code>window.w2gp.*</code> calls with <code>invoke()</code>. That's the bulk of the Tauri migration.</p>
+        <p><strong>Embedded Wan2GP (<code>localhost:7860</code>)</strong>: not wired in this spike. Next step is <code>Window::add_child(WebviewBuilder)</code> or <code>WebviewWindow</code> for the BrowserView replacement.</p>
+      </section>
+
+      <p style="opacity:0.5; font-size:0.85em; margin-top:16px">See <code>README_SPIKE.md</code> for run/build/delete. Identifier <code>com.wangp.desktop-tauri</code> avoids collision with Electron <code>com.wangp.desktop</code>.</p>
+    </main>
+  </body>
+</html>
