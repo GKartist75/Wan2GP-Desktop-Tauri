@@ -312,12 +312,22 @@ fn config_save(cfg: serde_json::Value) -> Result<serde_json::Value, String> {
 fn get_install_paths() -> serde_json::Value {
     let data = get_data_dir();
     let repo = get_repo_dir();
+    let orig = if let Ok(a) = std::env::var("APPDATA") { PathBuf::from(a).join("wan2gp-desktop") } else { PathBuf::from("C:\\Users\\Default\\AppData\\Roaming\\wan2gp-desktop") };
+    let models_default = data.with_file_name(format!("{}-Models", data.file_name().unwrap_or_default().to_string_lossy()));
+    let models_default = if models_default.to_string_lossy().is_empty() { PathBuf::from("C:\\Wan2GP-Models") } else { models_default };
     serde_json::json!({
+        "appData": data.to_string_lossy().to_string(),
+        "appDataRoot": orig.to_string_lossy().to_string(),
+        "repo": repo.to_string_lossy().to_string(),
         "dataDir": data.to_string_lossy().to_string(),
         "repoDir": repo.to_string_lossy().to_string(),
+        "config": get_config_file().to_string_lossy().to_string(),
         "configFile": get_config_file().to_string_lossy().to_string(),
         "envsFile": get_envs_file().to_string_lossy().to_string(),
-        "isRoaming": data.to_string_lossy().contains("AppData\\Roaming") || data.to_string_lossy().contains("AppData/Roaming")
+        "modelsDefault": models_default.to_string_lossy().to_string(),
+        "dataDirInRoaming": data.to_string_lossy().to_string().to_lowercase().contains("appdata"),
+        "legacyRoamingFound": false,
+        "isRoaming": data.to_string_lossy().contains("AppData")
     })
 }
 
@@ -359,15 +369,17 @@ fn get_model_paths() -> serde_json::Value {
     if cfg_path.exists() {
         if let Ok(s) = std::fs::read_to_string(&cfg_path) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
-                return serde_json::json!({
-                    "checkpoints": v.get("ckpt_dir").cloned().unwrap_or(serde_json::Value::Null),
-                    "loras": v.get("lora_dir").cloned().unwrap_or(serde_json::Value::Null),
-                    "outputs": v.get("save_path").cloned().unwrap_or(serde_json::Value::Null)
-                });
+                let mut out = serde_json::Map::new();
+                if let Some(a) = v.get("checkpoints_paths").and_then(|x| x.as_array()).and_then(|a| a.first()) { out.insert("checkpoints".into(), a.clone()); }
+                else if let Some(c) = v.get("ckpt_dir") { out.insert("checkpoints".into(), c.clone()); }
+                if let Some(l) = v.get("loras_root") { out.insert("loras".into(), l.clone()); }
+                else if let Some(l) = v.get("lora_dir") { out.insert("loras".into(), l.clone()); }
+                if let Some(o) = v.get("save_path") { out.insert("output".into(), o.clone()); }
+                if !out.is_empty() { return serde_json::Value::Object(out); }
             }
         }
     }
-    serde_json::json!({"checkpoints": null, "loras": null, "outputs": null})
+    serde_json::Value::Null
 }
 
 #[tauri::command]
