@@ -562,12 +562,34 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
     if !repo.join("wgp.py").exists() {
         emit(&format!("[*] Cloning Wan2GP into {}\n", repo.display()));
         std::fs::create_dir_all(&repo).map_err(|e| e.to_string())?;
-        // use shell plugin so stdout streams to UI instead of buffering
-        use tauri_plugin_shell::ShellExt;
-        let (mut rx, _child) = app.shell().command("git").args(["clone","--depth","1","https://github.com/deepbeepmeep/Wan2GP.git", &repo.to_string_lossy()]).spawn().map_err(|e| e.to_string())?;
-        use tauri_plugin_shell::process::CommandEvent;
-        while let Some(ev) = rx.recv().await {
-            match ev { CommandEvent::Stdout(b) => emit(&String::from_utf8_lossy(&b)), CommandEvent::Stderr(b) => emit(&String::from_utf8_lossy(&b)), _ => {} }
+        // If repo already exists but is not empty (e.g. contains desktop-config.json from previous launch),
+        // git clone directly into it fails ("already exists and is not empty"). Clone into a temp dir
+        // inside the target (same volume) then merge, preserving user files — mirrors Electron mergeDir.
+        let needs_tmp = repo.exists() && std::fs::read_dir(&repo).map(|mut it| it.next().is_some()).unwrap_or(false);
+        if needs_tmp {
+            let tmp = repo.join(format!(".wan2gp-clone-tmp-{}", std::process::id()));
+            if tmp.exists() { let _ = std::fs::remove_dir_all(&tmp); }
+            emit(&format!("[*] Target not empty — cloning into temp {}\n", tmp.display()));
+            use tauri_plugin_shell::ShellExt;
+            let (mut rx, _child) = app.shell().command("git").args(["clone","--depth","1","https://github.com/deepbeepmeep/Wan2GP.git", &tmp.to_string_lossy()]).spawn().map_err(|e| e.to_string())?;
+            use tauri_plugin_shell::process::CommandEvent;
+            while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b) => emit(&String::from_utf8_lossy(&b)), CommandEvent::Stderr(b) => emit(&String::from_utf8_lossy(&b)), _ => {} } }
+            if !tmp.join("wgp.py").exists() { mutating_done(); return Err("git clone failed — check output above".into()); }
+            // merge tmp into repo, keep user files (desktop-config.json, wgp_config.json, .electron)
+            const KEEP: &[&str] = &["desktop-config.json", "wgp_config.json", ".electron", "envs.json"];
+            for e in std::fs::read_dir(&tmp).map_err(|e| e.to_string())? {
+                let e = e.map_err(|e| e.to_string())?; let name = e.file_name().to_string_lossy().to_string();
+                if KEEP.contains(&name.as_str()) { continue; }
+                let dst = repo.join(&name);
+                if dst.exists() && name==".git" { let _ = std::fs::remove_dir_all(&dst); }
+                let _ = std::fs::rename(e.path(), &dst).or_else(|_| { if e.path().is_dir() { fs_extra_fallback_copy_dir(&e.path(), &dst) } else { std::fs::copy(e.path(), &dst).map(|_| ()).map_err(|e| e.to_string()) } });
+            }
+            let _ = std::fs::remove_dir_all(&tmp);
+        } else {
+            use tauri_plugin_shell::ShellExt;
+            let (mut rx, _child) = app.shell().command("git").args(["clone","--depth","1","https://github.com/deepbeepmeep/Wan2GP.git", &repo.to_string_lossy()]).spawn().map_err(|e| e.to_string())?;
+            use tauri_plugin_shell::process::CommandEvent;
+            while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b) => emit(&String::from_utf8_lossy(&b)), CommandEvent::Stderr(b) => emit(&String::from_utf8_lossy(&b)), _ => {} } }
         }
         if !repo.join("wgp.py").exists() { mutating_done(); return Err("git clone failed — check output above".into()); }
         emit("[*] Repository cloned.\n");
