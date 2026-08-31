@@ -35,24 +35,30 @@ fn local_appdata_dir() -> PathBuf {
     if let Ok(l) = std::env::var("LOCALAPPDATA") { PathBuf::from(l) }
     else { appdata_dir() }
 }
-fn data_dir_override_file() -> PathBuf { home_dir().join(".wan2gp-desktop-data-dir") }
+fn data_dir_override_file() -> PathBuf { home_dir().join(".wan2gp-tauri-data-dir") }
+fn data_dir_override_file_electron() -> PathBuf { home_dir().join(".wan2gp-desktop-data-dir") }
 
 fn get_data_dir() -> PathBuf {
-    // 1. override file
-    let ov = data_dir_override_file();
-    if ov.exists() {
-        if let Ok(s) = std::fs::read_to_string(&ov) {
-            let d = s.trim().to_string();
-            if !d.is_empty() {
-                let p = PathBuf::from(&d);
-                // Validate absolute-ish and exists; stale override => delete fallback
-                if p.is_absolute() && p.exists() { return p; }
-                if !p.exists() {
-                    let legacy = std::path::Path::new(&d).join("wgp.py");
-                    let nested = PathBuf::from(&d).join("Wan2GP").join("wgp.py");
-                    if legacy.exists() || nested.exists() { return PathBuf::from(d); }
-                    // stale: remove override so next call falls back
-                    let _ = std::fs::remove_file(&ov);
+    // 1. Tauri override (isolated from Electron) — keeps side-by-side installs separate
+    for ov in [data_dir_override_file(), data_dir_override_file_electron()] {
+        if ov.exists() {
+            if let Ok(s) = std::fs::read_to_string(&ov) {
+                let d = s.trim().to_string();
+                if !d.is_empty() {
+                    let p = PathBuf::from(&d);
+                    if p.is_absolute() && p.exists() {
+                        // auto-migrate Electron override to Tauri file on first run (side-by-side)
+                        if ov == data_dir_override_file_electron() && !data_dir_override_file().exists() {
+                            let _ = atomic_write(&data_dir_override_file(), &d);
+                        }
+                        return p;
+                    }
+                    if !p.exists() {
+                        let legacy = std::path::Path::new(&d).join("wgp.py");
+                        let nested = PathBuf::from(&d).join("Wan2GP").join("wgp.py");
+                        if legacy.exists() || nested.exists() { return PathBuf::from(d); }
+                        if ov == data_dir_override_file() { let _ = std::fs::remove_file(&ov); }
+                    }
                 }
             }
         }
@@ -111,7 +117,8 @@ fn load_config_value() -> serde_json::Value {
     }
     serde_json::json!({
         "githubToken": "", "hfToken": "", "claudeApiKey": "", "theme": "dark",
-        "serverPort": 7860, "serverName": "localhost", "defaultBrowser": "system",
+        "serverPort": 7861, "serverName": "localhost", "defaultBrowser": "system", // ponytail: 7861 for side-by-side with Electron 7860
+
         "termDockDefault": "bottom", "electronGpu": true, "share": false,
         "autoUpdateEnabled": true, "ggufEnv": { "enabled": true, "matmulMode": "auto", "streamK": true, "bf16Fp16": false }
     })
