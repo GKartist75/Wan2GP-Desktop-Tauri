@@ -3,6 +3,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use tauri::{Emitter, Manager};
 // shell/dialog/fs plugins wired for install/launch streaming — ponytail: std::process covers probes without them
+static MUTATING: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+fn mutating_try(name: &str) -> Result<(), String> {
+    let m = MUTATING.get_or_init(|| Mutex::new(None));
+    let mut g = m.lock().unwrap();
+    if let Some(cur) = g.as_ref() { return Err(format!("Another operation already running ({cur}). Wait for it to finish.")); }
+    *g = Some(name.to_string()); Ok(())
+}
+fn mutating_done() { if let Some(m) = MUTATING.get() { *m.lock().unwrap() = None; } }
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -135,14 +143,54 @@ fn get_gpu_info_sync() -> serde_json::Value {
 fn detect_gpu() -> Result<serde_json::Value, String> {
     Ok(get_gpu_info_sync())
 }
+fn kernel_profile_key(vendor: &str, name: &str) -> String {
+    let v = vendor.to_uppercase(); let g = name.to_uppercase();
+    if v == "APPLE" { return "MPS".into(); }
+    if v == "NVIDIA" {
+        if g.contains(" 10") || g.contains(" 16") || g.contains("GTX 10") || g.contains("GTX 16") { return "GTX_10".into(); }
+        if g.contains("50") { return "RTX_50".into(); } if g.contains("40") { return "RTX_40".into(); } if g.contains("30") { return "RTX_30".into(); }
+        if g.contains("20") || g.contains("QUADRO") { return "RTX_20".into(); } return "GTX_10".into();
+    }
+    if v == "AMD" {
+        if g.contains("7600")||g.contains("7700")||g.contains("7800")||g.contains("7900")||g.contains("780M") { return "AMD_GFX110X".into(); }
+        if g.contains("890M")||g.contains("STRIX")||g.contains("HALO")||g.contains("Z1")||g.contains("PHOENIX") { return "AMD_GFX1151".into(); }
+        if g.contains("9060")||g.contains("9070")||g.contains("8000")||g.contains("1201") { return "AMD_GFX1201".into(); }
+        return "AMD_GFX110X".into();
+    }
+    "RTX_40".into()
+}
+fn build_install_plan(hw: &serde_json::Value) -> serde_json::Value {
+    let vendor = hw.get("vendor").and_then(|v| v.as_str()).unwrap_or("UNKNOWN").to_uppercase();
+    let name = hw.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let vram = hw.get("vramMB").and_then(|v| v.as_str()).unwrap_or("0").split_whitespace().next().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
+    let driver = hw.get("driverVersion").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let vram_gb = vram / 1024.0_f64; let is_gtx = name.to_uppercase().contains("GTX 10") || name.to_uppercase().contains("GTX 16") || (name.contains("10") && vendor=="NVIDIA" && (name.contains("1050")||name.contains("1060")||name.contains("1650")));
+    let (cuda, torch, mut warn) = if vendor=="NVIDIA" { if is_gtx { ("CUDA 12.8", "PyTorch 2.7.1", String::new()) } else { let mut w=String::new(); if let Ok(dv)=driver.parse::<f64>() { if dv < 580.0 { w=format!("NVIDIA driver {} < R580 — cu130 needs R580+", driver); }} ("CUDA 13 (cu130)", "PyTorch 2.10", w) } } else if vendor=="AMD" { ("ROCm (TheRock)", "PyTorch 2.7.0", String::new()) } else if vendor=="APPLE" { ("MPS (Metal)", "PyTorch (MPS)", String::new()) } else { ("CPU", "PyTorch (CPU)", String::new()) };
+    let _ = vram_gb; let _ = warn.clone();
+    serde_json::json!({"vendor": vendor, "gpuName": name, "vramGb": vram, "cuda": cuda, "torch": torch, "driverWarning": warn, "profile": kernel_profile_key(&vendor, &name)})
+}
 #[tauri::command]
 fn get_status() -> serde_json::Value {
-    // real get_status now also covers kernel/version probe; keep spike message as fallback
     let env = get_active_env();
-    if env.is_null() {
-        return serde_json::json!({"error":"No active environment","spike":true});
+    if env.is_null() { return serde_json::json!({"error":"No active environment","spike":true}); }
+    // try to read kernel wheels from setup_config.json if present
+    let repo = get_repo_dir(); let cfg_path = repo.join("setup_config.json");
+    let mut wheels = serde_json::json!([]);
+    let mut profile = String::new();
+    if cfg_path.exists() {
+        if let Ok(s) = std::fs::read_to_string(&cfg_path) {
+            if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&s) {
+                let gpu = get_gpu_info_sync(); let vendor=gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or("UNKNOWN"); let name=gpu.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                profile = kernel_profile_key(vendor, name);
+                if let Some(prof) = cfg.get("gpu_profiles").and_then(|p| p.get(&profile)) {
+                    if let Some(kernels) = prof.get("kernels").and_then(|k| k.as_array()) {
+                        wheels = serde_json::Value::Array(kernels.clone());
+                    }
+                }
+            }
+        }
     }
-    serde_json::json!({"env": env, "versions": {}, "kernelWheels": [], "spike": false})
+    serde_json::json!({"env": env, "versions": {}, "kernelWheels": wheels, "kernelProfile": profile, "spike": false})
 }
 #[tauri::command]
 fn check_python() -> serde_json::Value {
@@ -334,10 +382,21 @@ fn detect_model_folders() -> serde_json::Value {
 // ── Phase 2 stubs + real logic as needed ──
 #[tauri::command]
 fn install_plan() -> serde_json::Value {
-    serde_json::json!({"plan": [], "gpu": get_gpu_info_sync()})
+    let gpu = get_gpu_info_sync();
+    let plan = build_install_plan(&gpu);
+    // disk check (ponytail: statvfs when exact GB needed)
+    let disk = get_disk_space(None);
+    serde_json::json!({"gpu": gpu, "plan": plan, "disk": disk})
 }
 #[tauri::command]
-fn validate_install() -> serde_json::Value { serde_json::json!({"ok": true, "errors": []}) }
+fn validate_install() -> serde_json::Value {
+    let repo = get_repo_dir();
+    let mut errors: Vec<String> = Vec::new();
+    if !repo.join("wgp.py").exists() { errors.push("wgp.py not found — not installed".into()); }
+    if !repo.join("setup_config.json").exists() { errors.push("setup_config.json missing".into()); }
+    if get_active_env().is_null() { errors.push("no active env".into()); }
+    serde_json::json!({"ok": errors.is_empty(), "errors": errors})
+}
 #[tauri::command]
 fn uv_cache_info() -> serde_json::Value {
     let p = get_repo_dir().join(".uv-cache");
@@ -463,10 +522,15 @@ fn auto_tune_recommend(hw: Option<serde_json::Value>, opts: Option<serde_json::V
 #[tauri::command]
 async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serde_json::Value,String> {
     mutating_try("install")?;
-    let env = env_type.unwrap_or("uv".into());
+    let env = env_type.unwrap_or("uv".into()); // uv | venv | conda
     let repo = get_repo_dir();
-    let emit = |msg: &str| { let _ = app.emit("setup-output", msg.to_string()); };
-    // ponytail: minimal install — clone + setup.py streaming; full Electron fixups (py shim, kernel sync, sageattention swap) add when stub proves insufficient
+    let emit = |msg: &str| { let _ = app.emit("setup-output", msg.to_string()); let _ = app.emit("setup-phase", serde_json::json!({"label": msg})); };
+    // hardware-aware header (driver warning surfaces before 20min install)
+    let gpu = get_gpu_info_sync();
+    let plan = build_install_plan(&gpu);
+    emit(&format!("[hw] GPU: {} ({}) — {} / {} — profile {}\n", plan["gpuName"].as_str().unwrap_or("?"), plan["vendor"].as_str().unwrap_or("?"), plan["cuda"].as_str().unwrap_or("?"), plan["torch"].as_str().unwrap_or("?"), plan["profile"].as_str().unwrap_or("?")));
+    if let Some(w)=plan["driverWarning"].as_str() { if !w.is_empty() { emit(&format!("[warn] {}\n", w)); } }
+    emit(&format!("[env] requested: {}\n", env));
     if !repo.join("wgp.py").exists() {
         emit(&format!("[*] Cloning Wan2GP into {}\n", repo.display()));
         std::fs::create_dir_all(&repo).map_err(|e| e.to_string())?;
@@ -481,10 +545,56 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
         emit("[*] Repository cloned.\n");
     }
     emit(&format!("[*] Installing env={} via setup.py (streaming)…\n", env));
+    // ── env creation (uv/venv/conda) — ponytail: setup.py will pick hardware-aware wheels from setup_config.json
+    let env_path = match env.as_str() {
+        "conda" => repo.join("env_conda"),
+        "venv" => repo.join("env_venv"),
+        _ => repo.join("env_uv"),
+    };
+    if !env_path.exists() {
+        emit(&format!("[*] Creating {} env at {}\n", env, env_path.display()));
+        use tauri_plugin_shell::ShellExt;
+        let res: Result<(), String> = match env.as_str() {
+            "conda" => {
+                let (mut r, _) = app.shell().command("conda").args(["create","-p", &env_path.to_string_lossy(), "python=3.11", "-y"]).spawn().map_err(|e| format!("conda not found: {}", e))?;
+                use tauri_plugin_shell::process::CommandEvent; while let Some(ev)=r.recv().await { match ev{ CommandEvent::Stdout(b)|CommandEvent::Stderr(b)=>emit(&String::from_utf8_lossy(&b)), _=>{}}}
+                Ok(())
+            },
+            "venv" => {
+                // try py -3.11 then python
+                let py = if std::process::Command::new("py").args(["-3.11","--version"]).output().map(|o| o.status.success()).unwrap_or(false) { "py".to_string() } else { "python".to_string() };
+                let pya: Vec<String> = if py=="py" { vec!["-3.11".into(), "-m".into(), "venv".into(), env_path.to_string_lossy().to_string()] } else { vec!["-m".into(), "venv".into(), env_path.to_string_lossy().to_string()] };
+                let (mut r, _) = app.shell().command(&py).args(pya).spawn().map_err(|e| e.to_string())?;
+                use tauri_plugin_shell::process::CommandEvent; while let Some(ev)=r.recv().await { match ev{ CommandEvent::Stdout(b)|CommandEvent::Stderr(b)=>emit(&String::from_utf8_lossy(&b)), _=>{}}}
+                Ok(())
+            },
+            _ => { // uv
+                let (mut r, _) = app.shell().command("uv").args(["venv", &env_path.to_string_lossy(), "--python", "3.11"]).spawn().map_err(|e| format!("uv not found: {}", e))?;
+                use tauri_plugin_shell::process::CommandEvent; while let Some(ev)=r.recv().await { match ev{ CommandEvent::Stdout(b)|CommandEvent::Stderr(b)=>emit(&String::from_utf8_lossy(&b)), _=>{}}}
+                Ok(())
+            }
+        };
+        if let Err(e) = res { emit(&format!("[warn] env creation: {}\n", e)); }
+        // record envs.json
+        let envs_file = get_envs_file();
+        let mut envs: serde_json::Value = std::fs::read_to_string(&envs_file).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::json!({"envs":{}, "active": null}));
+        if envs.get("envs").is_none() { envs["envs"] = serde_json::json!({}); }
+        envs["envs"][&env] = serde_json::json!({"name": env, "type": env, "path": env_path.to_string_lossy().to_string()});
+        envs["active"] = serde_json::Value::String(env.clone());
+        let _ = atomic_write(&envs_file, &serde_json::to_string_pretty(&envs).unwrap());
+    }
+    // run setup.py with the env's python (hardware-aware: setup.py reads setup_config.json + GPU)
     {
         use tauri_plugin_shell::ShellExt;
-        let py = if env == "uv" { "uv".to_string() } else { "python".to_string() };
-        let args: Vec<String> = if env == "uv" { vec!["run".into(), "python".into(), "setup.py".into(), "--env".into(), env.clone()] } else { vec!["setup.py".into(), "--env".into(), env.clone()] };
+        let (py, args): (String, Vec<String>) = match env.as_str() {
+            "conda" => ("conda".into(), vec!["run".into(), "-p".into(), env_path.to_string_lossy().to_string(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]),
+            _ => {
+                let p = if env=="uv" { env_path.join(if cfg!(windows){"Scripts\\python.exe"} else {"bin/python"}) } else { env_path.join(if cfg!(windows){"Scripts\\python.exe"} else {"bin/python3"}) };
+                let py_bin = if p.exists() { p.to_string_lossy().to_string() } else if env=="uv" { "uv".into() } else { "python".into() };
+                if py_bin=="uv" { ("uv".into(), vec!["run".into(), "--with".into(), "setuptools".into(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) }
+                else { (py_bin, vec!["setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) }
+            }
+        };
         let (mut rx, _child) = app.shell().command(&py).args(args).current_dir(&repo).spawn().map_err(|e| e.to_string())?;
         use tauri_plugin_shell::process::CommandEvent;
         while let Some(ev) = rx.recv().await {
@@ -558,15 +668,6 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
 #[tauri::command] fn notifier_ensure() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn ui_mode_set(mode: String) -> serde_json::Value { let _=mode; serde_json::json!({"ok": true}) }
 #[tauri::command] fn on_system_theme_change() -> serde_json::Value { serde_json::json!(null) }
-
-static MUTATING: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-fn mutating_try(name: &str) -> Result<(), String> {
-    let m = MUTATING.get_or_init(|| Mutex::new(None));
-    let mut g = m.lock().unwrap();
-    if let Some(cur) = g.as_ref() { return Err(format!("Another operation already running ({cur}). Wait for it to finish.")); }
-    *g = Some(name.to_string()); Ok(())
-}
-fn mutating_done() { if let Some(m) = MUTATING.get() { *m.lock().unwrap() = None; } }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
