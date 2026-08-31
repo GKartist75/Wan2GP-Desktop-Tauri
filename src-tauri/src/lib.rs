@@ -1,7 +1,7 @@
 // ponytail: single-file spike — one lib.rs covers all 100 handlers; split into modules when this file hurts
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 // shell/dialog/fs plugins wired for install/launch streaming — ponytail: std::process covers probes without them
 static MUTATING: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 fn mutating_try(name: &str) -> Result<(), String> {
@@ -30,6 +30,7 @@ fn appdata_dir() -> PathBuf {
     else if let Ok(h) = std::env::var("HOME") { PathBuf::from(h).join(".config") }
     else { PathBuf::from(".") }
 }
+#[allow(dead_code)]
 fn local_appdata_dir() -> PathBuf {
     if let Ok(l) = std::env::var("LOCALAPPDATA") { PathBuf::from(l) }
     else { appdata_dir() }
@@ -165,7 +166,7 @@ fn build_install_plan(hw: &serde_json::Value) -> serde_json::Value {
     let vram = hw.get("vramMB").and_then(|v| v.as_str()).unwrap_or("0").split_whitespace().next().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
     let driver = hw.get("driverVersion").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let vram_gb = vram / 1024.0_f64; let is_gtx = name.to_uppercase().contains("GTX 10") || name.to_uppercase().contains("GTX 16") || (name.contains("10") && vendor=="NVIDIA" && (name.contains("1050")||name.contains("1060")||name.contains("1650")));
-    let (cuda, torch, mut warn) = if vendor=="NVIDIA" { if is_gtx { ("CUDA 12.8", "PyTorch 2.7.1", String::new()) } else { let mut w=String::new(); if let Ok(dv)=driver.parse::<f64>() { if dv < 580.0 { w=format!("NVIDIA driver {} < R580 — cu130 needs R580+", driver); }} ("CUDA 13 (cu130)", "PyTorch 2.10", w) } } else if vendor=="AMD" { ("ROCm (TheRock)", "PyTorch 2.7.0", String::new()) } else if vendor=="APPLE" { ("MPS (Metal)", "PyTorch (MPS)", String::new()) } else { ("CPU", "PyTorch (CPU)", String::new()) };
+    let (cuda, torch, warn) = if vendor=="NVIDIA" { if is_gtx { ("CUDA 12.8", "PyTorch 2.7.1", String::new()) } else { let mut w=String::new(); if let Ok(dv)=driver.parse::<f64>() { if dv < 580.0 { w=format!("NVIDIA driver {} < R580 — cu130 needs R580+", driver); }} ("CUDA 13 (cu130)", "PyTorch 2.10", w) } } else if vendor=="AMD" { ("ROCm (TheRock)", "PyTorch 2.7.0", String::new()) } else if vendor=="APPLE" { ("MPS (Metal)", "PyTorch (MPS)", String::new()) } else { ("CPU", "PyTorch (CPU)", String::new()) };
     let _ = vram_gb; let _ = warn.clone();
     serde_json::json!({"vendor": vendor, "gpuName": name, "vramGb": vram, "cuda": cuda, "torch": torch, "driverWarning": warn, "profile": kernel_profile_key(&vendor, &name)})
 }
@@ -393,7 +394,7 @@ fn config_save(cfg: serde_json::Value) -> Result<serde_json::Value, String> {
     let p = get_config_file();
     let s = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
     atomic_write(&p, &s).map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({"ok": true}))
+    Ok(serde_json::json!({"ok": true, "success": true}))
 }
 
 #[tauri::command]
@@ -569,7 +570,7 @@ async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_jso
         } else { cand.to_string_lossy().to_string() }
     } else { "python".to_string() };
     use tauri_plugin_shell::ShellExt;
-    let (mut rx, child) = app.shell().command(&py).args(&args).current_dir(&repo).spawn().map_err(|e| { mutating_done(); e.to_string() })?;
+    let (rx, child) = app.shell().command(&py).args(&args).current_dir(&repo).spawn().map_err(|e| { mutating_done(); e.to_string() })?;
     if let Some(m) = WANGP_PID.get_or_init(|| Mutex::new(None)).lock().ok() { drop(m); }
     *WANGP_PID.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(child.pid());
     // stream logs in background
@@ -634,7 +635,20 @@ fn check_package(pkg: String) -> serde_json::Value { serde_json::json!({"name": 
 #[tauri::command]
 fn deepy_status() -> serde_json::Value { serde_json::json!({"mode": "disabled"}) }
 #[tauri::command]
-fn memory_profile_read() -> serde_json::Value { serde_json::json!({}) }
+fn memory_profile_read() -> serde_json::Value {
+    // read wgp_config.json memory profile — ponytail: return current profile or default
+    let p = get_repo_dir().join("wgp_config.json");
+    if let Ok(s) = std::fs::read_to_string(&p) { if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+        return serde_json::json!({
+            "video_profile": v.get("video_profile").cloned().unwrap_or(serde_json::json!(4)),
+            "image_profile": v.get("image_profile").cloned().unwrap_or(serde_json::json!(4)),
+            "audio_profile": v.get("audio_profile").cloned().unwrap_or(serde_json::json!(4)),
+            "vram_safety_coefficient": v.get("vram_safety_coefficient").cloned().unwrap_or(serde_json::json!(0.8)),
+            "vae_config": v.get("vae_config").cloned().unwrap_or(serde_json::json!(0))
+        });
+    }}
+    serde_json::json!({"video_profile": 4, "image_profile": 4, "audio_profile": 4, "vram_safety_coefficient": 0.8, "vae_config": 0, "transformer_quantization": "int8"})
+}
 #[tauri::command]
 fn auto_tune_detect() -> serde_json::Value {
     // real hardware detect — mirrors services/auto-tune.js detect() but sync via nvidia-smi
@@ -669,7 +683,31 @@ fn auto_tune_detect() -> serde_json::Value {
     })
 }
 #[tauri::command]
-fn auto_tune_recommend(hw: Option<serde_json::Value>, opts: Option<serde_json::Value>) -> serde_json::Value { let _ = (hw, opts); serde_json::json!({"video_profile": 4}) }
+fn auto_tune_recommend(hw: Option<serde_json::Value>, opts: Option<serde_json::Value>) -> serde_json::Value {
+    let hw = hw.unwrap_or(serde_json::json!({"vram_tier":"low","ram_tier":"low","gpu_vram_gb":10}));
+    let vram_tier = hw.get("vram_tier").and_then(|v| v.as_str()).unwrap_or("low");
+    let ram_tier = hw.get("ram_tier").and_then(|v| v.as_str()).unwrap_or("low");
+    let vram_gb = hw.get("gpu_vram_gb").and_then(|v| v.as_f64()).unwrap_or(10.0);
+    let failsafe = opts.as_ref().and_then(|o| o.get("failsafe")).and_then(|v| v.as_bool()).unwrap_or(false);
+    let (profile, coeff) = if failsafe { (5, 0.6) } else {
+        let p = match (vram_tier, ram_tier) {
+            ("high","high")=>1, ("high","low")=>3, ("high","very_low")=>3,
+            ("low","high")=>2, ("low","low")=>4, ("low","very_low")=>5,
+            ("tight","high")=>4, ("tight","low")=>4, _=>5
+        };
+        let c = if vram_tier=="tight"||vram_tier=="none" {0.7} else {0.8};
+        (p,c)
+    };
+    let audio = if vram_gb>=12.0 && ![1,3].contains(&profile) {3} else {profile};
+    serde_json::json!({
+        "video_profile": profile, "image_profile": profile, "audio_profile": audio,
+        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8",
+        "_recommendation_label": format!("P{} {}", profile, if failsafe {"(failsafe)"} else {""}),
+        "_recommendation_reason": "Auto-tuned for your hardware",
+        "packages": ["torch","triton","sageattention"],
+        "kernels": ["nunchaku","gguf"]
+    })
+}
 
 // ── Phase 2-5: remaining 65 handlers as thin stubs (real logic behind shell/fs plugins) ──
 #[tauri::command]
@@ -762,7 +800,7 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
         // track which phases we've started
         let mut phases = std::collections::HashSet::new();
         let mut do_phase = |id: &str, label: &str| { if phases.insert(id.to_string()) { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": false})); } };
-        let mut done_phase = |id: &str, label: &str| { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": true})); };
+        let done_phase = |id: &str, label: &str| { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": true})); };
         while let Some(ev) = rx.recv().await {
             let txt = match ev { CommandEvent::Stdout(b) => String::from_utf8_lossy(&b).to_string(), CommandEvent::Stderr(b) => String::from_utf8_lossy(&b).to_string(), _ => continue };
             emit(&txt);
@@ -788,10 +826,10 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
     }
     emit("[*] Install finished.\n");
     mutating_done();
-    Ok(serde_json::json!({"ok": true}))
+    Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command]
-async fn reinstall(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
+async fn reinstall(_app: tauri::AppHandle) -> Result<serde_json::Value,String> {
     mutating_try("reinstall")?;
     let repo = get_repo_dir();
     // backup plugins/finetunes (ponytail: xcopy fallback)
@@ -803,10 +841,10 @@ async fn reinstall(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
     // remove repo
     if repo.exists() { let _ = std::fs::remove_dir_all(&repo); }
     let _ = std::fs::remove_file(get_envs_file());
-    mutating_done(); Ok(serde_json::json!({"ok": true}))
+    mutating_done(); Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command]
-async fn uninstall(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
+async fn uninstall(_app: tauri::AppHandle) -> Result<serde_json::Value,String> {
     mutating_try("uninstall")?;
     let repo = get_repo_dir();
     if !repo.exists() { mutating_done(); return Err("Wan2GP not installed".into()); }
@@ -838,7 +876,7 @@ async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,String>
             while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
         }
     }
-    mutating_done(); Ok(serde_json::json!({"ok": true}))
+    mutating_done(); Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command]
 async fn update(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
@@ -848,14 +886,14 @@ async fn update(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
     use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
     let (mut rx, _) = app.shell().command("git").args(["pull"]).current_dir(&repo).spawn().map_err(|e| e.to_string())?;
     while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
-    mutating_done(); Ok(serde_json::json!({"ok": true}))
+    mutating_done(); Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command] fn manage_set_active(name: String) -> Result<serde_json::Value,String> {
     let f = get_envs_file(); let mut v: serde_json::Value = std::fs::read_to_string(&f).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::json!({"envs":{}, "active":null}));
     if v.get("envs").and_then(|e| e.get(&name)).is_none() { return Err(format!("env {} not found", name)); }
     v["active"] = serde_json::Value::String(name);
     atomic_write(&f, &serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({"ok": true}))
+    Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command] fn uninstall_env(name: String) -> Result<serde_json::Value,String> {
     let f = get_envs_file(); let mut v: serde_json::Value = std::fs::read_to_string(&f).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::json!({"envs":{}}));
@@ -864,22 +902,40 @@ async fn update(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
     if let Some(obj) = v.get_mut("envs").and_then(|e| e.as_object_mut()) { obj.remove(&name); }
     if v.get("active").and_then(|a| a.as_str()) == Some(&name) { v["active"] = serde_json::Value::Null; }
     atomic_write(&f, &serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({"ok": true}))
+    Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command] fn open_external(url: Option<String>) -> Result<(),String> { let _=url; Ok(()) }
 #[tauri::command] fn detect_browsers() -> serde_json::Value {
+    // mirrors Electron WELL_KNOWN_BROWSERS with win env expansion
+    let cfg = load_config_value(); let def = cfg.get("defaultBrowser").and_then(|v| v.as_str()).unwrap_or("system").to_string();
+    let expand = |p: &str| {
+        let mut s = p.to_string();
+        for (k,v) in std::env::vars() { s = s.replace(&format!("%{}%", k), &v); s = s.replace(&format!("%{}%", k.to_lowercase()), &v); }
+        // handle (x86)
+        if let Ok(pf86) = std::env::var("ProgramFiles(x86)") { s = s.replace("%ProgramFiles(x86)%", &pf86); }
+        s
+    };
+    let browsers = vec![
+        ("chrome", "Google Chrome", vec!["%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe","%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe","%LocalAppData%\\Google\\Chrome\\Application\\chrome.exe"]),
+        ("edge", "Microsoft Edge", vec!["%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe","%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe"]),
+        ("firefox","Firefox", vec!["%ProgramFiles%\\Mozilla Firefox\\firefox.exe","%ProgramFiles(x86)%\\Mozilla Firefox\\firefox.exe"]),
+        ("brave","Brave", vec!["%LocalAppData%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"]),
+        ("opera","Opera", vec!["%LocalAppData%\\Programs\\Opera\\launcher.exe"]),
+        ("vivaldi","Vivaldi", vec!["%LocalAppData%\\Vivaldi\\Application\\vivaldi.exe"]),
+    ];
     let mut out = Vec::new();
-    for (name, exe) in [("chrome","chrome"),("edge","msedge"),("firefox","firefox")] {
-        let found = std::process::Command::new("where").arg(exe).output().map(|o| o.status.success()).unwrap_or(false);
-        if found { out.push(serde_json::json!({"name": name, "exe": exe})); }
+    for (id, name, wins) in browsers {
+        let mut path: Option<String> = None;
+        for cand in wins { let ep = expand(cand); if std::path::Path::new(&ep).exists() { path = Some(ep); break; } }
+        out.push(serde_json::json!({"id": id, "name": name, "installed": path.is_some(), "path": path}));
     }
-    serde_json::Value::Array(out)
+    serde_json::json!({"browsers": out, "defaultBrowser": def})
 }
 #[tauri::command] fn launch_browser(url: Option<String>) -> serde_json::Value { let _=url; // ponytail: url optional — app.js may call with null before launch
 serde_json::json!({"ok": true}) }
 #[tauri::command] fn launch_browser_no_gpu(url: Option<String>) -> serde_json::Value { let _=url; serde_json::json!({"ok": true}) }
 #[tauri::command] fn chrome_available() -> bool { std::process::Command::new("where").arg("chrome").output().map(|o| o.status.success()).unwrap_or(false) }
-#[tauri::command] fn set_data_dir(dir: String) -> Result<serde_json::Value,String> { let ov = data_dir_override_file(); atomic_write(&ov, &dir).map_err(|e| e.to_string())?; Ok(serde_json::json!({"ok": true})) }
+#[tauri::command] fn set_data_dir(dir: String) -> Result<serde_json::Value,String> { let ov = data_dir_override_file(); atomic_write(&ov, &dir).map_err(|e| e.to_string())?; Ok(serde_json::json!({"ok": true, "success": true})) }
 #[tauri::command] fn reset_data_dir() -> serde_json::Value { let _=std::fs::remove_file(data_dir_override_file()); serde_json::json!({"ok": true}) }
 #[tauri::command] fn migrate_to_preferred(choices: Option<serde_json::Value>) -> serde_json::Value { let _=choices; serde_json::json!({"ok": true}) }
 #[tauri::command] fn move_folder(src: String, dst: String) -> Result<serde_json::Value,String> {
@@ -889,7 +945,7 @@ serde_json::json!({"ok": true}) }
         if s.is_dir() { fs_extra_fallback_copy_dir(&s, &d)?; std::fs::remove_dir_all(&s).map_err(|e| e.to_string())?; }
         else { std::fs::copy(&s, &d).map_err(|e| e.to_string())?; std::fs::remove_file(&s).map_err(|e| e.to_string())?; }
     }
-    Ok(serde_json::json!({"ok": true}))
+    Ok(serde_json::json!({"ok": true, "success": true}))
 }
 fn fs_extra_fallback_copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
@@ -913,7 +969,7 @@ fn fs_extra_fallback_copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
     if let Some(v) = cfg.get("savePath") { cur["save_path"] = v.clone(); }
     let s = serde_json::to_string_pretty(&cur).map_err(|e| e.to_string())?;
     atomic_write(&p, &s).map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({"ok": true}))
+    Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command]
 async fn install_prerequisite(app: tauri::AppHandle, tool: String) -> Result<serde_json::Value,String> {
@@ -921,9 +977,35 @@ async fn install_prerequisite(app: tauri::AppHandle, tool: String) -> Result<ser
     let cmd = match tool.as_str() { "git" => vec!["winget","install","--id","Git.Git","-e"], "uv" => vec!["winget","install","--id","astral-sh.uv","-e"], _ => return Err(format!("unknown tool {}", tool)) };
     let (mut rx, _) = app.shell().command(cmd[0]).args(&cmd[1..]).spawn().map_err(|e| e.to_string())?;
     while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
-    Ok(serde_json::json!({"ok": true}))
+    Ok(serde_json::json!({"ok": true, "success": true}))
 }
-#[tauri::command] fn get_wangp_upstream_info() -> serde_json::Value { serde_json::json!(null) }
+#[tauri::command]
+async fn get_wangp_upstream_info() -> serde_json::Value {
+    // fetch latest commit from GitHub API — mirrors Electron fetchUrl for Wan2GP upstream
+    let url = "https://api.github.com/repos/deepbeepmeep/Wan2GP/commits?per_page=1";
+    // try curl first (fast, no PS overhead), fallback to powershell
+    let try_curl = std::process::Command::new("curl").args(["-s", "-H", "User-Agent: wan2gp-tauri", url]).output();
+    let json_str = if let Ok(o) = try_curl { if o.status.success() { String::from_utf8_lossy(&o.stdout).to_string() } else { String::new() } } else { String::new() };
+    let json_str = if json_str.trim().starts_with('[') { json_str } else {
+        // powershell fallback
+        std::process::Command::new("powershell").args(["-NoProfile","-Command", &format!("try {{ (Invoke-RestMethod -Uri '{}' -Headers @{{'User-Agent'='wan2gp-tauri'}} | ConvertTo-Json -Depth 4) }} catch {{ '[]' }}", url)]).output()
+            .ok().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
+    };
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
+        if let Some(arr) = v.as_array() { if let Some(first) = arr.first() {
+            let sha = first.get("sha").and_then(|s| s.as_str()).unwrap_or("");
+            let date = first.get("commit").and_then(|c| c.get("committer")).and_then(|c| c.get("date")).and_then(|d| d.as_str()).unwrap_or("");
+            let msg = first.get("commit").and_then(|c| c.get("message")).and_then(|m| m.as_str()).unwrap_or("");
+            if !sha.is_empty() { return serde_json::json!({"hash": sha, "date": date, "message": msg}); }
+        }}
+        // if API returned object (single commit) handle
+        if let Some(sha) = v.get("sha").and_then(|s| s.as_str()) {
+            let date = v.get("commit").and_then(|c| c.get("committer")).and_then(|c| c.get("date")).and_then(|d| d.as_str()).unwrap_or("");
+            return serde_json::json!({"hash": sha, "date": date});
+        }
+    }
+    serde_json::json!(null)
+}
 #[tauri::command] fn get_wangp_version() -> serde_json::Value { serde_json::json!(null) }
 #[tauri::command] fn report_issue() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn create_desktop_shortcut() -> serde_json::Value { serde_json::json!({"ok": true}) }
@@ -935,7 +1017,7 @@ async fn upgrade_package(app: tauri::AppHandle, pkg: String) -> Result<serde_jso
     use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
     let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install","--upgrade", &pkg]).spawn().map_err(|e| e.to_string())?;
     while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
-    Ok(serde_json::json!({"ok": true}))
+    Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command]
 async fn install_package(app: tauri::AppHandle, pkg: String) -> Result<serde_json::Value,String> {
@@ -945,7 +1027,7 @@ async fn install_package(app: tauri::AppHandle, pkg: String) -> Result<serde_jso
     use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
     let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install", &pkg]).spawn().map_err(|e| e.to_string())?;
     while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
-    Ok(serde_json::json!({"ok": true}))
+    Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command]
 async fn uninstall_package(app: tauri::AppHandle, pkg: String) -> Result<serde_json::Value,String> {
@@ -955,7 +1037,7 @@ async fn uninstall_package(app: tauri::AppHandle, pkg: String) -> Result<serde_j
     use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
     let (mut rx, _) = app.shell().command(&py).args(["-m","pip","uninstall","-y", &pkg]).spawn().map_err(|e| e.to_string())?;
     while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
-    Ok(serde_json::json!({"ok": true}))
+    Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command]
 async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
@@ -965,7 +1047,7 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
     use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
     let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install","-r", "requirements.txt"]).current_dir(&repo).spawn().map_err(|e| e.to_string())?;
     while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
-    Ok(serde_json::json!({"ok": true}))
+    Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command] fn llm_engines_list() -> serde_json::Value { serde_json::json!([]) }
 #[tauri::command] fn llm_engine_install(engine: String) -> serde_json::Value { let _=engine; serde_json::json!({"ok": true}) }
@@ -988,7 +1070,11 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
 #[tauri::command] fn destroy_browser_view() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn get_log_history() -> serde_json::Value { serde_json::json!([]) }
 #[tauri::command] fn uv_cache_clean(action: Option<String>) -> serde_json::Value { let _=action; serde_json::json!({"success": true}) }
-#[tauri::command] fn open_task_manager() -> serde_json::Value { serde_json::json!({"ok": true}) }
+#[tauri::command] fn open_task_manager() -> Result<serde_json::Value,String> {
+    #[cfg(windows)] { std::process::Command::new("taskmgr.exe").spawn().map_err(|e| e.to_string())?; }
+    #[cfg(not(windows))] { std::process::Command::new("gnome-system-monitor").spawn().map_err(|e| e.to_string())?; }
+    Ok(serde_json::json!({"ok": true, "success": true}))
+}
 #[tauri::command] fn get_crash_recovery_info() -> serde_json::Value { serde_json::json!(null) }
 #[tauri::command] fn launch_webview() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn popout_webview(url: Option<String>) -> serde_json::Value { let _=url; serde_json::json!({"ok": true}) }
@@ -1004,6 +1090,7 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
 #[tauri::command] fn migrate_choose() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn notifier_ensure() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn ui_mode_set(mode: String) -> serde_json::Value { let _=mode; serde_json::json!({"ok": true}) }
+#[allow(dead_code)]
 #[tauri::command] fn on_system_theme_change() -> serde_json::Value { serde_json::json!(null) }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1013,6 +1100,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        // ponytail: updater plugin wired in Cargo but not inited until pubkey/endpoints configured — keep stubs
         .invoke_handler(tauri::generate_handler![
             greet, detect_gpu, detect_gpus, detect_hardware, get_hardware_profile, get_system_metrics,
             get_status, check_python, check_git, check_installed, check_command,
