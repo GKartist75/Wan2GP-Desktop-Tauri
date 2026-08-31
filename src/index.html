@@ -4,57 +4,64 @@
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>wan2gp-tauri-spike</title>
+    <title>wan2gp-tauri-spike — full surface</title>
     <script type="module" src="/main.js" defer></script>
   </head>
   <body>
     <main class="container">
-      <h1>wan2gp-tauri-spike</h1>
-      <p style="opacity:0.7">Isolated Tauri eval — does NOT touch <code>../wan2gp-desktop</code>. Delete this folder to abort.</p>
+      <h1>wan2gp-tauri-spike — 101 commands</h1>
+      <p style="opacity:0.7">Full Electron → Tauri surface. <code>src/w2gp.js</code> maps <code>window.w2gp.*</code> (preload) → <code>invoke(snake_case)</code>. Delete this folder to abort.</p>
 
-      <div class="row" style="margin:12px 0">
-        <a href="https://tauri.app" target="_blank"><img src="/assets/tauri.svg" class="logo tauri" alt="Tauri" /></a>
-        <a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript" target="_blank"><img src="/assets/javascript.svg" class="logo vanilla" alt="JS" /></a>
-      </div>
-
-      <!-- 1. Template prove: invoke() works -->
       <section style="border:1px solid #333; border-radius:8px; padding:12px; margin:12px 0; text-align:left">
         <h3>1) IPC: greet (template)</h3>
-        <form class="row" id="greet-form">
-          <input id="greet-input" placeholder="Enter a name..." />
-          <button type="submit">Greet (invoke → Rust)</button>
-        </form>
+        <form class="row" id="greet-form"><input id="greet-input" placeholder="Enter a name..." /><button type="submit">Greet</button></form>
         <p id="greet-msg" style="min-height:1.2em"></p>
-        <small style="opacity:0.6">Electron equivalent: <code>ipcRenderer.invoke('greet')</code> → <code>invoke("greet")</code></small>
       </section>
 
-      <!-- 2. Real wan2gp proof: GPU detect + system probes -->
       <section style="border:1px solid #333; border-radius:8px; padding:12px; margin:12px 0; text-align:left">
-        <h3>2) System: detect_gpu + probes (real)</h3>
-        <p style="margin:4px 0; opacity:0.8">Mirrors <code>wan2gp-desktop/main.js getGpuInfo()</code> — runs <code>nvidia-smi</code> / <code>python --version</code> via Rust <code>std::process::Command</code>.</p>
-        <div class="row"><button id="btn-gpu">Detect GPU</button><button id="btn-python">Check Python</button><button id="btn-git">Check Git</button><button id="btn-status">Get Status</button></div>
-        <pre id="gpu-out" style="background:#1a1a1a; color:#a0ffa0; padding:8px; border-radius:6px; overflow:auto; min-height:3em; max-height:200px"></pre>
-        <small style="opacity:0.6">No shell plugin — <code>std::process::Command</code> covers all read-only probes. Add <code>tauri-plugin-shell</code> only for streaming install/launch stdout.</small>
+        <h3>2) System probes (real Rust)</h3>
+        <div class="row" style="flex-wrap:wrap; gap:6px">
+          <button id="btn-gpu">Detect GPU</button><button id="btn-gpus">List GPUs</button><button id="btn-hw">Hardware</button>
+          <button id="btn-python">Python</button><button id="btn-git">Git</button><button id="btn-status">Get Status</button>
+          <button id="btn-installed">Installed?</button><button id="btn-paths">Paths</button><button id="btn-disks">Disk</button>
+          <button id="btn-config">Config</button><button id="btn-w2gp">w2gp shim (12 calls)</button>
+        </div>
+        <pre id="gpu-out" style="background:#1a1a1a; color:#a0ffa0; padding:8px; border-radius:6px; overflow:auto; min-height:3em; max-height:320px"></pre>
+        <small style="opacity:0.6">Real: <code>detect_gpu/detect_gpus/detect_hardware/get_install_paths/config_load</code> etc. — std::process + fs. Stub: <code>install/launch</code> need shell plugin for streaming.</small>
       </section>
 
-      <!-- 3. Frontend reuse + embedded Wan2GP -->
       <section style="border:1px solid #333; border-radius:8px; padding:12px; margin:12px 0; text-align:left">
         <h3>3) Frontend reuse + embedded Wan2GP</h3>
-        <p>Your <code>reference/renderer/</code> (961 HTML + 1046 CSS + 3332 JS) runs as-is in WebView2.</p>
-        <p style="opacity:0.7">Try: copy <code>reference/renderer/index.html</code> over <code>src/index.html</code> — then replace <code>window.w2gp.*</code> with <code>invoke()</code>.</p>
-        <div style="margin:8px 0">
-          <label style="opacity:0.8">Wan2GP URL: <input id="wan-url" value="http://localhost:7860" style="width:220px" /></label>
-          <button id="btn-load-wan">Load in iframe</button>
-          <button id="btn-open-external">Open externally</button>
-          <small style="opacity:0.6; margin-left:8px">iframe = lazy BrowserView. Native <code>add_child(WebviewBuilder)</code> only if iframe falls short.</small>
-        </div>
-        <div style="border:1px solid #444; border-radius:6px; overflow:hidden; background:#111; height:320px; display:flex; align-items:center; justify-content:center" id="wan-wrap">
+        <p><code>reference/renderer/</code> (3332 JS) runs as-is: set <code>window.w2gp</code> via <code>src/w2gp.js</code> then load <code>reference/renderer/index.html</code>.</p>
+        <div style="margin:8px 0"><label>Wan2GP URL: <input id="wan-url" value="http://localhost:7860" style="width:220px" /></label>
+          <button id="btn-load-wan">Load in iframe</button><button id="btn-open-external">Open externally</button></div>
+        <div style="border:1px solid #444; border-radius:6px; overflow:hidden; background:#111; height:320px; display:flex; align-items:center; justify-content:center">
           <iframe id="wan-frame" style="width:100%; height:100%; border:0; display:none" sandbox="allow-same-origin allow-scripts allow-forms allow-popups"></iframe>
-          <span id="wan-placeholder" style="opacity:0.5; padding:16px; text-align:center">Click “Load in iframe” when Wan2GP is running on :7860.<br>Electron equivalent: <code>BrowserView</code> / <code>create-browser-view</code></span>
+          <span id="wan-placeholder" style="opacity:0.5; padding:16px; text-align:center">Click Load when Wan2GP is on :7860<br>iframe = lazy BrowserView</span>
         </div>
       </section>
 
-      <p style="opacity:0.5; font-size:0.85em; margin-top:16px">See <code>README_SPIKE.md</code> for run/build/delete. Identifier <code>com.wangp.desktop-tauri</code> avoids collision with Electron <code>com.wangp.desktop</code>.</p>
+      <section style="border:1px solid #333; border-radius:8px; padding:12px; margin:12px 0; text-align:left">
+        <h3>4) Coverage — 101 Tauri commands (100 Electron handlers)</h3>
+        <details><summary>Show all commands</summary>
+        <pre style="font-size:0.75em; opacity:0.8">greet, detect_gpu, detect_gpus, detect_hardware, get_hardware_profile, get_system_metrics,
+check_python, check_git, check_installed, check_command, config_load/save, get_install_paths,
+get_disk_space, get_model_paths, detect_model_folders, install_plan, validate_install,
+uv_cache_info/size/clean, manage_list/set_active, uninstall_env, get_desktop_version,
+get_wangp_local_version, get_desktop_git_info, launch/stop_wangp/launch_webview/popout_webview,
+open_folder, select_folder, confirm_dialog, repair_settings, check_package/updates,
+upgrade/install/uninstall_package, restore_requirements, deepy_status/activate/set,
+llm_engines_list/install/serve/auth, memory_profile_read/apply, notifier_config/set/test/ensure,
+pulsebar_hide, set_auto_start/theme_follow/notifications, check/download/install_update,
+create/destroy_browser_view, get_log_history, open_task_manager, get_crash_recovery_info,
+hide/detach/reattach_browser_view, create/destroy_term_view, bv_navigate/zoom/dock,
+is_data_dir_roaming, migrate_choose/to_preferred, move_folder, write_wgp_config,
+install_prerequisite, get_wangp_upstream/version, report_issue, create_desktop_shortcut,
+install, reinstall, uninstall, sync_kernels, update, open_external, detect_browsers, launch_browser/no_gpu, chrome_available
++ window.w2gp shim in src/w2gp.js</pre>
+        </details>
+        <small style="opacity:0.6">Real logic: ~30 handlers (paths/config/hardware/probes). Stub: ~70 handlers return safe defaults — keeps 3332L renderer from crashing; replace stubs with shell/dialog plugin wiring when streaming is needed. ponytail: add tauri-plugin-shell + dialog only when you need install/launch logs.</small>
+      </section>
     </main>
   </body>
 </html>
