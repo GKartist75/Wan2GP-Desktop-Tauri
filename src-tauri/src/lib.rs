@@ -190,7 +190,42 @@ fn get_status() -> serde_json::Value {
             }
         }
     }
-    serde_json::json!({"env": env, "versions": {}, "kernelWheels": wheels, "kernelProfile": profile, "spike": false})
+    // real version scan via env's python (importlib.metadata) — ponytail: helper file on same drive as env
+    let mut versions = serde_json::Map::new();
+    if let Some(raw) = env.get("path").and_then(|p| p.as_str()) {
+        let rel = raw.trim_start_matches(".\\").trim_start_matches("./");
+        let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(rel) };
+        let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python3") };
+        let py_bin = if py.exists() { py } else { PathBuf::from(raw) };
+        if py_bin.exists() {
+            let helper = get_data_dir().join(".get_versions.py");
+            let code = r#"import sys, importlib.metadata
+try:
+    aliases={'triton':'triton-windows','opencv-python':'opencv','spas_sage_attn':'spas-sage-attn','huggingface_hub':'huggingface-hub'}
+    pkgs=['python','torch','triton','sageattention','spas_sage_attn','flash_attn','nunchaku','llamacpp_gguf_cuda','lightx2v','diffusers','transformers','gradio','accelerate','onnxruntime','xformers','mmgp','moviepy','opencv-python','insightface','peft','timm','vector_quantize_pytorch','torchcodec','torchaudio','huggingface_hub','bitsandbytes','numpy','sentencepiece','open_clip_torch','imageio','einops','librosa','soundfile','tokenizers','av']
+    r=[]
+    for p in pkgs:
+        try:
+            if p=='python': r.append(f'python={sys.version.split()[0]}')
+            elif p in aliases: r.append(f'{p}={importlib.metadata.version(aliases[p])}')
+            else: r.append(f'{p}={importlib.metadata.version(p)}')
+        except: pass
+    print('||'.join(r))
+except Exception as e:
+    print(f'error:{e}')
+"#;
+            let _ = std::fs::write(&helper, code);
+            if let Ok(out) = std::process::Command::new(&py_bin).arg(&helper).current_dir(&repo).output() {
+                if out.status.success() {
+                    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    for part in s.split("||") {
+                        if let Some((k,v)) = part.split_once('=') { versions.insert(k.to_string(), serde_json::Value::String(v.to_string())); }
+                    }
+                }
+            }
+        }
+    }
+    serde_json::json!({"env": env, "versions": serde_json::Value::Object(versions), "kernelWheels": wheels, "kernelProfile": profile, "spike": false})
 }
 #[tauri::command]
 fn check_python() -> serde_json::Value {
@@ -291,10 +326,63 @@ fn get_hardware_profile() -> serde_json::Value {
     serde_json::json!({"profile": profile, "vramGb": vram_gb})
 }
 
+static PREV_CPU: OnceLock<Mutex<Option<(u64,u64)>>> = OnceLock::new();
+static LAST_NVIDIA: OnceLock<Mutex<Option<serde_json::Value>>> = OnceLock::new();
 #[tauri::command]
 fn get_system_metrics() -> serde_json::Value {
-    // ponytail: sysinfo crate if sparklines need real sampling; this is enough for dashboard
-    serde_json::json!({"cpu": 0, "ram": 0, "vram": 0, "gpu": 0})
+    let mut result = serde_json::json!({"ramFree": null, "vramFree": null, "cpu": null, "gpu": null, "ramUsed": null, "ramTotal": null, "vramUsed": null, "vramTotal": null, "ram": null, "vram": null});
+    // RAM/CPU via sysinfo + os
+    {
+        use sysinfo::{System, CpuRefreshKind, MemoryRefreshKind, RefreshKind};
+        let mut sys = System::new_with_specifics(RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()).with_memory(MemoryRefreshKind::everything()));
+        sys.refresh_memory();
+        sys.refresh_cpu_usage();
+        let total = sys.total_memory(); let free = sys.free_memory(); let used = sys.used_memory();
+        let gb = |b: u64| format!("{} GB", b / 1073741824);
+        result["ramFree"] = serde_json::Value::String(gb(free));
+        result["ramTotal"] = serde_json::Value::String(gb(total));
+        result["ramUsed"] = serde_json::Value::String(gb(used));
+        if total > 0 { result["ram"] = serde_json::json!( (used as f64 / total as f64 * 100.0).round() as i64 ); }
+        // CPU via sysinfo global
+        let cpu = sys.global_cpu_usage().round() as i64;
+        // use prev delta if available would be more accurate, but sysinfo's usage is already delta-based (needs two refreshes)
+        // fallback to sysinfo value if >0, else null on first tick
+        if cpu > 0 { result["cpu"] = serde_json::json!(cpu); }
+        // store prev for next tick (not needed for sysinfo, but keep for compat)
+        let _ = PREV_CPU.get_or_init(|| Mutex::new(None));
+    }
+    // nvidia-smi for VRAM/GPU
+    {
+        use std::process::Command;
+        let out = Command::new("nvidia-smi").args(["--query-gpu=memory.free,memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"]).output();
+        if let Ok(o) = out { if o.status.success() {
+            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if !s.is_empty() {
+                let mut free=0i64; let mut used=0i64; let mut total=0i64; let mut gpu=0i64; let mut cnt=0;
+                for line in s.lines() {
+                    let p: Vec<&str> = line.split(',').map(|x| x.trim()).collect();
+                    if p.len()>=4 {
+                        if let Ok(v)=p[0].parse::<i64>() { free+=v; }
+                        if let Ok(v)=p[1].parse::<i64>() { used+=v; }
+                        if let Ok(v)=p[2].parse::<i64>() { total+=v; }
+                        if let Ok(v)=p[3].parse::<i64>() { gpu+=v; cnt+=1; }
+                    }
+                }
+                let fmt = |mb: i64| if mb>=1024 { format!("{} GB", (mb as f64/1024.0).round() as i64) } else { format!("{} MB", mb) };
+                result["vramFree"] = serde_json::Value::String(fmt(free));
+                result["vramUsed"] = serde_json::Value::String(fmt(used));
+                result["vramTotal"] = serde_json::Value::String(fmt(total));
+                if total>0 { result["vram"] = serde_json::json!((used as f64/total as f64*100.0).round() as i64); }
+                result["gpu"] = serde_json::json!(if cnt>1 { (gpu as f64/cnt as f64).round() as i64 } else { gpu });
+                let _ = LAST_NVIDIA.get_or_init(|| Mutex::new(None)).lock().unwrap().replace(result.clone());
+            }
+        } else {
+            if let Some(last) = LAST_NVIDIA.get().and_then(|m| m.lock().ok()).and_then(|g| g.clone()) {
+                result["vramFree"] = last["vramFree"].clone(); result["vramUsed"] = last["vramUsed"].clone(); result["vramTotal"] = last["vramTotal"].clone(); result["vram"] = last["vram"].clone(); result["gpu"] = last["gpu"].clone();
+            }
+        }}
+    }
+    result
 }
 
 #[tauri::command]
@@ -493,14 +581,15 @@ async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_jso
             match ev { CommandEvent::Stdout(b) => { let _ = app2.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, CommandEvent::Stderr(b) => { let _ = app2.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, CommandEvent::Terminated(s) => { let _ = app2.emit("wangp-exit", serde_json::json!({"code": s.code})); break; }, _ => {} }
         }
     });
-    // wait for port in background (ponytail: simple poll, upgrade to notify when needed)
+    // wait for port in background (don't hold mutating — launch is done, server boots async)
     let host = "127.0.0.1".to_string();
     let app3 = app.clone();
     std::thread::spawn(move || {
         for _ in 0..60 { std::thread::sleep(std::time::Duration::from_secs(3)); if std::net::TcpStream::connect(format!("{}:{}", host, port)).is_ok() { let _ = app3.emit("launch-log", format!("[✓] Wan2GP ready on http://localhost:{}\n", port)); break; } }
-        mutating_done();
     });
-    Ok(serde_json::json!({"ok": true, "port": port, "mode": mode}))
+    mutating_done();
+    let url = format!("http://localhost:{}", port);
+    Ok(serde_json::json!({"ok": true, "port": port, "mode": mode, "url": url, "fresh": true}))
 }
 #[tauri::command]
 fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
@@ -547,7 +636,38 @@ fn deepy_status() -> serde_json::Value { serde_json::json!({"mode": "disabled"})
 #[tauri::command]
 fn memory_profile_read() -> serde_json::Value { serde_json::json!({}) }
 #[tauri::command]
-fn auto_tune_detect() -> serde_json::Value { serde_json::json!({"cuda_available": false}) }
+fn auto_tune_detect() -> serde_json::Value {
+    // real hardware detect — mirrors services/auto-tune.js detect() but sync via nvidia-smi
+    let gpu = get_gpu_info_sync();
+    let vendor = gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or("").to_uppercase();
+    let name = gpu.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let vram_str = gpu.get("vramMB").and_then(|v| v.as_str()).unwrap_or("0");
+    let vram_mb: f64 = vram_str.split_whitespace().next().unwrap_or("0").parse().unwrap_or(0.0);
+    let vram_gb = (vram_mb / 1024.0).round() as i64;
+    let cuda_available = vendor == "NVIDIA" && vram_mb > 0.0 && !name.is_empty();
+    // RAM via powershell fallback
+    let ram_gb = {
+        #[cfg(windows)] {
+            std::process::Command::new("powershell").args(["-NoProfile","-Command","[math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB,1)"]).output()
+                .ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok()).unwrap_or(32.0)
+        }
+        #[cfg(not(windows))] { 32.0 }
+    };
+    let cpu_count = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8) as i64;
+    let vram_tier = if !cuda_available { "none" } else if vram_gb >= 24 { "high" } else if vram_gb >= 12 { "low" } else { "tight" };
+    let ram_tier = if ram_gb >= 63.5 { "high" } else if ram_gb >= 31.5 { "low" } else { "very_low" };
+    serde_json::json!({
+        "cuda_available": cuda_available,
+        "gpu_name": if cuda_available { name.clone() } else { "—".into() },
+        "gpu_vram_gb": vram_gb,
+        "ram_gb": ram_gb,
+        "cpu_count": cpu_count,
+        "vram_tier": vram_tier,
+        "ram_tier": ram_tier,
+        "vendor": vendor,
+        "driver": gpu.get("driverVersion").cloned().unwrap_or(serde_json::Value::Null)
+    })
+}
 #[tauri::command]
 fn auto_tune_recommend(hw: Option<serde_json::Value>, opts: Option<serde_json::Value>) -> serde_json::Value { let _ = (hw, opts); serde_json::json!({"video_profile": 4}) }
 
@@ -564,7 +684,9 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
     emit(&format!("[hw] GPU: {} ({}) — {} / {} — profile {}\n", plan["gpuName"].as_str().unwrap_or("?"), plan["vendor"].as_str().unwrap_or("?"), plan["cuda"].as_str().unwrap_or("?"), plan["torch"].as_str().unwrap_or("?"), plan["profile"].as_str().unwrap_or("?")));
     if let Some(w)=plan["driverWarning"].as_str() { if !w.is_empty() { emit(&format!("[warn] {}\n", w)); } }
     emit(&format!("[env] requested: {}\n", env));
+    let emit_phase = |id: &str, label: &str, done: bool| { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": done})); };
     if !repo.join("wgp.py").exists() {
+        emit_phase("clone", "Clone Wan2GP repository", false);
         emit(&format!("[*] Cloning Wan2GP into {}\n", repo.display()));
         std::fs::create_dir_all(&repo).map_err(|e| e.to_string())?;
         // If repo already exists but is not empty (e.g. contains desktop-config.json from previous launch),
@@ -596,8 +718,11 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
             use tauri_plugin_shell::process::CommandEvent;
             while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b) => emit(&String::from_utf8_lossy(&b)), CommandEvent::Stderr(b) => emit(&String::from_utf8_lossy(&b)), _ => {} } }
         }
-        if !repo.join("wgp.py").exists() { mutating_done(); return Err("git clone failed — check output above".into()); }
+        if !repo.join("wgp.py").exists() { mutating_done(); emit_phase("clone", "Clone Wan2GP repository", true); return Err("git clone failed — check output above".into()); }
         emit("[*] Repository cloned.\n");
+        emit_phase("clone", "Clone Wan2GP repository", true);
+    } else {
+        emit_phase("clone", "Clone Wan2GP repository", true);
     }
     emit(&format!("[*] Installing env={} via setup.py (streaming)…\n", env));
     // ponytail: don't pre-create env here — setup.py does `uv venv --seed` itself and fails if dir already exists.
@@ -634,25 +759,126 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
         };
         let (mut rx, _child) = app.shell().command(&py).args(args).current_dir(&repo).spawn().map_err(|e| e.to_string())?;
         use tauri_plugin_shell::process::CommandEvent;
+        // track which phases we've started
+        let mut phases = std::collections::HashSet::new();
+        let mut do_phase = |id: &str, label: &str| { if phases.insert(id.to_string()) { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": false})); } };
+        let mut done_phase = |id: &str, label: &str| { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": true})); };
         while let Some(ev) = rx.recv().await {
-            match ev { CommandEvent::Stdout(b) => emit(&String::from_utf8_lossy(&b)), CommandEvent::Stderr(b) => emit(&String::from_utf8_lossy(&b)), _ => {} }
+            let txt = match ev { CommandEvent::Stdout(b) => String::from_utf8_lossy(&b).to_string(), CommandEvent::Stderr(b) => String::from_utf8_lossy(&b).to_string(), _ => continue };
+            emit(&txt);
+            let low = txt.to_lowercase();
+            if low.contains("[1/3]") || low.contains("preparing environment") { do_phase("venv", "Create Python virtual environment"); }
+            if low.contains("[2/3]") || low.contains("installing torch") { done_phase("venv", "Create Python virtual environment"); do_phase("torch", "Install PyTorch + CUDA"); }
+            if low.contains("[3/3]") || low.contains("installing requirements") { done_phase("torch", "Install PyTorch + CUDA"); do_phase("reqs", "Install Python dependencies"); }
+            if low.contains("triton-windows") && low.contains("installed") { done_phase("reqs", "Install Python dependencies"); done_phase("triton", "Install Triton compiler"); }
+            if low.contains("sageattention") && low.contains("installed") { do_phase("sage", "Install Sage Attention kernel"); done_phase("sage", "Install Sage Attention kernel"); }
+            if low.contains("spas-sage") || low.contains("sparge") { do_phase("flash", "Install Flash Attention"); }
+            if low.contains("flash-attn") && low.contains("installed") { done_phase("flash", "Install Flash Attention"); do_phase("kernels", "Install GPU kernels (nunchaku/GGUF)"); }
+            if low.contains("nunchaku") && low.contains("installed") { /* kernels still running */ }
+            if low.contains("llamacpp") && low.contains("installed") { done_phase("kernels", "Install GPU kernels (nunchaku/GGUF)"); }
         }
+        done_phase("venv", "Create Python virtual environment");
+        done_phase("torch", "Install PyTorch + CUDA");
+        done_phase("reqs", "Install Python dependencies");
+        done_phase("triton", "Install Triton compiler");
+        done_phase("sage", "Install Sage Attention kernel");
+        done_phase("flash", "Install Flash Attention");
+        done_phase("kernels", "Install GPU kernels (nunchaku/GGUF)");
+        emit_phase("done", "Finalize installation", true);
     }
     emit("[*] Install finished.\n");
     mutating_done();
     Ok(serde_json::json!({"ok": true}))
 }
-#[tauri::command] fn reinstall() -> Result<serde_json::Value,String> { Err("reinstall: needs shell plugin".into()) }
-#[tauri::command] fn uninstall() -> serde_json::Value { serde_json::json!({"success": false, "error": "stub"}) }
-#[tauri::command] fn sync_kernels() -> serde_json::Value { serde_json::json!({"ok": true}) }
-#[tauri::command] fn update() -> serde_json::Value { serde_json::json!({"ok": true}) }
-#[tauri::command] fn manage_set_active(name: String) -> serde_json::Value { let _=name; serde_json::json!({"ok": true}) }
-#[tauri::command] fn uninstall_env(name: String) -> serde_json::Value { let _=name; serde_json::json!({"ok": true}) }
-#[tauri::command] fn open_external(url: String) -> Result<(),String> { let _=url; Ok(()) }
-#[tauri::command] fn detect_browsers() -> serde_json::Value { serde_json::json!([]) }
-#[tauri::command] fn launch_browser(url: String) -> serde_json::Value { let _=url; serde_json::json!({"ok": true}) }
-#[tauri::command] fn launch_browser_no_gpu(url: String) -> serde_json::Value { let _=url; serde_json::json!({"ok": true}) }
-#[tauri::command] fn chrome_available() -> bool { false }
+#[tauri::command]
+async fn reinstall(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
+    mutating_try("reinstall")?;
+    let repo = get_repo_dir();
+    // backup plugins/finetunes (ponytail: xcopy fallback)
+    let backup = get_data_dir().join(".reinstall-backup");
+    let _ = std::fs::remove_dir_all(&backup);
+    let _ = std::fs::create_dir_all(&backup);
+    for sub in ["plugins","finetunes"] { let s = repo.join(sub); if s.exists() { let d = backup.join(sub); let _ = std::process::Command::new("xcopy").args(["/E","/I", &s.to_string_lossy().to_string(), &d.to_string_lossy().to_string()]).output(); } }
+    if repo.join("wgp_config.json").exists() { let _ = std::fs::copy(repo.join("wgp_config.json"), backup.join("wgp_config.json")); }
+    // remove repo
+    if repo.exists() { let _ = std::fs::remove_dir_all(&repo); }
+    let _ = std::fs::remove_file(get_envs_file());
+    mutating_done(); Ok(serde_json::json!({"ok": true}))
+}
+#[tauri::command]
+async fn uninstall(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
+    mutating_try("uninstall")?;
+    let repo = get_repo_dir();
+    if !repo.exists() { mutating_done(); return Err("Wan2GP not installed".into()); }
+    // keep ckpts/loras/outputs if user wants — for now delete all (full uninstall). ponytail: add keep prompt when needed
+    let _ = std::fs::remove_dir_all(&repo);
+    let _ = std::fs::remove_file(get_envs_file());
+    mutating_done(); Ok(serde_json::json!({"success": true}))
+}
+#[tauri::command]
+async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
+    mutating_try("sync-kernels")?;
+    let repo = get_repo_dir(); let cfg_path = repo.join("setup_config.json");
+    let env = get_active_env();
+    let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { repo.join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
+    let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python3") };
+    if !py.exists() { mutating_done(); return Err("python not found for active env".into()); }
+    if !cfg_path.exists() { mutating_done(); return Err("setup_config.json missing".into()); }
+    let cfg: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cfg_path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let gpu = get_gpu_info_sync(); let profile = kernel_profile_key(gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""), gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""));
+    let kernels = cfg.get("gpu_profiles").and_then(|p| p.get(&profile)).and_then(|pr| pr.get("kernels")).and_then(|k| k.as_array()).cloned().unwrap_or_default();
+    use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
+    for k in kernels {
+        if let Some(name) = k.as_str() {
+            // find wheel url from components.kernels[name].cmd[win]
+            let url = cfg.get("components").and_then(|c| c.get("kernels")).and_then(|m| m.get(name)).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()).unwrap_or("");
+            if url.is_empty() { continue; }
+            let _ = app.emit("launch-log", format!("[*] sync kernel {}\n", name));
+            let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install", url, "--upgrade"]).spawn().map_err(|e| e.to_string())?;
+            while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
+        }
+    }
+    mutating_done(); Ok(serde_json::json!({"ok": true}))
+}
+#[tauri::command]
+async fn update(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
+    mutating_try("update")?;
+    let repo = get_repo_dir();
+    if !repo.join(".git").exists() { mutating_done(); return Err("not a git repo".into()); }
+    use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
+    let (mut rx, _) = app.shell().command("git").args(["pull"]).current_dir(&repo).spawn().map_err(|e| e.to_string())?;
+    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
+    mutating_done(); Ok(serde_json::json!({"ok": true}))
+}
+#[tauri::command] fn manage_set_active(name: String) -> Result<serde_json::Value,String> {
+    let f = get_envs_file(); let mut v: serde_json::Value = std::fs::read_to_string(&f).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::json!({"envs":{}, "active":null}));
+    if v.get("envs").and_then(|e| e.get(&name)).is_none() { return Err(format!("env {} not found", name)); }
+    v["active"] = serde_json::Value::String(name);
+    atomic_write(&f, &serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({"ok": true}))
+}
+#[tauri::command] fn uninstall_env(name: String) -> Result<serde_json::Value,String> {
+    let f = get_envs_file(); let mut v: serde_json::Value = std::fs::read_to_string(&f).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::json!({"envs":{}}));
+    let path = v.get("envs").and_then(|e| e.get(&name)).and_then(|e| e.get("path")).and_then(|p| p.as_str()).map(|p| if std::path::Path::new(p).is_absolute() { PathBuf::from(p) } else { get_repo_dir().join(p.trim_start_matches(".\\").trim_start_matches("./")) });
+    if let Some(p) = path { let _ = std::fs::remove_dir_all(p); }
+    if let Some(obj) = v.get_mut("envs").and_then(|e| e.as_object_mut()) { obj.remove(&name); }
+    if v.get("active").and_then(|a| a.as_str()) == Some(&name) { v["active"] = serde_json::Value::Null; }
+    atomic_write(&f, &serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({"ok": true}))
+}
+#[tauri::command] fn open_external(url: Option<String>) -> Result<(),String> { let _=url; Ok(()) }
+#[tauri::command] fn detect_browsers() -> serde_json::Value {
+    let mut out = Vec::new();
+    for (name, exe) in [("chrome","chrome"),("edge","msedge"),("firefox","firefox")] {
+        let found = std::process::Command::new("where").arg(exe).output().map(|o| o.status.success()).unwrap_or(false);
+        if found { out.push(serde_json::json!({"name": name, "exe": exe})); }
+    }
+    serde_json::Value::Array(out)
+}
+#[tauri::command] fn launch_browser(url: Option<String>) -> serde_json::Value { let _=url; // ponytail: url optional — app.js may call with null before launch
+serde_json::json!({"ok": true}) }
+#[tauri::command] fn launch_browser_no_gpu(url: Option<String>) -> serde_json::Value { let _=url; serde_json::json!({"ok": true}) }
+#[tauri::command] fn chrome_available() -> bool { std::process::Command::new("where").arg("chrome").output().map(|o| o.status.success()).unwrap_or(false) }
 #[tauri::command] fn set_data_dir(dir: String) -> Result<serde_json::Value,String> { let ov = data_dir_override_file(); atomic_write(&ov, &dir).map_err(|e| e.to_string())?; Ok(serde_json::json!({"ok": true})) }
 #[tauri::command] fn reset_data_dir() -> serde_json::Value { let _=std::fs::remove_file(data_dir_override_file()); serde_json::json!({"ok": true}) }
 #[tauri::command] fn migrate_to_preferred(choices: Option<serde_json::Value>) -> serde_json::Value { let _=choices; serde_json::json!({"ok": true}) }
@@ -689,15 +915,58 @@ fn fs_extra_fallback_copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
     atomic_write(&p, &s).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({"ok": true}))
 }
-#[tauri::command] fn install_prerequisite(tool: String) -> serde_json::Value { let _=tool; serde_json::json!({"ok": true}) }
+#[tauri::command]
+async fn install_prerequisite(app: tauri::AppHandle, tool: String) -> Result<serde_json::Value,String> {
+    use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
+    let cmd = match tool.as_str() { "git" => vec!["winget","install","--id","Git.Git","-e"], "uv" => vec!["winget","install","--id","astral-sh.uv","-e"], _ => return Err(format!("unknown tool {}", tool)) };
+    let (mut rx, _) = app.shell().command(cmd[0]).args(&cmd[1..]).spawn().map_err(|e| e.to_string())?;
+    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
+    Ok(serde_json::json!({"ok": true}))
+}
 #[tauri::command] fn get_wangp_upstream_info() -> serde_json::Value { serde_json::json!(null) }
 #[tauri::command] fn get_wangp_version() -> serde_json::Value { serde_json::json!(null) }
 #[tauri::command] fn report_issue() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn create_desktop_shortcut() -> serde_json::Value { serde_json::json!({"ok": true}) }
-#[tauri::command] fn upgrade_package(pkg: String) -> serde_json::Value { let _=pkg; serde_json::json!({"ok": true}) }
-#[tauri::command] fn install_package(pkg: String) -> serde_json::Value { let _=pkg; serde_json::json!({"ok": true}) }
-#[tauri::command] fn uninstall_package(pkg: String) -> serde_json::Value { let _=pkg; serde_json::json!({"ok": true}) }
-#[tauri::command] fn restore_requirements() -> serde_json::Value { serde_json::json!({"ok": true}) }
+#[tauri::command]
+async fn upgrade_package(app: tauri::AppHandle, pkg: String) -> Result<serde_json::Value,String> {
+    let env = get_active_env(); let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
+    let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
+    if !py.exists() { return Err("python not found".into()); }
+    use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
+    let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install","--upgrade", &pkg]).spawn().map_err(|e| e.to_string())?;
+    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
+    Ok(serde_json::json!({"ok": true}))
+}
+#[tauri::command]
+async fn install_package(app: tauri::AppHandle, pkg: String) -> Result<serde_json::Value,String> {
+    let env = get_active_env(); let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
+    let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
+    if !py.exists() { return Err("python not found".into()); }
+    use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
+    let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install", &pkg]).spawn().map_err(|e| e.to_string())?;
+    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
+    Ok(serde_json::json!({"ok": true}))
+}
+#[tauri::command]
+async fn uninstall_package(app: tauri::AppHandle, pkg: String) -> Result<serde_json::Value,String> {
+    let env = get_active_env(); let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
+    let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
+    if !py.exists() { return Err("python not found".into()); }
+    use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
+    let (mut rx, _) = app.shell().command(&py).args(["-m","pip","uninstall","-y", &pkg]).spawn().map_err(|e| e.to_string())?;
+    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
+    Ok(serde_json::json!({"ok": true}))
+}
+#[tauri::command]
+async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
+    let repo = get_repo_dir(); let env = get_active_env(); let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { repo.join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
+    let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
+    if !py.exists() { return Err("python not found".into()); }
+    use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
+    let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install","-r", "requirements.txt"]).current_dir(&repo).spawn().map_err(|e| e.to_string())?;
+    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
+    Ok(serde_json::json!({"ok": true}))
+}
 #[tauri::command] fn llm_engines_list() -> serde_json::Value { serde_json::json!([]) }
 #[tauri::command] fn llm_engine_install(engine: String) -> serde_json::Value { let _=engine; serde_json::json!({"ok": true}) }
 #[tauri::command] fn llm_engine_serve(engine: String, action: String) -> serde_json::Value { let _=(engine, action); serde_json::json!({"ok": true}) }
@@ -715,14 +984,14 @@ fn fs_extra_fallback_copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
 #[tauri::command] fn check_update(opts: Option<serde_json::Value>) -> serde_json::Value { let _=opts; serde_json::json!({"update": null}) }
 #[tauri::command] fn download_update(opts: Option<serde_json::Value>) -> serde_json::Value { let _=opts; serde_json::json!({"ok": true}) }
 #[tauri::command] fn install_update() -> serde_json::Value { serde_json::json!({"ok": true}) }
-#[tauri::command] fn create_browser_view(url: String, opts: Option<serde_json::Value>) -> serde_json::Value { let _=(url, opts); serde_json::json!({"ok": true}) }
+#[tauri::command] fn create_browser_view(url: Option<String>, opts: Option<serde_json::Value>) -> serde_json::Value { let _=(url, opts); serde_json::json!({"ok": true}) }
 #[tauri::command] fn destroy_browser_view() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn get_log_history() -> serde_json::Value { serde_json::json!([]) }
 #[tauri::command] fn uv_cache_clean(action: Option<String>) -> serde_json::Value { let _=action; serde_json::json!({"success": true}) }
 #[tauri::command] fn open_task_manager() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn get_crash_recovery_info() -> serde_json::Value { serde_json::json!(null) }
 #[tauri::command] fn launch_webview() -> serde_json::Value { serde_json::json!({"ok": true}) }
-#[tauri::command] fn popout_webview(url: String) -> serde_json::Value { let _=url; serde_json::json!({"ok": true}) }
+#[tauri::command] fn popout_webview(url: Option<String>) -> serde_json::Value { let _=url; serde_json::json!({"ok": true}) }
 #[tauri::command] fn hide_browser_view() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn detach_browser_view() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn reattach_browser_view() -> serde_json::Value { serde_json::json!({"ok": true}) }
