@@ -1,5 +1,8 @@
 // ponytail: single-file spike — one lib.rs covers all 100 handlers; split into modules when this file hurts
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use tauri::{Emitter, Manager};
+// shell/dialog/fs plugins wired for install/launch streaming — ponytail: std::process covers probes without them
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -377,14 +380,62 @@ fn get_wangp_local_version() -> serde_json::Value {
 fn get_desktop_git_info() -> serde_json::Value { get_wangp_local_version() }
 
 // ── Phase 3: launch stubs (real spawn needs shell plugin for streaming) ──
+static WANGP_PID: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
 #[tauri::command]
-fn launch(mode: Option<String>) -> Result<serde_json::Value, String> {
-    let _m = mode.unwrap_or("browser".into());
-    // ponytail: real launch needs tauri-plugin-shell streaming + bootstrap shim; stub keeps frontend wired
-    Err("launch: wire tauri-plugin-shell for streaming stdout (see README_SPIKE next steps)".into())
+async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_json::Value, String> {
+    mutating_try("launch")?;
+    let mode = mode.unwrap_or("browser".into());
+    let repo = get_repo_dir();
+    if !repo.join("wgp.py").exists() { mutating_done(); return Err("Wan2GP not installed — run Install first".into()); }
+    let cfg = load_config_value();
+    let port = cfg.get("serverPort").and_then(|v| v.as_u64()).unwrap_or(7860);
+    let share = cfg.get("share").and_then(|v| v.as_bool()).unwrap_or(false);
+    let mut args = vec!["wgp.py".to_string(), "--server-port".into(), port.to_string(), "--server-name".into(), "localhost".into(), "--advanced".into()];
+    if share { args.push("--share".into()); }
+    // vram coefficient forward (reads wgp_config.json if present)
+    let emit = |msg: &str| { let _ = app.emit("launch-log", msg.to_string()); };
+    emit(&format!("[*] Launching Wan2GP ({}) on :{}…\n", mode, port));
+    // bootstrap shim — minimal PYTHONUNBUFFERED + isatty patch so tqdm bars stream
+    let boot = repo.join(".wan2gp-bootstrap.py");
+    let _ = std::fs::write(&boot, "import runpy,sys,os; os.environ['PYTHONUNBUFFERED']='1'\nrunpy.run_path('wgp.py',run_name='__main__')");
+    // resolve python for active env
+    let env = get_active_env();
+    let py = if env.get("path").and_then(|p| p.as_str()).is_some() {
+        let p = PathBuf::from(env.get("path").unwrap().as_str().unwrap());
+        if cfg!(windows) { p.join("python.exe").to_string_lossy().to_string() } else { p.join("bin/python3").to_string_lossy().to_string() }
+    } else { "python".to_string() };
+    use tauri_plugin_shell::ShellExt;
+    let (mut rx, child) = app.shell().command(&py).args(&args).current_dir(&repo).spawn().map_err(|e| { mutating_done(); e.to_string() })?;
+    if let Some(m) = WANGP_PID.get_or_init(|| Mutex::new(None)).lock().ok() { drop(m); }
+    *WANGP_PID.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(child.pid());
+    // stream logs in background
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        use tauri_plugin_shell::process::CommandEvent;
+        let mut rx = rx;
+        while let Some(ev) = rx.recv().await {
+            match ev { CommandEvent::Stdout(b) => { let _ = app2.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, CommandEvent::Stderr(b) => { let _ = app2.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, CommandEvent::Terminated(s) => { let _ = app2.emit("wangp-exit", serde_json::json!({"code": s.code})); break; }, _ => {} }
+        }
+    });
+    // wait for port in background (ponytail: simple poll, upgrade to notify when needed)
+    let host = "127.0.0.1".to_string();
+    let app3 = app.clone();
+    std::thread::spawn(move || {
+        for _ in 0..60 { std::thread::sleep(std::time::Duration::from_secs(3)); if std::net::TcpStream::connect(format!("{}:{}", host, port)).is_ok() { let _ = app3.emit("launch-log", format!("[✓] Wan2GP ready on http://localhost:{}\n", port)); break; } }
+        mutating_done();
+    });
+    Ok(serde_json::json!({"ok": true, "port": port, "mode": mode}))
 }
 #[tauri::command]
-fn stop_wangp() -> serde_json::Value { serde_json::json!({"ok": true}) }
+fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
+    if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
+        #[cfg(windows)] { let _ = std::process::Command::new("taskkill").args(["/pid", &pid.to_string(), "/f", "/t"]).output(); }
+        #[cfg(not(windows))] { let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).output(); }
+        if let Some(m) = WANGP_PID.get() { *m.lock().unwrap() = None; }
+        let _ = app.emit("wangp-exit", serde_json::json!({"stopped": true}));
+    }
+    serde_json::json!({"ok": true})
+}
 
 // ── misc stubs to unblock frontend (return safe defaults) ──
 #[tauri::command]
@@ -409,7 +460,41 @@ fn auto_tune_detect() -> serde_json::Value { serde_json::json!({"cuda_available"
 fn auto_tune_recommend(hw: Option<serde_json::Value>, opts: Option<serde_json::Value>) -> serde_json::Value { let _ = (hw, opts); serde_json::json!({"video_profile": 4}) }
 
 // ── Phase 2-5: remaining 65 handlers as thin stubs (real logic behind shell/fs plugins) ──
-#[tauri::command] fn install(env_type: Option<String>) -> Result<serde_json::Value,String> { let _=env_type; Err("install: needs shell plugin streaming".into()) }
+#[tauri::command]
+async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serde_json::Value,String> {
+    mutating_try("install")?;
+    let env = env_type.unwrap_or("uv".into());
+    let repo = get_repo_dir();
+    let emit = |msg: &str| { let _ = app.emit("setup-output", msg.to_string()); };
+    // ponytail: minimal install — clone + setup.py streaming; full Electron fixups (py shim, kernel sync, sageattention swap) add when stub proves insufficient
+    if !repo.join("wgp.py").exists() {
+        emit(&format!("[*] Cloning Wan2GP into {}\n", repo.display()));
+        std::fs::create_dir_all(&repo).map_err(|e| e.to_string())?;
+        // use shell plugin so stdout streams to UI instead of buffering
+        use tauri_plugin_shell::ShellExt;
+        let (mut rx, _child) = app.shell().command("git").args(["clone","--depth","1","https://github.com/deepbeepmeep/Wan2GP.git", &repo.to_string_lossy()]).spawn().map_err(|e| e.to_string())?;
+        use tauri_plugin_shell::process::CommandEvent;
+        while let Some(ev) = rx.recv().await {
+            match ev { CommandEvent::Stdout(b) => emit(&String::from_utf8_lossy(&b)), CommandEvent::Stderr(b) => emit(&String::from_utf8_lossy(&b)), _ => {} }
+        }
+        if !repo.join("wgp.py").exists() { mutating_done(); return Err("git clone failed — check output above".into()); }
+        emit("[*] Repository cloned.\n");
+    }
+    emit(&format!("[*] Installing env={} via setup.py (streaming)…\n", env));
+    {
+        use tauri_plugin_shell::ShellExt;
+        let py = if env == "uv" { "uv".to_string() } else { "python".to_string() };
+        let args: Vec<String> = if env == "uv" { vec!["run".into(), "python".into(), "setup.py".into(), "--env".into(), env.clone()] } else { vec!["setup.py".into(), "--env".into(), env.clone()] };
+        let (mut rx, _child) = app.shell().command(&py).args(args).current_dir(&repo).spawn().map_err(|e| e.to_string())?;
+        use tauri_plugin_shell::process::CommandEvent;
+        while let Some(ev) = rx.recv().await {
+            match ev { CommandEvent::Stdout(b) => emit(&String::from_utf8_lossy(&b)), CommandEvent::Stderr(b) => emit(&String::from_utf8_lossy(&b)), _ => {} }
+        }
+    }
+    emit("[*] Install finished.\n");
+    mutating_done();
+    Ok(serde_json::json!({"ok": true}))
+}
 #[tauri::command] fn reinstall() -> Result<serde_json::Value,String> { Err("reinstall: needs shell plugin".into()) }
 #[tauri::command] fn uninstall() -> serde_json::Value { serde_json::json!({"success": false, "error": "stub"}) }
 #[tauri::command] fn sync_kernels() -> serde_json::Value { serde_json::json!({"ok": true}) }
@@ -474,10 +559,22 @@ fn auto_tune_recommend(hw: Option<serde_json::Value>, opts: Option<serde_json::V
 #[tauri::command] fn ui_mode_set(mode: String) -> serde_json::Value { let _=mode; serde_json::json!({"ok": true}) }
 #[tauri::command] fn on_system_theme_change() -> serde_json::Value { serde_json::json!(null) }
 
+static MUTATING: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+fn mutating_try(name: &str) -> Result<(), String> {
+    let m = MUTATING.get_or_init(|| Mutex::new(None));
+    let mut g = m.lock().unwrap();
+    if let Some(cur) = g.as_ref() { return Err(format!("Another operation already running ({cur}). Wait for it to finish.")); }
+    *g = Some(name.to_string()); Ok(())
+}
+fn mutating_done() { if let Some(m) = MUTATING.get() { *m.lock().unwrap() = None; } }
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             greet, detect_gpu, detect_gpus, detect_hardware, get_hardware_profile, get_system_metrics,
             get_status, check_python, check_git, check_installed, check_command,
