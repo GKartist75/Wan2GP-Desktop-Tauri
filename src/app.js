@@ -1738,7 +1738,7 @@ $('browserBtn').addEventListener('click', async () => {
     btn.textContent = 'Open Wan2GP in Browser'
     $('browserNoGpuBtn').style.display = 'none'
   } catch(e){
-    appendLog(`[LAUNCH ERROR] ${e.message}`)
+    appendLog(`[LAUNCH ERROR] ${e.message || String(e)}`)
   } finally {
     $('launchInfo').classList.add('hidden')
     $('browserBtn').disabled = false
@@ -1769,7 +1769,7 @@ $('browserNoGpuBtn').addEventListener('click', async () => {
     $('browserBtn').style.display = 'none'
     $('launchInfo').classList.add('hidden')
   } catch(e){
-    appendLog(`[LAUNCH ERROR] ${e.message}`)
+    appendLog(`[LAUNCH ERROR] ${e.message || String(e)}`)
     $('launchInfo').classList.add('hidden')
   } finally {
     $('browserNoGpuBtn').disabled = false
@@ -1796,7 +1796,7 @@ $('termBtn').addEventListener('click', async () => {
     $('browserNoGpuBtn').style.display = 'none'
     $('launchInfo').classList.add('hidden')
   } catch(e){
-    appendLog(`[LAUNCH ERROR] ${e.message}`)
+    appendLog(`[LAUNCH ERROR] ${e.message || String(e)}`)
     $('launchInfo').classList.add('hidden')
   } finally {
     $('termBtn').disabled = false
@@ -1846,7 +1846,7 @@ $('appBtn').addEventListener('click', async () => {
     $('dashBody').style.display = ''
     $('webviewContainer').classList.add('hidden')
     hideWebviewUI()
-    appendLog(`[LAUNCH ERROR] ${e.message}`)
+    appendLog(`[LAUNCH ERROR] ${e.message || String(e)}`)
   } finally {
     $('appBtn').disabled = false; setAppLaunchLabel()
   }

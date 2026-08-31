@@ -471,9 +471,14 @@ async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_jso
     let _ = std::fs::write(&boot, "import runpy,sys,os; os.environ['PYTHONUNBUFFERED']='1'\nrunpy.run_path('wgp.py',run_name='__main__')");
     // resolve python for active env
     let env = get_active_env();
-    let py = if env.get("path").and_then(|p| p.as_str()).is_some() {
-        let p = PathBuf::from(env.get("path").unwrap().as_str().unwrap());
-        if cfg!(windows) { p.join("python.exe").to_string_lossy().to_string() } else { p.join("bin/python3").to_string_lossy().to_string() }
+    let py = if let Some(raw) = env.get("path").and_then(|p| p.as_str()) {
+        let rel = raw.trim_start_matches(".\\").trim_start_matches("./").trim_start_matches(".\\").trim_start_matches("./");
+        let base = if Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(rel) };
+        let cand = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python3") };
+        if cand.exists() { cand.to_string_lossy().to_string() } else if base.exists() { // uv env may be at base itself
+            let alt = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
+            if alt.exists() { alt.to_string_lossy().to_string() } else { raw.to_string() }
+        } else { cand.to_string_lossy().to_string() }
     } else { "python".to_string() };
     use tauri_plugin_shell::ShellExt;
     let (mut rx, child) = app.shell().command(&py).args(&args).current_dir(&repo).spawn().map_err(|e| { mutating_done(); e.to_string() })?;
@@ -610,6 +615,12 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
         emit(&format!("[*] Removing existing env at {} so setup.py can recreate (clean install)…\n", env_path.display()));
         let _ = std::fs::remove_dir_all(&env_path);
     }
+    // fix: hardlink warning when cache (C:) and target (D:) are different filesystems → copy fallback
+    // set cache to repo/.uv-cache (same drive as env) and force copy mode to suppress warning
+    let uv_cache = repo.join(".uv-cache");
+    let _ = std::fs::create_dir_all(&uv_cache);
+    std::env::set_var("UV_LINK_MODE", "copy");
+    std::env::set_var("UV_CACHE_DIR", uv_cache.to_string_lossy().to_string());
     // run setup.py with the env's python (hardware-aware: setup.py reads setup_config.json + GPU)
     {
         use tauri_plugin_shell::ShellExt;
