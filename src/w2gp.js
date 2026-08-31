@@ -28,15 +28,38 @@
     confirmDialog: (opts) => call('confirm_dialog', { opts }), detectModelFolders: () => call('detect_model_folders'),
     getModelPaths: () => call('get_model_paths'), repairSettings: () => call('repair_settings'),
     getStatus: () => call('get_status'), launch: (mode) => call('launch', { mode }), launchWebview: () => call('launch_webview'),
-    stopWangp: () => call('stop_wangp'), popoutWebview: (url) => call('popout_webview', { url }),
-    createBrowserView: (url, opts) => call('create_browser_view', { url, opts }),
-    hideBrowserView: () => call('hide_browser_view'), destroyBrowserView: () => call('destroy_browser_view'),
-    detachBrowserView: () => call('detach_browser_view'), reattachBrowserView: () => call('reattach_browser_view'),
+    stopWangp: () => call('stop_wangp'), popoutWebview: async (url) => { const u = url || 'http://localhost:7860'; try { await call('open_external', { url: u }); } catch {} window.open(u, '_blank'); return {ok:true}; },
+    // ponytail: BrowserView → iframe (no native WebView needed) — fixes black screen in desktop mode
+    createBrowserView: async (url, opts) => {
+        const u = url || 'http://localhost:7860';
+        let c = document.getElementById('tauri-browser-view');
+        if (!c) {
+            c = document.createElement('div');
+            c.id = 'tauri-browser-view';
+            // below topbar (60px) and above console (~120px) — matches Electron BrowserView bounds
+            c.style.cssText = 'position:absolute;left:0;right:0;top:60px;bottom:120px;background:#0f0f0f;z-index:5;display:flex;flex-direction:column;';
+            // insert after topbar if possible, else body
+            const dash = document.getElementById('dashBody') || document.getElementById('app');
+            (dash?.parentElement || document.body).appendChild(c);
+        }
+        c.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;background:#1a1a1a;border-bottom:1px solid #333;font-size:12px;color:#aaa;"><span>Wan2GP</span><span style="opacity:0.6">${u}</span><button id="tauri-bv-close" style="margin-left:auto;background:#333;color:#fff;border:0;padding:2px 8px;border-radius:4px;cursor:pointer;">Close</button></div><iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;" allow="fullscreen; clipboard-read; clipboard-write"></iframe>`;
+        c.style.display = 'flex';
+        document.getElementById('tauri-bv-close')?.addEventListener('click', () => { c.style.display='none'; try { document.getElementById('dashBody').style.display=''; } catch {} });
+        // also notify Rust stub so app.js considers it created
+        try { await call('create_browser_view', { url: u, opts }); } catch {}
+        return {ok:true};
+    },
+    hideBrowserView: async () => { const c=document.getElementById('tauri-browser-view'); if(c) c.style.display='none'; try{await call('hide_browser_view');}catch{} return {ok:true}; },
+    destroyBrowserView: async () => { document.getElementById('tauri-browser-view')?.remove(); try{await call('destroy_browser_view');}catch{} return {ok:true}; },
+    detachBrowserView: async () => { const c=document.getElementById('tauri-browser-view'); if(c) c.style.display='none'; try{await call('detach_browser_view');}catch{} return {ok:true}; },
+    reattachBrowserView: async () => { const c=document.getElementById('tauri-browser-view'); if(c) c.style.display='flex'; try{await call('reattach_browser_view');}catch{} return {ok:true}; },
     createTermView: () => call('create_term_view'), destroyTermView: () => call('destroy_term_view'),
     bvNavigate: (a) => call('bv_navigate', { action: a }), bvSetZoom: (f) => call('bv_set_zoom', { factor: f }), bvSetDock: (d) => call('bv_set_dock', { dock: d }),
     getLogHistory: () => call('get_log_history'),
-    openExternal: (url) => call('open_external', { url }), detectBrowsers: () => call('detect_browsers'),
-    launchBrowser: (url) => call('launch_browser', { url }), launchBrowserNoGpu: (url) => call('launch_browser_no_gpu', { url }),
+    openExternal: async (url) => { const u = url || 'http://localhost:7860'; try { await window.__TAURI__.core.invoke('plugin:opener|open_url', { url: u }); } catch { try { window.open(u, '_blank'); } catch {} } try { await call('open_external', { url: u }); } catch {} return {ok:true}; },
+    detectBrowsers: () => call('detect_browsers'),
+    launchBrowser: async (url) => { const u = url || 'http://localhost:7860'; try { await window.__TAURI__.core.invoke('plugin:opener|open_url', { url: u }); } catch { window.open(u, '_blank'); } try { await call('launch_browser', { url: u }); } catch {} return {ok:true}; },
+    launchBrowserNoGpu: async (url) => { const u = url || 'http://localhost:7860'; try { await window.__TAURI__.core.invoke('plugin:opener|open_url', { url: u }); } catch { window.open(u, '_blank'); } try { await call('launch_browser_no_gpu', { url: u }); } catch {} return {ok:true}; },
     chromeAvailable: () => call('chrome_available'), openTaskManager: () => call('open_task_manager'),
     configLoad: () => call('config_load'), configSave: (cfg) => call('config_save', { cfg }),
     deepyStatus: () => call('deepy_status'), deepyActivate: (e) => call('deepy_activate', { engine: e }),

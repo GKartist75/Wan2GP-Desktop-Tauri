@@ -629,7 +629,21 @@ async fn confirm_dialog(app: tauri::AppHandle, opts: Option<serde_json::Value>) 
 #[tauri::command]
 fn repair_settings() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command]
-fn check_package_updates(versions: Option<serde_json::Value>) -> serde_json::Value { let _ = versions; serde_json::json!([]) }
+async fn check_package_updates(app: tauri::AppHandle, versions: Option<serde_json::Value>) -> Result<serde_json::Value,String> {
+    let _ = versions;
+    let env = get_active_env();
+    let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
+    let r = raw.trim_start_matches(|c| c == '.' || c == '\\' || c == '/');
+    let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(r) };
+    let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
+    if !py.exists() { return Ok(serde_json::json!([])); }
+    use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
+    let (mut rx, _) = app.shell().command(&py).args(["-m","pip","list","--outdated","--format=json"]).spawn().map_err(|e| e.to_string())?;
+    let mut out = String::new();
+    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b) => out.push_str(&String::from_utf8_lossy(&b)), CommandEvent::Stderr(b) => out.push_str(&String::from_utf8_lossy(&b)), _=>{} } }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) { if let Some(arr) = v.as_array() { let res: Vec<serde_json::Value> = arr.iter().map(|e| serde_json::json!({"name": e.get("name").cloned().unwrap_or(serde_json::Value::Null), "current": e.get("version").cloned().unwrap_or(serde_json::Value::Null), "latest": e.get("latest_version").cloned().unwrap_or(serde_json::Value::Null)})).collect(); return Ok(serde_json::Value::Array(res)); } }
+    Ok(serde_json::json!([]))
+}
 #[tauri::command]
 fn check_package(pkg: String) -> serde_json::Value { serde_json::json!({"name": pkg, "installed": false}) }
 #[tauri::command]
