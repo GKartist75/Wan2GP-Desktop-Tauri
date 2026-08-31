@@ -543,12 +543,18 @@ fn get_desktop_git_info() -> serde_json::Value { get_wangp_local_version() }
 static WANGP_PID: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
 #[tauri::command]
 async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_json::Value, String> {
-    mutating_try("launch")?;
     let mode = mode.unwrap_or("browser".into());
     let repo = get_repo_dir();
-    if !repo.join("wgp.py").exists() { mutating_done(); return Err("Wan2GP not installed — run Install first".into()); }
+    if !repo.join("wgp.py").exists() { return Err("Wan2GP not installed — run Install first".into()); }
     let cfg = load_config_value();
     let port = cfg.get("serverPort").and_then(|v| v.as_u64()).unwrap_or(7860);
+    // ponytail: if server already listening on :port (desktop→browser switch), reuse it — don't spawn second python on same port (Gradio OSError)
+    if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
+        let url = format!("http://localhost:{}", port);
+        let _ = app.emit("launch-log", format!("[*] Wan2GP already running on :{} — opening {}\n", port, url));
+        return Ok(serde_json::json!({"ok": true, "port": port, "mode": mode, "url": url, "fresh": false}));
+    }
+    mutating_try("launch")?;
     let share = cfg.get("share").and_then(|v| v.as_bool()).unwrap_or(false);
     let mut args = vec!["wgp.py".to_string(), "--server-port".into(), port.to_string(), "--server-name".into(), "localhost".into(), "--advanced".into()];
     if share { args.push("--share".into()); }

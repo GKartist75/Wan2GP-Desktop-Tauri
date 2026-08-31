@@ -29,23 +29,22 @@
     getModelPaths: () => call('get_model_paths'), repairSettings: () => call('repair_settings'),
     getStatus: () => call('get_status'), launch: (mode) => call('launch', { mode }), launchWebview: () => call('launch_webview'),
     stopWangp: () => call('stop_wangp'), popoutWebview: async (url) => { const u = url || 'http://localhost:7860'; try { await call('open_external', { url: u }); } catch {} window.open(u, '_blank'); return {ok:true}; },
-    // ponytail: BrowserView → iframe (no native WebView needed) — fixes black screen in desktop mode
+    // ponytail: BrowserView → fixed iframe overlay (high z-index, flex) — fixes black screen / CSS hide
     createBrowserView: async (url, opts) => {
         const u = url || 'http://localhost:7860';
-        let c = document.getElementById('tauri-browser-view');
-        if (!c) {
-            c = document.createElement('div');
-            c.id = 'tauri-browser-view';
-            // below topbar (60px) and above console (~120px) — matches Electron BrowserView bounds
-            c.style.cssText = 'position:absolute;left:0;right:0;top:60px;bottom:120px;background:#0f0f0f;z-index:5;display:flex;flex-direction:column;';
-            // insert after topbar if possible, else body
-            const dash = document.getElementById('dashBody') || document.getElementById('app');
-            (dash?.parentElement || document.body).appendChild(c);
-        }
-        c.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;background:#1a1a1a;border-bottom:1px solid #333;font-size:12px;color:#aaa;"><span>Wan2GP</span><span style="opacity:0.6">${u}</span><button id="tauri-bv-close" style="margin-left:auto;background:#333;color:#fff;border:0;padding:2px 8px;border-radius:4px;cursor:pointer;">Close</button></div><iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;" allow="fullscreen; clipboard-read; clipboard-write"></iframe>`;
-        c.style.display = 'flex';
-        document.getElementById('tauri-bv-close')?.addEventListener('click', () => { c.style.display='none'; try { document.getElementById('dashBody').style.display=''; } catch {} });
-        // also notify Rust stub so app.js considers it created
+        // remove any stale container
+        document.getElementById('tauri-browser-view')?.remove();
+        const c = document.createElement('div');
+        c.id = 'tauri-browser-view';
+        // fixed overlay above #app (which is absolute inset:0) — use 9999 z-index and inset to avoid being covered
+        c.style.cssText = 'position:fixed;inset:60px 0 120px 0;background:#0f0f0f;z-index:9999;display:flex;flex-direction:column;border-top:1px solid #333;';
+        c.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:6px 12px;background:#1a1a1a;border-bottom:1px solid #2a2a2a;font-size:12px;color:#aaa;flex-shrink:0;"><span style="color:#eee">● Wan2GP</span><span style="opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u}</span><button id="tauri-bv-close" style="margin-left:auto;background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">✕ Close</button><button id="tauri-bv-popout" style="background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">Open in Browser</button></div><iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-downloads"></iframe>`;
+        document.body.appendChild(c);
+        // ensure dashBody stays hidden while iframe shows (app.js does this, but enforce)
+        try { const db=document.getElementById('dashBody'); if(db) db.style.display='none'; } catch {}
+        document.getElementById('tauri-bv-close')?.addEventListener('click', () => { c.remove(); try { const db=document.getElementById('dashBody'); if(db) db.style.display='flex'; } catch {} });
+        document.getElementById('tauri-bv-popout')?.addEventListener('click', async () => { try { await window.__TAURI__.core.invoke('plugin:opener|open_url', { url: u }); } catch { window.open(u,'_blank'); } });
+        console.log('[tauri] BrowserView iframe created for', u, '— if blank, check F12 Network for', u, 'and X-Frame-Options');
         try { await call('create_browser_view', { url: u, opts }); } catch {}
         return {ok:true};
     },
