@@ -20,22 +20,27 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   const gpuOut = document.querySelector("#gpu-out");
-  document.querySelector("#btn-gpu").addEventListener("click", async () => {
-    gpuOut.textContent = "probing nvidia-smi…";
-    try {
-      const res = await invoke("detect_gpu");
-      renderJson(gpuOut, res);
-    } catch (e) {
-      gpuOut.textContent = String(e);
-    }
+  async function probe(cmd, label) {
+    gpuOut.textContent = label;
+    try { renderJson(gpuOut, await invoke(cmd)); } catch (e) { gpuOut.textContent = String(e); }
+  }
+  document.querySelector("#btn-gpu").addEventListener("click", () => probe("detect_gpu", "probing nvidia-smi…"));
+  document.querySelector("#btn-python")?.addEventListener("click", () => probe("check_python", "probing python…"));
+  document.querySelector("#btn-git")?.addEventListener("click", () => probe("check_git", "probing git…"));
+  document.querySelector("#btn-status").addEventListener("click", () => probe("get_status", "fetching status…"));
+
+  // Embedded Wan2GP — iframe proves BrowserView replacement without native add_child
+  const wanFrame = document.querySelector("#wan-frame");
+  const wanPlaceholder = document.querySelector("#wan-placeholder");
+  const wanUrl = document.querySelector("#wan-url");
+  document.querySelector("#btn-load-wan")?.addEventListener("click", () => {
+    const url = wanUrl.value.trim() || "http://localhost:7860";
+    wanFrame.src = url;
+    wanFrame.style.display = "block";
+    if (wanPlaceholder) wanPlaceholder.style.display = "none";
   });
-  document.querySelector("#btn-status").addEventListener("click", async () => {
-    gpuOut.textContent = "fetching status…";
-    try {
-      const res = await invoke("get_status");
-      renderJson(gpuOut, res);
-    } catch (e) {
-      gpuOut.textContent = String(e);
-    }
+  document.querySelector("#btn-open-external")?.addEventListener("click", async () => {
+    const url = wanUrl.value.trim() || "http://localhost:7860";
+    try { await invoke("plugin:opener|open_url", { url }); } catch { window.open(url, "_blank"); }
   });
 });

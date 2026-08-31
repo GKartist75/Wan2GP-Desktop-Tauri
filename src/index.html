@@ -28,21 +28,30 @@
         <small style="opacity:0.6">Electron equivalent: <code>ipcRenderer.invoke('greet')</code> → <code>invoke("greet")</code></small>
       </section>
 
-      <!-- 2. Real wan2gp proof: GPU detect -->
+      <!-- 2. Real wan2gp proof: GPU detect + system probes -->
       <section style="border:1px solid #333; border-radius:8px; padding:12px; margin:12px 0; text-align:left">
-        <h3>2) System: detect_gpu (real)</h3>
-        <p style="margin:4px 0; opacity:0.8">Mirrors <code>wan2gp-desktop/main.js getGpuInfo()</code> — runs <code>nvidia-smi</code> via Rust <code>std::process::Command</code>.</p>
-        <div class="row"><button id="btn-gpu">Detect GPU</button><button id="btn-status">Get Status</button></div>
+        <h3>2) System: detect_gpu + probes (real)</h3>
+        <p style="margin:4px 0; opacity:0.8">Mirrors <code>wan2gp-desktop/main.js getGpuInfo()</code> — runs <code>nvidia-smi</code> / <code>python --version</code> via Rust <code>std::process::Command</code>.</p>
+        <div class="row"><button id="btn-gpu">Detect GPU</button><button id="btn-python">Check Python</button><button id="btn-git">Check Git</button><button id="btn-status">Get Status</button></div>
         <pre id="gpu-out" style="background:#1a1a1a; color:#a0ffa0; padding:8px; border-radius:6px; overflow:auto; min-height:3em; max-height:200px"></pre>
-        <small style="opacity:0.6">No shell plugin needed for read-only probe. Write ops (install/launch) would use <code>tauri-plugin-shell</code>.</small>
+        <small style="opacity:0.6">No shell plugin — <code>std::process::Command</code> covers all read-only probes. Add <code>tauri-plugin-shell</code> only for streaming install/launch stdout.</small>
       </section>
 
-      <!-- 3. Frontend reuse note -->
+      <!-- 3. Frontend reuse + embedded Wan2GP -->
       <section style="border:1px solid #333; border-radius:8px; padding:12px; margin:12px 0; text-align:left">
-        <h3>3) Frontend reuse</h3>
+        <h3>3) Frontend reuse + embedded Wan2GP</h3>
         <p>Your <code>reference/renderer/</code> (961 HTML + 1046 CSS + 3332 JS) runs as-is in WebView2.</p>
-        <p style="opacity:0.7">Try: copy <code>reference/renderer/index.html</code> over <code>src/index.html</code> and <code>reference/renderer/style.css</code> over <code>src/styles.css</code> — then replace <code>window.w2gp.*</code> calls with <code>invoke()</code>. That's the bulk of the Tauri migration.</p>
-        <p><strong>Embedded Wan2GP (<code>localhost:7860</code>)</strong>: not wired in this spike. Next step is <code>Window::add_child(WebviewBuilder)</code> or <code>WebviewWindow</code> for the BrowserView replacement.</p>
+        <p style="opacity:0.7">Try: copy <code>reference/renderer/index.html</code> over <code>src/index.html</code> — then replace <code>window.w2gp.*</code> with <code>invoke()</code>.</p>
+        <div style="margin:8px 0">
+          <label style="opacity:0.8">Wan2GP URL: <input id="wan-url" value="http://localhost:7860" style="width:220px" /></label>
+          <button id="btn-load-wan">Load in iframe</button>
+          <button id="btn-open-external">Open externally</button>
+          <small style="opacity:0.6; margin-left:8px">iframe = lazy BrowserView. Native <code>add_child(WebviewBuilder)</code> only if iframe falls short.</small>
+        </div>
+        <div style="border:1px solid #444; border-radius:6px; overflow:hidden; background:#111; height:320px; display:flex; align-items:center; justify-content:center" id="wan-wrap">
+          <iframe id="wan-frame" style="width:100%; height:100%; border:0; display:none" sandbox="allow-same-origin allow-scripts allow-forms allow-popups"></iframe>
+          <span id="wan-placeholder" style="opacity:0.5; padding:16px; text-align:center">Click “Load in iframe” when Wan2GP is running on :7860.<br>Electron equivalent: <code>BrowserView</code> / <code>create-browser-view</code></span>
+        </div>
       </section>
 
       <p style="opacity:0.5; font-size:0.85em; margin-top:16px">See <code>README_SPIKE.md</code> for run/build/delete. Identifier <code>com.wangp.desktop-tauri</code> avoids collision with Electron <code>com.wangp.desktop</code>.</p>

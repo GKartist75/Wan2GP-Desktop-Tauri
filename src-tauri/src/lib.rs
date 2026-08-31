@@ -46,11 +46,37 @@ fn get_status() -> serde_json::Value {
     })
 }
 
+// ponytail: no shell plugin — std::process covers probes; add tauri-plugin-shell only if you need streaming stdout
+#[tauri::command]
+fn check_python() -> serde_json::Value {
+    use std::process::Command;
+    for cmd in ["python", "python3", "py"] {
+        if let Ok(out) = Command::new(cmd).args(["--version"]).output() {
+            if out.status.success() {
+                let v = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)).trim().to_string();
+                return serde_json::json!({ "found": true, "cmd": cmd, "version": v });
+            }
+        }
+    }
+    serde_json::json!({ "found": false, "cmd": null, "version": "python not found" })
+}
+
+#[tauri::command]
+fn check_git() -> serde_json::Value {
+    use std::process::Command;
+    match Command::new("git").arg("--version").output() {
+        Ok(out) if out.status.success() => {
+            serde_json::json!({ "found": true, "version": String::from_utf8_lossy(&out.stdout).trim() })
+        }
+        _ => serde_json::json!({ "found": false, "version": "git not found" }),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, detect_gpu, get_status])
+        .invoke_handler(tauri::generate_handler![greet, detect_gpu, get_status, check_python, check_git])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
