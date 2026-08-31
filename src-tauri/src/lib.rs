@@ -498,11 +498,27 @@ fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
 
 // ── misc stubs to unblock frontend (return safe defaults) ──
 #[tauri::command]
-fn open_folder(path: String) -> Result<(), String> { std::process::Command::new("explorer").arg(&path).spawn().map(|_| ()).map_err(|e| e.to_string()) }
+fn open_folder(path: String, app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener().open_path(&path, None::<&str>).map_err(|e| e.to_string()).or_else(|_| std::process::Command::new("explorer").arg(&path).spawn().map(|_| ()).map_err(|e| e.to_string()))
+}
 #[tauri::command]
-fn select_folder() -> Option<String> { None }
+async fn select_folder(app: tauri::AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    // blocking_pick_folder is sync; pick_folder is async — try both
+    if let Some(p) = app.dialog().file().blocking_pick_folder() { return Some(p.to_string()); }
+    None
+}
 #[tauri::command]
-fn confirm_dialog(opts: Option<serde_json::Value>) -> serde_json::Value { let _ = opts; serde_json::json!({"response": 1}) }
+async fn confirm_dialog(app: tauri::AppHandle, opts: Option<serde_json::Value>) -> serde_json::Value {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+    let title = opts.as_ref().and_then(|o| o.get("title").and_then(|v| v.as_str())).unwrap_or("Confirm");
+    let msg = opts.as_ref().and_then(|o| o.get("message").and_then(|v| v.as_str())).unwrap_or("Are you sure?");
+    let detail = opts.as_ref().and_then(|o| o.get("detail").and_then(|v| v.as_str())).unwrap_or("");
+    let full = if detail.is_empty() { msg.to_string() } else { format!("{}\n\n{}", msg, detail) };
+    let confirmed = app.dialog().message(&full).title(title).kind(MessageDialogKind::Info).blocking_show();
+    serde_json::json!({"response": if confirmed { 0 } else { 1 }})
+}
 #[tauri::command]
 fn repair_settings() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command]
@@ -619,8 +635,39 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
 #[tauri::command] fn set_data_dir(dir: String) -> Result<serde_json::Value,String> { let ov = data_dir_override_file(); atomic_write(&ov, &dir).map_err(|e| e.to_string())?; Ok(serde_json::json!({"ok": true})) }
 #[tauri::command] fn reset_data_dir() -> serde_json::Value { let _=std::fs::remove_file(data_dir_override_file()); serde_json::json!({"ok": true}) }
 #[tauri::command] fn migrate_to_preferred(choices: Option<serde_json::Value>) -> serde_json::Value { let _=choices; serde_json::json!({"ok": true}) }
-#[tauri::command] fn move_folder(src: String, dst: String) -> Result<serde_json::Value,String> { std::fs::rename(&src, &dst).map_err(|e| e.to_string())?; Ok(serde_json::json!({"ok": true})) }
-#[tauri::command] fn write_wgp_config(cfg: serde_json::Value) -> serde_json::Value { let _=cfg; serde_json::json!({"ok": true}) }
+#[tauri::command] fn move_folder(src: String, dst: String) -> Result<serde_json::Value,String> {
+    let s = PathBuf::from(&src); let d = PathBuf::from(&dst);
+    if let Err(_) = std::fs::rename(&s, &d) {
+        // cross-device fallback — copy then remove
+        if s.is_dir() { fs_extra_fallback_copy_dir(&s, &d)?; std::fs::remove_dir_all(&s).map_err(|e| e.to_string())?; }
+        else { std::fs::copy(&s, &d).map_err(|e| e.to_string())?; std::fs::remove_file(&s).map_err(|e| e.to_string())?; }
+    }
+    Ok(serde_json::json!({"ok": true}))
+}
+fn fs_extra_fallback_copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    for e in std::fs::read_dir(src).map_err(|e| e.to_string())? {
+        let e = e.map_err(|e| e.to_string())?;
+        let s = e.path(); let d = dst.join(e.file_name());
+        if s.is_dir() { fs_extra_fallback_copy_dir(&s, &d)?; } else { std::fs::copy(&s, &d).map_err(|e| e.to_string())?; }
+    }
+    Ok(())
+}
+#[tauri::command] fn write_wgp_config(cfg: serde_json::Value) -> Result<serde_json::Value, String> {
+    let repo = get_repo_dir();
+    let p = repo.join("wgp_config.json");
+    let mut cur: serde_json::Value = if p.exists() { std::fs::read_to_string(&p).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::json!({})) } else { serde_json::json!({}) };
+    if let Some(obj) = cfg.as_object() {
+        for (k,v) in obj { cur[k] = v.clone(); }
+    } else if let Some(patch) = cfg.get("patch") { if let Some(o) = patch.as_object() { for (k,v) in o { cur[k]=v.clone(); } } }
+    // also handle Electron shape {checkpointsPaths, lorasRoot, savePath}
+    if let Some(v) = cfg.get("checkpointsPaths") { cur["ckpt_dir"] = v.clone(); }
+    if let Some(v) = cfg.get("lorasRoot") { cur["lora_dir"] = v.clone(); }
+    if let Some(v) = cfg.get("savePath") { cur["save_path"] = v.clone(); }
+    let s = serde_json::to_string_pretty(&cur).map_err(|e| e.to_string())?;
+    atomic_write(&p, &s).map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({"ok": true}))
+}
 #[tauri::command] fn install_prerequisite(tool: String) -> serde_json::Value { let _=tool; serde_json::json!({"ok": true}) }
 #[tauri::command] fn get_wangp_upstream_info() -> serde_json::Value { serde_json::json!(null) }
 #[tauri::command] fn get_wangp_version() -> serde_json::Value { serde_json::json!(null) }
