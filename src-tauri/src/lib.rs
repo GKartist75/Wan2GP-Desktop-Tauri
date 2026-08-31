@@ -608,19 +608,18 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
         "venv" => repo.join("env_venv"),
         _ => repo.join("env_uv"),
     };
-    // If a Tauri pre-create left env_uv behind, setup.py's `uv venv --seed env_uv` fails with
-    // "already exists at env_uv". Remove any existing env so setup.py can recreate cleanly
-    // (fresh install has no env yet, so this is a no-op for the normal case).
-    if env_path.exists() {
-        emit(&format!("[*] Removing existing env at {} so setup.py can recreate (clean install)…\n", env_path.display()));
+    // If a previous half-created env blocks setup.py, remove only stale env (python.exe missing).
+    // Don't delete a valid env on every Install — that would force full re-download (slow).
+    let stale = env_path.exists() && !env_path.join(if cfg!(windows){"Scripts\\python.exe"} else {"bin/python"}).exists();
+    if stale {
+        emit(&format!("[*] Removing stale env at {} …\n", env_path.display()));
         let _ = std::fs::remove_dir_all(&env_path);
     }
-    // fix: hardlink warning when cache (C:) and target (D:) are different filesystems → copy fallback
-    // set cache to repo/.uv-cache (same drive as env) and force copy mode to suppress warning
+    // fix: hardlink warning when cache (C:) and target (D:) differ → move cache to repo/.uv-cache on same drive so hardlink works (fast)
     let uv_cache = repo.join(".uv-cache");
     let _ = std::fs::create_dir_all(&uv_cache);
-    std::env::set_var("UV_LINK_MODE", "copy");
     std::env::set_var("UV_CACHE_DIR", uv_cache.to_string_lossy().to_string());
+    // don't force copy — hardlink on same drive is faster; warning disappears when cache is on D:
     // run setup.py with the env's python (hardware-aware: setup.py reads setup_config.json + GPU)
     {
         use tauri_plugin_shell::ShellExt;
