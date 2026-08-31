@@ -10,9 +10,12 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "wan2gp-tauri-spike",
-        "width": 800,
-        "height": 600
+        "title": "Wan2GP Desktop (Tauri)",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1024,
+        "minHeight": 600,
+        "resizable": true
       }
     ],
     "security": {
