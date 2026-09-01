@@ -29,17 +29,20 @@
     getModelPaths: () => call('get_model_paths'), repairSettings: () => call('repair_settings'),
     getStatus: () => call('get_status'), launch: (mode) => call('launch', { mode }), launchWebview: () => call('launch_webview'),
     stopWangp: () => call('stop_wangp'), popoutWebview: async (url) => { const u = url || 'http://localhost:7861'; try { await call('open_external', { url: u }); } catch {} window.open(u, '_blank'); return {ok:true}; },
-    // ponytail: BrowserView → fixed iframe overlay (high z-index, flex) — fixes black screen / CSS hide
+    // ponytail: BrowserView → iframe inside webviewContainer (Tauri) — was fixed overlay on body, now respects layout
     createBrowserView: async (url, opts) => {
         const u = url || 'http://localhost:7861';
-        // remove any stale container
         document.getElementById('tauri-browser-view')?.remove();
+        const host = document.getElementById('webviewContainer') || document.body;
+        const isWebviewHost = host.id === 'webviewContainer';
         const c = document.createElement('div');
         c.id = 'tauri-browser-view';
-        // fixed overlay above #app (which is absolute inset:0) — use 9999 z-index and inset to avoid being covered
-        c.style.cssText = 'position:fixed;inset:60px 0 120px 0;background:#0f0f0f;z-index:9999;display:flex;flex-direction:column;border-top:1px solid #333;';
-        c.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:6px 12px;background:#1a1a1a;border-bottom:1px solid #2a2a2a;font-size:12px;color:#aaa;flex-shrink:0;"><span style="color:#eee">● Wan2GP</span><span style="opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u}</span><button id="tauri-bv-close" style="margin-left:auto;background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">✕ Close</button><button id="tauri-bv-popout" style="background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">Open in Browser</button></div><iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-downloads"></iframe>`;
-        document.body.appendChild(c);
+        c.style.cssText = isWebviewHost
+          ? 'position:absolute;inset:0;background:#111;display:flex;flex-direction:column;'
+          : 'position:fixed;inset:60px 0 120px 0;background:#0f0f0f;z-index:9999;display:flex;flex-direction:column;border-top:1px solid #333;';
+        c.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:6px 12px;background:#1a1a1a;border-bottom:1px solid #2a2a2a;font-size:12px;color:#aaa;flex-shrink:0;"><span style="color:#eee">● Wan2GP</span><span style="opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u}</span><button id="tauri-bv-close" style="margin-left:auto;background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">✕ Close</button><button id="tauri-bv-popout" style="background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">Open in Browser</button></div><iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write"></iframe>`;
+        host.appendChild(c);
+        if (isWebviewHost) { host.classList.remove('hidden'); host.style.display = 'flex'; }
         // ensure dashBody stays hidden while iframe shows (app.js does this, but enforce)
         try { const db=document.getElementById('dashBody'); if(db) db.style.display='none'; } catch {}
         document.getElementById('tauri-bv-close')?.addEventListener('click', () => { c.remove(); try { const db=document.getElementById('dashBody'); if(db) db.style.display='flex'; } catch {} });
