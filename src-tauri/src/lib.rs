@@ -721,13 +721,39 @@ async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_jso
 }
 #[tauri::command]
 fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
+    // robust stop: kill stored PID + any PID listening on :7861 (handles shim/child split + stale port)
+    let mut killed: Vec<u32> = Vec::new();
     if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
+        killed.push(pid);
         #[cfg(windows)] { let _ = std::process::Command::new("taskkill").args(["/pid", &pid.to_string(), "/f", "/t"]).output(); }
         #[cfg(not(windows))] { let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).output(); }
-        if let Some(m) = WANGP_PID.get() { *m.lock().unwrap() = None; }
-        let _ = app.emit("wangp-exit", serde_json::json!({"stopped": true}));
     }
-    serde_json::json!({"ok": true})
+    // find actual LISTENING PID on :7861 via netstat (handles uv shim -> cpython child)
+    #[cfg(windows)]
+    {
+        if let Ok(out) = std::process::Command::new("cmd").args(["/C", "netstat -ano | findstr LISTENING | findstr :7861"]).output() {
+            if out.status.success() {
+                let s = String::from_utf8_lossy(&out.stdout);
+                for line in s.lines() {
+                    if let Some(pid_str) = line.split_whitespace().last() {
+                        if let Ok(pid) = pid_str.parse::<u32>() {
+                            if !killed.contains(&pid) {
+                                let _ = std::process::Command::new("taskkill").args(["/pid", &pid.to_string(), "/f", "/t"]).output();
+                                killed.push(pid);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // fallback: kill any python wgp.py
+        let _ = std::process::Command::new("taskkill").args(["/F", "/IM", "python.exe", "/T"]).output();
+    }
+    if let Some(m) = WANGP_PID.get() { *m.lock().unwrap() = None; }
+    let _ = app.emit("wangp-exit", serde_json::json!({"stopped": true, "killed": killed}));
+    // wait a bit for port to free (FIN_WAIT -> TIME_WAIT -> CLOSED)
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    serde_json::json!({"ok": true, "killed": killed})
 }
 
 // ── misc stubs to unblock frontend (return safe defaults) ──
@@ -1255,6 +1281,7 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
     serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines})
 }
 #[tauri::command] fn deepy_set(mode: String, engine: Option<String>, enhancer: Option<serde_json::Value>) -> serde_json::Value {
+    eprintln!("[deepy_set] mode={} engine={:?} enhancer={:?}", mode, engine, enhancer);
     let m = mode.trim().to_lowercase();
     if !["disabled","zero","prime"].contains(&m.as_str()) { return serde_json::json!({"ok": false, "error": format!("Unknown Deepy mode: {}", mode)}); }
     if m=="prime" && engine.as_deref().map(|s| ["opencode","claude-code","codex"].contains(&s)).unwrap_or(false)==false {
