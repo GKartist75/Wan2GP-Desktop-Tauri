@@ -1112,6 +1112,8 @@ async function refreshDashboard(){
 async function checkModelsPathWarning() {
   const banner = $('modelsWarnBanner')
   if (!banner) return
+  // ponytail: Tauri uses isolated C:\Wan2GP — hide roaming warning (05cbdb3)
+  if (window.__TAURI__) { banner.classList.add('hidden'); return; }
   if (banner.dataset.dismissed === '1') { banner.classList.add('hidden'); return }
   try {
     const [paths, ip] = await Promise.all([window.w2gp.getModelPaths(), window.w2gp.getInstallPaths()])
@@ -1488,7 +1490,8 @@ async function loadPaths(skipModelPaths) {
   // manual re-trigger when there is no legacy roaming dir to migrate.
   const wrap = $('moveToPreferredWrap')
   if (wrap) {
-    if (!p.legacyRoamingFound) {
+    // ponytail: Tauri isolated — never show roaming migrate-warn
+    if (window.__TAURI__) { wrap.classList.add('hidden') } else if (!p.legacyRoamingFound) {
       wrap.classList.remove('hidden')
       const cp = $('currentDataDirPath')
       if (cp) cp.textContent = p.appData
