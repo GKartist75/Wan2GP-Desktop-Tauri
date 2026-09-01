@@ -42,8 +42,32 @@
         const c = document.createElement('div');
         c.id = 'tauri-browser-view';
         c.style.cssText = 'flex:1;display:flex;flex-direction:column;background:#111;min-height:0;width:100%;height:100%;overflow:hidden;';
-        c.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:6px 12px;background:#1a1a1a;border-bottom:1px solid #2a2a2a;font-size:12px;color:#aaa;flex-shrink:0;"><span style="color:#eee">● Wan2GP</span><span style="opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u}</span><button id="tauri-bv-close" style="margin-left:auto;background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">✕ Close</button><button id="tauri-bv-popout" style="background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">Open in Browser</button></div><iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write"></iframe>`;
+        c.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:6px 12px;background:#1a1a1a;border-bottom:1px solid #2a2a2a;font-size:12px;color:#aaa;flex-shrink:0;"><span style="color:#eee">● Wan2GP</span><span style="opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u}</span><button id="tauri-bv-close" style="margin-left:auto;background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">✕ Close</button><button id="tauri-bv-popout" style="background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">Open in Browser</button></div><div id="tauri-bv-loading" style="position:absolute;inset:36px 0 0 0;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:13px;background:#111;z-index:1;">Loading Wan2GP… (server booting, ~10s)</div><iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write"></iframe>`;
         host.appendChild(c);
+        // ponytail: auto-retry until server ready — fixes black/ERR_CONNECTION_REFUSED when iframe races boot
+        const iframe = c.querySelector('iframe');
+        const loading = c.querySelector('#tauri-bv-loading');
+        const hideLoading = () => { if(loading) loading.style.display='none'; };
+        iframe.addEventListener('load', hideLoading);
+        let tries=0;
+        const poll=setInterval(async()=>{
+            tries++;
+            if(tries>30){ clearInterval(poll); if(loading) loading.textContent='Failed to load — try Open in Browser'; return; }
+            try{
+                const r=await fetch(u,{method:'HEAD',cache:'no-store'});
+                if(r.ok){ hideLoading(); clearInterval(poll); if(iframe.src==='about:blank') iframe.src=u; }
+            }catch{}
+            // reload every 2 tries (~4s) while still loading
+            if(loading && loading.style.display!=='none' && tries%2===0){ iframe.src='about:blank'; setTimeout(()=>iframe.src=u,150); }
+        },2000);
+        // also listen for Tauri's ready log to reload immediately
+        try{
+            const unlisten=await window.__TAURI__.event.listen('launch-log', e=>{
+                const m=e.payload||'';
+                if(m.includes('Wan2GP ready')){ hideLoading(); iframe.src=u; clearInterval(poll); try{unlisten();}catch{}
+                }
+            });
+        }catch{}
         // hide dashBody, show webviewContainer — app.js also does this, but enforce
         try { const db=document.getElementById('dashBody'); if(db) db.style.display='none'; } catch {}
         // ensure dashBody stays hidden while iframe shows (app.js does this, but enforce)
