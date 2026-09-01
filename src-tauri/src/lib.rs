@@ -1230,7 +1230,16 @@ async fn update(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
 #[tauri::command] fn launch_browser(url: Option<String>) -> serde_json::Value { let _=url; // ponytail: url optional — app.js may call with null before launch
 serde_json::json!({"ok": true}) }
 #[tauri::command] fn launch_browser_no_gpu(url: Option<String>) -> serde_json::Value { let _=url; serde_json::json!({"ok": true}) }
-#[tauri::command] fn chrome_available() -> bool { std::process::Command::new("where").arg("chrome").output().map(|o| o.status.success()).unwrap_or(false) }
+#[tauri::command] fn chrome_available() -> bool {
+    // ponytail: where chrome only checks PATH, but Chrome is at Program Files — check there like detect_browsers does
+    for p in ["C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"] {
+        if std::path::Path::new(p).exists() { return true; }
+    }
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        if std::path::Path::new(&format!("{}\\Google\\Chrome\\Application\\chrome.exe", local)).exists() { return true; }
+    }
+    std::process::Command::new("where").arg("chrome").output().map(|o| o.status.success()).unwrap_or(false)
+}
 #[tauri::command] fn set_data_dir(dir: String) -> Result<serde_json::Value,String> { let ov = data_dir_override_file(); atomic_write(&ov, &dir).map_err(|e| e.to_string())?; Ok(serde_json::json!({"ok": true, "success": true})) }
 #[tauri::command] fn reset_data_dir() -> serde_json::Value { let _=std::fs::remove_file(data_dir_override_file()); serde_json::json!({"ok": true}) }
 #[tauri::command] fn migrate_to_preferred(choices: Option<serde_json::Value>) -> serde_json::Value { let _=choices; serde_json::json!({"ok": true}) }
@@ -1277,30 +1286,44 @@ async fn install_prerequisite(app: tauri::AppHandle, tool: String) -> Result<ser
 }
 #[tauri::command]
 async fn get_wangp_upstream_info() -> serde_json::Value {
-    // fetch latest commit from GitHub API — mirrors Electron fetchUrl for Wan2GP upstream
-    let url = "https://api.github.com/repos/deepbeepmeep/Wan2GP/commits?per_page=1";
-    // try curl first (fast, no PS overhead), fallback to powershell
-    let try_curl = std::process::Command::new("curl").args(["-s", "-H", "User-Agent: wan2gp-tauri", url]).output();
-    let json_str = if let Ok(o) = try_curl { if o.status.success() { String::from_utf8_lossy(&o.stdout).to_string() } else { String::new() } } else { String::new() };
-    let json_str = if json_str.trim().starts_with('[') { json_str } else {
-        // powershell fallback
-        std::process::Command::new("powershell").args(["-NoProfile","-Command", &format!("try {{ (Invoke-RestMethod -Uri '{}' -Headers @{{'User-Agent'='wan2gp-tauri'}} | ConvertTo-Json -Depth 4) }} catch {{ '[]' }}", url)]).output()
-            .ok().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
-    };
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
-        if let Some(arr) = v.as_array() { if let Some(first) = arr.first() {
-            let sha = first.get("sha").and_then(|s| s.as_str()).unwrap_or("");
-            let date = first.get("commit").and_then(|c| c.get("committer")).and_then(|c| c.get("date")).and_then(|d| d.as_str()).unwrap_or("");
-            let msg = first.get("commit").and_then(|c| c.get("message")).and_then(|m| m.as_str()).unwrap_or("");
-            if !sha.is_empty() { return serde_json::json!({"hash": sha, "date": date, "message": msg}); }
-        }}
-        // if API returned object (single commit) handle
-        if let Some(sha) = v.get("sha").and_then(|s| s.as_str()) {
-            let date = v.get("commit").and_then(|c| c.get("committer")).and_then(|c| c.get("date")).and_then(|d| d.as_str()).unwrap_or("");
-            return serde_json::json!({"hash": sha, "date": date});
+    // mirrors Electron: fetch 10 commits, use githubToken if set, cache 5 min (handled in frontend, but we also handle single)
+    let cfg = load_config_value();
+    let token = cfg.get("githubToken").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let url = "https://api.github.com/repos/deepbeepmeep/Wan2GP/commits?per_page=10&sha=main";
+    let auth_header = if !token.is_empty() { Some(format!("Authorization: token {}", token)) } else { None };
+    let mut curl_args = vec!["-s", "-H", "User-Agent: wan2gp-tauri", "-H", "Accept: application/vnd.github.v3+json"];
+    if let Some(ref h) = auth_header { curl_args.extend_from_slice(&["-H", h.as_str()]); }
+    curl_args.push(url);
+    let try_curl = std::process::Command::new("curl").args(&curl_args).output();
+    let mut json_str = if let Ok(o) = try_curl { if o.status.success() { String::from_utf8_lossy(&o.stdout).to_string() } else { String::new() } } else { String::new() };
+    if !json_str.trim().starts_with('[') {
+        // powershell fallback with token
+        let ps_headers = if !token.is_empty() { format!("@{{'User-Agent'='wan2gp-tauri';'Accept'='application/vnd.github.v3+json';'Authorization'='token {}'}}", token) } else { "@{'User-Agent'='wan2gp-tauri';'Accept'='application/vnd.github.v3+json'}".to_string() };
+        let ps_cmd = format!("try {{ (Invoke-RestMethod -Uri '{}' -Headers {} | ConvertTo-Json -Depth 6) }} catch {{ '[]' }}", url, ps_headers);
+        if let Ok(o) = std::process::Command::new("powershell").args(["-NoProfile","-Command", &ps_cmd]).output() {
+            if o.status.success() {
+                let s = String::from_utf8_lossy(&o.stdout).to_string();
+                if s.trim().starts_with('[') { json_str = s; }
+            }
         }
     }
-    serde_json::json!(null)
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
+        if let Some(arr) = v.as_array() {
+            let commits: Vec<serde_json::Value> = arr.iter().map(|c| {
+                let sha = c.get("sha").and_then(|s| s.as_str()).unwrap_or("");
+                let commit = c.get("commit");
+                let date = commit.and_then(|x| x.get("author")).and_then(|x| x.get("date")).and_then(|d| d.as_str()).unwrap_or("");
+                let msg = commit.and_then(|x| x.get("message")).and_then(|m| m.as_str()).unwrap_or("").split('\n').next().unwrap_or("").to_string();
+                let author = commit.and_then(|x| x.get("author")).and_then(|x| x.get("name")).and_then(|n| n.as_str()).unwrap_or("").to_string();
+                serde_json::json!({"hash": sha, "date": date, "message": msg, "author": author})
+            }).collect();
+            if !commits.is_empty() {
+                return serde_json::json!({"commits": commits});
+            }
+        }
+    }
+    // fallback single
+    serde_json::json!({"error": "Could not fetch updates — GitHub API rate limited or offline. Add a GitHub token in Manage → General to avoid limits."})
 }
 #[tauri::command] fn get_wangp_version() -> serde_json::Value { serde_json::json!(null) }
 #[tauri::command] fn report_issue() -> serde_json::Value {
