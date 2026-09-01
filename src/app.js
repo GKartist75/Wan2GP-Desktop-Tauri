@@ -1207,12 +1207,15 @@ function renderKernelWheels(wheels, kernelProfile, osKey) {
   if (tag && kernelProfile) tag.textContent = kernelProfile
   box.innerHTML = ''
   list.forEach(w => {
+    // ponytail: Tauri spike returns string array; Electron returns objects — handle both
+    if (typeof w === 'string') w = { key: w, label: w, pipName: w, state: 'missing' }
     const row = document.createElement('div')
     row.className = 'spec-row'
     const dot = document.createElement('span')
     dot.className = 'spec-dot'
     const state = w.state || (w.installed ? (w.installed === w.configured ? 'ok' : 'mismatch') : 'missing')
-    dot.classList.add(state === 'ok' ? 'installed' : (state === 'mismatch' ? 'error' : ''))
+    const cls = state === 'ok' ? 'installed' : (state === 'mismatch' ? 'error' : '')
+    if (cls) dot.classList.add(cls)
     const label = document.createElement('span')
     label.className = 'spec-label'
     label.textContent = w.label
