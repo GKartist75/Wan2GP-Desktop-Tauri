@@ -29,46 +29,23 @@
     getModelPaths: () => call('get_model_paths'), repairSettings: () => call('repair_settings'),
     getStatus: () => call('get_status'), launch: (mode) => call('launch', { mode }), launchWebview: () => call('launch_webview'),
     stopWangp: () => call('stop_wangp'), popoutWebview: async (url) => { const u = url || 'http://localhost:7861'; try { await call('open_external', { url: u }); } catch {} window.open(u, '_blank'); return {ok:true}; },
-    // ponytail: BrowserView → Tauri WebviewWindow (native, no iframe) — iframe from tauri:// vs http:// is cross-origin, plugins 404, manifest 404, black
+    // ponytail: BrowserView → embedded iframe in webviewContainer (Tauri) — simple, no separate window
     createBrowserView: async (url, opts) => {
         const u = url || 'http://localhost:7861';
-        // try native WebviewWindow first (no iframe, no X-Frame, window.w2gp can be injected)
-        try {
-            const { WebviewWindow } = window.__TAURI__.webviewWindow;
-            let win = null;
-            try { win = await WebviewWindow.getByLabel('wan2gp-view'); } catch {}
-            if (win) { try { await win.close(); } catch {} }
-            const w = new WebviewWindow('wan2gp-view', {
-              url: u,
-              title: 'Wan2GP — Desktop View',
-              width: 1280, height: 800,
-              decorations: true,
-              center: true,
-              focus: true,
-              // ponytail: inject dummy w2gp so Gradio's VM7:5 plugins check doesn't throw inside the webview
-              initializationScript: "window.w2gp={plugins:{},platform:'win32'};"
-            });
-            w.once('tauri://created', () => console.log('[tauri] WebviewWindow wan2gp-view created for', u));
-            w.once('tauri://error', e => console.error('[tauri] WebviewWindow error', e));
-            // also keep dash hidden so launcher shows "Back to Desktop"
-            try { const db=document.getElementById('dashBody'); if(db) db.style.display='none'; const wc=document.getElementById('webviewContainer'); if(wc){ wc.classList.remove('hidden'); wc.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#aaa;font-size:13px;">Wan2GP opened in separate window — close that window to return</div>'; wc.style.display='flex'; } } catch {}
-            try { await call('create_browser_view', { url: u, opts }); } catch {}
-            return {ok:true, mode:'window'};
-        } catch (e) {
-            console.warn('[tauri] WebviewWindow failed, fallback to iframe', e);
-        }
-        // fallback: iframe inside webviewContainer (for when WebviewWindow not available)
+        // close any previous WebviewWindow if it exists (from previous separate-window attempt)
+        try { const { WebviewWindow } = window.__TAURI__.webviewWindow; const win = await WebviewWindow.getByLabel('wan2gp-view'); if (win) await win.close(); } catch {}
         document.getElementById('tauri-browser-view')?.remove();
         const host = document.getElementById('webviewContainer') || document.body;
         const isWebviewHost = host.id === 'webviewContainer';
+        // ensure host is visible and has height — webviewContainer is flex:1 inside dashboard (flex column)
+        if (isWebviewHost) { host.classList.remove('hidden'); host.style.display = 'flex'; host.style.flex = '1'; host.style.minHeight = '0'; host.style.height = 'calc(100vh - 44px)'; host.style.position = 'relative'; }
         const c = document.createElement('div');
         c.id = 'tauri-browser-view';
-        c.style.cssText = isWebviewHost
-          ? 'flex:1;display:flex;flex-direction:column;background:#111;min-height:0;width:100%;height:100%;'
-          : 'position:fixed;inset:60px 0 120px 0;background:#0f0f0f;z-index:9999;display:flex;flex-direction:column;border-top:1px solid #333;';
+        c.style.cssText = 'flex:1;display:flex;flex-direction:column;background:#111;min-height:0;width:100%;height:100%;overflow:hidden;';
         c.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:6px 12px;background:#1a1a1a;border-bottom:1px solid #2a2a2a;font-size:12px;color:#aaa;flex-shrink:0;"><span style="color:#eee">● Wan2GP</span><span style="opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u}</span><button id="tauri-bv-close" style="margin-left:auto;background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">✕ Close</button><button id="tauri-bv-popout" style="background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">Open in Browser</button></div><iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write"></iframe>`;
         host.appendChild(c);
-        if (isWebviewHost) { host.classList.remove('hidden'); host.style.display = 'flex'; }
+        // hide dashBody, show webviewContainer — app.js also does this, but enforce
+        try { const db=document.getElementById('dashBody'); if(db) db.style.display='none'; } catch {}
         // ensure dashBody stays hidden while iframe shows (app.js does this, but enforce)
         try { const db=document.getElementById('dashBody'); if(db) db.style.display='none'; } catch {}
         document.getElementById('tauri-bv-close')?.addEventListener('click', () => { c.remove(); try { const db=document.getElementById('dashBody'); if(db) db.style.display='flex'; } catch {} });
