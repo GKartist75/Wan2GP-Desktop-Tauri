@@ -38,7 +38,7 @@
         const c = document.createElement('div');
         c.id = 'tauri-browser-view';
         c.style.cssText = isWebviewHost
-          ? 'position:absolute;inset:0;background:#111;display:flex;flex-direction:column;'
+          ? 'flex:1;display:flex;flex-direction:column;background:#111;min-height:0;width:100%;height:100%;'
           : 'position:fixed;inset:60px 0 120px 0;background:#0f0f0f;z-index:9999;display:flex;flex-direction:column;border-top:1px solid #333;';
         c.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:6px 12px;background:#1a1a1a;border-bottom:1px solid #2a2a2a;font-size:12px;color:#aaa;flex-shrink:0;"><span style="color:#eee">● Wan2GP</span><span style="opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u}</span><button id="tauri-bv-close" style="margin-left:auto;background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">✕ Close</button><button id="tauri-bv-popout" style="background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">Open in Browser</button></div><iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write"></iframe>`;
         host.appendChild(c);
