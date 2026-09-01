@@ -1079,10 +1079,29 @@ async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,String>
     let kernels = cfg.get("gpu_profiles").and_then(|p| p.get(&profile)).and_then(|pr| pr.get("kernels")).and_then(|k| k.as_array()).cloned().unwrap_or_default();
     use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
     let sage_safe = load_config_value().get("sageSafe").and_then(|v| v.as_bool()).unwrap_or(false);
-    for k in kernels {
+    // ponytail: Sage wheel is not in gpu_profiles[RTX_30].kernels (only nunchaku+gguf) — handle it separately like Electron's setSageAttentionSafe
+    let mut all_kernels = kernels.clone();
+    if ["RTX_30","RTX_40","RTX_50"].contains(&profile.as_str()) {
+        // ensure sage is in the sync list when toggling safe/upstream, so the wheel actually swaps
+        if !all_kernels.iter().any(|k| k.as_str()==Some("sage") || k.as_str()==Some("sageattention")) {
+            all_kernels.push(serde_json::json!("sage"));
+        }
+    }
+    for k in all_kernels {
         if let Some(name) = k.as_str() {
             // find wheel url from components.kernels[name].cmd[win] — handle Sage post6 safe toggle
             let mut url = cfg.get("components").and_then(|c| c.get("kernels")).and_then(|m| m.get(name)).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()).unwrap_or("").to_string();
+            // sage is stored under components.kernels.sage or sageattention — try both, fallback to known URLs
+            if url.is_empty() && (name=="sage" || name=="sageattention") {
+                url = cfg.get("components").and_then(|c| c.get("kernels")).and_then(|m| m.get("sage")).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()).unwrap_or("").to_string();
+                if url.is_empty() {
+                    url = if sage_safe {
+                        "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl".into()
+                    } else {
+                        "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl".into()
+                    };
+                }
+            }
             if url.is_empty() { continue; }
             // Sage safe toggle: post4 (upstream) vs post6 (safe) — respects Manage → Settings
             if name=="sage" || name=="sageattention" {
