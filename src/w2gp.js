@@ -25,7 +25,17 @@
     moveFolder: (src, dst) => call('move_folder', { src, dst }), migrateChoose: () => call('migrate_choose'),
     isDataDirRoaming: () => call('is_data_dir_roaming'),
     writeWgpConfig: (cfg) => call('write_wgp_config', { cfg }), selectFolder: () => call('select_folder'),
-    confirmDialog: (opts) => call('confirm_dialog', { opts }), detectModelFolders: () => call('detect_model_folders'),
+    // ponytail: Tauri native dialog only has OK/Cancel — for the 3-button Move/Point/Cancel pencil flow, use window.confirm so user actually gets a choice (was only OK)
+    confirmDialog: async (opts) => {
+        // pencil Move/Point/Cancel has 3 buttons — map to confirm() so Tauri gets a real choice
+        if (opts && Array.isArray(opts.buttons) && opts.buttons.length===3) {
+            const msg = (opts.message||'') + (opts.detail ? '\n\n' + opts.detail : '') + '\n\n[OK] Move existing files  —  [Cancel] Just point (no move)\n(Esc or close = Cancel)';
+            // eslint-disable-next-line no-restricted-globals
+            const ok = confirm(msg);
+            return ok ? 'move' : 'point';
+        }
+        try { const r = await call('confirm_dialog', { opts }); if (typeof r==='string') return r; if (r && typeof r.response==='number') return r.response===0 ? 'ok' : 'cancel'; if (r && r.ok) return 'ok'; return r; } catch { return 'cancel'; }
+    }, detectModelFolders: () => call('detect_model_folders'),
     getModelPaths: () => call('get_model_paths'), repairSettings: () => call('repair_settings'),
     getStatus: () => call('get_status'), launch: (mode) => call('launch', { mode }), launchWebview: () => call('launch_webview'),
     stopWangp: () => call('stop_wangp'), popoutWebview: async (url) => { const u = url || 'http://localhost:7861'; try { await call('open_external', { url: u }); } catch {} window.open(u, '_blank'); return {ok:true}; },

@@ -537,11 +537,15 @@ fn get_model_paths() -> serde_json::Value {
         if let Ok(s) = std::fs::read_to_string(&cfg_path) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
                 let mut out = serde_json::Map::new();
-                if let Some(a) = v.get("checkpoints_paths").and_then(|x| x.as_array()).and_then(|a| a.first()) { out.insert("checkpoints".into(), a.clone()); }
-                else if let Some(c) = v.get("ckpt_dir") { out.insert("checkpoints".into(), c.clone()); }
-                if let Some(l) = v.get("loras_root") { out.insert("loras".into(), l.clone()); }
+                // checkpoints: handle checkpointsPaths (camel, Tauri) / checkpoints_paths / ckpt_dir (array|string)
+                if let Some(a) = v.get("checkpointsPaths").and_then(|x| x.as_array()).and_then(|a| a.first()) { out.insert("checkpoints".into(), a.clone()); }
+                else if let Some(a) = v.get("checkpoints_paths").and_then(|x| x.as_array()).and_then(|a| a.first()) { out.insert("checkpoints".into(), a.clone()); }
+                else if let Some(c) = v.get("ckpt_dir") { if let Some(arr)=c.as_array().and_then(|a| a.first()) { out.insert("checkpoints".into(), arr.clone()); } else { out.insert("checkpoints".into(), c.clone()); } }
+                if let Some(l) = v.get("lorasRoot") { out.insert("loras".into(), l.clone()); }
+                else if let Some(l) = v.get("loras_root") { out.insert("loras".into(), l.clone()); }
                 else if let Some(l) = v.get("lora_dir") { out.insert("loras".into(), l.clone()); }
-                if let Some(o) = v.get("save_path") { out.insert("output".into(), o.clone()); }
+                if let Some(o) = v.get("savePath") { out.insert("output".into(), o.clone()); }
+                else if let Some(o) = v.get("save_path") { out.insert("output".into(), o.clone()); }
                 if !out.is_empty() { return serde_json::Value::Object(out); }
             }
         }
