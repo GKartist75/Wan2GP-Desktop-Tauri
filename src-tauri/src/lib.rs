@@ -186,12 +186,41 @@ fn get_status() -> serde_json::Value {
                 profile = kernel_profile_key(vendor, name);
                 if let Some(prof) = cfg.get("gpu_profiles").and_then(|p| p.get(&profile)) {
                     if let Some(kernels) = prof.get("kernels").and_then(|k| k.as_array()) {
-                        wheels = serde_json::Value::Array(kernels.clone());
+                        // build overview wheels with label/pipName/configured so frontend shows "want <ver>" not "want ?"
+                        let mut arr = Vec::new();
+                        for k in kernels {
+                            if let Some(key) = k.as_str() {
+                                let (label, pip) = match key {
+                                    "nunchaku_cu13" | "nunchaku" => ("Nunchaku", "nunchaku"),
+                                    "gguf" | "llamacpp_gguf_cuda" => ("GGUF (llamacpp)", "llamacpp_gguf_cuda"),
+                                    "light2xv" | "lightx2v_kernel" => ("LightX2V", "lightx2v_kernel"),
+                                    _ => (key, key),
+                                };
+                                // configured version from setup_config.json components.kernels[key].cmd[win]
+                                let mut configured: Option<String> = None;
+                                if let Some(cmd) = cfg.get("components").and_then(|c| c.get("kernels")).and_then(|m| m.get(key)).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()) {
+                                    // wheelDistVersion: parse "<dist>-<version>-cp..." 
+                                    if let Some(base) = cmd.split('/').last() {
+                                        let base = base.trim_end_matches(".whl");
+                                        if let Some(dash) = base.find('-') {
+                                            let rest = &base[dash+1..];
+                                            if let Some(v_end) = rest.find("-cp") .or_else(|| rest.find("-py")) {
+                                                configured = Some(rest[..v_end].to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                                arr.push(serde_json::json!({"key": key, "label": label, "pipName": pip, "configured": configured}));
+                            }
+                        }
+                        wheels = serde_json::Value::Array(arr);
                     }
                 }
             }
         }
     }
+    // wheels already built with configured, but installed will be filled after version scan
+    let mut pending_wheels = wheels.clone();
     // real version scan via env's python (importlib.metadata) — ponytail: helper file on same drive as env
     let mut versions = serde_json::Map::new();
     if let Some(raw) = env.get("path").and_then(|p| p.as_str()) {
@@ -227,7 +256,30 @@ except Exception as e:
             }
         }
     }
-    serde_json::json!({"env": env, "versions": serde_json::Value::Object(versions), "kernelWheels": wheels, "kernelProfile": profile, "spike": false})
+    // fill installed into wheels now that versions are known
+    let mut final_wheels = Vec::new();
+    if let Some(arr) = pending_wheels.as_array() {
+        for w in arr {
+            let mut obj = w.clone();
+            if let Some(pip) = w.get("pipName").and_then(|v| v.as_str()) {
+                if let Some(ver) = versions.get(pip).and_then(|v| v.as_str()) {
+                    obj["installed"] = serde_json::json!(ver);
+                    let cfg = w.get("configured").and_then(|v| v.as_str()).unwrap_or("");
+                    // configured is like "1.2.1+cu13.0torch2.10", installed is same or with "+" - compare prefix before "+"
+                    let want = cfg.split('+').next().unwrap_or(cfg);
+                    let have = ver.split('+').next().unwrap_or(ver);
+                    obj["state"] = serde_json::json!(if have==want { "ok" } else { "mismatch" });
+                } else {
+                    obj["state"] = serde_json::json!("missing");
+                }
+            }
+            final_wheels.push(obj);
+        }
+    } else if let Some(arr) = wheels.as_array() {
+        final_wheels = arr.clone();
+    }
+    let out_wheels = if !final_wheels.is_empty() { serde_json::Value::Array(final_wheels) } else { wheels };
+    serde_json::json!({"env": env, "versions": serde_json::Value::Object(versions), "kernelWheels": out_wheels, "kernelProfile": profile, "spike": false})
 }
 #[tauri::command]
 fn check_python() -> serde_json::Value {
@@ -1089,18 +1141,21 @@ async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,String>
     }
     for k in all_kernels {
         if let Some(name) = k.as_str() {
-            // find wheel url from components.kernels[name].cmd[win] — handle Sage post6 safe toggle
-            let mut url = cfg.get("components").and_then(|c| c.get("kernels")).and_then(|m| m.get(name)).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()).unwrap_or("").to_string();
-            // sage is stored under components.kernels.sage or sageattention — try both, fallback to known URLs
+            // find wheel url — nunchaku/gguf are under components.kernels, sage is under components.sage[profile.sage]
+            let mut url = if name=="sage" || name=="sageattention" {
+                // sage: look up via gpu_profiles[profile].sage -> components.sage[version].cmd[win]
+                let sage_ver = cfg.get("gpu_profiles").and_then(|p| p.get(&profile)).and_then(|pr| pr.get("sage")).and_then(|v| v.as_str()).unwrap_or("v220_cu13");
+                cfg.get("components").and_then(|c| c.get("sage")).and_then(|m| m.get(sage_ver)).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()).unwrap_or("").to_string()
+            } else {
+                cfg.get("components").and_then(|c| c.get("kernels")).and_then(|m| m.get(name)).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()).unwrap_or("").to_string()
+            };
             if url.is_empty() && (name=="sage" || name=="sageattention") {
-                url = cfg.get("components").and_then(|c| c.get("kernels")).and_then(|m| m.get("sage")).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()).unwrap_or("").to_string();
-                if url.is_empty() {
-                    url = if sage_safe {
-                        "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl".into()
-                    } else {
-                        "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl".into()
-                    };
-                }
+                // fallback to known URLs if setup_config missing sage entry
+                url = if sage_safe {
+                    "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl".into()
+                } else {
+                    "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl".into()
+                };
             }
             if url.is_empty() { continue; }
             // Sage safe toggle: post4 (upstream) vs post6 (safe) — respects Manage → Settings
