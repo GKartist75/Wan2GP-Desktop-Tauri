@@ -298,8 +298,30 @@ fn detect_hardware() -> serde_json::Value {
     let gpu_name = gpus.as_array().and_then(|a| a.first()).and_then(|g| g.get("name")).and_then(|n| n.as_str()).unwrap_or("—").to_string();
     let vram = gpus.as_array().and_then(|a| a.first()).and_then(|g| g.get("vramMB")).and_then(|v| v.as_f64()).unwrap_or(0.0);
     let vram_str = if vram > 0.0 { format!("{} MB", vram as i64) } else { "—".into() };
-    // cpu/ram via std
-    let cpu = std::env::var("PROCESSOR_IDENTIFIER").unwrap_or("—".into());
+    // cpu via WMI Name (like Electron os.cpus()[0].model) — PROCESSOR_IDENTIFIER gives "Intel64 Family 6..." which users hate
+    let cpu = {
+        #[cfg(windows)]
+        {
+            use std::process::Command;
+            // Name already contains "12th Gen Intel(R) Core(TM) i9-12900K", MaxClockSpeed adds GHz
+            if let Ok(out) = Command::new("powershell").args(["-NoProfile","-Command","(Get-CimInstance Win32_Processor | Select-Object -First 1).Name"]).output() {
+                if out.status.success() {
+                    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !name.is_empty() {
+                        // try to append GHz if not already in Name
+                        let ghz = Command::new("powershell").args(["-NoProfile","-Command","(Get-CimInstance Win32_Processor | Select-Object -First 1).MaxClockSpeed"]).output()
+                            .ok().and_then(|o| if o.status.success() { String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok() } else { None })
+                            .map(|mhz| format!("{:.2} GHz", mhz as f64 / 1000.0))
+                            .unwrap_or_default();
+                        if !ghz.is_empty() && !name.contains("GHz") && !name.contains("MHz") {
+                            format!("{} ({})", name, ghz)
+                        } else { name }
+                    } else { std::env::var("PROCESSOR_IDENTIFIER").unwrap_or("—".into()) }
+                } else { std::env::var("PROCESSOR_IDENTIFIER").unwrap_or("—".into()) }
+            } else { std::env::var("PROCESSOR_IDENTIFIER").unwrap_or("—".into()) }
+        }
+        #[cfg(not(windows))] { std::env::var("PROCESSOR_IDENTIFIER").unwrap_or("—".into()) }
+    };
     let ram = {
         // ponytail: real sysinfo crate if needed; this probe is enough for dashboard
         #[cfg(windows)]
@@ -1214,7 +1236,7 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
 #[tauri::command] fn bv_navigate(action: String) -> serde_json::Value { let _=action; serde_json::json!({"ok": true}) }
 #[tauri::command] fn bv_set_zoom(factor: f64) -> serde_json::Value { let _=factor; serde_json::json!({"ok": true}) }
 #[tauri::command] fn bv_set_dock(dock: String) -> serde_json::Value { let _=dock; serde_json::json!({"ok": true}) }
-#[tauri::command] fn is_data_dir_roaming() -> bool { get_data_dir().to_string_lossy().contains("AppData") }
+#[tauri::command] fn is_data_dir_roaming() -> bool { false } // ponytail: Tauri uses isolated .wan2gp-tauri-data-dir + C:\Wan2GP — never roaming, hide pre-v3.0 warning (#05cbdb3)
 #[tauri::command] fn migrate_choose() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn notifier_ensure() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn ui_mode_set(mode: String) -> serde_json::Value { let _=mode; serde_json::json!({"ok": true}) }
