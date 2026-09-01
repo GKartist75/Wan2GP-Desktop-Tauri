@@ -1254,7 +1254,7 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
     let engines: Vec<String> = le.and_then(|x| x.get("profiles")).and_then(|x| x.as_object()).map(|o| o.keys().cloned().collect()).unwrap_or_default();
     serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines})
 }
-#[tauri::command] fn deepy_set(mode: String, engine: Option<String>, enhancer: Option<String>) -> serde_json::Value {
+#[tauri::command] fn deepy_set(mode: String, engine: Option<String>, enhancer: Option<serde_json::Value>) -> serde_json::Value {
     let m = mode.trim().to_lowercase();
     if !["disabled","zero","prime"].contains(&m.as_str()) { return serde_json::json!({"ok": false, "error": format!("Unknown Deepy mode: {}", mode)}); }
     if m=="prime" && engine.as_deref().map(|s| ["opencode","claude-code","codex"].contains(&s)).unwrap_or(false)==false {
@@ -1267,8 +1267,12 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
     let bak = p.with_file_name("wgp_config.json.deepy-bak"); let _ = std::fs::copy(&p, &bak);
     let (enabled, dtype) = match m.as_str() { "disabled"=> (0,"zero"), "prime"=> (1,"prime"), _=> (1,"zero") };
     v["deepy_enabled"] = serde_json::json!(enabled); v["deepy_type"] = serde_json::json!(dtype);
-    // enhancer id
-    let enh_id: Option<i64> = enhancer.as_ref().and_then(|e| e.parse::<i64>().ok()).or_else(|| {
+    // enhancer id — JS sends number (3) or null, handle both string/number
+    let enh_id: Option<i64> = enhancer.as_ref().and_then(|v| {
+        if let Some(n) = v.as_i64() { Some(n) }
+        else if let Some(s) = v.as_str() { s.parse::<i64>().ok() }
+        else { None }
+    }).or_else(|| {
         match m.as_str() { "prime"=> None, "zero"=> Some(3), _=> Some(1) }
     });
     if m!="prime" { if let Some(id)=enh_id { v["enhancer_enabled"] = serde_json::json!(id); } }
