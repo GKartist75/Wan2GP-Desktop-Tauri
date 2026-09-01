@@ -29,9 +29,35 @@
     getModelPaths: () => call('get_model_paths'), repairSettings: () => call('repair_settings'),
     getStatus: () => call('get_status'), launch: (mode) => call('launch', { mode }), launchWebview: () => call('launch_webview'),
     stopWangp: () => call('stop_wangp'), popoutWebview: async (url) => { const u = url || 'http://localhost:7861'; try { await call('open_external', { url: u }); } catch {} window.open(u, '_blank'); return {ok:true}; },
-    // ponytail: BrowserView → iframe inside webviewContainer (Tauri) — was fixed overlay on body, now respects layout
+    // ponytail: BrowserView → Tauri WebviewWindow (native, no iframe) — iframe from tauri:// vs http:// is cross-origin, plugins 404, manifest 404, black
     createBrowserView: async (url, opts) => {
         const u = url || 'http://localhost:7861';
+        // try native WebviewWindow first (no iframe, no X-Frame, window.w2gp can be injected)
+        try {
+            const { WebviewWindow } = window.__TAURI__.webviewWindow;
+            let win = null;
+            try { win = await WebviewWindow.getByLabel('wan2gp-view'); } catch {}
+            if (win) { try { await win.close(); } catch {} }
+            const w = new WebviewWindow('wan2gp-view', {
+              url: u,
+              title: 'Wan2GP — Desktop View',
+              width: 1280, height: 800,
+              decorations: true,
+              center: true,
+              focus: true,
+              // ponytail: inject dummy w2gp so Gradio's VM7:5 plugins check doesn't throw inside the webview
+              initializationScript: "window.w2gp={plugins:{},platform:'win32'};"
+            });
+            w.once('tauri://created', () => console.log('[tauri] WebviewWindow wan2gp-view created for', u));
+            w.once('tauri://error', e => console.error('[tauri] WebviewWindow error', e));
+            // also keep dash hidden so launcher shows "Back to Desktop"
+            try { const db=document.getElementById('dashBody'); if(db) db.style.display='none'; const wc=document.getElementById('webviewContainer'); if(wc){ wc.classList.remove('hidden'); wc.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#aaa;font-size:13px;">Wan2GP opened in separate window — close that window to return</div>'; wc.style.display='flex'; } } catch {}
+            try { await call('create_browser_view', { url: u, opts }); } catch {}
+            return {ok:true, mode:'window'};
+        } catch (e) {
+            console.warn('[tauri] WebviewWindow failed, fallback to iframe', e);
+        }
+        // fallback: iframe inside webviewContainer (for when WebviewWindow not available)
         document.getElementById('tauri-browser-view')?.remove();
         const host = document.getElementById('webviewContainer') || document.body;
         const isWebviewHost = host.id === 'webviewContainer';
@@ -51,8 +77,16 @@
         try { await call('create_browser_view', { url: u, opts }); } catch {}
         return {ok:true};
     },
-    hideBrowserView: async () => { const c=document.getElementById('tauri-browser-view'); if(c) c.style.display='none'; try{await call('hide_browser_view');}catch{} return {ok:true}; },
-    destroyBrowserView: async () => { document.getElementById('tauri-browser-view')?.remove(); try{await call('destroy_browser_view');}catch{} return {ok:true}; },
+    hideBrowserView: async () => {
+        try { const { WebviewWindow } = window.__TAURI__.webviewWindow; const win = await WebviewWindow.getByLabel('wan2gp-view'); if (win) { try{ await win.hide(); }catch{} } } catch {}
+        const c=document.getElementById('tauri-browser-view'); if(c) c.style.display='none'; try{await call('hide_browser_view');}catch{} return {ok:true};
+    },
+    destroyBrowserView: async () => {
+        try { const { WebviewWindow } = window.__TAURI__.webviewWindow; const win = await WebviewWindow.getByLabel('wan2gp-view'); if (win) { try{ await win.close(); }catch{} } } catch {}
+        document.getElementById('tauri-browser-view')?.remove();
+        try { const wc=document.getElementById('webviewContainer'); if(wc){ wc.classList.add('hidden'); wc.innerHTML=''; } const db=document.getElementById('dashBody'); if(db) db.style.display='flex'; } catch {}
+        try{await call('destroy_browser_view');}catch{} return {ok:true};
+    },
     detachBrowserView: async () => { const c=document.getElementById('tauri-browser-view'); if(c) c.style.display='none'; try{await call('detach_browser_view');}catch{} return {ok:true}; },
     reattachBrowserView: async () => { const c=document.getElementById('tauri-browser-view'); if(c) c.style.display='flex'; try{await call('reattach_browser_view');}catch{} return {ok:true}; },
     createTermView: () => call('create_term_view'), destroyTermView: () => call('destroy_term_view'),
@@ -100,6 +134,8 @@
     onBvCrashRecovered: (cb) => { listen('bv-crash-recovered', cb); return ()=>{}; }
   };
   window.w2gp = w2gp;
+  // ponytail: dummy plugins for Gradio iframe that does window.parent.w2gp.plugins (MotionDesigner bridge) — prevents "Cannot read properties of undefined (reading 'plugins')" and black screen
+  window.w2gp.plugins = {};
   // also expose for module users
   window.w2gpReady = true;
 })();
