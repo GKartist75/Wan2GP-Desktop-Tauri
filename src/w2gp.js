@@ -81,9 +81,9 @@
     uninstallPackage: (p) => call('uninstall_package', { pkg: p }), checkPackage: (p) => call('check_package', { pkg: p }),
     restoreRequirements: () => call('restore_requirements'),
     getCrashRecoveryInfo: () => call('get_crash_recovery_info'), uiModeSet: (m) => call('ui_mode_set', { mode: m }),
-    // event bridges: Electron ipcRenderer.on → Tauri listen (returns unlisten fn)
+    // event bridges: Electron ipcRenderer.on → Tauri listen (returns unlisten fn) — with debug log for phases
     onSetupOutput: (cb) => { listen('setup-output', cb); return ()=>{}; },
-    onSetupPhase: (cb) => { listen('setup-phase', cb); return ()=>{}; },
+    onSetupPhase: (cb) => { console.log('[w2gp] onSetupPhase registered'); listen('setup-phase', (p)=>{ console.log('[w2gp] setup-phase', p); try{cb(p);}catch(e){console.error(e);} }); return ()=>{}; },
     onSetupProfile: (cb) => { listen('setup-profile', cb); return ()=>{}; },
     onLaunchLog: (cb) => { listen('launch-log', cb); return ()=>{}; },
     onWangpExit: (cb) => { listen('wangp-exit', cb); return ()=>{}; },

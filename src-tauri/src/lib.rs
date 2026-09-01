@@ -36,29 +36,23 @@ fn local_appdata_dir() -> PathBuf {
     else { appdata_dir() }
 }
 fn data_dir_override_file() -> PathBuf { home_dir().join(".wan2gp-tauri-data-dir") }
+#[allow(dead_code)]
 fn data_dir_override_file_electron() -> PathBuf { home_dir().join(".wan2gp-desktop-data-dir") }
 
 fn get_data_dir() -> PathBuf {
-    // 1. Tauri override (isolated from Electron) — keeps side-by-side installs separate
-    for ov in [data_dir_override_file(), data_dir_override_file_electron()] {
-        if ov.exists() {
-            if let Ok(s) = std::fs::read_to_string(&ov) {
-                let d = s.trim().to_string();
-                if !d.is_empty() {
-                    let p = PathBuf::from(&d);
-                    if p.is_absolute() && p.exists() {
-                        // auto-migrate Electron override to Tauri file on first run (side-by-side)
-                        if ov == data_dir_override_file_electron() && !data_dir_override_file().exists() {
-                            let _ = atomic_write(&data_dir_override_file(), &d);
-                        }
-                        return p;
-                    }
-                    if !p.exists() {
-                        let legacy = std::path::Path::new(&d).join("wgp.py");
-                        let nested = PathBuf::from(&d).join("Wan2GP").join("wgp.py");
-                        if legacy.exists() || nested.exists() { return PathBuf::from(d); }
-                        if ov == data_dir_override_file() { let _ = std::fs::remove_file(&ov); }
-                    }
+    // 1. Tauri override only — isolated from Electron, no fallback
+    let ov = data_dir_override_file();
+    if ov.exists() {
+        if let Ok(s) = std::fs::read_to_string(&ov) {
+            let d = s.trim().to_string();
+            if !d.is_empty() {
+                let p = PathBuf::from(&d);
+                if p.is_absolute() && p.exists() { return p; }
+                if !p.exists() {
+                    let legacy = std::path::Path::new(&d).join("wgp.py");
+                    let nested = PathBuf::from(&d).join("Wan2GP").join("wgp.py");
+                    if legacy.exists() || nested.exists() { return PathBuf::from(d); }
+                    let _ = std::fs::remove_file(&ov);
                 }
             }
         }
@@ -119,7 +113,7 @@ fn load_config_value() -> serde_json::Value {
         "githubToken": "", "hfToken": "", "claudeApiKey": "", "theme": "dark",
         "serverPort": 7861, "serverName": "localhost", "defaultBrowser": "system", // ponytail: 7861 for side-by-side with Electron 7860
 
-        "termDockDefault": "bottom", "electronGpu": true, "share": false,
+        "termDockDefault": "bottom", "electronGpu": true, "launcherGpu": "auto", "share": false,
         "autoUpdateEnabled": true, "ggufEnv": { "enabled": true, "matmulMode": "auto", "streamK": true, "bf16Fp16": false }
     })
 }
@@ -338,7 +332,7 @@ static PREV_CPU: OnceLock<Mutex<Option<(u64,u64)>>> = OnceLock::new();
 static LAST_NVIDIA: OnceLock<Mutex<Option<serde_json::Value>>> = OnceLock::new();
 #[tauri::command]
 fn get_system_metrics() -> serde_json::Value {
-    let mut result = serde_json::json!({"ramFree": null, "vramFree": null, "cpu": null, "gpu": null, "ramUsed": null, "ramTotal": null, "vramUsed": null, "vramTotal": null, "ram": null, "vram": null});
+    let mut result = serde_json::json!({"ramFree": null, "vramFree": null, "cpu": null, "gpu": null, "ramUsed": null, "ramTotal": null, "vramUsed": null, "vramTotal": null, "ram": null, "vram": null, "gpus": [], "gpu2": null, "vram2": null, "vramFree2": null, "vramUsed2": null, "vramTotal2": null});
     // RAM/CPU via sysinfo + os
     {
         use sysinfo::{System, CpuRefreshKind, MemoryRefreshKind, RefreshKind};
@@ -351,15 +345,11 @@ fn get_system_metrics() -> serde_json::Value {
         result["ramTotal"] = serde_json::Value::String(gb(total));
         result["ramUsed"] = serde_json::Value::String(gb(used));
         if total > 0 { result["ram"] = serde_json::json!( (used as f64 / total as f64 * 100.0).round() as i64 ); }
-        // CPU via sysinfo global
         let cpu = sys.global_cpu_usage().round() as i64;
-        // use prev delta if available would be more accurate, but sysinfo's usage is already delta-based (needs two refreshes)
-        // fallback to sysinfo value if >0, else null on first tick
         if cpu > 0 { result["cpu"] = serde_json::json!(cpu); }
-        // store prev for next tick (not needed for sysinfo, but keep for compat)
         let _ = PREV_CPU.get_or_init(|| Mutex::new(None));
     }
-    // nvidia-smi for VRAM/GPU
+    // nvidia-smi for VRAM/GPU — per-GPU breakdown + WMI iGPU fallback (mirrors Electron main.js)
     {
         use std::process::Command;
         let out = Command::new("nvidia-smi").args(["--query-gpu=memory.free,memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"]).output();
@@ -367,13 +357,18 @@ fn get_system_metrics() -> serde_json::Value {
             let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
             if !s.is_empty() {
                 let mut free=0i64; let mut used=0i64; let mut total=0i64; let mut gpu=0i64; let mut cnt=0;
+                let mut per_gpu: Vec<serde_json::Value> = Vec::new();
                 for line in s.lines() {
                     let p: Vec<&str> = line.split(',').map(|x| x.trim()).collect();
                     if p.len()>=4 {
-                        if let Ok(v)=p[0].parse::<i64>() { free+=v; }
-                        if let Ok(v)=p[1].parse::<i64>() { used+=v; }
-                        if let Ok(v)=p[2].parse::<i64>() { total+=v; }
-                        if let Ok(v)=p[3].parse::<i64>() { gpu+=v; cnt+=1; }
+                        let f = p[0].parse::<i64>().unwrap_or(0);
+                        let u = p[1].parse::<i64>().unwrap_or(0);
+                        let t = p[2].parse::<i64>().unwrap_or(0);
+                        let g = p[3].parse::<i64>().unwrap_or(0);
+                        free+=f; used+=u; total+=t; gpu+=g; cnt+=1;
+                        let fmt_mb = |mb: i64| if mb>=1024 { format!("{} GB", (mb as f64/1024.0).round() as i64) } else { format!("{} MB", mb) };
+                        let vram_pct = if t>0 { (u as f64 / t as f64 * 100.0).round() as i64 } else { 0 };
+                        per_gpu.push(serde_json::json!({"free": f, "used": u, "total": t, "gpu": g, "vram": vram_pct, "vramFree": fmt_mb(f), "vramUsed": fmt_mb(u), "vramTotal": fmt_mb(t)}));
                     }
                 }
                 let fmt = |mb: i64| if mb>=1024 { format!("{} GB", (mb as f64/1024.0).round() as i64) } else { format!("{} MB", mb) };
@@ -382,11 +377,47 @@ fn get_system_metrics() -> serde_json::Value {
                 result["vramTotal"] = serde_json::Value::String(fmt(total));
                 if total>0 { result["vram"] = serde_json::json!((used as f64/total as f64*100.0).round() as i64); }
                 result["gpu"] = serde_json::json!(if cnt>1 { (gpu as f64/cnt as f64).round() as i64 } else { gpu });
+                // build gpus array for topbar
+                let mut gpus_arr: Vec<serde_json::Value> = per_gpu.iter().enumerate().map(|(i,g)| {
+                    serde_json::json!({"index": i, "gpu": g["gpu"], "vram": g["vram"], "vramFree": g["vramFree"], "vramUsed": g["vramUsed"], "vramTotal": g["vramTotal"]})
+                }).collect();
+                // iGPU fallback: nvidia-smi only lists NVIDIA; add Intel/AMD via WMI when only 1 GPU
+                if gpus_arr.len() == 1 {
+                    if let Ok(wmi_out) = Command::new("powershell").args(["-NoProfile","-Command","Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ForEach-Object { $_.Name + '|' + $_.AdapterRAM }"]).output() {
+                        if wmi_out.status.success() {
+                            let wmi_s = String::from_utf8_lossy(&wmi_out.stdout).trim().to_string();
+                            for ln in wmi_s.lines() {
+                                if let Some((n, r)) = ln.split_once('|') {
+                                    let name = n.trim();
+                                    if name.is_empty() || name.to_lowercase().contains("nvidia") { continue; }
+                                    let lower = name.to_lowercase();
+                                    if lower.contains("intel") || lower.contains("amd") || lower.contains("radeon") || lower.contains("arc") {
+                                        let vram_mb = r.trim().parse::<i64>().unwrap_or(0) / (1024*1024);
+                                        let fmt2 = if vram_mb>0 { format!("{} MB", vram_mb) } else { "—".into() };
+                                        gpus_arr.push(serde_json::json!({"index": gpus_arr.len(), "gpu": 0, "vram": null, "vramFree": fmt2.clone(), "vramUsed": "0 MB", "vramTotal": fmt2, "name": name}));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                result["gpus"] = serde_json::Value::Array(gpus_arr.clone());
+                if gpus_arr.len() > 1 {
+                    if let Some(g2) = gpus_arr.get(1) {
+                        result["gpu2"] = g2.get("gpu").cloned().unwrap_or(serde_json::Value::Null);
+                        result["vram2"] = g2.get("vram").cloned().unwrap_or(serde_json::Value::Null);
+                        result["vramFree2"] = g2.get("vramFree").cloned().unwrap_or(serde_json::Value::Null);
+                        result["vramUsed2"] = g2.get("vramUsed").cloned().unwrap_or(serde_json::Value::Null);
+                        result["vramTotal2"] = g2.get("vramTotal").cloned().unwrap_or(serde_json::Value::Null);
+                    }
+                }
                 let _ = LAST_NVIDIA.get_or_init(|| Mutex::new(None)).lock().unwrap().replace(result.clone());
             }
         } else {
             if let Some(last) = LAST_NVIDIA.get().and_then(|m| m.lock().ok()).and_then(|g| g.clone()) {
                 result["vramFree"] = last["vramFree"].clone(); result["vramUsed"] = last["vramUsed"].clone(); result["vramTotal"] = last["vramTotal"].clone(); result["vram"] = last["vram"].clone(); result["gpu"] = last["gpu"].clone();
+                result["gpus"] = last["gpus"].clone(); result["gpu2"] = last["gpu2"].clone(); result["vram2"] = last["vram2"].clone(); result["vramFree2"] = last["vramFree2"].clone(); result["vramUsed2"] = last["vramUsed2"].clone(); result["vramTotal2"] = last["vramTotal2"].clone();
             }
         }}
     }
@@ -511,12 +542,17 @@ fn uv_cache_info() -> serde_json::Value {
     serde_json::json!({"exists": p.exists(), "sizeBytes": null, "cacheDir": p.to_string_lossy().to_string()})
 }
 #[tauri::command]
-fn uv_cache_size() -> serde_json::Value {
+async fn uv_cache_size() -> serde_json::Value {
+    // ponytail: async walk so Manage → Calculate size doesn't freeze UI (Electron 63b0f90)
     let p = get_repo_dir().join(".uv-cache");
     if !p.exists() { return serde_json::json!({"exists": false, "sizeBytes": 0, "cacheDir": p.to_string_lossy().to_string()}); }
-    let mut size: u64 = 0;
-    fn walk(p: &Path, acc: &mut u64) { if let Ok(rd) = std::fs::read_dir(p) { for e in rd.flatten() { if let Ok(m) = e.metadata() { if m.is_dir() { walk(&e.path(), acc); } else { *acc += m.len(); } } } } }
-    walk(&p, &mut size);
+    let p_clone = p.clone();
+    let size = tauri::async_runtime::spawn_blocking(move || {
+        let mut size: u64 = 0;
+        fn walk(p: &Path, acc: &mut u64) { if let Ok(rd) = std::fs::read_dir(p) { for e in rd.flatten() { if let Ok(m) = e.metadata() { if m.is_dir() { walk(&e.path(), acc); } else { *acc += m.len(); } } } } }
+        walk(&p_clone, &mut size);
+        size
+    }).await.unwrap_or(0);
     serde_json::json!({"exists": true, "sizeBytes": size, "cacheDir": p.to_string_lossy().to_string()})
 }
 #[tauri::command]
@@ -563,11 +599,28 @@ async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_jso
     }
     mutating_try("launch")?;
     let share = cfg.get("share").and_then(|v| v.as_bool()).unwrap_or(false);
-    let mut args = vec!["wgp.py".to_string(), "--server-port".into(), port.to_string(), "--server-name".into(), "localhost".into(), "--advanced".into()];
+    let gpu_device = cfg.get("gpuDevice").and_then(|v| v.as_str()).unwrap_or("auto").trim().to_string();
+    let launcher_gpu = cfg.get("launcherGpu").and_then(|v| v.as_str()).unwrap_or("auto").to_string();
+    // build args — gpuDevice -> --gpu (mirrors Electron buildCommonLaunchArgs)
+    let server_name = cfg.get("serverName").and_then(|v| v.as_str()).unwrap_or("localhost").to_string();
+    let mut args = vec!["wgp.py".to_string(), "--server-port".into(), port.to_string(), "--server-name".into(), server_name.clone(), "--advanced".into(), "--multiple-images".into()];
     if share { args.push("--share".into()); }
-    // vram coefficient forward (reads wgp_config.json if present)
+    if gpu_device != "auto" && gpu_device.starts_with("cuda:") && !args.contains(&"--gpu".to_string()) {
+        args.push("--gpu".into()); args.push(gpu_device.clone());
+    }
     let emit = |msg: &str| { let _ = app.emit("launch-log", msg.to_string()); };
     emit(&format!("[*] Launching Wan2GP ({}) on :{}…\n", mode, port));
+    // GPU assignment log (mirrors Electron 9945990)
+    {
+        let hw = get_gpu_info_sync();
+        let hw_name = hw.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        let hw_vendor = hw.get("vendor").and_then(|v| v.as_str()).unwrap_or("?");
+        let hw_vram = hw.get("vramMB").and_then(|v| v.as_str()).unwrap_or("0");
+        let gpu_count = std::process::Command::new("nvidia-smi").args(["--query-gpu=index","--format=csv,noheader"]).output().ok().map(|o| if o.status.success() { String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count().to_string() + " NVIDIA" } else { "?".into() }).unwrap_or("?".into());
+        let gen_label = if gpu_device=="auto" { format!("auto ({} )", hw_name) } else { gpu_device.clone() };
+        emit(&format!("[*] GPU assignment — Launcher UI: {} | Generation: {} | HW: {} ({}, {}) | Detected: {}\n", launcher_gpu, gen_label, hw_name, hw_vendor, hw_vram, gpu_count));
+    }
+    emit(&format!("[*] Args: {}\n", args.join(" ")));
     // bootstrap shim — minimal PYTHONUNBUFFERED + isatty patch so tqdm bars stream
     let boot = repo.join(".wan2gp-bootstrap.py");
     let _ = std::fs::write(&boot, "import runpy,sys,os; os.environ['PYTHONUNBUFFERED']='1'\nrunpy.run_path('wgp.py',run_name='__main__')");
@@ -856,18 +909,61 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command]
-async fn reinstall(_app: tauri::AppHandle) -> Result<serde_json::Value,String> {
+async fn reinstall(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
     mutating_try("reinstall")?;
     let repo = get_repo_dir();
+    let emit = |msg: &str| { let _ = app.emit("setup-output", msg.to_string()); };
+    emit("[*] Removing existing installation...\n");
     // backup plugins/finetunes (ponytail: xcopy fallback)
     let backup = get_data_dir().join(".reinstall-backup");
     let _ = std::fs::remove_dir_all(&backup);
     let _ = std::fs::create_dir_all(&backup);
     for sub in ["plugins","finetunes"] { let s = repo.join(sub); if s.exists() { let d = backup.join(sub); let _ = std::process::Command::new("xcopy").args(["/E","/I", &s.to_string_lossy().to_string(), &d.to_string_lossy().to_string()]).output(); } }
     if repo.join("wgp_config.json").exists() { let _ = std::fs::copy(repo.join("wgp_config.json"), backup.join("wgp_config.json")); }
-    // remove repo
-    if repo.exists() { let _ = std::fs::remove_dir_all(&repo); }
+    if repo.exists() {
+        // ponytail: .electron is the live WebView2 Shared Dictionary — locked while launcher runs, keep it (Electron d186d49+e3e8505)
+        const KEEP: &[&str] = &[".electron"];
+        let trash = repo.with_file_name(format!("{}.trash-{}", repo.file_name().unwrap_or_default().to_string_lossy(), std::process::id()));
+        let mut ok = true;
+        if let Ok(ents) = std::fs::read_dir(&repo) {
+            let _ = std::fs::create_dir_all(&trash);
+            for e in ents.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if KEEP.contains(&name.as_str()) { continue; }
+                let src = e.path(); let dst = trash.join(&name);
+                if std::fs::rename(&src, &dst).is_err() {
+                    // locked .git/.uv-cache — clear read-only and retry, then blocking rm fallback
+                    #[cfg(windows)] { let _ = std::process::Command::new("cmd").args(["/C", &format!("attrib -R /S /D \"{}\"", src.display())]).output(); }
+                    if std::fs::rename(&src, &dst).is_err() {
+                        let mut moved = false;
+                        for _ in 0..5 {
+                            if std::fs::remove_dir_all(&src).is_ok() || std::fs::remove_file(&src).is_ok() { moved = true; break; }
+                            std::thread::sleep(std::time::Duration::from_millis(400));
+                        }
+                        if !moved { ok = false; }
+                        let _ = std::fs::remove_dir_all(&dst);
+                    }
+                }
+            }
+            // ensure .git is gone before clone
+            for _ in 0..5 {
+                let git = repo.join(".git");
+                if !git.exists() { break; }
+                #[cfg(windows)] { let _ = std::process::Command::new("cmd").args(["/C", &format!("attrib -R /S /D \"{}\"", git.display())]).output(); }
+                let _ = std::fs::remove_dir_all(&git);
+                if git.exists() { std::thread::sleep(std::time::Duration::from_millis(400)); } else { break; }
+            }
+            // background delete of trash
+            let trash_clone = trash.clone();
+            std::thread::spawn(move || { let _ = std::fs::remove_dir_all(&trash_clone); });
+            if ok { emit("[*] Old installation moved to trash (kept .electron) — fresh install starting...\n"); }
+        }
+        if !ok {
+            emit("[!] Some files were locked — fresh install will reuse the folder.\n");
+        }
+    }
     let _ = std::fs::remove_file(get_envs_file());
+    let _ = std::fs::remove_dir_all(get_data_dir().join(".py-shim"));
     mutating_done(); Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command]
@@ -1091,7 +1187,12 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
 #[tauri::command] fn set_theme_follow_system(enabled: bool) -> serde_json::Value { let _=enabled; serde_json::json!({"ok": true}) }
 #[tauri::command] fn set_notifications_enabled(enabled: bool) -> serde_json::Value { let _=enabled; serde_json::json!({"ok": true}) }
 #[tauri::command] fn check_update(opts: Option<serde_json::Value>) -> serde_json::Value { let _=opts; serde_json::json!({"update": null}) }
-#[tauri::command] fn download_update(opts: Option<serde_json::Value>) -> serde_json::Value { let _=opts; serde_json::json!({"ok": true}) }
+#[tauri::command] fn download_update(opts: Option<serde_json::Value>) -> serde_json::Value {
+    // Electron 91c2de8: Full (disableDifferentialDownload=true) vs Quick (differential=true)
+    let use_diff = opts.as_ref().and_then(|o| o.get("differential")).and_then(|v| v.as_bool()).unwrap_or(false);
+    // ponytail: Tauri updater plugin not yet wired (needs pubkey/endpoints) — keep stub but respect flag
+    serde_json::json!({"ok": true, "differential": use_diff})
+}
 #[tauri::command] fn install_update() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn create_browser_view(url: Option<String>, opts: Option<serde_json::Value>) -> serde_json::Value { let _=(url, opts); serde_json::json!({"ok": true}) }
 #[tauri::command] fn destroy_browser_view() -> serde_json::Value { serde_json::json!({"ok": true}) }
@@ -1122,6 +1223,29 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Launcher GPU preference — mirrors Electron early switch (main.js 323-350)
+    // Reads desktop-config.json before WebView2 creation and sets browser args.
+    // Supports: auto | integrated (low-power) | dedicated (high-perf) | disabled (SwiftShader)
+    {
+        let cfg_path = get_config_file();
+        if cfg_path.exists() {
+            if let Ok(s) = std::fs::read_to_string(&cfg_path) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+                    let lg = v.get("launcherGpu")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or_else(|| if v.get("electronGpu").and_then(|x| x.as_bool()) == Some(false) { "disabled" } else { "auto" })
+                        .trim().to_string();
+                    match lg.as_str() {
+                        "disabled" => std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGS", "--disable-gpu"),
+                        "integrated" => std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGS", "--force_low_power_gpu"),
+                        "dedicated" => std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGS", "--force_high_performance_gpu"),
+                        _ => {}
+                    }
+                    eprintln!("[launcher] GPU preference: {} — {}", lg, match lg.as_str() { "integrated" => "iGPU (power saving, frees VRAM)", "dedicated" => "dGPU (high perf)", "disabled" => "SwiftShader (max VRAM)", _ => "OS decides" });
+                }
+            }
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
