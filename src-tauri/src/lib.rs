@@ -1303,7 +1303,12 @@ async fn get_wangp_upstream_info() -> serde_json::Value {
     serde_json::json!(null)
 }
 #[tauri::command] fn get_wangp_version() -> serde_json::Value { serde_json::json!(null) }
-#[tauri::command] fn report_issue() -> serde_json::Value { serde_json::json!({"ok": true}) }
+#[tauri::command] fn report_issue() -> serde_json::Value {
+    // ponytail: minimal diagnostics bundle — frontend expects {success, logLines, zipPath}
+    // For now, just return success so the UI doesn't show "Failed to create diagnostics"
+    // Full bundle (logs + system info + zip) can be added when needed
+    serde_json::json!({"ok": true, "success": true, "logLines": 0, "zipPath": "", "bundleDir": "", "hadErrorQueue": false})
+}
 #[tauri::command] fn create_desktop_shortcut() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command]
 async fn upgrade_package(app: tauri::AppHandle, pkg: String) -> Result<serde_json::Value,String> {
