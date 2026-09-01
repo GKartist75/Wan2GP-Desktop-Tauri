@@ -2422,7 +2422,8 @@ async function refreshDeepy() {
       else if (!ready(eng)) { ok = false; title = 'Install / enable this engine first (see LLM Engines above)' }
     } else if (mode === 'disabled' || mode === 'zero') {
       const enh = (enhancerOpts.querySelector('input[name=deepyEnhancer]:checked') || {}).value
-      if (!enh) { ok = false; title = 'Pick a local model (Prompt Enhancer)' }
+      // ponytail: Tauri — don't block Apply if enhancer not yet rendered; Rust defaults to 3 (Qwen 4B) for Zero
+      if (!enh && !window.__TAURI__) { ok = false; title = 'Pick a local model (Prompt Enhancer)' }
     }
     applyBtn.disabled = !ok
     applyBtn.title = title || ('Set Deepy to ' + mode)
