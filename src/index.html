@@ -970,7 +970,9 @@
        script tag (NOT via preload require — the window is sandboxed, and
        sandboxed preloads can only require whitelisted modules). Same module the
        node --test suite requires, so escaping logic lives in one place. -->
-  <script src="../services/escape.js"></script>
+  <!-- Tauri shim: provides window.w2gp via invoke() — ponytail: one file replaces 9600L preload.js -->
+  <script src="w2gp.js"></script>
+  <script src="services/escape.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
