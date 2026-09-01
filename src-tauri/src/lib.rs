@@ -342,12 +342,30 @@ fn detect_hardware() -> serde_json::Value {
 
 #[tauri::command]
 fn get_hardware_profile() -> serde_json::Value {
-    // mirrors auto-tune recommend matrix simplified
+    // mirrors Electron get-hardware-profile — returns profile string + packages/kernels so frontend .join() never crashes
     let gpus = detect_gpus();
     let vram_mb = gpus.as_array().and_then(|a| a.first()).and_then(|g| g.get("vramMB")).and_then(|v| v.as_f64()).unwrap_or(0.0);
     let vram_gb = vram_mb / 1024.0;
-    let profile = if vram_gb >= 24.0 { 1 } else if vram_gb >= 12.0 { 4 } else { 5 };
-    serde_json::json!({"profile": profile, "vramGb": vram_gb})
+    let gpu = get_gpu_info_sync();
+    let vendor = gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
+    let name = gpu.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let key = kernel_profile_key(vendor, name);
+    let (profile_str, packages, kernels) = match key.as_str() {
+        "RTX_50" => ("RTX_50", vec!["torch","triton","sageattention","spas_sage_attn","flash_attn"], vec!["nunchaku","lightx2v","gguf"]),
+        "RTX_40" | "RTX_30" | "RTX_20" => (key.as_str(), vec!["torch","triton","sageattention","spas_sage_attn","flash_attn"], vec!["nunchaku","gguf"]),
+        "GTX_10" => ("GTX_10", vec!["torch"], vec![] as Vec<&str>),
+        _ => (key.as_str(), vec!["torch"], vec![] as Vec<&str>),
+    };
+    let pnum = if vram_gb >= 24.0 { 1 } else if vram_gb >= 12.0 { 4 } else { 5 };
+    serde_json::json!({
+        "profile": profile_str,
+        "vramGb": vram_gb,
+        "profileNum": pnum,
+        "detail": { "kernels": kernels.clone(), "python": "3.11.14", "torch": "2.10.0 CU13", "profile": profile_str },
+        "packages": packages,
+        "kernels": kernels.iter().map(|k| serde_json::json!({"label": *k, "dist": *k})).collect::<Vec<_>>(),
+        "kernelsRaw": kernels
+    })
 }
 
 static PREV_CPU: OnceLock<Mutex<Option<(u64,u64)>>> = OnceLock::new();
@@ -643,6 +661,10 @@ async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_jso
         emit(&format!("[*] GPU assignment — Launcher UI: {} | Generation: {} | HW: {} ({}, {}) | Detected: {}\n", launcher_gpu, gen_label, hw_name, hw_vendor, hw_vram, gpu_count));
     }
     emit(&format!("[*] Args: {}\n", args.join(" ")));
+    // HF_TOKEN / config env (mirrors Electron launchCfg)
+    let launch_cfg = load_config_value();
+    let hf_token = launch_cfg.get("hfToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let claude_key = launch_cfg.get("claudeApiKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
     // bootstrap shim — minimal PYTHONUNBUFFERED + isatty patch so tqdm bars stream
     let boot = repo.join(".wan2gp-bootstrap.py");
     let _ = std::fs::write(&boot, "import runpy,sys,os; os.environ['PYTHONUNBUFFERED']='1'\nrunpy.run_path('wgp.py',run_name='__main__')");
@@ -657,8 +679,25 @@ async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_jso
             if alt.exists() { alt.to_string_lossy().to_string() } else { raw.to_string() }
         } else { cand.to_string_lossy().to_string() }
     } else { "python".to_string() };
+    emit(&format!("[*] Python: {}\n", py));
+    emit(&format!("[*] Port: {}\n", port));
     use tauri_plugin_shell::ShellExt;
-    let (rx, child) = app.shell().command(&py).args(&args).current_dir(&repo).spawn().map_err(|e| { mutating_done(); e.to_string() })?;
+    // ponytail: PYTHONUNBUFFERED for streaming logs (tqdm), plus HF_TOKEN/claude key
+    let mut cmd = app.shell().command(&py);
+    cmd = cmd.args(&args).current_dir(&repo);
+    // shell plugin env() — if not available, fallback to std env (child inherits)
+    // tauri-plugin-shell 2.x supports .env() — use it when available
+    #[allow(unused_mut)]
+    let mut cmd = cmd;
+    // set env via std::env for child inheritance as fallback
+    // (shell plugin also inherits process env, so set temporarily)
+    if !hf_token.is_empty() { std::env::set_var("HF_TOKEN", &hf_token); }
+    if !claude_key.is_empty() { std::env::set_var("ANTHROPIC_API_KEY", &claude_key); }
+    std::env::set_var("PYTHONUNBUFFERED", "1");
+    std::env::set_var("PYTHONUTF8", "1");
+    std::env::set_var("PYTHONIOENCODING", "utf-8");
+    let (rx, child) = cmd.spawn().map_err(|e| { mutating_done(); emit(&format!("[LAUNCH ERROR] spawn failed: {}\n", e)); e.to_string() })?;
+    emit(&format!("[*] Spawned PID {}\n", child.pid()));
     if let Some(m) = WANGP_PID.get_or_init(|| Mutex::new(None)).lock().ok() { drop(m); }
     *WANGP_PID.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(child.pid());
     // stream logs in background
@@ -734,8 +773,6 @@ async fn check_package_updates(app: tauri::AppHandle, versions: Option<serde_jso
 }
 #[tauri::command]
 fn check_package(pkg: String) -> serde_json::Value { serde_json::json!({"name": pkg, "installed": false}) }
-#[tauri::command]
-fn deepy_status() -> serde_json::Value { serde_json::json!({"mode": "disabled"}) }
 #[tauri::command]
 fn memory_profile_read() -> serde_json::Value {
     // read wgp_config.json memory profile — ponytail: return current profile or default
@@ -1194,14 +1231,90 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
     while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
-#[tauri::command] fn llm_engines_list() -> serde_json::Value { serde_json::json!([]) }
+#[tauri::command] fn llm_engines_list() -> serde_json::Value {
+    // ponytail: minimal stub that satisfies frontend ready() checks (opencode/claude/codex)
+    // Electron probes cliOnPath; Tauri returns empty but with ok flag so Deepy Prime still selectable
+    serde_json::json!({"ok": true, "engines": []})
+}
 #[tauri::command] fn llm_engine_install(engine: String) -> serde_json::Value { let _=engine; serde_json::json!({"ok": true}) }
 #[tauri::command] fn llm_engine_serve(engine: String, action: String) -> serde_json::Value { let _=(engine, action); serde_json::json!({"ok": true}) }
 #[tauri::command] fn llm_engine_auth(engine: String) -> serde_json::Value { let _=engine; serde_json::json!({"ok": true}) }
-#[tauri::command] fn deepy_activate(engine: String) -> serde_json::Value { let _=engine; serde_json::json!({"ok": true}) }
-#[tauri::command] fn deepy_set(mode: String, engine: Option<String>, enhancer: Option<String>) -> serde_json::Value { let _=(mode, engine, enhancer); serde_json::json!({"ok": true}) }
+#[tauri::command] fn deepy_status() -> serde_json::Value {
+    let p = get_repo_dir().join("wgp_config.json");
+    if !p.exists() { return serde_json::json!({"ok": true, "available": false, "reason": "wgp_config.json not found — install Wan2GP first."}); }
+    let Ok(s) = std::fs::read_to_string(&p) else { return serde_json::json!({"ok": false, "error": "cannot read wgp_config.json"}); };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) else { return serde_json::json!({"ok": false, "error": "wgp_config.json corrupted"}); };
+    let enabled = v.get("deepy_enabled").and_then(|x| x.as_i64()).unwrap_or(0);
+    let dtype = v.get("deepy_type").and_then(|x| x.as_str()).unwrap_or("zero");
+    let mode = if enabled==0 { "disabled" } else if dtype=="prime" { "prime" } else { "zero" };
+    let enh = v.get("enhancer_enabled").and_then(|x| x.as_i64());
+    let le = v.get("llm_engines");
+    let cur_engine = le.and_then(|x| x.get("deepy")).and_then(|x| x.as_str()).map(|s| s.to_string()).unwrap_or_default();
+    let prompt_enh = le.and_then(|x| x.get("prompt_enhancer")).and_then(|x| x.as_str()).map(|s| s.to_string());
+    let engines: Vec<String> = le.and_then(|x| x.get("profiles")).and_then(|x| x.as_object()).map(|o| o.keys().cloned().collect()).unwrap_or_default();
+    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines})
+}
+#[tauri::command] fn deepy_set(mode: String, engine: Option<String>, enhancer: Option<String>) -> serde_json::Value {
+    let m = mode.trim().to_lowercase();
+    if !["disabled","zero","prime"].contains(&m.as_str()) { return serde_json::json!({"ok": false, "error": format!("Unknown Deepy mode: {}", mode)}); }
+    if m=="prime" && engine.as_deref().map(|s| ["opencode","claude-code","codex"].contains(&s)).unwrap_or(false)==false {
+        return serde_json::json!({"ok": false, "error": "Prime requires an engine (OpenCode / Claude Code / Codex)."});
+    }
+    let p = get_repo_dir().join("wgp_config.json");
+    if !p.exists() { return serde_json::json!({"ok": false, "error": "wgp_config.json not found — install Wan2GP first."}); }
+    let Ok(s) = std::fs::read_to_string(&p) else { return serde_json::json!({"ok": false, "error": "cannot read wgp_config.json"}); };
+    let mut v: serde_json::Value = match serde_json::from_str(&s) { Ok(x)=>x, Err(e)=> return serde_json::json!({"ok": false, "error": format!("wgp_config.json corrupted: {}", e)}) };
+    let bak = p.with_file_name("wgp_config.json.deepy-bak"); let _ = std::fs::copy(&p, &bak);
+    let (enabled, dtype) = match m.as_str() { "disabled"=> (0,"zero"), "prime"=> (1,"prime"), _=> (1,"zero") };
+    v["deepy_enabled"] = serde_json::json!(enabled); v["deepy_type"] = serde_json::json!(dtype);
+    // enhancer id
+    let enh_id: Option<i64> = enhancer.as_ref().and_then(|e| e.parse::<i64>().ok()).or_else(|| {
+        match m.as_str() { "prime"=> None, "zero"=> Some(3), _=> Some(1) }
+    });
+    if m!="prime" { if let Some(id)=enh_id { v["enhancer_enabled"] = serde_json::json!(id); } }
+    // llm_engines deepy
+    let eng_map = |id: &str| match id { "opencode"=> "opencode", "claude-code"=> "claude", "codex"=> "codex", _=> "opencode" };
+    let exe_map = |id: &str| match id { "opencode"=> "opencode", "claude-code"=> "claude", "codex"=> "codex", _=> "opencode" };
+    let enh_to_engine = |id:i64| match id { 1=>"local_florence_llama32", 2=>"local_florence_llamajoy", 3=>"qwen35_4b", 4=>"qwen35_9b", 5=>"qwen38_27b", _=>"qwen35_4b" };
+    if v.get("llm_engines").is_none() { v["llm_engines"] = serde_json::json!({}); }
+    if m=="prime" {
+        let eid = engine.clone().unwrap_or_else(|| "opencode".into());
+        let profile = eng_map(&eid); let exe = exe_map(&eid);
+        v["llm_engines"]["deepy"] = serde_json::json!(profile);
+        v["llm_engines"]["prompt_enhancer"] = serde_json::json!("same_as_deepy");
+        if v["llm_engines"]["profiles"].is_null() { v["llm_engines"]["profiles"] = serde_json::json!({}); }
+        if v["llm_engines"]["profiles"][profile].is_null() { v["llm_engines"]["profiles"][profile] = serde_json::json!({}); }
+        v["llm_engines"]["profiles"][profile]["executable"] = serde_json::json!(exe);
+        if profile=="opencode" { v["llm_engines"]["profiles"]["opencode"]["base_url"] = serde_json::json!("http://127.0.0.1:4096"); }
+    } else {
+        let eid = enh_id.unwrap_or(1);
+        let eng_str = enh_to_engine(eid);
+        v["llm_engines"]["deepy"] = serde_json::json!(eng_str);
+        v["llm_engines"]["prompt_enhancer"] = serde_json::json!("same_as_deepy");
+    }
+    if atomic_write(&p, &serde_json::to_string_pretty(&v).unwrap_or_default()).is_err() {
+        return serde_json::json!({"ok": false, "error": "failed to write wgp_config.json"});
+    }
+    let msg = if m=="prime" { format!("Deepy Prime set to {}", engine.clone().unwrap_or_else(|| "opencode".into())) } else if m=="zero" { "Deepy Zero enabled (local model)".into() } else { "Deepy disabled".into() };
+    serde_json::json!({"ok": true, "mode": m, "enhancerId": enh_id, "backup": bak.to_string_lossy().to_string(), "message": msg + ". Launch Wan2GP and click \"Ask Deepy\"."})
+}
+#[tauri::command] fn deepy_activate(engine: String) -> serde_json::Value { deepy_set("prime".into(), Some(engine), None) }
 #[tauri::command] fn set_auto_start(enabled: bool) -> serde_json::Value { let _=enabled; serde_json::json!({"ok": true}) }
-#[tauri::command] fn memory_profile_apply(settings: serde_json::Value) -> serde_json::Value { let _=settings; serde_json::json!({"ok": true}) }
+#[tauri::command] fn memory_profile_apply(settings: serde_json::Value) -> serde_json::Value {
+    // mirrors Electron memory_profile:apply — writes to wgp_config.json and returns applied keys
+    let p = get_repo_dir().join("wgp_config.json");
+    let Ok(s) = std::fs::read_to_string(&p) else { return serde_json::json!({"ok": false, "success": false, "error": "wgp_config.json not found"}); };
+    let mut cfg: serde_json::Value = match serde_json::from_str(&s) { Ok(v)=>v, Err(e)=> return serde_json::json!({"ok": false, "success": false, "error": format!("corrupted: {}", e)}) };
+    let mut applied: Vec<String> = Vec::new();
+    for key in ["video_profile","image_profile","audio_profile","vram_safety_coefficient","vae_config","transformer_quantization"] {
+        if let Some(val) = settings.get(key) { cfg[key] = val.clone(); applied.push(key.to_string()); }
+    }
+    if applied.is_empty() { return serde_json::json!({"ok": true, "success": true, "applied": applied, "unchanged": true}); }
+    if atomic_write(&p, &serde_json::to_string_pretty(&cfg).unwrap_or_default()).is_err() {
+        return serde_json::json!({"ok": false, "success": false, "error": "write failed"});
+    }
+    serde_json::json!({"ok": true, "success": true, "applied": applied})
+}
 #[tauri::command] fn notifier_config() -> serde_json::Value { serde_json::json!({"ok": true, "config": {}}) }
 #[tauri::command] fn notifier_set(cfg: serde_json::Value) -> serde_json::Value { let _=cfg; serde_json::json!({"ok": true}) }
 #[tauri::command] fn notifier_test(cfg: Option<serde_json::Value>) -> serde_json::Value { let _=cfg; serde_json::json!({"ok": true}) }
@@ -1226,8 +1339,13 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command] fn get_crash_recovery_info() -> serde_json::Value { serde_json::json!(null) }
-#[tauri::command] fn launch_webview() -> serde_json::Value { serde_json::json!({"ok": true}) }
-#[tauri::command] fn popout_webview(url: Option<String>) -> serde_json::Value { let _=url; serde_json::json!({"ok": true}) }
+#[tauri::command] async fn launch_webview(app: tauri::AppHandle) -> Result<serde_json::Value, String> { launch(app, Some("app".into())).await }
+#[tauri::command] async fn popout_webview(app: tauri::AppHandle, url: Option<String>) -> Result<serde_json::Value, String> {
+    let res = launch(app.clone(), Some("browser".into())).await?;
+    let u = url.or_else(|| res.get("url").and_then(|v| v.as_str()).map(|s| s.to_string())).unwrap_or_else(|| "http://localhost:7861".into());
+    use tauri_plugin_opener::OpenerExt; let _ = app.opener().open_url(u, None::<String>);
+    Ok(res)
+}
 #[tauri::command] fn hide_browser_view() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn detach_browser_view() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn reattach_browser_view() -> serde_json::Value { serde_json::json!({"ok": true}) }
