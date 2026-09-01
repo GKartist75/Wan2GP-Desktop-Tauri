@@ -1861,8 +1861,9 @@ $('appBtn').addEventListener('click', async () => {
     window.w2gp.uiModeSet('app')   // crash recovery: remember we are in Desktop mode
     if (browserRunning) resetBrowserLaunchUI()
     // Open the floating terminal per the saved default dock (or stay minimised)
+    // ponytail: Tauri desktop embed is iframe, not native BrowserView — don't auto-cover it with the console
     const cfg = await window.w2gp.configLoad()
-    const dock = cfg.termDockDefault || 'bottom'
+    const dock = window.__TAURI__ ? 'minimised' : (cfg.termDockDefault || 'bottom')
     if (dock === 'minimised') {
       if (!$('floatingTerminal').classList.contains('hidden')) closeFloatingTerm()
     } else {

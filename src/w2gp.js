@@ -54,7 +54,9 @@
         try { await call('create_browser_view', { url: u, opts }); } catch {}
         return {ok:true};
     },
-    hideBrowserView: async () => {
+    hideBrowserView: async (reason) => {
+        // ponytail: docked terminal calls hideBrowserView('term') to shrink, not hide — keep iframe visible
+        if (reason === 'term') { console.log('[tauri] hideBrowserView(term) — keep iframe visible'); try{await call('hide_browser_view');}catch{} return {ok:true}; }
         try { const { WebviewWindow } = window.__TAURI__.webviewWindow; const win = await WebviewWindow.getByLabel('wan2gp-view'); if (win) { try{ await win.hide(); }catch{} } } catch {}
         const c=document.getElementById('tauri-browser-view'); if(c) c.style.display='none'; try{await call('hide_browser_view');}catch{} return {ok:true};
     },
@@ -67,7 +69,7 @@
     detachBrowserView: async () => { const c=document.getElementById('tauri-browser-view'); if(c) c.style.display='none'; try{await call('detach_browser_view');}catch{} return {ok:true}; },
     reattachBrowserView: async () => { const c=document.getElementById('tauri-browser-view'); if(c) c.style.display='flex'; try{await call('reattach_browser_view');}catch{} return {ok:true}; },
     createTermView: () => call('create_term_view'), destroyTermView: () => call('destroy_term_view'),
-    bvNavigate: (a) => call('bv_navigate', { action: a }), bvSetZoom: (f) => call('bv_set_zoom', { factor: f }), bvSetDock: (d) => call('bv_set_dock', { dock: d }),
+    bvNavigate: (a) => call('bv_navigate', { action: a }), bvSetZoom: (f) => call('bv_set_zoom', { factor: f }), bvSetDock: (d) => { console.log('[tauri] bvSetDock', d, '— keep iframe visible'); try{ return call('bv_set_dock', { dock: d }); }catch{ return Promise.resolve({ok:true}); } },
     getLogHistory: () => call('get_log_history'),
     openExternal: async (url) => { const u = url || 'http://localhost:7861'; try { await window.__TAURI__.core.invoke('plugin:opener|open_url', { url: u }); } catch { try { window.open(u, '_blank'); } catch {} } try { await call('open_external', { url: u }); } catch {} return {ok:true}; },
     detectBrowsers: () => call('detect_browsers'),
