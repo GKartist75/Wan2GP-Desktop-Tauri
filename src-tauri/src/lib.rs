@@ -113,7 +113,7 @@ fn load_config_value() -> serde_json::Value {
         "githubToken": "", "hfToken": "", "claudeApiKey": "", "theme": "dark",
         "serverPort": 7861, "serverName": "localhost", "defaultBrowser": "system", // ponytail: 7861 for side-by-side with Electron 7860
 
-        "termDockDefault": "bottom", "electronGpu": true, "launcherGpu": "auto", "share": false,
+        "termDockDefault": "bottom", "electronGpu": true, "launcherGpu": "auto", "sageSafe": false, "share": false,
         "autoUpdateEnabled": true, "ggufEnv": { "enabled": true, "matmulMode": "auto", "streamK": true, "bf16Fp16": false }
     })
 }
@@ -1078,13 +1078,23 @@ async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,String>
     let gpu = get_gpu_info_sync(); let profile = kernel_profile_key(gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""), gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""));
     let kernels = cfg.get("gpu_profiles").and_then(|p| p.get(&profile)).and_then(|pr| pr.get("kernels")).and_then(|k| k.as_array()).cloned().unwrap_or_default();
     use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
+    let sage_safe = load_config_value().get("sageSafe").and_then(|v| v.as_bool()).unwrap_or(false);
     for k in kernels {
         if let Some(name) = k.as_str() {
-            // find wheel url from components.kernels[name].cmd[win]
-            let url = cfg.get("components").and_then(|c| c.get("kernels")).and_then(|m| m.get(name)).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()).unwrap_or("");
+            // find wheel url from components.kernels[name].cmd[win] — handle Sage post6 safe toggle
+            let mut url = cfg.get("components").and_then(|c| c.get("kernels")).and_then(|m| m.get(name)).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()).unwrap_or("").to_string();
             if url.is_empty() { continue; }
+            // Sage safe toggle: post4 (upstream) vs post6 (safe) — respects Manage → Settings
+            if name=="sage" || name=="sageattention" {
+                if sage_safe && url.contains("sageattention-2.2.0+cu130torch2.9.0andhigher.post4") {
+                    url = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl".into();
+                } else if !sage_safe && url.contains("sageattention-2.2.0+cu130torch2.10.0andhigher.post6") {
+                    // user chose upstream, but setup_config has safe — revert to post4
+                    url = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl".into();
+                }
+            }
             let _ = app.emit("launch-log", format!("[*] sync kernel {}\n", name));
-            let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install", url, "--upgrade"]).spawn().map_err(|e| e.to_string())?;
+            let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install", &url, "--upgrade"]).spawn().map_err(|e| e.to_string())?;
             while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
         }
     }
