@@ -517,8 +517,8 @@
           <div class="card-header">
             <span class="card-title">Active Environment</span>
             <span class="env-type-tag" id="envType"></span>
-            <button class="btn btn-ghost small" id="envUnlinkBtn" title="Uninstall active environment" style="color:var(--signal-red);border-color:var(--signal-red)">unlink</button>
-            <button class="btn btn-ghost small" id="envRestoreBtn" title="Reinstall all packages from requirements.txt">restore</button>
+            <button class="env-unlink-btn" id="envUnlinkBtn" title="Uninstall active environment">unlink</button>
+            <button class="env-restore-btn" id="envRestoreBtn" title="Reinstall all packages from requirements.txt">restore</button>
             <button class="btn btn-ghost small" id="checkPkgUpdatesBtn" title="Check PyPI for package updates" style="margin-left:auto;padding:1px 6px;font-size:0.55rem;line-height:1.4">↻ Check Updates</button>
           </div>
           <p class="token-hint" style="margin:6px 12px 0">↻ Check Updates queries PyPI for newer versions. Updating a single package (e.g. torch) can break the env (CUDA mismatch, black frames) — use <em>restore</em> to reinstall the tested <code>requirements.txt</code>.</p>
