@@ -1,6 +1,6 @@
 {
     "$schema":  "https://schema.tauri.app/config/2",
-    "productName":  "wan2gp-tauri-spike",
+    "productName":  "Wan2GP Desktop Launcher Tauri",
     "version":  "0.1.2",
     "identifier":  "com.wangp.desktop-tauri",
     "build":  {
