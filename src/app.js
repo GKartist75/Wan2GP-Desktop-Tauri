@@ -1086,6 +1086,7 @@ async function refreshDashboard(){
     if (errNote) errNote.textContent = 'Could not read environment status: ' + (status.error || 'no active environment')
     $('envName').textContent='No active environment'
     window._activeEnvName = ''
+    window._hasActiveEnv = false
     $('envNameHint')?.classList.remove('hidden')
     document.querySelectorAll('.pkg-install-btn, .spec-latest, .spec-update-btn').forEach(function(el) { el.remove() })
     ;['specPython','specTorch','specCuda','specTriton','specSage','specFlash','specDiffusers','specTransformers','specGradio','specAccelerate','specOnnx','specOpencv','specPeft','specHfhub','specBits','specNumpy','specTokenizers','specSparge'].forEach(id=>{ const el=$(id); if(el) el.textContent='—' })
@@ -1096,6 +1097,7 @@ async function refreshDashboard(){
   } else {
     $('envName').textContent=status.env.name; $('envType').textContent=status.env.type
     window._activeEnvName = status.env.name || ''
+    window._hasActiveEnv = true
     $('envNameHint')?.classList.add('hidden')
     // Clear old update/install buttons before re-creating
     document.querySelectorAll('.spec-latest, .spec-update-btn, .pkg-install-btn').forEach(function(el) { el.remove() })
@@ -1366,8 +1368,9 @@ function renderProfileOverview(detail, ids) {
 function refreshEnvUnlink() {
   var btn = $('envUnlinkBtn')
   var restoreBtn = $('envRestoreBtn')
-  // State-driven (not DOM text): envName can lag during coalesced refreshes.
-  var name = window._activeEnvName || ($('envName') && $('envName').textContent) || ''
+  // State-driven: shown whenever an env is known-active, hidden otherwise.
+  var hasEnv = window._hasActiveEnv === true
+  var name = (hasEnv && window._activeEnvName) || ''
   if (btn) {
     if (name && name !== '—' && name !== 'No active environment') {
       btn.style.display = ''; if (restoreBtn) restoreBtn.style.display = ''
