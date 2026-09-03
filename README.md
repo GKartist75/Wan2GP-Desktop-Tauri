@@ -147,6 +147,11 @@ WanGP's memory manager (`mmgp`) uses 7 profiles trading VRAM for speed — Auto-
 - **Keyboard shortcuts** — <kbd>Esc</kbd>/<kbd>Ctrl+W</kbd> close webview.
 - **Maintenance** — update WanGP or the launcher from **Dashboard** or **Manage → Updates**, switch envs, or uninstall from the UI. **Dashboard → Paths** migrates installs between drives.
 
+### Screenshots
+
+![Wan2GP in Desktop with floating console showing live generation progress](screenshots/desktop-live-progress.png)
+*Desktop embed running LTX-2.5 Distilled — floating console streams the live log with progress bars, completed generation in the gallery.*
+
 ---
 
 ## 🔧 GPU kernels — what gets installed per GPU
