@@ -2301,6 +2301,9 @@ function switchSettingsTab(tabName) {
   // Auto-Tune: check if Wan2GP is installed — disable if not
   if (tabName === 'autotune') {
     checkAutoTuneInstalled()
+    // Saved tags + dropdown seeding — runs on EVERY entry (tab click or
+    // dashboard shortcut), not just physical clicks.
+    setTimeout(() => { try { memProfileLoad() } catch {} }, 120)
   }
 }
 
@@ -3298,13 +3301,7 @@ $('memProfileApplyBtn')?.addEventListener('click', async () => {
   finally { btn.disabled = false; btn.textContent = 'Apply Overrides' }
 })
 
-// Load current memory settings whenever the Auto-Tune tab is opened.
-const _origSettingsSwitch = window.__settingsSwitch
-document.querySelectorAll('.settings-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    if (tab.getAttribute('data-tab') === 'autotune') setTimeout(memProfileLoad, 120)
-  })
-})
+// (memProfileLoad is called from switchSettingsTab — every entry path.)
 
   // ── Auto-Tune: failsafe toggle → re-render recommendation live ──
   $('autotuneFailsafeChk').addEventListener('change', async () => {

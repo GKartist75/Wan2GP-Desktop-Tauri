@@ -238,7 +238,7 @@ pub fn repair_settings() -> serde_json::Value {
     let lnk = desktop.join("Wan2GP Tauri.lnk");
     let ps = format!("$s=New-Object -ComObject WScript.Shell; $l=$s.CreateShortcut('{}'); $l.TargetPath='{}'; $l.Arguments='wgp.py'; $l.WorkingDirectory='{}'; $l.Description='Wan2GP Tauri'; $l.Save()", lnk.display(), py.display(), repo.display());
     let ok = silent_command("powershell").args(["-NoProfile","-Command", &ps]).output().is_ok_and(|o| o.status.success());
-    if ok { serde_json::json!({"ok": true, "path": lnk.to_string_lossy().to_string()}) } else { serde_json::json!({"ok": false, "error": "Failed to create shortcut"}) }
+    if ok { serde_json::json!({"ok": true, "success": true, "path": lnk.to_string_lossy().to_string()}) } else { serde_json::json!({"ok": false, "error": "Failed to create shortcut"}) }
 }
 #[tauri::command] pub fn create_browser_view(url: Option<String>, opts: Option<serde_json::Value>) -> serde_json::Value { let _=(url, opts); serde_json::json!({"ok": true}) }
 #[tauri::command] pub fn destroy_browser_view() -> serde_json::Value { serde_json::json!({"ok": true}) }
