@@ -281,14 +281,20 @@ static OPENCODE_PID: std::sync::OnceLock<std::sync::Mutex<Option<u32>>> = std::s
     let bak = p.with_file_name("wgp_config.json.deepy-bak"); let _ = std::fs::copy(&p, &bak);
     let (enabled, dtype) = match m.as_str() { "disabled"=> (0,"zero"), "prime"=> (1,"prime"), _=> (1,"zero") };
     v["deepy_enabled"] = serde_json::json!(enabled); v["deepy_type"] = serde_json::json!(dtype);
-    // enhancer id — JS sends number (3) or null, handle both string/number
-    let enh_id: Option<i64> = enhancer.as_ref().and_then(|v| {
+    // enhancer id — JS sends number (3) or null, handle both string/number.
+    // Enforce valid mode↔id pairs like Electron's resolveEnhancerId: Zero only
+    // runs on Qwen (3/4/5) — a Llama id (1/2) with Zero is the tokenizer-crash
+    // combo, so fall back to the mode default instead of writing it.
+    let raw_id: Option<i64> = enhancer.as_ref().and_then(|v| {
         if let Some(n) = v.as_i64() { Some(n) }
         else if let Some(s) = v.as_str() { s.parse::<i64>().ok() }
         else { None }
-    }).or({
-        match m.as_str() { "prime"=> None, "zero"=> Some(3), _=> Some(1) }
     });
+    let enh_id: Option<i64> = match m.as_str() {
+        "prime" => None,
+        "zero" => Some(match raw_id { Some(3) | Some(4) | Some(5) => raw_id.unwrap(), _ => 3 }),
+        _ => Some(match raw_id { Some(1) | Some(2) => raw_id.unwrap(), _ => 1 }),
+    };
     if m!="prime" { if let Some(id)=enh_id { v["enhancer_enabled"] = serde_json::json!(id); } }
     // llm_engines deepy
     let eng_map = |id: &str| match id { "opencode"=> "opencode", "claude-code"=> "claude", "codex"=> "codex", _=> "opencode" };
@@ -304,11 +310,41 @@ static OPENCODE_PID: std::sync::OnceLock<std::sync::Mutex<Option<u32>>> = std::s
         if v["llm_engines"]["profiles"][profile].is_null() { v["llm_engines"]["profiles"][profile] = serde_json::json!({}); }
         v["llm_engines"]["profiles"][profile]["executable"] = serde_json::json!(exe);
         if profile=="opencode" { v["llm_engines"]["profiles"]["opencode"]["base_url"] = serde_json::json!("http://127.0.0.1:4096"); }
+        // Full Prime preset (mirrors shared/deepy/config.py defaults + guidance).
+        for (k, val) in [
+            ("deepy_prime_custom_system_prompt", serde_json::json!("When several models can satisfy the request, prefer the highest-quality base or full model unless the user explicitly prioritizes speed or names another model.")),
+            ("deepy_prime_mcp_servers", serde_json::json!({})),
+            ("deepy_mcp_auto_discover_paths", serde_json::json!(false)),
+            ("deepy_allow_read_file_system", serde_json::json!(false)),
+            ("deepy_file_system_paths", serde_json::json!([])),
+            ("deepy_read_everywhere", serde_json::json!(false)),
+            ("deepy_auto_cancel_queue_tasks", serde_json::json!(true)),
+            ("deepy_separate_requests_with_empty_line", serde_json::json!(true)),
+        ] { v[k] = val; }
     } else {
         let eid = enh_id.unwrap_or(1);
         let eng_str = enh_to_engine(eid);
         v["llm_engines"]["deepy"] = serde_json::json!(eng_str);
         v["llm_engines"]["prompt_enhancer"] = serde_json::json!("same_as_deepy");
+        if m=="zero" {
+            // Full Zero preset (mirrors shared/deepy/config.py defaults + tool picks).
+            for (k, val) in [
+                ("deepy_vram_mode", serde_json::json!("unload")),
+                ("deepy_context_tokens", serde_json::json!(16386)),
+                ("deepy_kv_cache_quantization", serde_json::json!("auto")),
+                ("deepy_compaction_type", serde_json::json!("discard")),
+                ("deepy_tool_gen_image", serde_json::json!("Krea 2 Turbo (8 Steps)")),
+                ("deepy_tool_edit_image", serde_json::json!("Flux Klein 9B")),
+                ("deepy_tool_gen_video", serde_json::json!("LTX-2 2.5 Distilled")),
+                ("deepy_tool_gen_video_with_speech", serde_json::json!("LTX-2.5 Distilled With Sound")),
+                ("deepy_tool_gen_song", serde_json::json!("ACE-Step 1.5 Turbo LM 1.7B")),
+                ("deepy_tool_gen_speech_from_description", serde_json::json!("Qwen3 1.7B")),
+                ("deepy_tool_gen_speech_from_sample", serde_json::json!("Index TTS 2")),
+                ("deepy_zero_custom_system_prompt", serde_json::json!("")),
+                ("deepy_auto_cancel_queue_tasks", serde_json::json!(true)),
+                ("deepy_separate_requests_with_empty_line", serde_json::json!(true)),
+            ] { v[k] = val; }
+        }
     }
     if atomic_write(&p, &serde_json::to_string_pretty(&v).unwrap_or_default()).is_err() {
         return serde_json::json!({"ok": false, "error": "failed to write wgp_config.json"});
@@ -555,3 +591,52 @@ pub(crate) fn pulse_sniff(line: &str) {
     }
 }
 #[tauri::command] pub fn set_notifications_enabled(enabled: bool) -> serde_json::Value { let _=enabled; serde_json::json!({"ok": true}) }
+
+#[cfg(test)]
+mod deepy_roundtrip_tests {
+    use super::*;
+    fn read_cfg() -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(get_repo_dir().join("wgp_config.json")).unwrap()).unwrap()
+    }
+    #[test]
+    fn deepy_set_writes_coherent_config() {
+        let p = get_repo_dir().join("wgp_config.json");
+        if !p.exists() { return; } // no Wan2GP install on CI — nothing to verify
+        let original = std::fs::read(&p).unwrap();
+        // zero + Qwen 9B
+        let r = deepy_set("zero".into(), None, Some(serde_json::json!(4)));
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap(), "zero apply failed: {r}");
+        let c = read_cfg();
+        assert_eq!(c["deepy_enabled"], 1);
+        assert_eq!(c["deepy_type"], "zero");
+        assert_eq!(c["enhancer_enabled"], 4);
+        assert_eq!(c["llm_engines"]["deepy"], "qwen35_9b");
+        assert_eq!(c["deepy_vram_mode"], "unload");
+        assert_eq!(c["deepy_context_tokens"], 16386);
+        assert_eq!(c["deepy_tool_gen_image"], "Krea 2 Turbo (8 Steps)");
+        // zero + Llama id must fall back to 3 (tokenizer-crash combo)
+        let r = deepy_set("zero".into(), None, Some(serde_json::json!(1)));
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
+        let c = read_cfg();
+        assert_eq!(c["enhancer_enabled"], 3);
+        assert_eq!(c["llm_engines"]["deepy"], "qwen35_4b");
+        // prime + codex
+        let r = deepy_set("prime".into(), Some("codex".into()), None);
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
+        let c = read_cfg();
+        assert_eq!(c["deepy_type"], "prime");
+        assert_eq!(c["llm_engines"]["deepy"], "codex");
+        assert_eq!(c["llm_engines"]["profiles"]["codex"]["executable"], "codex");
+        assert!(c.get("deepy_prime_mcp_servers").is_some());
+        // disabled + Florence
+        let r = deepy_set("disabled".into(), None, Some(serde_json::json!(2)));
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
+        let c = read_cfg();
+        assert_eq!(c["deepy_enabled"], 0);
+        assert_eq!(c["enhancer_enabled"], 2);
+        assert_eq!(c["llm_engines"]["deepy"], "local_florence_llamajoy");
+        // restore byte-identical
+        std::fs::write(&p, &original).unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), original);
+    }
+}
