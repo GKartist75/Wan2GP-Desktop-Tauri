@@ -108,29 +108,24 @@ function currentDock() {
   }
   return 'bottom'
 }
-// Show the console for the current dock. Returns nothing.
+// Show the console for the current dock. In Tauri the console is ALWAYS the
+// DOM terminal (all docks incl. floating overlay) — there is no separate native
+// terminal window like Electron's TermView, so no special-casing by dock.
 let _termBusy = false
 function showTerminal() {
   if (_termBusy) return
   _termBusy = true
   try {
-  const floating = $('floatingTerminal').classList.contains('dock-floating')
-  if (floating) {
-    $('floatingTerminal').classList.add('hidden')
-    window.w2gp.destroyTermView()
-    window.w2gp.reattachBrowserView()
-    window.w2gp.createTermView()
-  } else {
-    window.w2gp.destroyTermView()
-    $('floatingTerminal').classList.remove('hidden')
-    renderTerminals()
-    window.w2gp.reattachBrowserView()
-    // ponytail: guard — bvSetDock/showTerminal recursion caused open/close loop (floating vs dock)
-    const dock = currentDock()
-    if (dock !== 'floating') window.w2gp.bvSetDock(dock)
-    window.w2gp.hideBrowserView('term')
-    syncTermEmbedPadding()
-  }
+  window.w2gp.destroyTermView()
+  $('floatingTerminal').classList.remove('hidden')
+  _ftVisible = true
+  renderTerminals()
+  window.w2gp.reattachBrowserView()
+  // ponytail: guard — bvSetDock/showTerminal recursion caused open/close loop (floating vs dock)
+  const dock = currentDock()
+  if (dock !== 'floating') window.w2gp.bvSetDock(dock)
+  window.w2gp.hideBrowserView('term')
+  syncTermEmbedPadding()
   } finally { setTimeout(() => _termBusy = false, 50) }
 }
 function hideTerminal() {
@@ -138,6 +133,7 @@ function hideTerminal() {
   _termBusy = true
   try {
   $('floatingTerminal').classList.add('hidden')
+  _ftVisible = false
   syncTermEmbedPadding()
   window.w2gp.destroyTermView()
   window.w2gp.reattachBrowserView()
@@ -146,13 +142,12 @@ function hideTerminal() {
 function toggleFloatingTerm() {
   if (_termBusy) return
   if ($('dashBody').style.display === 'none') {
-    _ftVisible = !_ftVisible
-    if (_ftVisible) { renderTerminals(); showTerminal() }
+    // DOM is truth — the flag desyncs if a toggle ever gets swallowed.
+    if ($('floatingTerminal').classList.contains('hidden')) { renderTerminals(); showTerminal() }
     else { hideTerminal() }
   }
 }
 function closeFloatingTerm() {
-  _ftVisible = false
   hideTerminal()
 }
 // Apply a dock position to the floating terminal (className + IPC), without toggling visibility.
@@ -2193,10 +2188,6 @@ $('zoomSlider').addEventListener('input', () => {
     const f = document.querySelector('#tauri-browser-view iframe')
     if (f) f.style.zoom = (pct / 100)
   }, 120)
-})
-
-$('popoutBtn')?.addEventListener('click', () => {
-  if (currentUrl) window.w2gp.popoutWebview(currentUrl)
 })
 
 // ── Running LED ──
