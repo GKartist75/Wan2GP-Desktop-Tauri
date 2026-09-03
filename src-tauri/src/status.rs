@@ -161,7 +161,13 @@ pub(crate) fn get_active_env() -> serde_json::Value {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) else { return serde_json::Value::Null; };
     let active = v.get("active").and_then(|x| x.as_str()).unwrap_or("");
     if active.is_empty() { return serde_json::Value::Null; }
-    if let Some(env) = v.get("envs").and_then(|e| e.get(active)) { env.clone() } else { serde_json::Value::Null }
+    if let Some(env) = v.get("envs").and_then(|e| e.get(active)) {
+        // env entries carry type/path only — inject the map key as `name`
+        // (dashboard, unlink/restore and logs all key off status.env.name).
+        let mut e = env.clone();
+        if let Some(m) = e.as_object_mut() { m.insert("name".into(), serde_json::json!(active)); }
+        e
+    } else { serde_json::Value::Null }
 }
 
 #[tauri::command]
