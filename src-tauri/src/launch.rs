@@ -97,6 +97,31 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
     // (shell plugin also inherits process env, so set temporarily)
     if !hf_token.is_empty() { std::env::set_var("HF_TOKEN", &hf_token); }
     if !claude_key.is_empty() { std::env::set_var("ANTHROPIC_API_KEY", &claude_key); }
+    // GGUF CUDA kernel knobs from Manage → GGUF CUDA Kernel (docs/INSTALLATION.md parity).
+    // std::env persists in OUR process across launches, so always reconcile:
+    // set what's configured, REMOVE stale leftovers.
+    {
+        let g = load_config_value().get("ggufEnv").cloned().unwrap_or(serde_json::Value::Null);
+        let enabled = g.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+        if !enabled {
+            std::env::set_var("WGP_GGUF_LLAMACPP_CUDA", "0");
+        } else {
+            std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA");
+            match g.get("matmulMode").and_then(|v| v.as_str()).unwrap_or("auto") {
+                "fast" | "low_vram" => std::env::set_var("WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE", g["matmulMode"].as_str().unwrap()),
+                _ => std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE"),
+            }
+            if g.get("streamK").and_then(|v| v.as_bool()) == Some(false) { std::env::set_var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K", "0"); }
+            else { std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K"); }
+            if g.get("bf16Fp16").and_then(|v| v.as_bool()) == Some(true) { std::env::set_var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16", "1"); }
+            else { std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16"); }
+        }
+        emit(&format!("[i] GGUF env: CUDA={} MATMUL={} STREAM_K={} BF16_FP16={}\n",
+            std::env::var("WGP_GGUF_LLAMACPP_CUDA").unwrap_or("1".into()),
+            std::env::var("WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE").unwrap_or("auto".into()),
+            std::env::var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K").unwrap_or("1".into()),
+            std::env::var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16").unwrap_or("0".into())));
+    }
     std::env::set_var("PYTHONUNBUFFERED", "1");
     std::env::set_var("PYTHONUTF8", "1");
     std::env::set_var("PYTHONIOENCODING", "utf-8");
@@ -188,9 +213,67 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
     }
     serde_json::json!({"browsers": out, "defaultBrowser": def})
 }
-#[tauri::command] pub fn launch_browser(url: Option<String>) -> serde_json::Value { let _=url; // ponytail: url optional — app.js may call with null before launch
-serde_json::json!({"ok": true}) }
-#[tauri::command] pub fn launch_browser_no_gpu(url: Option<String>) -> serde_json::Value { let _=url; serde_json::json!({"ok": true}) }
+#[tauri::command] pub fn launch_browser(app: tauri::AppHandle, url: Option<String>) -> serde_json::Value {
+    use tauri_plugin_opener::OpenerExt;
+    let u = url.unwrap_or_else(|| "http://localhost:7861".into());
+    if !(u.starts_with("http://") || u.starts_with("https://")) {
+        return serde_json::json!({"ok": false, "success": false, "error": "invalid url"});
+    }
+    let chosen = load_config_value().get("defaultBrowser").and_then(|v| v.as_str()).unwrap_or("system").to_string();
+    // "system" (or anything unresolved) → OS default via opener.
+    let exe = if chosen == "system" { None } else { find_browser_exe(&chosen) };
+    match exe {
+        None => match app.opener().open_url(u, None::<String>) {
+            Ok(()) => serde_json::json!({"ok": true, "success": true, "via": "system"}),
+            Err(e) => serde_json::json!({"ok": false, "success": false, "error": e.to_string()}),
+        },
+        Some(path) => match silent_command(&path).arg(&u).spawn() {
+            Ok(_) => serde_json::json!({"ok": true, "success": true, "via": chosen}),
+            Err(e) => serde_json::json!({"ok": false, "success": false, "error": e.to_string()}),
+        },
+    }
+}
+// Resolve a known browser id to its exe (same candidates as detect_browsers).
+fn find_browser_exe(id: &str) -> Option<String> {
+    let cands: &[&str] = match id {
+        "chrome" => &["%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe", "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe", "%LocalAppData%\\Google\\Chrome\\Application\\chrome.exe"],
+        "edge" => &["%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe", "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe"],
+        "firefox" => &["%ProgramFiles%\\Mozilla Firefox\\firefox.exe", "%ProgramFiles(x86)%\\Mozilla Firefox\\firefox.exe"],
+        "brave" => &["%LocalAppData%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"],
+        "opera" => &["%LocalAppData%\\Programs\\Opera\\launcher.exe"],
+        "vivaldi" => &["%LocalAppData%\\Vivaldi\\Application\\vivaldi.exe"],
+        _ => return None,
+    };
+    for c in cands {
+        let mut s = c.to_string();
+        for (k, v) in std::env::vars() {
+            s = s.replace(&format!("%{k}%"), &v);
+            s = s.replace(&format!("%{}%", k.to_lowercase()), &v);
+        }
+        if let Ok(pf86) = std::env::var("ProgramFiles(x86)") { s = s.replace("%ProgramFiles(x86)%", &pf86); }
+        if std::path::Path::new(&s).exists() { return Some(s); }
+    }
+    None
+}
+#[tauri::command] pub fn launch_browser_no_gpu(url: Option<String>) -> serde_json::Value {
+    // No-GPU browser frees VRAM for generation (mirrors Electron's chrome flags).
+    let u = url.unwrap_or_else(|| "http://localhost:7861".into());
+    if !(u.starts_with("http://") || u.starts_with("https://")) {
+        return serde_json::json!({"ok": false, "success": false, "error": "invalid url"});
+    }
+    let chosen = load_config_value().get("defaultBrowser").and_then(|v| v.as_str()).unwrap_or("system").to_string();
+    // Prefer Chrome, else the chosen browser, else whatever opener gives (GPU on).
+    let exe = find_browser_exe("chrome")
+        .or_else(|| if chosen != "system" { find_browser_exe(&chosen) } else { None });
+    let Some(path) = exe else {
+        return serde_json::json!({"ok": false, "success": false, "error": "No Chromium browser found for no-GPU launch"});
+    };
+    let args = ["--disable-gpu", "--disable-gpu-compositing", "--disable-accelerated-2d-canvas", "--disable-accelerated-video-decode", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-webgpu"];
+    match silent_command(&path).args(args).arg(&u).spawn() {
+        Ok(_) => serde_json::json!({"ok": true, "success": true}),
+        Err(e) => serde_json::json!({"ok": false, "success": false, "error": e.to_string()}),
+    }
+}
 #[tauri::command] pub fn chrome_available() -> bool {
     // ponytail: where chrome only checks PATH, but Chrome is at Program Files — check there like detect_browsers does
     for p in ["C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"] {
