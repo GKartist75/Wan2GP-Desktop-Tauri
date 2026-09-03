@@ -757,6 +757,13 @@ function startDesktopPolling() {
     try { window.w2gp.checkUpdate() } catch {}
   }
   window.__desktopPollTimer = setInterval(poll, DESKTOP_POLL_MS)
+  // One early check shortly after boot — the 5h interval alone means a fresh
+  // release sits unknown for hours (seen with v0.1.3). Delayed, not immediate,
+  // so backend/network are up and the boot sequence stays undisturbed.
+  if (!window.__desktopBootCheckDone) {
+    window.__desktopBootCheckDone = true
+    setTimeout(poll, 30000)
+  }
   if (!window.__desktopVisBound) {
     window.__desktopVisBound = () => {
       if (document.hidden) {
