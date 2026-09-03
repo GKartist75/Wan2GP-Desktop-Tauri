@@ -204,15 +204,6 @@ function initSettingsToggles() {
     await window.w2gp.setNotificationsEnabled(el.checked)
     showToast(el.checked ? 'Notifications enabled' : 'Notifications disabled')
   })
-  $('pulsebarToggle')?.addEventListener('change', async () => {
-    const el = $('pulsebarToggle')
-    const c = await window.w2gp.configLoad()
-    c.pulsebar = { enabled: el.checked }
-    await window.w2gp.configSave(c)
-    if (el.checked) window.w2gp.pulsebarShow()
-    else window.w2gp.pulsebarHide()
-    showToast(el.checked ? 'Floating progress bar enabled' : 'Floating progress bar disabled')
-  })
   $('autoUpdateToggle')?.addEventListener('change', async () => {
     const el = $('autoUpdateToggle')
     const c = await window.w2gp.configLoad()
@@ -298,8 +289,6 @@ function openSettings() {
     if (followTheme) followTheme.checked = cfg.themeFollowSystem === true
     const notifications = $('notificationsToggle')
     if (notifications) notifications.checked = cfg.notificationsEnabled !== false
-    const pulsebar = $('pulsebarToggle')
-    if (pulsebar) pulsebar.checked = !!(cfg.pulsebar && cfg.pulsebar.enabled)
     const autoUpdate = $('autoUpdateToggle')
     if (autoUpdate) autoUpdate.checked = cfg.autoUpdateEnabled !== false
     const share = $('shareToggle')
@@ -471,12 +460,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.w2gp.onLaunchLog(t => {
     const clean = t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'').replace(/\x08/g,'')
     appendLog(clean)
-    // Console-first launch: stay on the dashboard while starting, flip to the
-    // Wan2GP view the moment the backend reports ready.
-    if (_pendingDesktopUrl && /Wan2GP ready/.test(clean)) {
-      const u = _pendingDesktopUrl
-      _pendingDesktopUrl = null
-      openDesktopView(u, true)
+    // Console-first launch: stay on the dashboard while starting, open the
+    // destination the moment the backend reports ready.
+    if (_pendingOpen && /Wan2GP ready/.test(clean)) {
+      const p = _pendingOpen
+      _pendingOpen = null
+      if (p.kind === 'desktop') openDesktopView(p.url, true)
+      else openBrowserView(p.url, p.noGpu).catch(e => appendLog(`[LAUNCH ERROR] ${e.message}`))
     }
   })
   window.w2gp.onSetupPhase(p => {
@@ -1901,28 +1891,48 @@ function setLaunchButtonsInstalled(installed) {
 }
 
 // ── Launch in Browser (uses the user's chosen default browser) ──
+// Opens the browser once the server is up (immediately if already running,
+// otherwise when the backend reports ready — never a dead URL first).
+async function openBrowserView(url, noGpu) {
+  if (noGpu) {
+    const r = await window.w2gp.launchBrowserNoGpu(url)
+    if (!r || !r.success) throw new Error((r && r.error) || 'no-GPU launch failed')
+    appendLog(`[*] Launched in browser with GPU disabled.`)
+  } else {
+    await window.w2gp.launchBrowser(url)
+  }
+  browserRunning = true
+  serverMode = 'browser'
+  window.w2gp.uiModeSet('browser')   // crash recovery: remember browser mode
+  showBrowserRunningUI()
+  $('browserBtn').textContent = 'Open Wan2GP in Browser'
+  if (noGpu) {
+    $('browserNoGpuBtn').textContent = 'Open in Chrome (no GPU)'
+    $('browserBtn').style.display = 'none'
+  } else {
+    $('browserNoGpuBtn').style.display = 'none'
+  }
+  $('launchInfo').classList.add('hidden')
+}
 $('browserBtn').addEventListener('click', async () => {
   // Already running in browser mode → just re-open the URL (don't re-spawn the server).
   if (browserRunning && currentUrl) { await window.w2gp.launchBrowser(currentUrl); return }
   const btn = $('browserBtn')
   btn.disabled = true; btn.textContent = 'Starting...'
   $('launchInfo').classList.remove('hidden')
+  appendLog('[*] Starting Wan2GP — watch the console below…\n')
   try {
     const result = await window.w2gp.launch()
     currentUrl = result.url
-    await window.w2gp.launchBrowser(result.url)
-    browserRunning = true
-    serverMode = 'browser'
-    window.w2gp.uiModeSet('browser')   // crash recovery: remember browser mode
-    showBrowserRunningUI()
-    btn.textContent = 'Open Wan2GP in Browser'
-    $('browserNoGpuBtn').style.display = 'none'
+    if (!result.fresh) { await openBrowserView(result.url, false); return }
+    _pendingOpen = { kind: 'browser', url: result.url, noGpu: false }
+    btn.textContent = 'Starting… (see console)'
+    armPendingTimeout()
   } catch(e){
     appendLog(`[LAUNCH ERROR] ${e.message}`)
-  } finally {
     $('launchInfo').classList.add('hidden')
-    $('browserBtn').disabled = false
-    if (!browserRunning) $('browserBtn').textContent = 'Launch Wan2GP in Browser'
+    btn.disabled = false
+    if (!browserRunning) btn.textContent = 'Launch Wan2GP in Browser'
   }
 })
 
@@ -1937,23 +1947,15 @@ $('browserNoGpuBtn').addEventListener('click', async () => {
   try {
     const result = await window.w2gp.launch()
     currentUrl = result.url
-    const r = await window.w2gp.launchBrowserNoGpu(result.url)
-    if (!r || !r.success) throw new Error(r && r.error ? r.error : 'no-GPU launch failed')
-    appendLog(`[*] Launched in browser with GPU disabled.`)
-    browserRunning = true
-    serverMode = 'browser'
-    window.w2gp.uiModeSet('browser')   // crash recovery: remember browser mode
-    showBrowserRunningUI()
-    $('browserBtn').textContent = 'Open Wan2GP in Browser'
-    btn.textContent = 'Open in Chrome (no GPU)'
-    $('browserBtn').style.display = 'none'
-    $('launchInfo').classList.add('hidden')
+    if (!result.fresh) { await openBrowserView(result.url, true); return }
+    _pendingOpen = { kind: 'browser', url: result.url, noGpu: true }
+    btn.textContent = 'Starting… (see console)'
+    armPendingTimeout()
   } catch(e){
     appendLog(`[LAUNCH ERROR] ${e.message}`)
     $('launchInfo').classList.add('hidden')
-  } finally {
-    $('browserNoGpuBtn').disabled = false
-    if (!browserRunning) $('browserNoGpuBtn').textContent = 'Launch in Chrome (no GPU script)'
+    btn.disabled = false
+    if (!browserRunning) btn.textContent = 'Launch in Chrome (no GPU script)'
   }
 })
 
@@ -1994,7 +1996,19 @@ let appRunning = false     // desktop-mode (BrowserView) server currently up (bu
 //     /manifest.json to dodge gradio#11553 blank-page bug) ──
 // Opens the Desktop embed for an already-running server (called immediately
 // when the server was already up, or when the backend reports ready).
-let _pendingDesktopUrl = null
+let _pendingOpen = null
+// Safety: if ready never arrives (crashed silencer), un-wedge after 3 min.
+function armPendingTimeout() {
+  setTimeout(() => {
+    if (_pendingOpen) {
+      _pendingOpen = null
+      appendLog('[!] Wan2GP did not report ready — check the console above for errors.')
+      $('appBtn').disabled = false; setAppLaunchLabel()
+      ;['browserBtn', 'browserNoGpuBtn'].forEach(id => { const b = $(id); if (b) b.disabled = false })
+      if (!browserRunning) $('browserBtn').textContent = 'Launch Wan2GP in Browser'
+    }
+  }, 180000)
+}
 async function openDesktopView(url, fresh) {
   $('appBtn').disabled = true; $('appBtn').textContent = 'Opening...'
   try {
@@ -2031,7 +2045,6 @@ async function openDesktopView(url, fresh) {
     // Open the floating terminal per the saved default dock (or stay minimised)
     // ponytail: Tauri desktop embed is iframe, not native BrowserView — don't auto-cover it with the console
     const cfg = await window.w2gp.configLoad()
-    if (cfg.pulsebar && cfg.pulsebar.enabled) window.w2gp.pulsebarShow().catch(() => {})
     const dock = window.__TAURI__ ? 'minimised' : (cfg.termDockDefault || 'bottom')
     if (dock === 'minimised') {
       if (!$('floatingTerminal').classList.contains('hidden')) closeFloatingTerm()
@@ -2060,16 +2073,9 @@ $('appBtn').addEventListener('click', async () => {
     currentUrl = result.url
     if (!result.fresh) { openDesktopView(result.url, false); return }
     // Fresh boot: stay on the dashboard console until the backend reports ready.
-    _pendingDesktopUrl = result.url
+    _pendingOpen = { kind: 'desktop', url: result.url }
     $('appBtn').textContent = 'Starting… (see console)'
-    // Safety: if ready never arrives (crashed silencer), un-wedge after 3 min.
-    setTimeout(() => {
-      if (_pendingDesktopUrl) {
-        _pendingDesktopUrl = null
-        appendLog('[!] Wan2GP did not report ready — check the console above for errors.')
-        $('appBtn').disabled = false; setAppLaunchLabel()
-      }
-    }, 180000)
+    armPendingTimeout()
   } catch(e){
     $('launchInfo').classList.add('hidden')
     appendLog(`[LAUNCH ERROR] ${e.message}`)
@@ -2243,7 +2249,7 @@ $('stopWangpBtn').addEventListener('click', async () => {
 // ── Reset UI when server exits (manual stop or crash) ──
 window.w2gp.onWangpExit(c => {
   appendLog(`${c === 0 ? '[*]' : '[!]'} Wan2GP process exited (code ${c})`)
-  _pendingDesktopUrl = null   // boot failed/went away — don't flip to the view later
+  _pendingOpen = null   // boot failed/went away — don't open anything later
   // Server is really gone: drop the (now stale) embed entirely so the next
   // open rebuilds it instead of showing a dead page.
   window.w2gp.destroyBrowserView().catch(() => {})

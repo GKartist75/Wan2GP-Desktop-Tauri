@@ -67,7 +67,7 @@ pub fn run() {
             features::upgrade_package, features::install_package, features::uninstall_package, features::restore_requirements,
             features::llm_engines_list, features::llm_engine_install, features::llm_engine_serve, features::llm_engine_auth,
             features::deepy_activate, features::deepy_set, features::set_auto_start, features::memory_profile_apply,
-            features::notifier_config, features::notifier_set, features::notifier_test, features::pulsebar_hide, features::pulsebar_show, features::pulsebar_state,
+            features::notifier_config, features::notifier_set, features::notifier_test,
             features::set_theme_follow_system, features::set_notifications_enabled,
             updates::check_update, updates::download_update, updates::install_update,
             system::create_browser_view, system::destroy_browser_view, system::get_log_history, config::uv_cache_clean,

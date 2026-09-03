@@ -23,6 +23,53 @@ fn split_launch_args(s: &str) -> Vec<String> {
     if started { out.push(cur); }
     out
 }
+static TERMINAL_TITLE: std::sync::OnceLock<std::sync::Mutex<Option<String>>> = std::sync::OnceLock::new();
+pub(crate) fn terminal_title() -> Option<String> {
+    TERMINAL_TITLE.get().and_then(|m| m.lock().ok()).and_then(|g| g.clone())
+}
+// External-terminal mode (run.bat style): generate a script that runs wgp.py
+// with the same args/env, open it in a VISIBLE console window, wait for the
+// server, open the browser. Not a streamed child — the user owns the window.
+fn launch_in_terminal(app: tauri::AppHandle, repo: &PathBuf, py: &str, args: &[String], port: u64, _cfg: &serde_json::Value, hf_token: String, claude_key: String) -> Result<serde_json::Value, String> {
+    let emit = |msg: &str| { crate::base::push_log(msg, "launch"); let _ = app.emit("launch-log", msg.to_string()); };
+    let title = format!("Wan2GP-Launcher-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
+    if let Ok(mut g) = TERMINAL_TITLE.get_or_init(|| std::sync::Mutex::new(None)).lock() { *g = Some(title.clone()); }
+    // env lines for the script (tokens + GGUF knobs, same as hidden launch)
+    let mut env_lines: Vec<String> = vec![
+        "set PYTHONIOENCODING=utf-8".into(), "set PYTHONUTF8=1".into(), "set PYTHONUNBUFFERED=1".into(),
+        "set TQDM_MININTERVAL=0".into(), "set TQDM_MINITERS=1".into(), "set NO_PROXY=localhost,127.0.0.1,::1".into(),
+    ];
+    if !hf_token.is_empty() { env_lines.push(format!("set HF_TOKEN={hf_token}")); }
+    if !claude_key.is_empty() { env_lines.push(format!("set ANTHROPIC_API_KEY={claude_key}"));
+    }
+    for k in ["WGP_GGUF_LLAMACPP_CUDA", "WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE", "WGP_GGUF_LLAMACPP_CUDA_STREAM_K", "WGP_GGUF_LLAMACPP_CUDA_BF16_FP16"] {
+        if let Ok(val) = std::env::var(k) { env_lines.push(format!("set {k}={val}")); }
+    }
+    let arg_str = args.iter().map(|a| if a.contains(' ') { format!("\"{}\"", a.replace('%', "%%")) } else { a.replace('%', "%%") }).collect::<Vec<_>>().join(" ");
+    #[cfg(windows)] {
+        let script = std::env::temp_dir().join("wan2gp-terminal.bat");
+        let url = format!("http://localhost:{port}");
+        let full = format!("@echo off\r\ntitle {title}\r\ncd /d \"{repo}\"\r\n{envs}\r\necho [Wan2GP Desktop Launcher] Starting on port {port}...\r\nstart /b \"\" cmd /c \"\"{py}\" -u wgp.py {arg_str}\" 2>&1\r\necho Waiting for server on port {port}...\r\nset RC=0\r\n:waitloop\r\ntimeout /t 2 /nobreak >nul\r\nset /a RC+=1\r\nif %RC% gtr 60 (echo Server failed to start. Check console. ^& pause ^& exit /b 1)\r\npowershell -Command \"try{{$(Invoke-WebRequest -Uri http://127.0.0.1:{port}/config -TimeoutSec 2 -UseBasicParsing).StatusCode -eq 200;exit 0}}catch{{exit 1}}\" >nul 2>&1 && goto ready\r\ngoto waitloop\r\n:ready\r\necho Wan2GP is ready! Opening browser...\r\nstart {url}\r\necho [Wan2GP] Server running. Close this window to stop it.\r\npause >nul\r\n",
+            repo = repo.display(), envs = env_lines.join("\r\n"));
+        std::fs::write(&script, full).map_err(|e| { mutating_done(); e.to_string() })?;
+        emit(&format!("[*] Starting Wan2GP in external terminal…\n"));
+        // visible window: wt.exe preferred, else cmd /K (NOT silent — user must see it)
+        let has_wt = std::process::Command::new("where").arg("wt.exe").output().is_ok_and(|o| o.status.success());
+        let spawned = if has_wt {
+            std::process::Command::new("wt.exe").args(["-w", "-1", "new-tab", "--title", &title, "cmd.exe", "/K", &script.to_string_lossy().to_string()]).spawn()
+        } else {
+            std::process::Command::new("cmd.exe").args(["/C", "start", &title, "cmd", "/K", &script.to_string_lossy().to_string()]).spawn()
+        };
+        if let Err(e) = spawned { mutating_done(); return Err(format!("Could not open terminal: {e}")); }
+        mutating_done();
+        return Ok(serde_json::json!({"ok": true, "port": port, "mode": "terminal", "url": url, "fresh": true}));
+    }
+    #[cfg(not(windows))] {
+        let _ = (cfg, hf_token, claude_key);
+        mutating_done();
+        return Err("External terminal mode is Windows-only in this build".into());
+    }
+}
 #[tauri::command]
 pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_json::Value, String> {
     let mode = mode.unwrap_or("browser".into());
@@ -125,6 +172,15 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
     std::env::set_var("PYTHONUNBUFFERED", "1");
     std::env::set_var("PYTHONUTF8", "1");
     std::env::set_var("PYTHONIOENCODING", "utf-8");
+    // Live progress bars (mirrors Electron terminal env): redraw every iteration.
+    std::env::set_var("TQDM_MININTERVAL", "0");
+    std::env::set_var("TQDM_MINITERS", "1");
+    std::env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
+    // External-terminal mode: visible console window running wgp.py (run.bat style).
+    // Not a child we stream — the user owns the window; Stop also kills by title.
+    if mode == "terminal" {
+        return launch_in_terminal(app, &repo, &py, &args, port, &cfg, hf_token.clone(), claude_key.clone());
+    }
     let (rx, child) = cmd.spawn().map_err(|e| { mutating_done(); emit(&format!("[LAUNCH ERROR] spawn failed: {e}\n")); e.to_string() })?;
     emit(&format!("[*] Spawned PID {}\n", child.pid()));
     if let Ok(m) = WANGP_PID.get_or_init(|| Mutex::new(None)).lock() { drop(m); }
@@ -175,7 +231,10 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
                 }
             }
         }
-        // fallback: kill any python wgp.py
+        // fallback: close our external-terminal window by title, then any python wgp.py
+        if let Some(t) = crate::launch::terminal_title() {
+            let _ = silent_command("taskkill").args(["/F", "/FI", &format!("WINDOWTITLE eq {t}*")]).output();
+        }
         let _ = silent_command("taskkill").args(["/F", "/IM", "python.exe", "/T"]).output();
     }
     if let Some(m) = WANGP_PID.get() { *m.lock().unwrap() = None; }

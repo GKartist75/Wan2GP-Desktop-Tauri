@@ -212,9 +212,9 @@ pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::V
         false
     };
     let engines = vec![
-        serde_json::json!({"id":"claude-code","label":"Claude Code","desc":"Anthropic Claude Code CLI + Python bridge","cli":"claude","cliOnPath": check_cli("claude"), "pipPackage":"claude_agent_sdk","pipInstalled": check_pip("claude-agent-sdk"), "external": false}),
-        serde_json::json!({"id":"codex","label":"OpenAI Codex","desc":"OpenAI Codex CLI (npm)","cli":"codex","cliOnPath": check_cli("codex"), "pipPackage":null,"pipInstalled":null,"external": true}),
-        serde_json::json!({"id":"opencode","label":"OpenCode","desc":"Universal-provider agent","cli":"opencode","cliOnPath": check_cli("opencode"), "pipPackage":null,"pipInstalled":null,"external": true, "serverUrl":"http://127.0.0.1:4096"}),
+        serde_json::json!({"id":"claude-code","label":"Claude Code","desc":"Anthropic Claude Code CLI + Python bridge","cli":"claude","cliOnPath": check_cli("claude"), "pipPackage":"claude_agent_sdk","pipInstalled": check_pip("claude-agent-sdk"), "install":{"mode":"pip","spec":"claude-agent-sdk==0.1.40"}, "external": false, "auth":{"docsUrl":"https://code.claude.com/docs/en/authentication"}, "notes":"Pinned to 0.1.40 - a newer SDK can clobber Wan2GP MCP deps."}),
+        serde_json::json!({"id":"codex","label":"OpenAI Codex","desc":"OpenAI Codex CLI (npm)","cli":"codex","cliOnPath": check_cli("codex"), "pipPackage":null,"pipInstalled":null,"install":{"mode":"npm","spec":"@openai/codex","global":true}, "external": true, "authHint":"Sign in via a Deepy request in Wan2GP (secure link shown in chat)."}),
+        serde_json::json!({"id":"opencode","label":"OpenCode","desc":"Universal-provider agent","cli":"opencode","cliOnPath": check_cli("opencode"), "pipPackage":null,"pipInstalled":null,"install":{"mode":"npm","spec":"opencode-ai","global":true}, "external": true, "serve":{"cmd":"opencode","args":["serve","--hostname","127.0.0.1","--port","4096"]}, "serverUrl":"http://127.0.0.1:4096", "authHint":"In the OpenCode UI run /connect, pick a provider, follow auth. Wan2GP auto-starts opencode serve."}),
     ];
     serde_json::json!({"ok": true, "engines": engines, "hasActiveEnv": !env.is_null()})
 }
@@ -548,67 +548,6 @@ pub(crate) fn notifier_scan_line(line: &str) {
         Ok(()) => serde_json::json!({"ok": true}),
         Err(e) => serde_json::json!({"ok": false, "error": e}),
     }
-}
-// ── Pulsebar: always-on-top mini progress window ──
-// Progress % is sniffed from the launch stream (same lines the notifier scans).
-// The window (pulsebar.html) polls pulsebar_state; toggle creates/destroys it.
-static PULSE: std::sync::OnceLock<std::sync::Mutex<(Option<u8>, String)>> = std::sync::OnceLock::new();
-pub(crate) fn pulse_sniff(line: &str) {
-    // last NN% wins (tqdm prints 50%|...)
-    let bytes = line.as_bytes();
-    let mut i = 0;
-    let mut pct: Option<u8> = None;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            let mut j = i;
-            while j > 0 && bytes[j - 1].is_ascii_digit() { j -= 1; }
-            if j < i {
-                if let Ok(n) = line[j..i].parse::<u8>() { if n <= 100 { pct = Some(n); } }
-            }
-        }
-        i += 1;
-    }
-    let m = PULSE.get_or_init(|| std::sync::Mutex::new((None, String::new())));
-    if let Ok(mut g) = m.lock() {
-        if let Some(p) = pct {
-            *g = (Some(p), format!("Generating… {p}%"));
-        } else {
-            let low = line.to_lowercase();
-            if DONE_MARKERS.iter().any(|mk| low.contains(mk)) { *g = (Some(100), "Done ✓".to_string()); }
-            else if FAIL_MARKERS.iter().any(|mk| low.contains(mk)) && !FAIL_SKIP.iter().any(|s| low.contains(s)) {
-                *g = (None, "Failed ✗".to_string());
-            }
-        }
-    }
-}
-#[tauri::command] pub fn pulsebar_state() -> serde_json::Value {
-    let (pct, label) = PULSE.get().and_then(|m| m.lock().ok()).map(|g| g.clone()).unwrap_or((None, String::new()));
-    serde_json::json!({"pct": pct, "label": label})
-}
-#[tauri::command] pub fn pulsebar_show(app: tauri::AppHandle) -> serde_json::Value {
-    use tauri::Manager;
-    if let Some(w) = app.get_webview_window("pulsebar") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
-        return serde_json::json!({"ok": true, "existed": true});
-    }
-    match tauri::WebviewWindowBuilder::new(&app, "pulsebar", tauri::WebviewUrl::App("pulsebar.html".into()))
-        .title("Wan2GP Progress")
-        .inner_size(340.0, 64.0)
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .resizable(false)
-        .build() {
-        Ok(_) => serde_json::json!({"ok": true}),
-        Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
-    }
-}
-#[tauri::command] pub fn pulsebar_hide(app: tauri::AppHandle) -> serde_json::Value {
-    use tauri::Manager;
-    if let Some(w) = app.get_webview_window("pulsebar") { let _ = w.close(); }
-    serde_json::json!({"ok": true})
 }
 #[tauri::command] pub fn set_theme_follow_system(enabled: bool) -> serde_json::Value {
     let mut full = load_config_value();

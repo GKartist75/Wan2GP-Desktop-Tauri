@@ -37,7 +37,7 @@ pub(crate) fn push_log(text: &str, source: &str) {
             if t.is_empty() { continue; }
             // launch stream doubles as the notifier event source
             // (scan before the tqdm skip — progress lives in those fragments)
-            if source == "launch" { crate::features::notifier_scan_line(t); crate::features::pulse_sniff(t); }
+            if source == "launch" { crate::features::notifier_scan_line(t); }
             // skip tqdm progress spam (\r-rewritten fragments) — history is for real log lines
             if t.contains("it/s") || t.contains("s/it") { continue; }
             g.push(line.to_string());
