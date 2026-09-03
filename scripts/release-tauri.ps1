@@ -29,14 +29,15 @@ $conf | ConvertTo-Json -Depth 10 | Set-Content $confPath
 (Get-Content "src-tauri\Cargo.toml" -Raw) -replace '(?m)^version = ".*"', "version = `"$Version`"" |
   Set-Content "src-tauri\Cargo.toml" -NoNewline
 git add $confPath "src-tauri\Cargo.toml"
-git commit -m "release: v$Version" | Out-Null
+if (git status --porcelain) { git commit -m "release: v$Version" | Out-Null }
 
 # 2) Build (signs updater artifacts automatically via the env key)
 npx tauri build
 if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
 
 # 3) Collect updater artifacts (v2 signs the installers directly: setup.exe + .sig)
-$setup = Get-ChildItem "src-tauri\target\release\bundle\nsis\*-setup.exe" | Select-Object -First 1
+$setup = Get-ChildItem "src-tauri\target\release\bundle\nsis\*-setup.exe" | Where-Object { $_.Name -like "*$Version*" } | Select-Object -First 1
+if (-not $setup) { $setup = Get-ChildItem "src-tauri\target\release\bundle\nsis\*-setup.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1 }
 if (-not $setup) { throw "No setup.exe found" }
 $sig = Get-Content ($setup.FullName + ".sig") -Raw
 $sig = $sig.Trim()
@@ -56,8 +57,9 @@ $latestPath = "src-tauri\target\release\bundle\nsis\latest.json"
 $latest | ConvertTo-Json -Depth 6 | Set-Content $latestPath
 
 # 4) Publish (latest.json must be on a published release — /latest/download/ 404s on drafts)
-$msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | Select-Object -First 1
+$msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | Where-Object { $_.Name -like "*$Version*" } | Select-Object -First 1
+if (-not $msi) { $msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | Sort-Object LastWriteTime -Descending | Select-Object -First 1 }
 gh release create $tag $setup.FullName ($setup.FullName + ".sig") $msi.FullName $latestPath `
   --repo GKartist75/Wan2GP-Desktop-Tauri --title $tag --notes $Notes
 git push
-Write-Host "Released $tag — updater will pick it up from latest.json" -ForegroundColor Green
+Write-Host "Released $tag - updater will pick it up from latest.json" -ForegroundColor Green
