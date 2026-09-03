@@ -237,16 +237,23 @@ pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::V
 // OpenCode server lifecycle (Wan2GP auto-starts it too; this is the manual toggle).
 // PID-tracked so Start/Stop is honest; other engines have no servable process.
 static OPENCODE_PID: std::sync::OnceLock<std::sync::Mutex<Option<u32>>> = std::sync::OnceLock::new();
+// Kill the OpenCode server this launcher spawned (if any). Shared by the
+// serve toggle and the app-close cleanup.
+pub(crate) fn stop_opencode_server() -> bool {
+    let pid = OPENCODE_PID.get().and_then(|m| m.lock().ok()).and_then(|mut g| g.take());
+    if let Some(pid) = pid {
+        #[cfg(windows)] { let _ = silent_command("taskkill").args(["/F", "/PID", &pid.to_string()]).output(); }
+        #[cfg(not(windows))] { let _ = silent_command("kill").arg(pid.to_string()).output(); }
+        return true;
+    }
+    false
+}
 #[tauri::command] pub fn llm_engine_serve(engine: String, action: String) -> serde_json::Value {
     if engine != "opencode" {
         return serde_json::json!({"ok": false, "success": false, "error": "Only OpenCode has a local server"});
     }
     if action == "stop" {
-        let pid = OPENCODE_PID.get().and_then(|m| m.lock().ok()).and_then(|mut g| g.take());
-        if let Some(pid) = pid {
-            #[cfg(windows)] { let _ = silent_command("taskkill").args(["/F", "/PID", &pid.to_string()]).output(); }
-            #[cfg(not(windows))] { let _ = silent_command("kill").arg(pid.to_string()).output(); }
-        }
+        crate::features::stop_opencode_server();
         return serde_json::json!({"ok": true, "success": true, "running": false});
     }
     // start: already up (ours or Wan2GP's) → report running instead of double-spawning

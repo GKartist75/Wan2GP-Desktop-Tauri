@@ -9,6 +9,8 @@ mod status;
 mod system;
 mod updates;
 
+use tauri::Manager;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Launcher GPU preference — mirrors Electron early switch (main.js 323-350)
@@ -40,6 +42,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .on_window_event(|window, event| {
+            // Closing the launcher also stops Wan2GP, helper servers and our
+            // Explorer windows — no orphaned processes left behind.
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    crate::system::shutdown_cleanup(window.app_handle());
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             system::greet, hw::detect_gpu, hw::detect_gpus, hw::detect_hardware, hw::get_hardware_profile, hw::get_system_metrics,
             status::get_status, status::check_python, status::check_git, status::check_installed, status::check_command,

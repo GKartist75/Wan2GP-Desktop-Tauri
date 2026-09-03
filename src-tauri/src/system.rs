@@ -8,9 +8,15 @@ pub fn greet(name: &str) -> String {
     format!("Hello, {name}! You've been greeted from Rust!")
 }
 
+// Explorer windows this launcher opened (plus data/models roots) are closed
+// again when the launcher exits — no orphaned windows left behind.
+static OPENED_FOLDERS: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> = std::sync::OnceLock::new();
 #[tauri::command]
 pub fn open_folder(path: String, app: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
+    if let Ok(mut g) = OPENED_FOLDERS.get_or_init(|| std::sync::Mutex::new(Vec::new())).lock() {
+        if !g.contains(&path) { g.push(path.clone()); }
+    }
     app.opener().open_path(&path, None::<&str>).map_err(|e| e.to_string()).or_else(|_| silent_command("explorer").arg(&path).spawn().map(|_| ()).map_err(|e| e.to_string()))
 }
 #[tauri::command]
@@ -324,3 +330,30 @@ pub fn repair_settings() -> serde_json::Value {
 }
 #[allow(dead_code)]
 #[tauri::command] pub fn on_system_theme_change() -> serde_json::Value { serde_json::json!(null) }
+// App-close cleanup: stop the Wan2GP server, stop our OpenCode server, close
+// Explorer windows showing our data/model folders. Runs synchronously inside
+// CloseRequested so everything is dead before the process exits.
+pub(crate) fn shutdown_cleanup(app: &tauri::AppHandle) {
+    let _ = crate::launch::stop_wangp(app.clone());
+    crate::features::stop_opencode_server();
+    #[cfg(windows)] {
+        let mut roots: Vec<String> = vec![get_data_dir().to_string_lossy().to_string()];
+        if let Ok(cfg) = std::fs::read_to_string(get_config_file()) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&cfg) {
+                for k in ["modelCkptsPath", "modelLorasPath", "modelOutputPath"] {
+                    if let Some(p) = v.get(k).and_then(|x| x.as_str()) {
+                        if !p.is_empty() { roots.push(p.to_string()); }
+                    }
+                }
+            }
+        }
+        if let Some(m) = OPENED_FOLDERS.get().and_then(|x| x.lock().ok()) {
+            for p in m.iter() { if !roots.contains(p) { roots.push(p.clone()); } }
+        }
+        for root in &roots {
+            let esc = root.replace('\'', "''");
+            let ps = format!("$sh=New-Object -ComObject Shell.Application; foreach($w in @($sh.Windows())){{ try {{ $p=$w.Document.Folder.Self.Path; if($p -like '{esc}*'){{$w.Quit()}} }} catch {{}} }}");
+            let _ = silent_command("powershell").args(["-NoProfile", "-Command", &ps]).output();
+        }
+    }
+}

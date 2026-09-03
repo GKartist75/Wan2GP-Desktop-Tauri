@@ -5,6 +5,24 @@ use std::sync::Mutex;
 use crate::base::*;
 use crate::{hw::get_gpu_info_sync, status::get_active_env};
 
+// Quote-aware split for Extra Launch Args (keeps "--teacache \"a b\"" together).
+fn split_launch_args(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_q = false;
+    let mut started = false;
+    for ch in s.chars() {
+        match ch {
+            '"' => { in_q = !in_q; started = true; }
+            c if c.is_whitespace() && !in_q => {
+                if started { out.push(std::mem::take(&mut cur)); started = false; }
+            }
+            c => { cur.push(c); started = true; }
+        }
+    }
+    if started { out.push(cur); }
+    out
+}
 #[tauri::command]
 pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_json::Value, String> {
     let mode = mode.unwrap_or("browser".into());
@@ -28,6 +46,11 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
     if share { args.push("--share".into()); }
     if gpu_device != "auto" && gpu_device.starts_with("cuda:") && !args.contains(&"--gpu".to_string()) {
         args.push("--gpu".into()); args.push(gpu_device.clone());
+    }
+    // Extra Launch Args from Manage tab (quote-aware split, appended last so they win).
+    if let Some(extra) = cfg.get("launchArgs").and_then(|v| v.as_str()) {
+        let add = split_launch_args(extra);
+        if !add.is_empty() { args.extend(add); }
     }
     let emit = |msg: &str| { crate::base::push_log(msg, "launch"); let _ = app.emit("launch-log", msg.to_string()); };
     emit(&format!("[*] Launching Wan2GP ({mode}) on :{port}…\n"));
@@ -185,4 +208,15 @@ serde_json::json!({"ok": true}) }
     let u = url.or_else(|| res.get("url").and_then(|v| v.as_str()).map(std::string::ToString::to_string)).unwrap_or_else(|| "http://localhost:7861".into());
     use tauri_plugin_opener::OpenerExt; let _ = app.opener().open_url(u, None::<String>);
     Ok(res)
+}
+
+#[cfg(test)]
+mod launch_args_tests {
+    use super::*;
+    #[test]
+    fn split_launch_args_quotes() {
+        assert_eq!(split_launch_args("--profile 4 --attention sage2"), vec!["--profile", "4", "--attention", "sage2"]);
+        assert_eq!(split_launch_args("--teacache \"a b\" --verbose 2"), vec!["--teacache", "a b", "--verbose", "2"]);
+        assert_eq!(split_launch_args(""), Vec::<String>::new());
+    }
 }
