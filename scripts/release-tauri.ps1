@@ -42,6 +42,10 @@ if (-not $setup) { throw "No setup.exe found" }
 $sig = Get-Content ($setup.FullName + ".sig") -Raw
 $sig = $sig.Trim()
 $tag = "v$Version"
+# GitHub normalizes spaces to dots in asset names on upload (seen in v0.1.3:
+# "Wan2GP Desktop Launcher Tauri_...setup.exe" became "Wan2GP.Desktop.Launcher.Tauri_..."),
+# so the updater URL must use the normalized name or Full Download 404s.
+$assetName = $setup.Name -replace ' ', '.'
 $latest = [ordered]@{
   version   = $Version
   notes     = $Notes
@@ -49,7 +53,7 @@ $latest = [ordered]@{
   platforms = [ordered]@{
     "windows-x86_64" = [ordered]@{
       signature = $sig
-      url       = "https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/$tag/$($setup.Name)"
+      url       = "https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/$tag/$assetName"
     }
   }
 }
