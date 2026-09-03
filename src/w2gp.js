@@ -25,16 +25,8 @@
     moveFolder: (src, dst) => call('move_folder', { src, dst }), migrateChoose: () => call('migrate_choose'),
     isDataDirRoaming: () => call('is_data_dir_roaming'),
     writeWgpConfig: (cfg) => call('write_wgp_config', { cfg }), selectFolder: () => call('select_folder'),
-    // ponytail: Tauri native dialog only has OK/Cancel — for the 3-button Move/Point/Cancel pencil flow, use window.confirm so user actually gets a choice (was only OK)
     confirmDialog: async (opts) => {
-        // pencil Move/Point/Cancel has 3 buttons — map to confirm() so Tauri gets a real choice
-        if (opts && Array.isArray(opts.buttons) && opts.buttons.length===3) {
-            const msg = (opts.message||'') + (opts.detail ? '\n\n' + opts.detail : '') + '\n\n[OK] Move existing files  —  [Cancel] Just point (no move)\n(Esc or close = Cancel)';
-            // eslint-disable-next-line no-restricted-globals
-            const ok = confirm(msg);
-            return ok ? 'move' : 'point';
-        }
-        try { const r = await call('confirm_dialog', { opts }); if (typeof r==='string') return r; if (r && typeof r.response==='number') return r.response===0 ? 'ok' : 'cancel'; if (r && r.ok) return 'ok'; return r; } catch { return 'cancel'; }
+        try { const r = await call('confirm_dialog', { opts }); if (typeof r==='string') return r; if (r && typeof r.choice==='string') return r.choice; if (r && typeof r.response==='number') return r.response===0 ? 'ok' : 'cancel'; if (r && r.ok) return 'ok'; return r; } catch { return 'cancel'; }
     }, detectModelFolders: () => call('detect_model_folders'),
     getModelPaths: () => call('get_model_paths'), repairSettings: () => call('repair_settings'),
     getStatus: () => call('get_status'), launch: (mode) => call('launch', { mode }), launchWebview: () => call('launch_webview'),
@@ -52,32 +44,46 @@
         const c = document.createElement('div');
         c.id = 'tauri-browser-view';
         c.style.cssText = 'flex:1;display:flex;flex-direction:column;background:#111;min-height:0;width:100%;height:100%;overflow:hidden;';
-        c.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:6px 12px;background:#1a1a1a;border-bottom:1px solid #2a2a2a;font-size:12px;color:#aaa;flex-shrink:0;"><span style="color:#eee">● Wan2GP</span><span style="opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u}</span><button id="tauri-bv-close" style="margin-left:auto;background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">✕ Close</button><button id="tauri-bv-popout" style="background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">Open in Browser</button></div><div id="tauri-bv-loading" style="position:absolute;inset:36px 0 0 0;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:13px;background:#111;z-index:1;">Loading Wan2GP… (server booting, ~10s)</div><iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write"></iframe>`;
+        // ponytail: start blank — no white ERR_CONNECTION_REFUSED flash like Electron's BrowserView `did-finish-load` guard
+        // ponytail: live console instead of static 10s text — streams launch-log (pip/starting) like Electron
+        c.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:6px 12px;background:#1a1a1a;border-bottom:1px solid #2a2a2a;font-size:12px;color:#aaa;flex-shrink:0;"><span style="color:#eee">● Wan2GP</span><span style="opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u}</span><button id="tauri-bv-close" style="margin-left:auto;background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">✕ Close</button><button id="tauri-bv-popout" style="background:#2a2a2a;color:#eee;border:1px solid #444;padding:4px 12px;border-radius:6px;cursor:pointer;">Open in Browser</button></div><div id="tauri-bv-loading" style="position:absolute;inset:36px 0 0 0;display:flex;flex-direction:column;padding:12px;background:#111;z-index:1;overflow:hidden;"><div style="color:#aaa;font-size:12px;margin-bottom:8px;">Starting Wan2GP — loading packages…</div><pre id="tauri-bv-log" style="flex:1;margin:0;padding:8px;background:#0a0a0a;color:#9ae6b4;font-family:Geist Mono,monospace;font-size:11px;overflow:auto;white-space:pre-wrap;word-break:break-all;border:1px solid #222;border-radius:4px;">Waiting for launch logs…</pre></div><iframe src="about:blank" data-src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write"></iframe>`;
         host.appendChild(c);
         // ponytail: auto-retry until server ready — fixes black/ERR_CONNECTION_REFUSED when iframe races boot
         const iframe = c.querySelector('iframe');
         const loading = c.querySelector('#tauri-bv-loading');
+        const logEl = c.querySelector('#tauri-bv-log');
+        // ponytail: pre-fill from existing buffer (launch started before overlay)
+        if(logEl && window._getLogTail){
+            try { const tail=window._getLogTail(); if(tail && tail.trim()) { logEl.textContent=tail; logEl.scrollTop=logEl.scrollHeight; } } catch{}
+        } else if(logEl && window._logBuffer && window._logBuffer.length){
+            const tail = window._logBuffer.slice(-40).join('\n');
+            logEl.textContent = tail;
+            logEl.scrollTop=logEl.scrollHeight;
+        }
         const hideLoading = () => { if(loading) loading.style.display='none'; };
-        iframe.addEventListener('load', hideLoading);
+        let logUnlisten = null;
+        try { logUnlisten = await window.__TAURI__.event.listen('launch-log', e=>{
+            const t=(e.payload||'').replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'');
+            if(logEl && loading && loading.style.display!=='none'){
+                if(logEl.textContent.includes('Waiting for launch logs')) logEl.textContent='';
+                logEl.textContent += t;
+                if(logEl.textContent.length>8000) logEl.textContent=logEl.textContent.slice(-8000);
+                logEl.scrollTop=logEl.scrollHeight;
+            }
+            if(t.includes('Wan2GP ready')){ hideLoading(); if(iframe.src.includes('about:blank')) iframe.src=u; }
+        }); } catch{}
+        const _origHide=hideLoading; const hideAndCleanup=()=>{ _origHide(); if(logUnlisten) try{logUnlisten();}catch{}; logUnlisten=null; };
+        // ponytail: only hide on real content load, not about:blank (prevents white flash)
+        iframe.addEventListener('load', () => { if (iframe.src && !iframe.src.includes('about:blank')) hideAndCleanup(); });
         let tries=0;
         const poll=setInterval(async()=>{
             tries++;
             if(tries>30){ clearInterval(poll); if(loading) loading.textContent='Failed to load — try Open in Browser'; return; }
             try{
                 const r=await fetch(u,{method:'HEAD',cache:'no-store'});
-                if(r.ok){ hideLoading(); clearInterval(poll); if(iframe.src==='about:blank') iframe.src=u; }
+                if(r.ok){ hideAndCleanup(); clearInterval(poll); if(iframe.src==='about:blank') iframe.src=u; }
             }catch{}
-            // reload every 2 tries (~4s) while still loading
-            if(loading && loading.style.display!=='none' && tries%2===0){ iframe.src='about:blank'; setTimeout(()=>iframe.src=u,150); }
         },2000);
-        // also listen for Tauri's ready log to reload immediately
-        try{
-            const unlisten=await window.__TAURI__.event.listen('launch-log', e=>{
-                const m=e.payload||'';
-                if(m.includes('Wan2GP ready')){ hideLoading(); iframe.src=u; clearInterval(poll); try{unlisten();}catch{}
-                }
-            });
-        }catch{}
         // hide dashBody, show webviewContainer — app.js also does this, but enforce
         try { const db=document.getElementById('dashBody'); if(db) db.style.display='none'; } catch {}
         // ensure dashBody stays hidden while iframe shows (app.js does this, but enforce)
@@ -121,9 +127,10 @@
     pulsebarHide: () => call('pulsebar_hide'), setAutoStart: (e) => call('set_auto_start', { enabled: e }),
     setThemeFollowSystem: (e) => call('set_theme_follow_system', { enabled: e }),
     setNotificationsEnabled: (e) => call('set_notifications_enabled', { enabled: e }),
-    checkUpdate: (o) => call('check_update', { opts: o }), downloadUpdate: (o) => call('download_update', { opts: o }), installUpdate: () => call('install_update'),
+    checkUpdate: (o) => call('check_update', { opts: o }), downloadUpdate: (o) => call('download_update', { opts: { ...(o||{}), differential: false } }), installUpdate: () => call('install_update'), // ponytail: differential disabled — full only
     getWangpLocalVersion: () => call('get_wangp_local_version'), getWangpUpstreamInfo: () => call('get_wangp_upstream_info'),
     getDesktopGitInfo: () => call('get_desktop_git_info'), getDesktopVersion: () => call('get_desktop_version'),
+    detectElectron: () => call('detect_electron'), uninstallElectron: () => call('uninstall_electron'),
     getWangpVersion: () => call('get_wangp_version'), reportIssue: () => call('report_issue'),
     createDesktopShortcut: () => call('create_desktop_shortcut'),
     checkPackageUpdates: (v) => call('check_package_updates', { versions: v }),

@@ -2,6 +2,9 @@
 
 // ── Global Log Buffer ──
 const logBuffer = []
+// ponytail: expose for overlay pre-fill (createBrowserView races launch-log)
+window._logBuffer = logBuffer
+window._getLogTail = () => logBuffer.slice(-40).join('\n') + (lastLine ? '\n' + lastLine : '')
 const MAX_LOG = 5000
 let lastLine = ''
 let _carriageReturn = false  // next text part replaces lastLine instead of appending (tqdm progress bars)
@@ -99,31 +102,42 @@ function currentDock() {
   return 'bottom'
 }
 // Show the console for the current dock. Returns nothing.
+let _termBusy = false
 function showTerminal() {
+  if (_termBusy) return
+  _termBusy = true
+  try {
   const floating = $('floatingTerminal').classList.contains('dock-floating')
   if (floating) {
-    // Wan2GP stays visible & full; the console lives in its own movable window.
     $('floatingTerminal').classList.add('hidden')
     window.w2gp.destroyTermView()
     window.w2gp.reattachBrowserView()
     window.w2gp.createTermView()
   } else {
-    // DOM panel beside a shrunk Wan2GP.
     window.w2gp.destroyTermView()
     $('floatingTerminal').classList.remove('hidden')
-    // Sync DOM terminal with the latest buffer (logs may have arrived while floating was active)
     renderTerminals()
     window.w2gp.reattachBrowserView()
-    window.w2gp.bvSetDock(currentDock())
+    // ponytail: guard — bvSetDock/showTerminal recursion caused open/close loop (floating vs dock)
+    const dock = currentDock()
+    if (dock !== 'floating') window.w2gp.bvSetDock(dock)
     window.w2gp.hideBrowserView('term')
+    syncTermEmbedPadding()
   }
+  } finally { setTimeout(() => _termBusy = false, 50) }
 }
 function hideTerminal() {
+  if (_termBusy) return
+  _termBusy = true
+  try {
   $('floatingTerminal').classList.add('hidden')
+  syncTermEmbedPadding()
   window.w2gp.destroyTermView()
-  window.w2gp.reattachBrowserView()   // ensure Wan2GP is full again (no-op when already)
+  window.w2gp.reattachBrowserView()
+  } finally { setTimeout(() => _termBusy = false, 50) }
 }
 function toggleFloatingTerm() {
+  if (_termBusy) return
   if ($('dashBody').style.display === 'none') {
     _ftVisible = !_ftVisible
     if (_ftVisible) { renderTerminals(); showTerminal() }
@@ -137,12 +151,33 @@ function closeFloatingTerm() {
 // Apply a dock position to the floating terminal (className + IPC), without toggling visibility.
 // When the console is open this also switches the rendering mode (DOM vs overlay) as needed.
 function setFtDock(dock) {
+  if (_termBusy) return
   const ft = $('floatingTerminal')
+  const wasVisible = !ft.classList.contains('hidden') && _ftVisible
   ft.className = 'floating-term dock-' + dock + (ft.classList.contains('hidden') ? ' hidden' : '')
   if (dock !== 'floating') ft.style.cssText = ''
   document.querySelectorAll('.dock-btn').forEach(b => b.classList.toggle('active', b.dataset.dock === dock))
-  window.w2gp.bvSetDock(dock)
-  if ($('dashBody').style.display === 'none' && _ftVisible) showTerminal()
+  if (dock !== 'floating') window.w2gp.bvSetDock(dock)
+  // ponytail: don't re-enter showTerminal from here if we just changed dock — toggling dock while open re-shrinks view without loop
+  if (wasVisible && $('dashBody').style.display === 'none') {
+    // only re-flow BrowserView, don't re-create terminal DOM in a loop
+    window.w2gp.hideBrowserView('term')
+  }
+  syncTermEmbedPadding()
+}
+// ponytail: Tauri has no native BrowserView — bvSetDock is a stub no-op, so a
+// docked console would overlay and cover part of the Wan2GP iframe. Shrink the
+// embed instead via container padding matching the console's real size.
+function syncTermEmbedPadding() {
+  const wc = $('webviewContainer')
+  if (!wc) return
+  const ft = $('floatingTerminal')
+  const dock = currentDock()
+  const visible = $('dashBody').style.display === 'none' && !ft.classList.contains('hidden') && dock !== 'floating'
+  wc.style.paddingBottom = (visible && dock === 'bottom') ? ft.offsetHeight + 'px' : ''
+  wc.style.paddingTop = (visible && dock === 'top') ? ft.offsetHeight + 'px' : ''
+  wc.style.paddingLeft = (visible && dock === 'left') ? ft.offsetWidth + 'px' : ''
+  wc.style.paddingRight = (visible && dock === 'right') ? ft.offsetWidth + 'px' : ''
 }
 // Settings toggle handlers registered once (avoids memory leak from repeated onchange reassignment).
 let _settingsTogglesReady = false
@@ -150,16 +185,6 @@ function initSettingsToggles() {
   if (_settingsTogglesReady) return
   _settingsTogglesReady = true
 
-  $('electronGpuToggle')?.addEventListener('change', async () => {
-    const gpu = $('electronGpuToggle')
-    const c = await window.w2gp.configLoad()
-    c.electronGpu = gpu.checked
-    c.launcherGpu = gpu.checked ? (c.launcherGpu === 'disabled' ? 'auto' : (c.launcherGpu || 'auto')) : 'disabled'
-    const lg = $('launcherGpuSelect')
-    if (lg) lg.value = c.launcherGpu
-    await window.w2gp.configSave(c)
-    showToast(gpu.checked ? 'GPU enabled — restart to apply' : 'GPU disabled — restart to free VRAM')
-  })
   $('autoStartToggle')?.addEventListener('change', async () => {
     const el = $('autoStartToggle')
     const r = await window.w2gp.setAutoStart(el.checked)
@@ -263,8 +288,6 @@ function openSettings() {
     const td = cfg.termDockDefault || 'bottom'
     document.querySelectorAll('input[name="termDock"]').forEach(r => { r.checked = (r.value === td) })
     // Sync toggle states from config (handlers already registered via initSettingsToggles)
-    const gpu = $('electronGpuToggle')
-    if (gpu) gpu.checked = cfg.electronGpu !== false
     const autoStart = $('autoStartToggle')
     if (autoStart) autoStart.checked = cfg.autoStart === true
     const followTheme = $('followSystemThemeToggle')
@@ -285,11 +308,11 @@ function openSettings() {
     if ($('ggufBf16Fp16')) $('ggufBf16Fp16').checked = g.bf16Fp16 === true
     // GPU device picker: fill the dropdown from the main process, keep current choice
     loadGpuDeviceOptions(cfg.gpuDevice || 'auto')
-    // Launcher GPU picker (Electron UI) — auto | integrated | dedicated | disabled
+    // Launcher GPU picker — auto | integrated | dedicated | disabled
     const lg = $('launcherGpuSelect')
     if (lg) lg.value = (cfg.launcherGpu || (cfg.electronGpu === false ? 'disabled' : 'auto'))
     const ss = $('sageSafeSelect')
-    if (ss) ss.value = (cfg.sageSafe === true ? 'safe' : 'upstream')
+    if (ss) ss.value = (cfg.sageSafe === false ? 'upstream' : 'safe') // ponytail: 1348e5b — default safe
     // Bind Address picker: reflect saved choice (default localhost)
     const sn = $('serverNameSelect')
     if (sn) sn.value = (cfg.serverName === '127.0.0.1') ? '127.0.0.1' : 'localhost'
@@ -299,7 +322,47 @@ function openSettings() {
   updateXetStatus()
   // Show current uv wheel cache size
   refreshUvCacheInfo()
+  // Legacy Electron launcher: show removal section only when detected
+  refreshElectronSection()
 }
+// ponytail: one-shot detect per Manage open — registry read, no polling
+async function refreshElectronSection() {
+  const sec = $('electronSection')
+  if (!sec) return
+  sec.style.display = 'none'
+  let det = null
+  try { det = await window.w2gp.detectElectron() } catch {}
+  if (!det || !det.found) return
+  sec.style.display = ''
+  const st = $('electronStatus')
+  if (st) st.textContent = 'Found: ' + (det.name || 'Electron launcher') + (det.version ? ' v' + det.version : '') + (det.installLocation ? ' — ' + det.installLocation : '')
+}
+$('removeElectronBtn')?.addEventListener('click', async function() {
+  const btn = this
+  const choice = await window.w2gp.confirmDialog({
+    title: 'Remove Electron launcher?',
+    message: 'Uninstall the legacy Electron launcher?',
+    detail: 'Only the old launcher app is removed. Your Wan2GP install, models, LoRAs, outputs and settings are kept and carry over automatically.'
+  })
+  if (choice !== 'ok') return
+  btn.disabled = true
+  const orig = btn.textContent
+  btn.textContent = 'Removing…'
+  try {
+    const r = await window.w2gp.uninstallElectron()
+    if (r && r.ok) {
+      showToast(r.removed ? '✓ Electron launcher removed — data kept' : '✓ Uninstaller ran (verify in Add/Remove Programs)')
+      refreshElectronSection()
+    } else {
+      showToast('✗ ' + ((r && r.error) || 'removal failed'))
+    }
+  } catch (e) {
+    showToast('✗ ' + e.message)
+  } finally {
+    btn.disabled = false
+    btn.textContent = orig
+  }
+})
 function closeSettings() { $('settingsPanel').classList.remove('open'); $('settingsOverlay').classList.remove('visible')
   // Restore the BrowserView (re-attach the still-alive view) when leaving Manage in webview mode.
   if ($('dashBody').style.display === 'none') {
@@ -382,13 +445,10 @@ window.addEventListener('unhandledrejection', e => {
 // ── Init ──
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-  // Start with a clean Desktop-Updates indicator — it's only set when a check
-  // reports an available update, so clear any stale dot from a prior render.
+  // ponytail: keep splash visible while loading — covers WebView2 + python scan (was showing empty dashboard)
+  $('splashStatus').textContent = 'Loading...'
   setDesktopUpdateIndicator(false)
-  const installed = await window.w2gp.checkInstalled()
-
-  // If the launcher renderer just crashed and was auto-reloaded, restore the
-  // UI state (embedded Wan2GP view / browser mode) instead of the bare dashboard.
+  const [installed, cfgPreload] = await Promise.all([window.w2gp.checkInstalled(), window.w2gp.configLoad().catch(()=>({}))])
   await checkCrashRecovery()
 
   window.w2gp.getDesktopVersion().then(function(v) {
@@ -419,7 +479,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   })
   window.w2gp.onSetupProfile(p => { $('installProfile').textContent=p; $('installProfileRow').style.display='flex' })
 
-  const cfg = await window.w2gp.configLoad()
+  const cfg = cfgPreload || await window.w2gp.configLoad().catch(()=>({}))
   if (cfg.theme === 'dark') applyTheme('dark')
 
   // Listen for system theme changes (native theme follow)
@@ -430,12 +490,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Embedded-Wan2GP view crashed and was auto-reloaded by the main process.
   window.w2gp.onBvCrashRecovered(() => showToast('Wan2GP view reloaded after a crash'))
 
-  loadHardware()
+  // hardware probe — fire-and-forget, fills specs when ready (no await)
+  loadHardware().catch(e => { console.warn('[hw] detectHardware failed', e) })
+  setTimeout(() => loadHardware().catch(()=>{}), 2000)
 
   if (installed.repo && installed.env) {
+    // ponytail: fast paint — show dashboard instantly (~300ms), fill versions in background
     show('dashboard')
-    refreshDashboard()
-    // Live system metrics polling (topbar sparklines + dashboard free-text)
+    refreshDashboard() // now ~150ms with 7 pkgs, not 800ms
     startMetricsPolling()
     // Periodic Wan2GP update re-check while the app is open (30 min) + Desktop (5h).
     // Launch-time check alone misses updates released mid-session; the
@@ -598,27 +660,29 @@ function startMetricsPolling() {
     drawSpark('sparkGpu', _sparkHistory.gpu, '#60A5FA')
     drawSpark('sparkRam', _sparkHistory.ram, '#FBBF24')
     drawSpark('sparkVram', _sparkHistory.vram, '#F472B6')
-    // 2nd GPU (iGPU or dual dGPU) — ponytail: show only when 2 GPUs reported
+    // 2nd GPU (iGPU or dual dGPU) — ponytail: flicker fix — only toggle display when state actually changes
     const hasGpu2 = m.gpus && m.gpus.length > 1 && m.gpus[1] != null
     const g2 = hasGpu2 ? m.gpus[1] : (m.gpu2 != null ? { gpu: m.gpu2, vram: m.vram2, vramUsed: m.vramUsed2, vramTotal: m.vramTotal2 } : null)
     const mg2 = $('metricGpu2'), mv2 = $('metricVram2')
-    if (g2 && g2.gpu != null) {
+    const shouldShow = !!(g2 && g2.gpu != null)
+    const isShown = mg2 && mg2.style.display !== 'none'
+    if (shouldShow) {
       pushMetric('gpu2', g2.gpu); pushMetric('vram2', g2.vram)
       if ($('valGpu2')) $('valGpu2').textContent = g2.gpu + '%'
       if ($('valVram2')) $('valVram2').textContent = g2.vramUsed ? g2.vramUsed + '/' + g2.vramTotal : '—'
       drawSpark('sparkGpu2', _sparkHistory.gpu2, '#A78BFA')
       drawSpark('sparkVram2', _sparkHistory.vram2, '#FB7185')
-      if (mg2) mg2.style.display = ''; if (mv2) mv2.style.display = ''
+      if (!isShown) { if (mg2) mg2.style.display = ''; if (mv2) mv2.style.display = '' }
       if (mg2) mg2.title = 'GPU 2' + (m.gpus[1] ? ' — ' + (m.gpus[1].vramTotal || '') : '')
       if (mv2) mv2.title = 'VRAM 2 ' + (g2.vramUsed || '') + '/' + (g2.vramTotal || '')
-    } else {
+    } else if (isShown) {
       if (mg2) mg2.style.display = 'none'; if (mv2) mv2.style.display = 'none'
     }
   }
   if (window.__metricsTimer) clearInterval(window.__metricsTimer)
   window.__metricsTick = tick
   tick()
-  window.__metricsTimer = setInterval(tick, 2000)
+  window.__metricsTimer = setInterval(tick, 3000)
   // Pause the 2s nvidia-smi sampling while the window is hidden/minimized;
   // resume with an immediate tick on visibility.
   if (!window.__metricsVisBound) {
@@ -973,7 +1037,12 @@ async function doInstall(installed, mode) {
 $('settingsOverlay').addEventListener('click', closeSettings)
 
 // ── Dashboard ──
+let _dashRefreshing = false, _dashPending = false
 async function refreshDashboard(){
+  if (_dashRefreshing) { _dashPending = true; return }
+  _dashRefreshing = true
+  const dash = $('dashboard')
+  try {
   // status / checkInstalled / manageList are independent — run them in one
   // batch instead of 3 sequential IPC round-trips (~2-6ms saved each, more
   // when the machine is under load from a running install).
@@ -1065,9 +1134,12 @@ async function refreshDashboard(){
     // Sparge Attn comes from the expected GPU profile (not a detected version),
     // so it's surfaced here to avoid a separate duplicate "GPU Profile Overview".
     const spargeEl = $('specSparge')
-    if (spargeEl) spargeEl.textContent = (status.profile && status.profile.sparge) ? status.profile.sparge : '—'
+    // ponytail: show installed 0.1.0 if present, else expected v010_cu13 profile tag
+    if (spargeEl) spargeEl.textContent = status.versions?.spas_sage_attn || status.versions?.sparge || (status.profile && status.profile.sparge) || status.kernelProfile || '—'
   }
-  const list=$('envList'); list.innerHTML=''
+  // ponytail: batch DOM swap to avoid flicker — build fragment then single replace
+  const list=$('envList');
+  const frag=document.createDocumentFragment()
   envs.forEach(e=>{
     const div=document.createElement('div')
     div.className='env-list-item'+(e.active?' active':'')
@@ -1081,8 +1153,9 @@ async function refreshDashboard(){
         if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); activate() }
       })
     }
-    list.appendChild(div)
+    frag.appendChild(div)
   })
+  list.innerHTML=''; list.appendChild(frag)
   loadWangpChangelog()
   loadPaths()
   loadModelPaths()
@@ -1106,6 +1179,10 @@ async function refreshDashboard(){
     if (btn) btn.disabled = !available
     if (hint) hint.style.display = available ? 'none' : 'block'
   })()
+  } finally {
+    _dashRefreshing = false
+    if (_dashPending) { _dashPending = false; setTimeout(refreshDashboard, 80) }
+  }
 }
 
 // ── Model-path warning ──
@@ -1424,6 +1501,8 @@ async function loadModelPaths() {
 async function changeModelFolder(type, key, cfgKey, singular) {
   const dir = await window.w2gp.selectFolder()
   if (!dir) return
+  // ponytail: reject file-as-folder (orca-paste Temp png)
+  if (/\.(png|jpg|jpeg|webp|bmp|gif)$/i.test(dir) || dir.toLowerCase().includes('orca-paste')) { alert('Please select a folder, not a file:\n' + dir); return }
   const cur = await window.w2gp.getModelPaths().then(p => ({ ckpts: p?.checkpoints, loras: p?.loras, output: p?.output })[type])
   if (cur && cur.toLowerCase() === dir.toLowerCase()) { window.w2gp.openFolder(dir); return }
   const choice = await window.w2gp.confirmDialog({
@@ -1563,10 +1642,15 @@ async function openMigrationModal() {
   let prefs
   try { prefs = await window.w2gp.migrateChoose() } catch { prefs = null }
   if (!prefs) { alert('Could not determine migration targets.'); return }
+  window._migPrefs = prefs
   $('migDataDir').value = prefs.dataDir || ''
+  $('migDataDir').title = prefs.dataDir || ''
   $('migCkpts').value = prefs.ckpts || ''
+  $('migCkpts').title = prefs.ckpts || ''
   $('migLoras').value = prefs.loras || ''
+  $('migLoras').title = prefs.loras || ''
   $('migOutput').value = prefs.output || ''
+  $('migOutput').title = prefs.output || ''
   // Context-aware copy: the modal is reused both for the first migration out of
   // a roaming AppData profile AND for later re-location of an already-migrated
   // install (e.g. C:\Wan2GP → D:\Wan2GP). Don't claim "AppData" when it isn't.
@@ -1599,41 +1683,63 @@ document.querySelectorAll('#migrationModal [data-browse]').forEach(btn => {
     const field = { dataDir: 'migDataDir', ckpts: 'migCkpts', loras: 'migLoras', output: 'migOutput' }[key]
     try {
       const picked = await window.w2gp.selectFolder()
-      if (picked) $(field).value = picked
+      if (picked) { $(field).value = picked; $(field).title = picked }
     } catch {}
   })
 })
 $('migrationMoveBtn')?.addEventListener('click', async () => {
   if (_migBusy) return
+  // ponytail: support 4 WAN2GP folder modes — existing vs new × Move vs Just point (like changeModelFolder)
+  const newDataDir = $('migDataDir').value.trim()
+  // ponytail: reject file-as-folder
+  if (/\.(png|jpg|jpeg|webp|bmp|gif)$/i.test(newDataDir) || newDataDir.toLowerCase().includes('orca-paste')) { alert('Please select a folder, not a file:\n' + newDataDir); resetMigrationUI(); return }
+  const oldDataDir = (window._migPrefs && (window._migPrefs.dataDir || window._migPrefs.legacy)) || (await window.w2gp.getInstallPaths().catch(()=>null))?.dataDir || ''
+  let doMove = true
+  if (newDataDir && oldDataDir && newDataDir.toLowerCase() !== oldDataDir.toLowerCase()) {
+    const c = await window.w2gp.confirmDialog({
+      title: 'Move files or just point?',
+      message: 'Change Wan2GP folder to:\n  ' + newDataDir,
+      detail: 'Old: ' + oldDataDir + '\n\n• Move existing files = physically move repo/venv/settings to new folder (existing or new — created if needed)\n• Just point = switch to new/existing folder without moving (empty or already-filled)',
+      buttons: ['Move existing files', 'Just point (no move)', 'Cancel'],
+      defaultId: 0, cancelId: 2
+    })
+    if (c === 'cancel') return
+    doMove = (c === 'move')
+  } else if (newDataDir && oldDataDir && newDataDir.toLowerCase() === oldDataDir.toLowerCase()) { doMove = false }
   _migBusy = true
   const btn = $('migrationMoveBtn')
   btn.disabled = true
-  btn.textContent = 'Moving…'
-  // Show the progress bar (hidden again on success/error below).
+  btn.textContent = doMove ? 'Moving…' : 'Switching…'
   const prog = $('migrationProgress')
   if (prog) { prog.classList.remove('hidden'); setMigrationProgress(0) }
   const choices = {
-    dataDir: $('migDataDir').value,
+    dataDir: newDataDir,
     ckpts: $('migCkpts').value,
     loras: $('migLoras').value,
     output: $('migOutput').value
   }
   if (!choices.dataDir) { alert('Choose a Wan2GP data folder.'); resetMigrationUI(); return }
-  // Don't allow a bare drive root (e.g. D:\) — the main process rejects it too,
-  // but catch it here for an immediate, friendly message.
   if (isDriveRoot(choices.dataDir)) {
     alert('Install/move into a folder, not a drive root.\n\nPick a folder such as D:\\Wan2GP (use Browse if unsure), then Move & restart.')
     resetMigrationUI(); return
   }
   try {
-    const r = await window.w2gp.migrateToPreferred(choices)
-    if (r && r.ok) {
-      btn.textContent = 'Restarting…'
-    } else {
-      alert('Could not move the data folder:\n' + ((r && r.error) || 'unknown error') +
-            '\n\nClose any Wan2GP windows/terminals pointing at the old folder and try again.')
-      resetMigrationUI()
+    // ponytail: 4 modes for Wan2GP folder — existing/new × Move vs Just point
+    if (doMove && oldDataDir && newDataDir.toLowerCase() !== oldDataDir.toLowerCase()) {
+      const r = await window.w2gp.moveFolder(oldDataDir, newDataDir)
+      if (!r || (!r.ok && !r.success)) { alert('Could not move files:\n' + ((r && r.error) || 'unknown') + '\n\nClose any Wan2GP windows/terminals and try again.'); resetMigrationUI(); return }
     }
+    const r2 = await window.w2gp.setDataDir(newDataDir)
+    if (!r2 || (!r2.ok && !r2.success)) { alert('Could not switch data folder:\n' + ((r2 && r2.error) || 'unknown')); resetMigrationUI(); return }
+    // persist model folder overrides if changed (no move, just point — like changeModelFolder "Just point")
+    const ck = $('migCkpts').value.trim(), lo = $('migLoras').value.trim(), out = $('migOutput').value.trim()
+    const patch={}
+    if (ck && ck !== (window._migPrefs?.ckpts||'')) patch.checkpointsPaths=[ck,'.']
+    if (lo && lo !== (window._migPrefs?.loras||'')) patch.lorasRoot=lo
+    if (out && out !== (window._migPrefs?.output||'')) patch.savePath=out
+    if (Object.keys(patch).length) await window.w2gp.writeWgpConfig(patch)
+    btn.textContent = 'Restarting…'
+    setTimeout(()=> location.reload(), 900)
   } catch (e) {
     alert('Migration failed: ' + e.message)
     resetMigrationUI()
@@ -1660,6 +1766,16 @@ window.w2gp.onOpenMigration?.(() => openMigrationModal());
 // Re-entrancy guard: periodic + manual checks share one flight; a slow GitHub
 // response can't stack overlapping fetches.
 let _wangpCheckBusy = false
+// ponytail: upstream fetch spawns curl/powershell to GitHub (~1-5s) — cache 5 min
+// instead of re-hitting the network on every refreshDashboard.
+let _upstreamAt = 0, _upstreamData = null
+// ponytail: llmEnginesList spawns 3x where + a cold venv python per call, and
+// refreshLLMEngines + refreshDeepy each called it per refresh — one shared flight.
+let _llmEnginesPromise = null
+function getLLMEngines() {
+  if (!_llmEnginesPromise) _llmEnginesPromise = window.w2gp.llmEnginesList().catch(() => ({ engines: [] }))
+  return _llmEnginesPromise
+}
 async function loadWangpChangelog(showLoading) {
   const localEl = $('localCommit')
   const listEl = $('updatesList')
@@ -1675,7 +1791,9 @@ async function loadWangpChangelog(showLoading) {
 
     window.w2gp.getWangpVersion().then(v => { if (v && verEl) verEl.textContent = v })
 
-    const upstream = await window.w2gp.getWangpUpstreamInfo()
+    const upstream = (Date.now() - _upstreamAt < 5 * 60 * 1000 && _upstreamData)
+      ? _upstreamData
+      : await window.w2gp.getWangpUpstreamInfo().then(u => { if (u && u.commits) { _upstreamAt = Date.now(); _upstreamData = u } return u })
     if (!upstream || !upstream.commits) {
       // A transient upstream failure on the silent periodic poll must not
       // clobber a previously rendered changelog — show the error only on an
@@ -2209,7 +2327,7 @@ async function refreshLLMEngines() {
   const list = $('llmEnginesList')
   if (!list) return
   let data
-  try { data = await window.w2gp.llmEnginesList() } catch (e) { data = { engines: [] } }
+  try { data = await getLLMEngines() } catch (e) { data = { engines: [] } }
   const engines = (data && data.engines) || []
   if (!engines.length) {
     list.innerHTML = '<div class="spec-row"><span class="spec-value">No LLM engines available — reload the Dashboard or check the logs.</span></div>'
@@ -2266,7 +2384,7 @@ async function refreshLLMEngines() {
       btn.disabled = true; btn.textContent = 'installing...'
       const r = await window.w2gp.llmEngineInstall(id)
       btn.textContent = (r && r.success) ? '✓ installed' : 'failed'
-      if (r && r.success) { showToast('✓ engine installed'); refreshLLMEngines() }
+      if (r && r.success) { _llmEnginesPromise = null; showToast('✓ engine installed'); refreshLLMEngines() }
       else showToast('✗ ' + (r && r.error ? r.error : 'install failed'))
     })
   })
@@ -2338,7 +2456,7 @@ async function refreshDeepy() {
     if (s && s.ok) status = s
   } catch (_) {}
   try {
-    const d = await window.w2gp.llmEnginesList()
+    const d = await getLLMEngines()
     engines = (d && d.engines) || []
   } catch (_) {}
 
@@ -2468,7 +2586,7 @@ async function refreshDeepy() {
   }
 }
 
-$('llmEnginesRefresh')?.addEventListener('click', refreshLLMEngines)
+$('llmEnginesRefresh')?.addEventListener('click', () => { _llmEnginesPromise = null; refreshLLMEngines() })
 
 $('desktopShortcutBtn').addEventListener('click', async function() {
   this.disabled = true; this.textContent = 'Creating...'
@@ -2580,6 +2698,7 @@ function _resizeMove(e) {
   let h = _resize.dock === 'top' ? _resize.startH + dh : _resize.startH - dh
   h = Math.max(80, Math.min(h, window.innerHeight * 0.6))
   $('floatingTerminal').style.height = h + 'px'
+  syncTermEmbedPadding()
 }
 function _resizeEnd() { _resize = null; document.removeEventListener('mousemove', _resizeMove); document.removeEventListener('mouseup', _resizeEnd) }
 
@@ -2613,8 +2732,9 @@ $('updateCheckBtn').addEventListener('click', (e) => {
 $('updateDownloadBtn').addEventListener('click', () => {
   window.w2gp.downloadUpdate({ differential: false })
 })
+// ponytail: differential disabled — Quick Update now does full download too
 $('updateDeltaBtn')?.addEventListener('click', () => {
-  window.w2gp.downloadUpdate({ differential: true })
+  window.w2gp.downloadUpdate({ differential: false })
 })
 $('updateInstallBtn').addEventListener('click', () => {
   window.w2gp.installUpdate()
@@ -2768,8 +2888,6 @@ $('launcherGpuSaveBtn')?.addEventListener('click', async () => {
   const cfg = await window.w2gp.configLoad()
   cfg.launcherGpu = val
   cfg.electronGpu = (val !== 'disabled')
-  const gpu = $('electronGpuToggle')
-  if (gpu) gpu.checked = cfg.electronGpu !== false
   await window.w2gp.configSave(cfg)
   showToast(val === 'auto' ? 'Launcher GPU set to Auto (restart to apply)' : 'Launcher GPU set to ' + val + ' (restart to apply)')
 })
@@ -2849,7 +2967,7 @@ window.w2gp.onUpdateStatus((status) => {
         // Download button instead.
         $('updateText').textContent = `v${status.version} available`
         $('updateDownloadBtn').classList.remove('hidden')
-        $('updateDeltaBtn')?.classList.remove('hidden')
+        $('updateDeltaBtn')?.classList.add('hidden') // ponytail: differential disabled — full only
         $('updateInstallBtn').classList.add('hidden')
         $('updateActions').classList.remove('hidden')
         $('updateProgress').classList.add('hidden')

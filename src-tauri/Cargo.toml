@@ -1,6 +1,6 @@
 [package]
 name = "wan2gp-tauri-spike"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -26,5 +26,16 @@ tauri-plugin-shell = "2.3.5"
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-fs = "2.5.1"
 sysinfo = "0.39.6"
-tauri-plugin-updater = "2.11.0"
+# tauri-plugin-updater removed — not initialized in lib.rs (no pubkey/endpoints). Re-add when updater is wired.
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 0
+incremental = true
 

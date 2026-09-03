@@ -1,9 +1,20 @@
 // ponytail: single-file spike — one lib.rs covers all 100 handlers; split into modules when this file hurts
+#![allow(clippy::too_many_lines, clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_possible_wrap, clippy::cast_lossless, clippy::missing_panics_doc, clippy::needless_pass_by_value, clippy::items_after_statements, clippy::match_same_arms, clippy::similar_names, clippy::many_single_char_names, clippy::case_sensitive_file_extension_comparisons, clippy::unreadable_literal, clippy::redundant_closure, clippy::uninlined_format_args, clippy::redundant_clone)]
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use tauri::Emitter;
 // shell/dialog/fs plugins wired for install/launch streaming — ponytail: std::process covers probes without them
 static MUTATING: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+static LAST_STATUS: OnceLock<Mutex<Option<(std::time::Instant, serde_json::Value)>>> = OnceLock::new(); // ponytail: cache get_status 5s — python importlib scan is 800ms, don't block every dashboard paint
+static CACHED_DATA_DIR: OnceLock<Mutex<(PathBuf, std::time::Instant)>> = OnceLock::new();
+static CACHED_REPO_DIR: OnceLock<Mutex<(PathBuf, std::time::Instant)>> = OnceLock::new();
+static CACHED_IGPU: OnceLock<Mutex<Option<serde_json::Value>>> = OnceLock::new();
+static METRICS_CACHE: OnceLock<Mutex<Option<(std::time::Instant, serde_json::Value)>>> = OnceLock::new();
+static SYSINFO_CACHE: OnceLock<Mutex<sysinfo::System>> = OnceLock::new();
+fn invalidate_path_cache() {
+    if let Some(m) = CACHED_DATA_DIR.get() { let _ = m.lock().map(|mut g| g.1 = std::time::Instant::now().checked_sub(std::time::Duration::from_hours(1)).unwrap()); }
+    if let Some(m) = CACHED_REPO_DIR.get() { let _ = m.lock().map(|mut g| g.1 = std::time::Instant::now().checked_sub(std::time::Duration::from_hours(1)).unwrap()); }
+}
 fn mutating_try(name: &str) -> Result<(), String> {
     let m = MUTATING.get_or_init(|| Mutex::new(None));
     let mut g = m.lock().unwrap();
@@ -14,7 +25,7 @@ fn mutating_done() { if let Some(m) = MUTATING.get() { *m.lock().unwrap() = None
 
 #[tauri::command]
 fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+    format!("Hello, {name}! You've been greeted from Rust!")
 }
 
 // ── helpers: paths (mirrors main.js getDataDir/getRepoDir) ──
@@ -39,25 +50,35 @@ fn data_dir_override_file() -> PathBuf { home_dir().join(".wan2gp-tauri-data-dir
 #[allow(dead_code)]
 fn data_dir_override_file_electron() -> PathBuf { home_dir().join(".wan2gp-desktop-data-dir") }
 
-fn get_data_dir() -> PathBuf {
-    // 1. Tauri override only — isolated from Electron, no fallback
+fn get_data_dir_uncached() -> PathBuf {
     let ov = data_dir_override_file();
-    if ov.exists() {
-        if let Ok(s) = std::fs::read_to_string(&ov) {
-            let d = s.trim().to_string();
-            if !d.is_empty() {
-                let p = PathBuf::from(&d);
-                if p.is_absolute() && p.exists() { return p; }
-                if !p.exists() {
-                    let legacy = std::path::Path::new(&d).join("wgp.py");
-                    let nested = PathBuf::from(&d).join("Wan2GP").join("wgp.py");
-                    if legacy.exists() || nested.exists() { return PathBuf::from(d); }
-                    let _ = std::fs::remove_file(&ov);
+    let ov_e = data_dir_override_file_electron();
+    for pth in [ov.clone(), ov_e.clone()] {
+        if pth.exists() {
+            if let Ok(s) = std::fs::read_to_string(&pth) {
+                let d = s.trim().to_string();
+                if !d.is_empty() {
+                    let p = PathBuf::from(&d);
+                    if p.is_absolute() && p.exists() { return p; }
+                    if !p.exists() {
+                        let legacy = std::path::Path::new(&d).join("wgp.py");
+                        let nested = PathBuf::from(&d).join("Wan2GP").join("wgp.py");
+                        if legacy.exists() || nested.exists() { return PathBuf::from(d); }
+                    }
                 }
             }
         }
     }
     default_data_dir()
+}
+fn get_data_dir() -> PathBuf {
+    let cache = CACHED_DATA_DIR.get_or_init(|| Mutex::new((PathBuf::new(), std::time::Instant::now().checked_sub(std::time::Duration::from_hours(1)).unwrap())));
+    if let Ok(g) = cache.lock() {
+        if g.1.elapsed() < std::time::Duration::from_secs(5) && !g.0.as_os_str().is_empty() { return g.0.clone(); }
+    }
+    let v = get_data_dir_uncached();
+    if let Ok(mut g) = cache.lock() { *g = (v.clone(), std::time::Instant::now()); }
+    v
 }
 fn default_data_dir() -> PathBuf {
     // Check existing installs on drives CDEFG (Windows)
@@ -79,7 +100,7 @@ fn default_data_dir() -> PathBuf {
                 if dir_is_writable(base) { return cand; }
             }
         }
-        return legacy;
+        legacy
     }
     #[cfg(not(windows))]
     {
@@ -88,32 +109,74 @@ fn default_data_dir() -> PathBuf {
 }
 fn dir_is_writable(p: &Path) -> bool {
     // try mkdir + probe file (same as main.js dirIsWritable)
-    let target = if p.exists() { p.to_path_buf() } else { p.to_path_buf() };
-    if let Err(_) = std::fs::create_dir_all(&target) { return false; }
+    let target = p.to_path_buf();
+    if std::fs::create_dir_all(&target).is_err() { return false; }
     let probe = target.join(format!(".writetest-{}", std::process::id()));
-    match std::fs::write(&probe, b"1") { Ok(_) => { let _ = std::fs::remove_file(&probe); true }, Err(_) => false }
+    match std::fs::write(&probe, b"1") { Ok(()) => { let _ = std::fs::remove_file(&probe); true }, Err(_) => false }
 }
-fn get_repo_dir() -> PathBuf {
+fn get_repo_dir_uncached() -> PathBuf {
     let base = get_data_dir();
     let nested = base.join("Wan2GP");
     if nested.join("wgp.py").exists() { return nested; }
     base
 }
+fn get_repo_dir() -> PathBuf {
+    let cache = CACHED_REPO_DIR.get_or_init(|| Mutex::new((PathBuf::new(), std::time::Instant::now().checked_sub(std::time::Duration::from_hours(1)).unwrap())));
+    if let Ok(g) = cache.lock() {
+        if g.1.elapsed() < std::time::Duration::from_secs(5) && !g.0.as_os_str().is_empty() { return g.0.clone(); }
+    }
+    let v = get_repo_dir_uncached();
+    if let Ok(mut g) = cache.lock() { *g = (v.clone(), std::time::Instant::now()); }
+    v
+}
 fn get_config_file() -> PathBuf { get_data_dir().join("desktop-config.json") }
 fn get_envs_file() -> PathBuf { get_repo_dir().join("envs.json") }
 
 fn load_config_value() -> serde_json::Value {
+    // ponytail: clean wgp_config.json file-as-folder on every launch (before desktop-config return)
+    {
+        let wp = get_repo_dir().join("wgp_config.json");
+        if wp.exists() {
+            if let Ok(s)=std::fs::read_to_string(&wp) {
+                if let Ok(mut v)=serde_json::from_str::<serde_json::Value>(&s) {
+                    let mut d=false;
+                    for k in ["checkpoints_paths","checkpointsPaths","ckpt_dir","loras_root","lorasRoot","lora_dir","save_path","savePath"] {
+                        if let Some(p)=v.get(k).and_then(|x| if x.is_array(){x.as_array().and_then(|a|a.first())}else{Some(x)}).and_then(|x| x.as_str()) {
+                            let low=p.to_lowercase();
+                            if low.contains("orca-paste")||low.ends_with(".png") {
+                                if let Some(m)=v.as_object_mut(){ m.remove(k); d=true; }
+                            }
+                        }
+                    }
+                    if d { let _= atomic_write(&wp, &serde_json::to_string_pretty(&v).unwrap_or(s)); }
+                }
+            }
+        }
+    }
     let f = get_config_file();
     if f.exists() {
         if let Ok(s) = std::fs::read_to_string(&f) {
-            if let Ok(v) = serde_json::from_str(&s) { return v; }
+            if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&s) {
+                let mut dirty=false;
+                for k in ["modelCkptsPath","modelLorasPath","modelOutputPath","modelCkpts","modelLoras"] {
+                    if let Some(p)=v.get(k).and_then(|x| x.as_str()) {
+                        let low=p.to_lowercase();
+                        if low.contains("orca-paste")||low.ends_with(".png")||low.ends_with(".jpg")|| (low.contains("\\temp\\") && low.contains(".png")) {
+                            v.as_object_mut().map(|m| m.remove(k));
+                            dirty=true;
+                        }
+                    }
+                }
+                if dirty { let _= atomic_write(&f, &serde_json::to_string_pretty(&v).unwrap_or(s)); }
+                return v;
+            }
         }
     }
     serde_json::json!({
         "githubToken": "", "hfToken": "", "claudeApiKey": "", "theme": "dark",
         "serverPort": 7861, "serverName": "localhost", "defaultBrowser": "system", // ponytail: 7861 for side-by-side with Electron 7860
 
-        "termDockDefault": "bottom", "electronGpu": true, "launcherGpu": "auto", "sageSafe": false, "share": false,
+        "termDockDefault": "bottom", "electronGpu": true, "launcherGpu": "auto", "sageSafe": true, "share": false,
         "autoUpdateEnabled": true, "ggufEnv": { "enabled": true, "matmulMode": "auto", "streamK": true, "bf16Fp16": false }
     })
 }
@@ -133,7 +196,7 @@ fn get_gpu_info_sync() -> serde_json::Value {
             let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if !s.is_empty() {
                 let parts: Vec<&str> = s.split(", ").collect();
-                return serde_json::json!({"vendor":"NVIDIA","name":parts.get(0).unwrap_or(&"").trim(),"vramMB":parts.get(1).unwrap_or(&"0 MiB").trim(),"driverVersion":parts.get(2).unwrap_or(&"").trim(),"raw":s});
+                return serde_json::json!({"vendor":"NVIDIA","name":parts.first().unwrap_or(&"").trim(),"vramMB":parts.get(1).unwrap_or(&"0 MiB").trim(),"driverVersion":parts.get(2).unwrap_or(&"").trim(),"raw":s});
             }
         }
     }
@@ -142,15 +205,17 @@ fn get_gpu_info_sync() -> serde_json::Value {
 
 // ── existing spike commands (kept) ──
 #[tauri::command]
-fn detect_gpu() -> Result<serde_json::Value, String> {
-    Ok(get_gpu_info_sync())
+fn detect_gpu() -> serde_json::Value {
+    get_gpu_info_sync()
 }
 fn kernel_profile_key(vendor: &str, name: &str) -> String {
     let v = vendor.to_uppercase(); let g = name.to_uppercase();
     if v == "APPLE" { return "MPS".into(); }
     if v == "NVIDIA" {
         if g.contains(" 10") || g.contains(" 16") || g.contains("GTX 10") || g.contains("GTX 16") { return "GTX_10".into(); }
-        if g.contains("50") { return "RTX_50".into(); } if g.contains("40") { return "RTX_40".into(); } if g.contains("30") { return "RTX_30".into(); }
+        if g.contains("50") { return "RTX_50".into(); }
+        if g.contains("40") { return "RTX_40".into(); }
+        if g.contains("30") { return "RTX_30".into(); }
         if g.contains("20") || g.contains("QUADRO") { return "RTX_20".into(); } return "GTX_10".into();
     }
     if v == "AMD" {
@@ -167,12 +232,20 @@ fn build_install_plan(hw: &serde_json::Value) -> serde_json::Value {
     let vram = hw.get("vramMB").and_then(|v| v.as_str()).unwrap_or("0").split_whitespace().next().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
     let driver = hw.get("driverVersion").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let vram_gb = vram / 1024.0_f64; let is_gtx = name.to_uppercase().contains("GTX 10") || name.to_uppercase().contains("GTX 16") || (name.contains("10") && vendor=="NVIDIA" && (name.contains("1050")||name.contains("1060")||name.contains("1650")));
-    let (cuda, torch, warn) = if vendor=="NVIDIA" { if is_gtx { ("CUDA 12.8", "PyTorch 2.7.1", String::new()) } else { let mut w=String::new(); if let Ok(dv)=driver.parse::<f64>() { if dv < 580.0 { w=format!("NVIDIA driver {} < R580 — cu130 needs R580+", driver); }} ("CUDA 13 (cu130)", "PyTorch 2.10", w) } } else if vendor=="AMD" { ("ROCm (TheRock)", "PyTorch 2.7.0", String::new()) } else if vendor=="APPLE" { ("MPS (Metal)", "PyTorch (MPS)", String::new()) } else { ("CPU", "PyTorch (CPU)", String::new()) };
+    let (cuda, torch, warn) = if vendor=="NVIDIA" { if is_gtx { ("CUDA 12.8", "PyTorch 2.7.1", String::new()) } else { let mut w=String::new(); if let Ok(dv)=driver.parse::<f64>() { if dv < 580.0 { w=format!("NVIDIA driver {driver} < R580 — cu130 needs R580+"); }} ("CUDA 13 (cu130)", "PyTorch 2.10", w) } } else if vendor=="AMD" { ("ROCm (TheRock)", "PyTorch 2.7.0", String::new()) } else if vendor=="APPLE" { ("MPS (Metal)", "PyTorch (MPS)", String::new()) } else { ("CPU", "PyTorch (CPU)", String::new()) };
     let _ = vram_gb; let _ = warn.clone();
     serde_json::json!({"vendor": vendor, "gpuName": name, "vramGb": vram, "cuda": cuda, "torch": torch, "driverWarning": warn, "profile": kernel_profile_key(&vendor, &name)})
 }
 #[tauri::command]
 fn get_status() -> serde_json::Value {
+    // ponytail: fast-path cache — return last scan if <5s old so dashboard opens instantly on cold start
+    if let Some(m) = LAST_STATUS.get() {
+        if let Ok(g) = m.lock() {
+            if let Some((t, v)) = g.as_ref() {
+                if t.elapsed() < std::time::Duration::from_secs(5) { return v.clone(); }
+            }
+        }
+    }
     let env = get_active_env();
     if env.is_null() { return serde_json::json!({"error":"No active environment","spike":true}); }
     // try to read kernel wheels from setup_config.json if present
@@ -200,7 +273,7 @@ fn get_status() -> serde_json::Value {
                                 let mut configured: Option<String> = None;
                                 if let Some(cmd) = cfg.get("components").and_then(|c| c.get("kernels")).and_then(|m| m.get(key)).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()) {
                                     // wheelDistVersion: parse "<dist>-<version>-cp..." 
-                                    if let Some(base) = cmd.split('/').last() {
+                                    if let Some(base) = cmd.split('/').next_back() {
                                         let base = base.trim_end_matches(".whl");
                                         if let Some(dash) = base.find('-') {
                                             let rest = &base[dash+1..];
@@ -220,7 +293,7 @@ fn get_status() -> serde_json::Value {
         }
     }
     // wheels already built with configured, but installed will be filled after version scan
-    let mut pending_wheels = wheels.clone();
+    let pending_wheels = wheels.clone();
     // real version scan via env's python (importlib.metadata) — ponytail: helper file on same drive as env
     let mut versions = serde_json::Map::new();
     if let Some(raw) = env.get("path").and_then(|p| p.as_str()) {
@@ -230,7 +303,7 @@ fn get_status() -> serde_json::Value {
         let py_bin = if py.exists() { py } else { PathBuf::from(raw) };
         if py_bin.exists() {
             let helper = get_data_dir().join(".get_versions.py");
-            let code = r#"import sys, importlib.metadata
+            let code = r"import sys, importlib.metadata
 try:
     aliases={'triton':'triton-windows','opencv-python':'opencv','spas_sage_attn':'spas-sage-attn','huggingface_hub':'huggingface-hub'}
     pkgs=['python','torch','triton','sageattention','spas_sage_attn','flash_attn','nunchaku','llamacpp_gguf_cuda','lightx2v','diffusers','transformers','gradio','accelerate','onnxruntime','xformers','mmgp','moviepy','opencv-python','insightface','peft','timm','vector_quantize_pytorch','torchcodec','torchaudio','huggingface_hub','bitsandbytes','numpy','sentencepiece','open_clip_torch','imageio','einops','librosa','soundfile','tokenizers','av']
@@ -244,7 +317,7 @@ try:
     print('||'.join(r))
 except Exception as e:
     print(f'error:{e}')
-"#;
+";
             let _ = std::fs::write(&helper, code);
             if let Ok(out) = std::process::Command::new(&py_bin).arg(&helper).current_dir(&repo).output() {
                 if out.status.success() {
@@ -276,10 +349,15 @@ except Exception as e:
             final_wheels.push(obj);
         }
     } else if let Some(arr) = wheels.as_array() {
-        final_wheels = arr.clone();
+        final_wheels.clone_from(arr);
     }
-    let out_wheels = if !final_wheels.is_empty() { serde_json::Value::Array(final_wheels) } else { wheels };
-    serde_json::json!({"env": env, "versions": serde_json::Value::Object(versions), "kernelWheels": out_wheels, "kernelProfile": profile, "spike": false})
+    let out_wheels = if final_wheels.is_empty() { wheels } else { serde_json::Value::Array(final_wheels) };
+    // profile object for frontend specSparge (was only kernelProfile string → showed —)
+    let profile_obj = cfg_path.exists().then(|| std::fs::read_to_string(&cfg_path).ok()).flatten().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).and_then(|c| c.get("gpu_profiles").and_then(|p| p.get(&profile)).cloned()).unwrap_or(serde_json::json!({"sparge": null}));
+    let out = serde_json::json!({"env": env, "versions": serde_json::Value::Object(versions), "kernelWheels": out_wheels, "kernelProfile": profile, "profile": profile_obj, "spike": false});
+    // cache for 5s
+    if let Ok(mut g) = LAST_STATUS.get_or_init(|| Mutex::new(None)).lock() { *g = Some((std::time::Instant::now(), out.clone())); }
+    out
 }
 #[tauri::command]
 fn check_python() -> serde_json::Value {
@@ -329,7 +407,7 @@ fn detect_gpus() -> serde_json::Value {
     if let Ok(out) = Command::new("nvidia-smi").args(["--query-gpu=index,name,memory.total", "--format=csv,noheader"]).output() {
         if out.status.success() {
             for line in String::from_utf8_lossy(&out.stdout).lines() {
-                let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+                let parts: Vec<&str> = line.split(',').map(str::trim).collect();
                 if parts.len() >= 3 {
                     if let Ok(idx) = parts[0].parse::<i32>() {
                         let vram = parts[2].split_whitespace().next().and_then(|n| n.parse::<f64>().ok()).unwrap_or(0.0);
@@ -348,46 +426,24 @@ fn detect_gpus() -> serde_json::Value {
 fn detect_hardware() -> serde_json::Value {
     let gpus = detect_gpus();
     let gpu_name = gpus.as_array().and_then(|a| a.first()).and_then(|g| g.get("name")).and_then(|n| n.as_str()).unwrap_or("—").to_string();
-    let vram = gpus.as_array().and_then(|a| a.first()).and_then(|g| g.get("vramMB")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let vram = gpus.as_array().and_then(|a| a.first()).and_then(|g| g.get("vramMB")).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
     let vram_str = if vram > 0.0 { format!("{} MB", vram as i64) } else { "—".into() };
-    // cpu via WMI Name (like Electron os.cpus()[0].model) — PROCESSOR_IDENTIFIER gives "Intel64 Family 6..." which users hate
-    let cpu = {
-        #[cfg(windows)]
-        {
-            use std::process::Command;
-            // Name already contains "12th Gen Intel(R) Core(TM) i9-12900K", MaxClockSpeed adds GHz
-            if let Ok(out) = Command::new("powershell").args(["-NoProfile","-Command","(Get-CimInstance Win32_Processor | Select-Object -First 1).Name"]).output() {
-                if out.status.success() {
-                    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    if !name.is_empty() {
-                        // try to append GHz if not already in Name
-                        let ghz = Command::new("powershell").args(["-NoProfile","-Command","(Get-CimInstance Win32_Processor | Select-Object -First 1).MaxClockSpeed"]).output()
-                            .ok().and_then(|o| if o.status.success() { String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok() } else { None })
-                            .map(|mhz| format!("{:.2} GHz", mhz as f64 / 1000.0))
-                            .unwrap_or_default();
-                        if !ghz.is_empty() && !name.contains("GHz") && !name.contains("MHz") {
-                            format!("{} ({})", name, ghz)
-                        } else { name }
-                    } else { std::env::var("PROCESSOR_IDENTIFIER").unwrap_or("—".into()) }
-                } else { std::env::var("PROCESSOR_IDENTIFIER").unwrap_or("—".into()) }
-            } else { std::env::var("PROCESSOR_IDENTIFIER").unwrap_or("—".into()) }
-        }
-        #[cfg(not(windows))] { std::env::var("PROCESSOR_IDENTIFIER").unwrap_or("—".into()) }
-    };
-    let ram = {
-        // ponytail: real sysinfo crate if needed; this probe is enough for dashboard
-        #[cfg(windows)]
-        {
-            use std::process::Command;
-            if let Ok(out) = Command::new("powershell").args(["-NoProfile","-Command","(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"]).output() {
-                if out.status.success() {
-                    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    if let Ok(b) = s.parse::<u64>() { format!("{} GB", b / 1073741824) } else { "—".into() }
-                } else { "—".into() }
-            } else { "—".into() }
-        }
-        #[cfg(not(windows))]
-        { "—".into() }
+    // CPU/RAM via sysinfo — ~0ms vs 800ms powershell; brand string is equivalent to WMI Name
+    let (cpu, ram) = {
+        use sysinfo::{System, RefreshKind, MemoryRefreshKind, CpuRefreshKind};
+        let mut sys = SYSINFO_CACHE.get_or_init(|| Mutex::new(System::new_with_specifics(RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()).with_memory(MemoryRefreshKind::everything())))).lock().unwrap();
+        // refresh only if stale (>4s) to avoid re-allocating every detect_hardware call
+        sys.refresh_memory();
+        sys.refresh_cpu_all();
+        let total = sys.total_memory();
+        let ram_s = if total > 0 { format!("{} GB", total / 1073741824) } else { "—".into() };
+        let cpu_s = sys.cpus().first().map(|c| c.brand().trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| std::env::var("PROCESSOR_IDENTIFIER").unwrap_or("—".into()));
+        // If brand already contains GHz, don't append; else append frequency hint from sysinfo
+        let cpu_s = if cpu_s.contains("GHz") || cpu_s.contains("MHz") { cpu_s } else {
+            let freq = sys.cpus().first().map_or(0, sysinfo::Cpu::frequency);
+            if freq > 0 { format!("{} ({:.2} GHz)", cpu_s, freq as f64 / 1000.0) } else { cpu_s }
+        };
+        (cpu_s, ram_s)
     };
     serde_json::json!({"cpu": cpu, "ram": ram, "gpu": gpu_name, "vram": vram_str})
 }
@@ -396,7 +452,7 @@ fn detect_hardware() -> serde_json::Value {
 fn get_hardware_profile() -> serde_json::Value {
     // mirrors Electron get-hardware-profile — returns profile string + packages/kernels so frontend .join() never crashes
     let gpus = detect_gpus();
-    let vram_mb = gpus.as_array().and_then(|a| a.first()).and_then(|g| g.get("vramMB")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let vram_mb = gpus.as_array().and_then(|a| a.first()).and_then(|g| g.get("vramMB")).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
     let vram_gb = vram_mb / 1024.0;
     let gpu = get_gpu_info_sync();
     let vendor = gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
@@ -422,13 +478,53 @@ fn get_hardware_profile() -> serde_json::Value {
 
 static PREV_CPU: OnceLock<Mutex<Option<(u64,u64)>>> = OnceLock::new();
 static LAST_NVIDIA: OnceLock<Mutex<Option<serde_json::Value>>> = OnceLock::new();
+fn get_cached_igpu() -> Option<serde_json::Value> {
+    // ponytail: WMI probed once, cached forever — was running powershell every 2s in hot loop
+    let m = CACHED_IGPU.get_or_init(|| Mutex::new(None));
+    if let Ok(g) = m.lock() { if let Some(v) = g.clone() { return Some(v); } }
+    // first call: run WMI, cache result (even None as explicit)
+    let mut igpu: Option<serde_json::Value> = None;
+    #[cfg(windows)] {
+        use std::process::Command;
+        if let Ok(wmi_out) = Command::new("powershell").args(["-NoProfile","-Command","Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ForEach-Object { $_.Name + '|' + $_.AdapterRAM }"]).output() {
+            if wmi_out.status.success() {
+                let wmi_s = String::from_utf8_lossy(&wmi_out.stdout).trim().to_string();
+                for ln in wmi_s.lines() {
+                    if let Some((n, r)) = ln.split_once('|') {
+                        let name = n.trim();
+                        if name.is_empty() || name.to_lowercase().contains("nvidia") { continue; }
+                        let lower = name.to_lowercase();
+                        if lower.contains("intel") || lower.contains("amd") || lower.contains("radeon") || lower.contains("arc") {
+                            let vram_mb = r.trim().parse::<i64>().unwrap_or(0) / (1024*1024);
+                            let fmt2 = if vram_mb>0 { format!("{vram_mb} MB") } else { "—".into() };
+                            igpu = Some(serde_json::json!({"name": name, "vram": fmt2}));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // cache sentinel: if no igpu found, store Null so we don't re-probe
+    if let Ok(mut g) = m.lock() { *g = igpu.clone().or(Some(serde_json::Value::Null)); }
+    igpu
+}
 #[tauri::command]
 fn get_system_metrics() -> serde_json::Value {
+    // throttle: if called <1.2s ago, return cached metrics (prevents double-fire from dashboard+polling)
+    if let Some(m) = METRICS_CACHE.get() {
+        if let Ok(g) = m.lock() {
+            if let Some((t, v)) = g.as_ref() {
+                if t.elapsed() < std::time::Duration::from_millis(1200) { return v.clone(); }
+            }
+        }
+    }
     let mut result = serde_json::json!({"ramFree": null, "vramFree": null, "cpu": null, "gpu": null, "ramUsed": null, "ramTotal": null, "vramUsed": null, "vramTotal": null, "ram": null, "vram": null, "gpus": [], "gpu2": null, "vram2": null, "vramFree2": null, "vramUsed2": null, "vramTotal2": null});
-    // RAM/CPU via sysinfo + os
+    // RAM/CPU via reused sysinfo instance (no alloc per tick)
     {
-        use sysinfo::{System, CpuRefreshKind, MemoryRefreshKind, RefreshKind};
-        let mut sys = System::new_with_specifics(RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()).with_memory(MemoryRefreshKind::everything()));
+        use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind};
+        let m = SYSINFO_CACHE.get_or_init(|| Mutex::new(sysinfo::System::new_with_specifics(RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()).with_memory(MemoryRefreshKind::everything()))));
+        let mut sys = m.lock().unwrap();
         sys.refresh_memory();
         sys.refresh_cpu_usage();
         let total = sys.total_memory(); let free = sys.free_memory(); let used = sys.used_memory();
@@ -451,46 +547,35 @@ fn get_system_metrics() -> serde_json::Value {
                 let mut free=0i64; let mut used=0i64; let mut total=0i64; let mut gpu=0i64; let mut cnt=0;
                 let mut per_gpu: Vec<serde_json::Value> = Vec::new();
                 for line in s.lines() {
-                    let p: Vec<&str> = line.split(',').map(|x| x.trim()).collect();
+                    let p: Vec<&str> = line.split(',').map(str::trim).collect();
                     if p.len()>=4 {
                         let f = p[0].parse::<i64>().unwrap_or(0);
                         let u = p[1].parse::<i64>().unwrap_or(0);
                         let t = p[2].parse::<i64>().unwrap_or(0);
                         let g = p[3].parse::<i64>().unwrap_or(0);
                         free+=f; used+=u; total+=t; gpu+=g; cnt+=1;
-                        let fmt_mb = |mb: i64| if mb>=1024 { format!("{} GB", (mb as f64/1024.0).round() as i64) } else { format!("{} MB", mb) };
+                        let fmt_mb = |mb: i64| if mb>=1024 { format!("{} GB", (mb as f64/1024.0).round() as i64) } else { format!("{mb} MB") };
                         let vram_pct = if t>0 { (u as f64 / t as f64 * 100.0).round() as i64 } else { 0 };
                         per_gpu.push(serde_json::json!({"free": f, "used": u, "total": t, "gpu": g, "vram": vram_pct, "vramFree": fmt_mb(f), "vramUsed": fmt_mb(u), "vramTotal": fmt_mb(t)}));
                     }
                 }
-                let fmt = |mb: i64| if mb>=1024 { format!("{} GB", (mb as f64/1024.0).round() as i64) } else { format!("{} MB", mb) };
+                let fmt = |mb: i64| if mb>=1024 { format!("{} GB", (mb as f64/1024.0).round() as i64) } else { format!("{mb} MB") };
                 result["vramFree"] = serde_json::Value::String(fmt(free));
                 result["vramUsed"] = serde_json::Value::String(fmt(used));
                 result["vramTotal"] = serde_json::Value::String(fmt(total));
                 if total>0 { result["vram"] = serde_json::json!((used as f64/total as f64*100.0).round() as i64); }
-                result["gpu"] = serde_json::json!(if cnt>1 { (gpu as f64/cnt as f64).round() as i64 } else { gpu });
+                result["gpu"] = serde_json::json!(if cnt>1 { (gpu as f64/f64::from(cnt)).round() as i64 } else { gpu });
                 // build gpus array for topbar
                 let mut gpus_arr: Vec<serde_json::Value> = per_gpu.iter().enumerate().map(|(i,g)| {
                     serde_json::json!({"index": i, "gpu": g["gpu"], "vram": g["vram"], "vramFree": g["vramFree"], "vramUsed": g["vramUsed"], "vramTotal": g["vramTotal"]})
                 }).collect();
-                // iGPU fallback: nvidia-smi only lists NVIDIA; add Intel/AMD via WMI when only 1 GPU
+                // iGPU fallback: cached once, not every 2s (was 400ms powershell in hot loop)
                 if gpus_arr.len() == 1 {
-                    if let Ok(wmi_out) = Command::new("powershell").args(["-NoProfile","-Command","Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ForEach-Object { $_.Name + '|' + $_.AdapterRAM }"]).output() {
-                        if wmi_out.status.success() {
-                            let wmi_s = String::from_utf8_lossy(&wmi_out.stdout).trim().to_string();
-                            for ln in wmi_s.lines() {
-                                if let Some((n, r)) = ln.split_once('|') {
-                                    let name = n.trim();
-                                    if name.is_empty() || name.to_lowercase().contains("nvidia") { continue; }
-                                    let lower = name.to_lowercase();
-                                    if lower.contains("intel") || lower.contains("amd") || lower.contains("radeon") || lower.contains("arc") {
-                                        let vram_mb = r.trim().parse::<i64>().unwrap_or(0) / (1024*1024);
-                                        let fmt2 = if vram_mb>0 { format!("{} MB", vram_mb) } else { "—".into() };
-                                        gpus_arr.push(serde_json::json!({"index": gpus_arr.len(), "gpu": 0, "vram": null, "vramFree": fmt2.clone(), "vramUsed": "0 MB", "vramTotal": fmt2, "name": name}));
-                                        break;
-                                    }
-                                }
-                            }
+                    if let Some(igpu) = get_cached_igpu() {
+                        if !igpu.is_null() {
+                            let name = igpu.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            let fmt2 = igpu.get("vram").and_then(|v| v.as_str()).unwrap_or("—").to_string();
+                            gpus_arr.push(serde_json::json!({"index": gpus_arr.len(), "gpu": 0, "vram": null, "vramFree": fmt2.clone(), "vramUsed": "0 MB", "vramTotal": fmt2, "name": name}));
                         }
                     }
                 }
@@ -506,13 +591,13 @@ fn get_system_metrics() -> serde_json::Value {
                 }
                 let _ = LAST_NVIDIA.get_or_init(|| Mutex::new(None)).lock().unwrap().replace(result.clone());
             }
-        } else {
-            if let Some(last) = LAST_NVIDIA.get().and_then(|m| m.lock().ok()).and_then(|g| g.clone()) {
-                result["vramFree"] = last["vramFree"].clone(); result["vramUsed"] = last["vramUsed"].clone(); result["vramTotal"] = last["vramTotal"].clone(); result["vram"] = last["vram"].clone(); result["gpu"] = last["gpu"].clone();
-                result["gpus"] = last["gpus"].clone(); result["gpu2"] = last["gpu2"].clone(); result["vram2"] = last["vram2"].clone(); result["vramFree2"] = last["vramFree2"].clone(); result["vramUsed2"] = last["vramUsed2"].clone(); result["vramTotal2"] = last["vramTotal2"].clone();
-            }
+        } else if let Some(last) = LAST_NVIDIA.get().and_then(|m| m.lock().ok()).and_then(|g| g.clone()) {
+            result["vramFree"] = last["vramFree"].clone(); result["vramUsed"] = last["vramUsed"].clone(); result["vramTotal"] = last["vramTotal"].clone(); result["vram"] = last["vram"].clone(); result["gpu"] = last["gpu"].clone();
+            result["gpus"] = last["gpus"].clone(); result["gpu2"] = last["gpu2"].clone(); result["vram2"] = last["vram2"].clone(); result["vramFree2"] = last["vramFree2"].clone(); result["vramUsed2"] = last["vramUsed2"].clone(); result["vramTotal2"] = last["vramTotal2"].clone();
         }}
     }
+    // cache for throttle
+    if let Ok(mut g) = METRICS_CACHE.get_or_init(|| Mutex::new(None)).lock() { *g = Some((std::time::Instant::now(), result.clone())); }
     result
 }
 
@@ -552,21 +637,27 @@ fn get_install_paths() -> serde_json::Value {
 
 #[tauri::command]
 fn get_disk_space(path: Option<String>) -> serde_json::Value {
-    // ponytail: real free-space via GetDiskFreeSpaceEx / statvfs when dashboard needs exact numbers; probe file is enough for now
     let p = path.unwrap_or_else(|| get_data_dir().to_string_lossy().to_string());
-    let pb = PathBuf::from(&p);
-    // Try to estimate by attempting to write probe — free check via powershell on Windows
-    #[cfg(windows)]
+    // Use sysinfo Disks — ~0ms, no powershell spawn (was 400ms)
     {
-        use std::process::Command;
-        let drive = pb.components().next().and_then(|c| match c { std::path::Component::Prefix(p) => Some(p.as_os_str().to_string_lossy().to_string()), _ => None }).unwrap_or("C:".into());
-        if let Ok(out) = Command::new("powershell").args(["-NoProfile","-Command", &format!("(Get-PSDrive {}).Free", drive.trim_end_matches(':'))]).output() {
-            if out.status.success() {
-                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if let Ok(free) = s.parse::<u64>() {
-                    return serde_json::json!({"path": p, "free": free, "total": null});
-                }
+        use sysinfo::{Disks, DiskRefreshKind};
+        let disks = Disks::new_with_refreshed_list_specifics(DiskRefreshKind::nothing().with_storage());
+        // match longest prefix mount_point that is parent of p
+        let mut best: Option<&sysinfo::Disk> = None;
+        let mut best_len = 0usize;
+        for d in disks.list() {
+            let mp = d.mount_point().to_string_lossy().to_string();
+            if p.to_lowercase().starts_with(&mp.to_lowercase()) && mp.len() > best_len {
+                best_len = mp.len();
+                best = Some(d);
             }
+        }
+        if let Some(d) = best {
+            return serde_json::json!({"path": p, "free": d.available_space(), "total": d.total_space()});
+        }
+        // fallback: first disk
+        if let Some(d) = disks.list().first() {
+            return serde_json::json!({"path": p, "free": d.available_space(), "total": d.total_space()});
         }
     }
     serde_json::json!({"path": p, "free": null, "total": null})
@@ -577,7 +668,7 @@ fn check_command(cmd: String) -> serde_json::Value {
     use std::process::Command;
     #[cfg(windows)] let probe = Command::new("where").arg(&cmd).output();
     #[cfg(not(windows))] let probe = Command::new("which").arg(&cmd).output();
-    let found = probe.map(|o| o.status.success()).unwrap_or(false);
+    let found = probe.is_ok_and(|o| o.status.success());
     serde_json::json!({"cmd": cmd, "found": found})
 }
 
@@ -589,7 +680,6 @@ fn get_model_paths() -> serde_json::Value {
         if let Ok(s) = std::fs::read_to_string(&cfg_path) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
                 let mut out = serde_json::Map::new();
-                // checkpoints: handle checkpointsPaths (camel, Tauri) / checkpoints_paths / ckpt_dir (array|string)
                 if let Some(a) = v.get("checkpointsPaths").and_then(|x| x.as_array()).and_then(|a| a.first()) { out.insert("checkpoints".into(), a.clone()); }
                 else if let Some(a) = v.get("checkpoints_paths").and_then(|x| x.as_array()).and_then(|a| a.first()) { out.insert("checkpoints".into(), a.clone()); }
                 else if let Some(c) = v.get("ckpt_dir") { if let Some(arr)=c.as_array().and_then(|a| a.first()) { out.insert("checkpoints".into(), arr.clone()); } else { out.insert("checkpoints".into(), c.clone()); } }
@@ -602,6 +692,13 @@ fn get_model_paths() -> serde_json::Value {
             }
         }
     }
+    // ponytail: fallback to desktop-config.json (changeModelFolder also writes there) — so UI shows new path even if wgp_config not yet created
+    let dc = load_config_value();
+    let mut out = serde_json::Map::new();
+    if let Some(p) = dc.get("modelCkptsPath").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) { out.insert("checkpoints".into(), serde_json::Value::String(p.to_string())); }
+    if let Some(p) = dc.get("modelLorasPath").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) { out.insert("loras".into(), serde_json::Value::String(p.to_string())); }
+    if let Some(p) = dc.get("modelOutputPath").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) { out.insert("output".into(), serde_json::Value::String(p.to_string())); }
+    if !out.is_empty() { return serde_json::Value::Object(out); }
     serde_json::Value::Null
 }
 
@@ -686,15 +783,15 @@ async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_jso
     let repo = get_repo_dir();
     if !repo.join("wgp.py").exists() { return Err("Wan2GP not installed — run Install first".into()); }
     let cfg = load_config_value();
-    let port = cfg.get("serverPort").and_then(|v| v.as_u64()).unwrap_or(7860);
+    let port = cfg.get("serverPort").and_then(serde_json::Value::as_u64).unwrap_or(7860);
     // ponytail: if server already listening on :port (desktop→browser switch), reuse it — don't spawn second python on same port (Gradio OSError)
-    if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
-        let url = format!("http://localhost:{}", port);
-        let _ = app.emit("launch-log", format!("[*] Wan2GP already running on :{} — opening {}\n", port, url));
+    if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
+        let url = format!("http://localhost:{port}");
+        let _ = app.emit("launch-log", format!("[*] Wan2GP already running on :{port} — opening {url}\n"));
         return Ok(serde_json::json!({"ok": true, "port": port, "mode": mode, "url": url, "fresh": false}));
     }
     mutating_try("launch")?;
-    let share = cfg.get("share").and_then(|v| v.as_bool()).unwrap_or(false);
+    let share = cfg.get("share").and_then(serde_json::Value::as_bool).unwrap_or(false);
     let gpu_device = cfg.get("gpuDevice").and_then(|v| v.as_str()).unwrap_or("auto").trim().to_string();
     let launcher_gpu = cfg.get("launcherGpu").and_then(|v| v.as_str()).unwrap_or("auto").to_string();
     // build args — gpuDevice -> --gpu (mirrors Electron buildCommonLaunchArgs)
@@ -705,16 +802,16 @@ async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_jso
         args.push("--gpu".into()); args.push(gpu_device.clone());
     }
     let emit = |msg: &str| { let _ = app.emit("launch-log", msg.to_string()); };
-    emit(&format!("[*] Launching Wan2GP ({}) on :{}…\n", mode, port));
+    emit(&format!("[*] Launching Wan2GP ({mode}) on :{port}…\n"));
     // GPU assignment log (mirrors Electron 9945990)
     {
         let hw = get_gpu_info_sync();
         let hw_name = hw.get("name").and_then(|v| v.as_str()).unwrap_or("?");
         let hw_vendor = hw.get("vendor").and_then(|v| v.as_str()).unwrap_or("?");
         let hw_vram = hw.get("vramMB").and_then(|v| v.as_str()).unwrap_or("0");
-        let gpu_count = std::process::Command::new("nvidia-smi").args(["--query-gpu=index","--format=csv,noheader"]).output().ok().map(|o| if o.status.success() { String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count().to_string() + " NVIDIA" } else { "?".into() }).unwrap_or("?".into());
-        let gen_label = if gpu_device=="auto" { format!("auto ({} )", hw_name) } else { gpu_device.clone() };
-        emit(&format!("[*] GPU assignment — Launcher UI: {} | Generation: {} | HW: {} ({}, {}) | Detected: {}\n", launcher_gpu, gen_label, hw_name, hw_vendor, hw_vram, gpu_count));
+        let gpu_count = std::process::Command::new("nvidia-smi").args(["--query-gpu=index","--format=csv,noheader"]).output().ok().map_or("?".into(), |o| if o.status.success() { String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count().to_string() + " NVIDIA" } else { "?".into() });
+        let gen_label = if gpu_device=="auto" { format!("auto ({hw_name} )") } else { gpu_device.clone() };
+        emit(&format!("[*] GPU assignment — Launcher UI: {launcher_gpu} | Generation: {gen_label} | HW: {hw_name} ({hw_vendor}, {hw_vram}) | Detected: {gpu_count}\n"));
     }
     emit(&format!("[*] Args: {}\n", args.join(" ")));
     // HF_TOKEN / config env (mirrors Electron launchCfg)
@@ -735,8 +832,8 @@ async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_jso
             if alt.exists() { alt.to_string_lossy().to_string() } else { raw.to_string() }
         } else { cand.to_string_lossy().to_string() }
     } else { "python".to_string() };
-    emit(&format!("[*] Python: {}\n", py));
-    emit(&format!("[*] Port: {}\n", port));
+    emit(&format!("[*] Python: {py}\n"));
+    emit(&format!("[*] Port: {port}\n"));
     use tauri_plugin_shell::ShellExt;
     // ponytail: PYTHONUNBUFFERED for streaming logs (tqdm), plus HF_TOKEN/claude key
     let mut cmd = app.shell().command(&py);
@@ -752,9 +849,9 @@ async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_jso
     std::env::set_var("PYTHONUNBUFFERED", "1");
     std::env::set_var("PYTHONUTF8", "1");
     std::env::set_var("PYTHONIOENCODING", "utf-8");
-    let (rx, child) = cmd.spawn().map_err(|e| { mutating_done(); emit(&format!("[LAUNCH ERROR] spawn failed: {}\n", e)); e.to_string() })?;
+    let (rx, child) = cmd.spawn().map_err(|e| { mutating_done(); emit(&format!("[LAUNCH ERROR] spawn failed: {e}\n")); e.to_string() })?;
     emit(&format!("[*] Spawned PID {}\n", child.pid()));
-    if let Some(m) = WANGP_PID.get_or_init(|| Mutex::new(None)).lock().ok() { drop(m); }
+    if let Ok(m) = WANGP_PID.get_or_init(|| Mutex::new(None)).lock() { drop(m); }
     *WANGP_PID.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(child.pid());
     // stream logs in background
     let app2 = app.clone();
@@ -769,10 +866,10 @@ async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_jso
     let host = "127.0.0.1".to_string();
     let app3 = app.clone();
     std::thread::spawn(move || {
-        for _ in 0..60 { std::thread::sleep(std::time::Duration::from_secs(3)); if std::net::TcpStream::connect(format!("{}:{}", host, port)).is_ok() { let _ = app3.emit("launch-log", format!("[✓] Wan2GP ready on http://localhost:{}\n", port)); break; } }
+        for _ in 0..60 { std::thread::sleep(std::time::Duration::from_secs(3)); if std::net::TcpStream::connect(format!("{host}:{port}")).is_ok() { let _ = app3.emit("launch-log", format!("[✓] Wan2GP ready on http://localhost:{port}\n")); break; } }
     });
     mutating_done();
-    let url = format!("http://localhost:{}", port);
+    let url = format!("http://localhost:{port}");
     Ok(serde_json::json!({"ok": true, "port": port, "mode": mode, "url": url, "fresh": true}))
 }
 #[tauri::command]
@@ -831,9 +928,9 @@ async fn confirm_dialog(app: tauri::AppHandle, opts: Option<serde_json::Value>) 
     let title = opts.as_ref().and_then(|o| o.get("title").and_then(|v| v.as_str())).unwrap_or("Confirm");
     let msg = opts.as_ref().and_then(|o| o.get("message").and_then(|v| v.as_str())).unwrap_or("Are you sure?");
     let detail = opts.as_ref().and_then(|o| o.get("detail").and_then(|v| v.as_str())).unwrap_or("");
-    let full = if detail.is_empty() { msg.to_string() } else { format!("{}\n\n{}", msg, detail) };
+    let full = if detail.is_empty() { msg.to_string() } else { format!("{msg}\n\n{detail}") };
     let confirmed = app.dialog().message(&full).title(title).kind(MessageDialogKind::Info).blocking_show();
-    serde_json::json!({"response": if confirmed { 0 } else { 1 }})
+    serde_json::json!({"response": i32::from(!confirmed)})
 }
 #[tauri::command]
 fn repair_settings() -> serde_json::Value { serde_json::json!({"ok": true}) }
@@ -842,7 +939,7 @@ async fn check_package_updates(app: tauri::AppHandle, versions: Option<serde_jso
     let _ = versions;
     let env = get_active_env();
     let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
-    let r = raw.trim_start_matches(|c| c == '.' || c == '\\' || c == '/');
+    let r = raw.trim_start_matches(['.', '\\', '/']);
     let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(r) };
     let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
     if !py.exists() { return Ok(serde_json::json!([])); }
@@ -888,7 +985,7 @@ fn auto_tune_detect() -> serde_json::Value {
         }
         #[cfg(not(windows))] { 32.0 }
     };
-    let cpu_count = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8) as i64;
+    let cpu_count = std::thread::available_parallelism().map_or(8, std::num::NonZero::get) as i64;
     let vram_tier = if !cuda_available { "none" } else if vram_gb >= 24 { "high" } else if vram_gb >= 12 { "low" } else { "tight" };
     let ram_tier = if ram_gb >= 63.5 { "high" } else if ram_gb >= 31.5 { "low" } else { "very_low" };
     serde_json::json!({
@@ -908,8 +1005,8 @@ fn auto_tune_recommend(hw: Option<serde_json::Value>, opts: Option<serde_json::V
     let hw = hw.unwrap_or(serde_json::json!({"vram_tier":"low","ram_tier":"low","gpu_vram_gb":10}));
     let vram_tier = hw.get("vram_tier").and_then(|v| v.as_str()).unwrap_or("low");
     let ram_tier = hw.get("ram_tier").and_then(|v| v.as_str()).unwrap_or("low");
-    let vram_gb = hw.get("gpu_vram_gb").and_then(|v| v.as_f64()).unwrap_or(10.0);
-    let failsafe = opts.as_ref().and_then(|o| o.get("failsafe")).and_then(|v| v.as_bool()).unwrap_or(false);
+    let vram_gb = hw.get("gpu_vram_gb").and_then(serde_json::Value::as_f64).unwrap_or(10.0);
+    let failsafe = opts.as_ref().and_then(|o| o.get("failsafe")).and_then(serde_json::Value::as_bool).unwrap_or(false);
     let (profile, coeff) = if failsafe { (5, 0.6) } else {
         let p = match (vram_tier, ram_tier) {
             ("high","high")=>1, ("high","low")=>3, ("high","very_low")=>3,
@@ -941,17 +1038,19 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
     let gpu = get_gpu_info_sync();
     let plan = build_install_plan(&gpu);
     emit(&format!("[hw] GPU: {} ({}) — {} / {} — profile {}\n", plan["gpuName"].as_str().unwrap_or("?"), plan["vendor"].as_str().unwrap_or("?"), plan["cuda"].as_str().unwrap_or("?"), plan["torch"].as_str().unwrap_or("?"), plan["profile"].as_str().unwrap_or("?")));
-    if let Some(w)=plan["driverWarning"].as_str() { if !w.is_empty() { emit(&format!("[warn] {}\n", w)); } }
-    emit(&format!("[env] requested: {}\n", env));
+    if let Some(w)=plan["driverWarning"].as_str() { if !w.is_empty() { emit(&format!("[warn] {w}\n")); } }
+    emit(&format!("[env] requested: {env}\n"));
     let emit_phase = |id: &str, label: &str, done: bool| { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": done})); };
-    if !repo.join("wgp.py").exists() {
+    if repo.join("wgp.py").exists() {
+        emit_phase("clone", "Clone Wan2GP repository", true);
+    } else {
         emit_phase("clone", "Clone Wan2GP repository", false);
         emit(&format!("[*] Cloning Wan2GP into {}\n", repo.display()));
         std::fs::create_dir_all(&repo).map_err(|e| e.to_string())?;
         // If repo already exists but is not empty (e.g. contains desktop-config.json from previous launch),
         // git clone directly into it fails ("already exists and is not empty"). Clone into a temp dir
         // inside the target (same volume) then merge, preserving user files — mirrors Electron mergeDir.
-        let needs_tmp = repo.exists() && std::fs::read_dir(&repo).map(|mut it| it.next().is_some()).unwrap_or(false);
+        let needs_tmp = repo.exists() && std::fs::read_dir(&repo).is_ok_and(|mut it| it.next().is_some());
         if needs_tmp {
             let tmp = repo.join(format!(".wan2gp-clone-tmp-{}", std::process::id()));
             if tmp.exists() { let _ = std::fs::remove_dir_all(&tmp); }
@@ -980,10 +1079,8 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
         if !repo.join("wgp.py").exists() { mutating_done(); emit_phase("clone", "Clone Wan2GP repository", true); return Err("git clone failed — check output above".into()); }
         emit("[*] Repository cloned.\n");
         emit_phase("clone", "Clone Wan2GP repository", true);
-    } else {
-        emit_phase("clone", "Clone Wan2GP repository", true);
     }
-    emit(&format!("[*] Installing env={} via setup.py (streaming)…\n", env));
+    emit(&format!("[*] Installing env={env} via setup.py (streaming)…\n"));
     // ponytail: don't pre-create env here — setup.py does `uv venv --seed` itself and fails if dir already exists.
     // If Tauri pre-creates env_uv then setup.py's `uv venv --seed env_uv` hits "already exists at env_uv".
     // Let setup.py own env creation; we only ensure envs.json is updated after success.
@@ -1007,14 +1104,11 @@ async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serd
     // run setup.py with the env's python (hardware-aware: setup.py reads setup_config.json + GPU)
     {
         use tauri_plugin_shell::ShellExt;
-        let (py, args): (String, Vec<String>) = match env.as_str() {
-            "conda" => ("conda".into(), vec!["run".into(), "-p".into(), env_path.to_string_lossy().to_string(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]),
-            _ => {
-                let p = if env=="uv" { env_path.join(if cfg!(windows){"Scripts\\python.exe"} else {"bin/python"}) } else { env_path.join(if cfg!(windows){"Scripts\\python.exe"} else {"bin/python3"}) };
-                let py_bin = if p.exists() { p.to_string_lossy().to_string() } else if env=="uv" { "uv".into() } else { "python".into() };
-                if py_bin=="uv" { ("uv".into(), vec!["run".into(), "--with".into(), "setuptools".into(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) }
-                else { (py_bin, vec!["setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) }
-            }
+        let (py, args): (String, Vec<String>) = if env.as_str() == "conda" { ("conda".into(), vec!["run".into(), "-p".into(), env_path.to_string_lossy().to_string(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) } else {
+            let p = if env=="uv" { env_path.join(if cfg!(windows){"Scripts\\python.exe"} else {"bin/python"}) } else { env_path.join(if cfg!(windows){"Scripts\\python.exe"} else {"bin/python3"}) };
+            let py_bin = if p.exists() { p.to_string_lossy().to_string() } else if env=="uv" { "uv".into() } else { "python".into() };
+            if py_bin=="uv" { ("uv".into(), vec!["run".into(), "--with".into(), "setuptools".into(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) }
+            else { (py_bin, vec!["setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) }
         };
         let (mut rx, _child) = app.shell().command(&py).args(args).current_dir(&repo).spawn().map_err(|e| e.to_string())?;
         use tauri_plugin_shell::process::CommandEvent;
@@ -1059,7 +1153,7 @@ async fn reinstall(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
     let backup = get_data_dir().join(".reinstall-backup");
     let _ = std::fs::remove_dir_all(&backup);
     let _ = std::fs::create_dir_all(&backup);
-    for sub in ["plugins","finetunes"] { let s = repo.join(sub); if s.exists() { let d = backup.join(sub); let _ = std::process::Command::new("xcopy").args(["/E","/I", &s.to_string_lossy().to_string(), &d.to_string_lossy().to_string()]).output(); } }
+    for sub in ["plugins","finetunes"] { let s = repo.join(sub); if s.exists() { let d = backup.join(sub); let _ = std::process::Command::new("xcopy").args(["/E","/I", s.to_string_lossy().as_ref(), d.to_string_lossy().as_ref()]).output(); } }
     if repo.join("wgp_config.json").exists() { let _ = std::fs::copy(repo.join("wgp_config.json"), backup.join("wgp_config.json")); }
     if repo.exists() {
         // ponytail: .electron is the live WebView2 Shared Dictionary — locked while launcher runs, keep it (Electron d186d49+e3e8505)
@@ -1125,12 +1219,38 @@ async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,String>
     let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { repo.join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
     let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python3") };
     if !py.exists() { mutating_done(); return Err("python not found for active env".into()); }
-    if !cfg_path.exists() { mutating_done(); return Err("setup_config.json missing".into()); }
-    let cfg: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cfg_path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    // ponytail: a058daf — remote fallback + commit/gguf log proves deepbeepmeep leading
+    let emit_log = |msg: &str| { let _ = app.emit("launch-log", msg.to_string()); };
+    let cfg: serde_json::Value = if cfg_path.exists() {
+        serde_json::from_str(&std::fs::read_to_string(&cfg_path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?
+    } else {
+        emit_log("[*] setup_config.json not found locally — fetching deepbeepmeep's wanted wheels from origin/main...\n");
+        // try curl then powershell (mirrors get_wangp_upstream_info)
+        let url = "https://raw.githubusercontent.com/deepbeepmeep/Wan2GP/main/setup_config.json";
+        let mut raw = String::new();
+        if let Ok(o) = std::process::Command::new("curl").args(["-sL", url]).output() { if o.status.success() { raw = String::from_utf8_lossy(&o.stdout).to_string(); } }
+        if raw.trim().is_empty() || !raw.trim().starts_with('{') {
+            if let Ok(o) = std::process::Command::new("powershell").args(["-NoProfile","-Command", &format!("(Invoke-WebRequest -Uri '{url}' -UseBasicParsing).Content")]).output() {
+                if o.status.success() { let s = String::from_utf8_lossy(&o.stdout).to_string(); if s.trim().starts_with('{') { raw = s; } }
+            }
+        }
+        if raw.trim().is_empty() || !raw.trim().starts_with('{') { mutating_done(); return Err("setup_config.json missing and remote fetch failed".into()); }
+        emit_log("[*] using remote setup_config.json (origin/main) — deepbeepmeep's wanted wheels\n");
+        serde_json::from_str(&raw).map_err(|e| e.to_string())?
+    };
+    // log commit + gguf version (a058daf)
+    {
+        let head = std::process::Command::new("git").args(["rev-parse","--short","HEAD"]).current_dir(&repo).output().ok().and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None }).unwrap_or("unknown".into());
+        let gguf_url = cfg.get("components").and_then(|c| c.get("kernels")).and_then(|m| m.get("gguf")).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()).unwrap_or("");
+        // wheelDistVersion extract: <dist>-<version>-cp... -> version
+        let gguf_ver = gguf_url.split('/').next_back().unwrap_or("").split(".whl").next().unwrap_or("").split('-').nth(1).unwrap_or("?");
+        let v = if gguf_ver.is_empty() { "?" } else { gguf_ver };
+        emit_log(&format!("[*] setup_config.json @ {head} (gguf {v}) — deepbeepmeep's wanted wheels\n"));
+    }
     let gpu = get_gpu_info_sync(); let profile = kernel_profile_key(gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""), gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""));
     let kernels = cfg.get("gpu_profiles").and_then(|p| p.get(&profile)).and_then(|pr| pr.get("kernels")).and_then(|k| k.as_array()).cloned().unwrap_or_default();
     use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
-    let sage_safe = load_config_value().get("sageSafe").and_then(|v| v.as_bool()).unwrap_or(false);
+    let sage_safe = load_config_value().get("sageSafe").and_then(serde_json::Value::as_bool) != Some(false); // ponytail: default safe post6 (1348e5b) — only false opts into upstream post4
     // ponytail: Sage wheel is not in gpu_profiles[RTX_30].kernels (only nunchaku+gguf) — handle it separately like Electron's setSageAttentionSafe
     let mut all_kernels = kernels.clone();
     if ["RTX_30","RTX_40","RTX_50"].contains(&profile.as_str()) {
@@ -1167,7 +1287,7 @@ async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,String>
                     url = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl".into();
                 }
             }
-            let _ = app.emit("launch-log", format!("[*] sync kernel {}\n", name));
+            let _ = app.emit("launch-log", format!("[*] sync kernel {name}\n"));
             let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install", &url, "--upgrade"]).spawn().map_err(|e| e.to_string())?;
             while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
         }
@@ -1186,7 +1306,7 @@ async fn update(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
 }
 #[tauri::command] fn manage_set_active(name: String) -> Result<serde_json::Value,String> {
     let f = get_envs_file(); let mut v: serde_json::Value = std::fs::read_to_string(&f).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::json!({"envs":{}, "active":null}));
-    if v.get("envs").and_then(|e| e.get(&name)).is_none() { return Err(format!("env {} not found", name)); }
+    if v.get("envs").and_then(|e| e.get(&name)).is_none() { return Err(format!("env {name} not found")); }
     v["active"] = serde_json::Value::String(name);
     atomic_write(&f, &serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({"ok": true, "success": true}))
@@ -1200,13 +1320,13 @@ async fn update(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
     atomic_write(&f, &serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
-#[tauri::command] fn open_external(url: Option<String>) -> Result<(),String> { let _=url; Ok(()) }
+#[tauri::command] fn open_external(url: Option<String>) { let _=url; }
 #[tauri::command] fn detect_browsers() -> serde_json::Value {
     // mirrors Electron WELL_KNOWN_BROWSERS with win env expansion
     let cfg = load_config_value(); let def = cfg.get("defaultBrowser").and_then(|v| v.as_str()).unwrap_or("system").to_string();
     let expand = |p: &str| {
         let mut s = p.to_string();
-        for (k,v) in std::env::vars() { s = s.replace(&format!("%{}%", k), &v); s = s.replace(&format!("%{}%", k.to_lowercase()), &v); }
+        for (k,v) in std::env::vars() { s = s.replace(&format!("%{k}%"), &v); s = s.replace(&format!("%{}%", k.to_lowercase()), &v); }
         // handle (x86)
         if let Ok(pf86) = std::env::var("ProgramFiles(x86)") { s = s.replace("%ProgramFiles(x86)%", &pf86); }
         s
@@ -1236,16 +1356,26 @@ serde_json::json!({"ok": true}) }
         if std::path::Path::new(p).exists() { return true; }
     }
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        if std::path::Path::new(&format!("{}\\Google\\Chrome\\Application\\chrome.exe", local)).exists() { return true; }
+        if std::path::Path::new(&format!("{local}\\Google\\Chrome\\Application\\chrome.exe")).exists() { return true; }
     }
-    std::process::Command::new("where").arg("chrome").output().map(|o| o.status.success()).unwrap_or(false)
+    std::process::Command::new("where").arg("chrome").output().is_ok_and(|o| o.status.success())
 }
-#[tauri::command] fn set_data_dir(dir: String) -> Result<serde_json::Value,String> { let ov = data_dir_override_file(); atomic_write(&ov, &dir).map_err(|e| e.to_string())?; Ok(serde_json::json!({"ok": true, "success": true})) }
-#[tauri::command] fn reset_data_dir() -> serde_json::Value { let _=std::fs::remove_file(data_dir_override_file()); serde_json::json!({"ok": true}) }
+#[tauri::command] fn set_data_dir(dir: String) -> Result<serde_json::Value,String> {
+    // ponytail: reject file paths pasted as folder (e.g. Temp\orca-paste-*.png)
+    let p = PathBuf::from(dir.trim());
+    if p.extension().map(|e| e.to_string_lossy().to_lowercase()).is_some_and(|e| ["png","jpg","jpeg","webp","bmp","gif"].contains(&e.as_str())) {
+        return Err("Please select a folder, not a file".into());
+    }
+    if p.to_string_lossy().to_lowercase().contains("orca-paste") {
+        return Err("Please select a folder, not a pasted image file".into());
+    }
+    let ov = data_dir_override_file(); atomic_write(&ov, p.to_string_lossy().as_ref()).map_err(|e| e.to_string())?; invalidate_path_cache(); Ok(serde_json::json!({"ok": true, "success": true}))
+}
+#[tauri::command] fn reset_data_dir() -> serde_json::Value { let _=std::fs::remove_file(data_dir_override_file()); invalidate_path_cache(); serde_json::json!({"ok": true}) }
 #[tauri::command] fn migrate_to_preferred(choices: Option<serde_json::Value>) -> serde_json::Value { let _=choices; serde_json::json!({"ok": true}) }
 #[tauri::command] fn move_folder(src: String, dst: String) -> Result<serde_json::Value,String> {
     let s = PathBuf::from(&src); let d = PathBuf::from(&dst);
-    if let Err(_) = std::fs::rename(&s, &d) {
+    if std::fs::rename(&s, &d).is_err() {
         // cross-device fallback — copy then remove
         if s.is_dir() { fs_extra_fallback_copy_dir(&s, &d)?; std::fs::remove_dir_all(&s).map_err(|e| e.to_string())?; }
         else { std::fs::copy(&s, &d).map_err(|e| e.to_string())?; std::fs::remove_file(&s).map_err(|e| e.to_string())?; }
@@ -1262,16 +1392,30 @@ fn fs_extra_fallback_copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 #[tauri::command] fn write_wgp_config(cfg: serde_json::Value) -> Result<serde_json::Value, String> {
+    // ponytail: reject file-as-folder (Temp\orca-paste-*.png was pasted as folder)
+    for key in ["checkpoints_paths","checkpointsPaths","ckpt_dir","loras_root","lorasRoot","lora_dir","save_path","savePath"] {
+        if let Some(v) = cfg.get(key).and_then(|x| if x.is_array() { x.as_array().and_then(|a| a.first()) } else { Some(x) }).and_then(|x| x.as_str()) {
+            let low = v.to_lowercase();
+            if low.ends_with(".png")||low.ends_with(".jpg")||low.ends_with(".jpeg")||low.contains("orca-paste")|| (low.contains("\\temp\\") && low.contains(".png")) {
+                return Err(format!("Please select a folder, not a file for {key}: {v}"));
+            }
+        }
+    }
     let repo = get_repo_dir();
     let p = repo.join("wgp_config.json");
     let mut cur: serde_json::Value = if p.exists() { std::fs::read_to_string(&p).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::json!({})) } else { serde_json::json!({}) };
     if let Some(obj) = cfg.as_object() {
-        for (k,v) in obj { cur[k] = v.clone(); }
-    } else if let Some(patch) = cfg.get("patch") { if let Some(o) = patch.as_object() { for (k,v) in o { cur[k]=v.clone(); } } }
-    // also handle Electron shape {checkpointsPaths, lorasRoot, savePath}
-    if let Some(v) = cfg.get("checkpointsPaths") { cur["ckpt_dir"] = v.clone(); }
-    if let Some(v) = cfg.get("lorasRoot") { cur["lora_dir"] = v.clone(); }
-    if let Some(v) = cfg.get("savePath") { cur["save_path"] = v.clone(); }
+        for (k,v) in obj {
+            // ponytail: don't write camelCase directly — only canonical snake_case
+            if k=="checkpointsPaths" || k=="lorasRoot" || k=="savePath" { continue; }
+            cur[k] = v.clone();
+        }
+    } else if let Some(patch) = cfg.get("patch") { if let Some(o) = patch.as_object() { for (k,v) in o { if k=="checkpointsPaths"||k=="lorasRoot"||k=="savePath"{continue;} cur[k]=v.clone(); } } }
+    if let Some(v) = cfg.get("checkpointsPaths") { cur["checkpoints_paths"] = v.clone(); }
+    if let Some(v) = cfg.get("lorasRoot") { cur["loras_root"] = v.clone(); }
+    if let Some(v) = cfg.get("savePath") { cur["save_path"] = v.clone(); cur["image_save_path"] = v.clone(); cur["audio_save_path"] = v.clone(); }
+    // clean legacy camel/ckpt_dir leftovers from earlier builds
+    if let Some(m) = cur.as_object_mut() { m.remove("checkpointsPaths"); m.remove("ckpt_dir"); m.remove("lora_dir"); m.remove("lorasRoot"); m.remove("savePath"); }
     let s = serde_json::to_string_pretty(&cur).map_err(|e| e.to_string())?;
     atomic_write(&p, &s).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({"ok": true, "success": true}))
@@ -1279,7 +1423,7 @@ fn fs_extra_fallback_copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
 #[tauri::command]
 async fn install_prerequisite(app: tauri::AppHandle, tool: String) -> Result<serde_json::Value,String> {
     use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
-    let cmd = match tool.as_str() { "git" => vec!["winget","install","--id","Git.Git","-e"], "uv" => vec!["winget","install","--id","astral-sh.uv","-e"], _ => return Err(format!("unknown tool {}", tool)) };
+    let cmd = match tool.as_str() { "git" => vec!["winget","install","--id","Git.Git","-e"], "uv" => vec!["winget","install","--id","astral-sh.uv","-e"], _ => return Err(format!("unknown tool {tool}")) };
     let (mut rx, _) = app.shell().command(cmd[0]).args(&cmd[1..]).spawn().map_err(|e| e.to_string())?;
     while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
     Ok(serde_json::json!({"ok": true, "success": true}))
@@ -1290,7 +1434,7 @@ async fn get_wangp_upstream_info() -> serde_json::Value {
     let cfg = load_config_value();
     let token = cfg.get("githubToken").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
     let url = "https://api.github.com/repos/deepbeepmeep/Wan2GP/commits?per_page=10&sha=main";
-    let auth_header = if !token.is_empty() { Some(format!("Authorization: token {}", token)) } else { None };
+    let auth_header = if token.is_empty() { None } else { Some(format!("Authorization: token {token}")) };
     let mut curl_args = vec!["-s", "-H", "User-Agent: wan2gp-tauri", "-H", "Accept: application/vnd.github.v3+json"];
     if let Some(ref h) = auth_header { curl_args.extend_from_slice(&["-H", h.as_str()]); }
     curl_args.push(url);
@@ -1298,8 +1442,8 @@ async fn get_wangp_upstream_info() -> serde_json::Value {
     let mut json_str = if let Ok(o) = try_curl { if o.status.success() { String::from_utf8_lossy(&o.stdout).to_string() } else { String::new() } } else { String::new() };
     if !json_str.trim().starts_with('[') {
         // powershell fallback with token
-        let ps_headers = if !token.is_empty() { format!("@{{'User-Agent'='wan2gp-tauri';'Accept'='application/vnd.github.v3+json';'Authorization'='token {}'}}", token) } else { "@{'User-Agent'='wan2gp-tauri';'Accept'='application/vnd.github.v3+json'}".to_string() };
-        let ps_cmd = format!("try {{ (Invoke-RestMethod -Uri '{}' -Headers {} | ConvertTo-Json -Depth 6) }} catch {{ '[]' }}", url, ps_headers);
+        let ps_headers = if token.is_empty() { "@{'User-Agent'='wan2gp-tauri';'Accept'='application/vnd.github.v3+json'}".to_string() } else { format!("@{{'User-Agent'='wan2gp-tauri';'Accept'='application/vnd.github.v3+json';'Authorization'='token {token}'}}") };
+        let ps_cmd = format!("try {{ (Invoke-RestMethod -Uri '{url}' -Headers {ps_headers} | ConvertTo-Json -Depth 6) }} catch {{ '[]' }}");
         if let Ok(o) = std::process::Command::new("powershell").args(["-NoProfile","-Command", &ps_cmd]).output() {
             if o.status.success() {
                 let s = String::from_utf8_lossy(&o.stdout).to_string();
@@ -1326,13 +1470,165 @@ async fn get_wangp_upstream_info() -> serde_json::Value {
     serde_json::json!({"error": "Could not fetch updates — GitHub API rate limited or offline. Add a GitHub token in Manage → General to avoid limits."})
 }
 #[tauri::command] fn get_wangp_version() -> serde_json::Value { serde_json::json!(null) }
-#[tauri::command] fn report_issue() -> serde_json::Value {
-    // ponytail: minimal diagnostics bundle — frontend expects {success, logLines, zipPath}
-    // For now, just return success so the UI doesn't show "Failed to create diagnostics"
-    // Full bundle (logs + system info + zip) can be added when needed
-    serde_json::json!({"ok": true, "success": true, "logLines": 0, "zipPath": "", "bundleDir": "", "hadErrorQueue": false})
+// ── Legacy Electron launcher removal ──
+// Finds the old Electron-based launcher (any DisplayName containing "wan2gp"
+// that isn't this Tauri build) and runs its uninstaller silently. Only the app
+// dir goes — Wan2GP repo, models, LoRAs, outputs and settings live outside it
+// (and this build already follows the Electron data-dir pointer), so all data
+// is kept.
+fn reg_val(line: &str) -> Option<(String, String)> {
+    let t = line.trim();
+    if t.is_empty() || t.starts_with("HKEY_") { return None; }
+    for typ in ["REG_SZ", "REG_EXPAND_SZ"] {
+        if let Some(i) = t.find(typ) {
+            return Some((t[..i].trim().to_string(), t[i + typ.len()..].trim().to_string()));
+        }
+    }
+    None
 }
-#[tauri::command] fn create_desktop_shortcut() -> serde_json::Value { serde_json::json!({"ok": true}) }
+fn split_cmdline(s: &str) -> (String, Vec<String>) {
+    let t = s.trim();
+    if t.starts_with('"') {
+        if let Some(end) = t[1..].find('"') {
+            let exe = t[1..1 + end].to_string();
+            let args = t[1 + end + 1..].split_whitespace().map(|x| x.to_string()).collect();
+            return (exe, args);
+        }
+    }
+    let mut it = t.split_whitespace();
+    (it.next().unwrap_or("").to_string(), it.map(|x| x.to_string()).collect())
+}
+#[tauri::command] fn detect_electron() -> serde_json::Value {
+    #[cfg(not(windows))] { return serde_json::json!({"found": false}); }
+    #[cfg(windows)] {
+        let mut best: Option<serde_json::Value> = None;
+        // 1) Add/Remove Programs registry scan (per-user + machine hives)
+        for hive in ["HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall", "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall", "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"] {
+            let Ok(o) = std::process::Command::new("reg").args(["query", hive, "/s"]).output() else { continue };
+            if !o.status.success() { continue; }
+            let s = String::from_utf8_lossy(&o.stdout);
+            let (mut name, mut ver, mut un, mut quiet, mut loc) = (String::new(), String::new(), String::new(), String::new(), String::new());
+            let flush = |name: &mut String, ver: &mut String, un: &mut String, quiet: &mut String, loc: &mut String, best: &mut Option<serde_json::Value>| {
+                let n = name.to_lowercase();
+                if n.contains("wan2gp") && !n.contains("tauri")
+                    && !un.to_lowercase().contains("tauri") && !loc.to_lowercase().contains("tauri") {
+                    *best = Some(serde_json::json!({"found": true, "name": name.trim(), "version": ver.trim(),
+                        "uninstallString": un.trim(), "quietUninstall": quiet.trim(), "installLocation": loc.trim()}));
+                }
+                name.clear(); ver.clear(); un.clear(); quiet.clear(); loc.clear();
+            };
+            for line in s.lines() {
+                if line.trim_start().starts_with("HKEY_") { flush(&mut name, &mut ver, &mut un, &mut quiet, &mut loc, &mut best); continue; }
+                if let Some((k, v)) = reg_val(line) {
+                    match k.as_str() {
+                        "DisplayName" => name = v, "DisplayVersion" => ver = v,
+                        "UninstallString" => un = v, "QuietUninstallString" => quiet = v,
+                        "InstallLocation" => loc = v, _ => {}
+                    }
+                }
+            }
+            flush(&mut name, &mut ver, &mut un, &mut quiet, &mut loc, &mut best);
+            if best.is_some() { return best.unwrap(); }
+        }
+        // 2) filesystem fallback: per-user Programs dir (Electron Builder default)
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            let progs = PathBuf::from(local).join("Programs");
+            if let Ok(rd) = std::fs::read_dir(&progs) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    let f = p.file_name().and_then(|x| x.to_str()).unwrap_or("").to_string();
+                    let fl = f.to_lowercase();
+                    if !p.is_dir() || !fl.contains("wan2gp") || fl.contains("tauri") { continue; }
+                    let has_un = std::fs::read_dir(&p).map(|r| r.flatten().any(|x| x.file_name().to_string_lossy().to_lowercase().starts_with("uninstall") && x.path().extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("exe")))).unwrap_or(false);
+                    if has_un { return serde_json::json!({"found": true, "name": f, "version": "", "uninstallString": "", "quietUninstall": "", "installLocation": p.to_string_lossy()}); }
+                }
+            }
+        }
+        best.unwrap_or(serde_json::json!({"found": false}))
+    }
+}
+#[tauri::command] async fn uninstall_electron() -> Result<serde_json::Value, String> {
+    let det = detect_electron();
+    if !det.get("found").and_then(|v| v.as_bool()).unwrap_or(false) {
+        return Ok(serde_json::json!({"ok": false, "error": "Legacy Electron launcher not found"}));
+    }
+    let loc = det.get("installLocation").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    // best-effort: kill running copies from that dir (not the uninstallers, never us — we live elsewhere)
+    if !loc.is_empty() {
+        if let Ok(rd) = std::fs::read_dir(&loc) {
+            for e in rd.flatten() {
+                let p = e.path();
+                let is_exe = p.extension().and_then(|x| x.to_str()).is_some_and(|x| x.eq_ignore_ascii_case("exe"));
+                let f = p.file_name().and_then(|x| x.to_str()).unwrap_or("");
+                if is_exe && !f.to_lowercase().starts_with("uninstall") {
+                    let _ = std::process::Command::new("taskkill").args(["/F", "/IM", f]).output();
+                }
+            }
+        }
+    }
+    let mut cmdline = det.get("quietUninstall").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if cmdline.is_empty() { cmdline = det.get("uninstallString").and_then(|v| v.as_str()).unwrap_or("").to_string(); }
+    if cmdline.is_empty() {
+        // last resort: Uninstall*.exe in the install dir (Electron Builder layout)
+        if !loc.is_empty() {
+            if let Ok(rd) = std::fs::read_dir(&loc) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    let f = p.file_name().and_then(|x| x.to_str()).unwrap_or("");
+                    if f.to_lowercase().starts_with("uninstall") && p.extension().and_then(|x| x.to_str()).is_some_and(|x| x.eq_ignore_ascii_case("exe")) {
+                        cmdline = format!("\"{}\"", p.to_string_lossy()); break;
+                    }
+                }
+            }
+        }
+    }
+    if cmdline.is_empty() { return Ok(serde_json::json!({"ok": false, "error": "No uninstaller registered"})); }
+    let (exe, mut args) = split_cmdline(&cmdline);
+    if !args.iter().any(|a| a.eq_ignore_ascii_case("/S")) { args.push("/S".into()); } // NSIS silent flag
+    let out = std::process::Command::new(&exe).args(&args).output().map_err(|e| e.to_string())?;
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let gone = !detect_electron().get("found").and_then(|v| v.as_bool()).unwrap_or(false);
+    Ok(serde_json::json!({"ok": out.status.success() || gone, "removed": gone, "exit": out.status.code()}))
+}
+#[tauri::command] fn report_issue() -> serde_json::Value {
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or("report".into(), |d| d.as_secs().to_string());
+    let bundle = get_data_dir().join(format!("report-{stamp}"));
+    let _ = std::fs::create_dir_all(&bundle);
+    let ver = env!("CARGO_PKG_VERSION");
+    let gpu = get_gpu_info_sync();
+    let mut lines = vec![
+        format!("Wan2GP Tauri {} ", ver),
+        format!("GPU: {} ({} {} MB)", gpu.get("name").and_then(|v| v.as_str()).unwrap_or("?"), gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or("?"), gpu.get("vramMB").and_then(|v| v.as_str()).unwrap_or("0")),
+        format!("OS: {} {}", std::env::consts::OS, std::env::consts::ARCH),
+    ];
+    if let Ok(s)=std::fs::read_to_string(get_data_dir().join("boot.log")) { lines.push("\n── boot.log ──".into()); lines.extend(s.lines().take(25).map(std::string::ToString::to_string)); }
+    let _ = std::fs::write(bundle.join("system-info.txt"), lines.join("\n"));
+    let eq = get_repo_dir().join("error_queue.zip");
+    let had = eq.exists();
+    if had { let _ = std::fs::copy(&eq, bundle.join("error_queue.zip")); }
+    let zip = get_data_dir().join(format!("report-{stamp}.zip"));
+    let zip_ok = std::process::Command::new("powershell").args(["-NoProfile","-Command", &format!("Compress-Archive -Path '{}\\*' -DestinationPath '{}' -Force", bundle.display(), zip.display())]).output().is_ok_and(|o| o.status.success());
+    let zip_path = if zip_ok { zip.to_string_lossy().to_string() } else { String::new() };
+    let open_path = if zip_ok { zip.to_string_lossy().to_string() } else { bundle.to_string_lossy().to_string() };
+    #[cfg(windows)] { let _ = std::process::Command::new("explorer").arg(&open_path).spawn(); }
+    serde_json::json!({"ok": true, "success": true, "logLines": 0, "zipPath": zip_path, "bundleDir": bundle.to_string_lossy().to_string(), "hadErrorQueue": had})
+}
+#[tauri::command] fn create_desktop_shortcut() -> serde_json::Value {
+    // ponytail: Windows .lnk via WScript.Shell — mirrors Electron main.js:3923 (uses active env python)
+    let env = get_active_env();
+    if env.is_null() { return serde_json::json!({"ok": false, "error": "No active environment"}); }
+    let repo = get_repo_dir();
+    if !repo.join("wgp.py").exists() { return serde_json::json!({"ok": false, "error": "Wan2GP repo not found"}); }
+    let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
+    let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { repo.join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
+    let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
+    if !py.exists() { return serde_json::json!({"ok": false, "error": "Python not found"}); }
+    let desktop = std::env::var("USERPROFILE").map_or(PathBuf::from("C:\\Users\\Public\\Desktop"), |p| PathBuf::from(p).join("Desktop"));
+    let lnk = desktop.join("Wan2GP Tauri.lnk");
+    let ps = format!("$s=New-Object -ComObject WScript.Shell; $l=$s.CreateShortcut('{}'); $l.TargetPath='{}'; $l.Arguments='wgp.py'; $l.WorkingDirectory='{}'; $l.Description='Wan2GP Tauri'; $l.Save()", lnk.display(), py.display(), repo.display());
+    let ok = std::process::Command::new("powershell").args(["-NoProfile","-Command", &ps]).output().is_ok_and(|o| o.status.success());
+    if ok { serde_json::json!({"ok": true, "path": lnk.to_string_lossy().to_string()}) } else { serde_json::json!({"ok": false, "error": "Failed to create shortcut"}) }
+}
 #[tauri::command]
 async fn upgrade_package(app: tauri::AppHandle, pkg: String) -> Result<serde_json::Value,String> {
     let env = get_active_env(); let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
@@ -1374,11 +1670,32 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command] fn llm_engines_list() -> serde_json::Value {
-    // ponytail: minimal stub that satisfies frontend ready() checks (opencode/claude/codex)
-    // Electron probes cliOnPath; Tauri returns empty but with ok flag so Deepy Prime still selectable
-    serde_json::json!({"ok": true, "engines": []})
+    // ponytail: probe cliOnPath + pipInstalled like Electron services/llm-engines.js
+    let env = get_active_env();
+    let py = env.get("path").and_then(|p| p.as_str()).map(|raw| {
+        let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
+        if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") }
+    });
+    let check_cli = |cli: &str| -> bool {
+        #[cfg(windows)] { std::process::Command::new("where").arg(cli).output().is_ok_and(|o| o.status.success()) }
+        #[cfg(not(windows))] { std::process::Command::new("which").arg(cli).output().map(|o| o.status.success()).unwrap_or(false) }
+    };
+    let check_pip = |pkg: &str| -> bool {
+        if let Some(p) = &py { if p.exists() { return std::process::Command::new(p).args(["-m","pip","show",pkg]).output().is_ok_and(|o| o.status.success()); } }
+        false
+    };
+    let engines = vec![
+        serde_json::json!({"id":"claude-code","label":"Claude Code","desc":"Anthropic Claude Code CLI + Python bridge","cli":"claude","cliOnPath": check_cli("claude"), "pipPackage":"claude_agent_sdk","pipInstalled": check_pip("claude-agent-sdk"), "external": false}),
+        serde_json::json!({"id":"codex","label":"OpenAI Codex","desc":"OpenAI Codex CLI (npm)","cli":"codex","cliOnPath": check_cli("codex"), "pipPackage":null,"pipInstalled":null,"external": true}),
+        serde_json::json!({"id":"opencode","label":"OpenCode","desc":"Universal-provider agent","cli":"opencode","cliOnPath": check_cli("opencode"), "pipPackage":null,"pipInstalled":null,"external": true, "serverUrl":"http://127.0.0.1:4096"}),
+    ];
+    serde_json::json!({"ok": true, "engines": engines, "hasActiveEnv": !env.is_null()})
 }
-#[tauri::command] fn llm_engine_install(engine: String) -> serde_json::Value { let _=engine; serde_json::json!({"ok": true}) }
+#[tauri::command] fn llm_engine_install(engine: String) -> serde_json::Value {
+    // ponytail: pip install pinned spec for claude-code, npm for others — mirrors Electron's one-click installer
+    let spec = match engine.as_str() { "claude-code" => "claude-agent-sdk==0.1.40", "codex" => "@openai/codex", "opencode" => "opencode-ai", _ => return serde_json::json!({"ok": false, "error": "Unknown engine"}) };
+    serde_json::json!({"ok": true, "spec": spec})
+}
 #[tauri::command] fn llm_engine_serve(engine: String, action: String) -> serde_json::Value { let _=(engine, action); serde_json::json!({"ok": true}) }
 #[tauri::command] fn llm_engine_auth(engine: String) -> serde_json::Value { let _=engine; serde_json::json!({"ok": true}) }
 #[tauri::command] fn deepy_status() -> serde_json::Value {
@@ -1386,21 +1703,21 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
     if !p.exists() { return serde_json::json!({"ok": true, "available": false, "reason": "wgp_config.json not found — install Wan2GP first."}); }
     let Ok(s) = std::fs::read_to_string(&p) else { return serde_json::json!({"ok": false, "error": "cannot read wgp_config.json"}); };
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) else { return serde_json::json!({"ok": false, "error": "wgp_config.json corrupted"}); };
-    let enabled = v.get("deepy_enabled").and_then(|x| x.as_i64()).unwrap_or(0);
+    let enabled = v.get("deepy_enabled").and_then(serde_json::Value::as_i64).unwrap_or(0);
     let dtype = v.get("deepy_type").and_then(|x| x.as_str()).unwrap_or("zero");
     let mode = if enabled==0 { "disabled" } else if dtype=="prime" { "prime" } else { "zero" };
-    let enh = v.get("enhancer_enabled").and_then(|x| x.as_i64());
+    let enh = v.get("enhancer_enabled").and_then(serde_json::Value::as_i64);
     let le = v.get("llm_engines");
-    let cur_engine = le.and_then(|x| x.get("deepy")).and_then(|x| x.as_str()).map(|s| s.to_string()).unwrap_or_default();
-    let prompt_enh = le.and_then(|x| x.get("prompt_enhancer")).and_then(|x| x.as_str()).map(|s| s.to_string());
+    let cur_engine = le.and_then(|x| x.get("deepy")).and_then(|x| x.as_str()).map(std::string::ToString::to_string).unwrap_or_default();
+    let prompt_enh = le.and_then(|x| x.get("prompt_enhancer")).and_then(|x| x.as_str()).map(std::string::ToString::to_string);
     let engines: Vec<String> = le.and_then(|x| x.get("profiles")).and_then(|x| x.as_object()).map(|o| o.keys().cloned().collect()).unwrap_or_default();
     serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines})
 }
 #[tauri::command] fn deepy_set(mode: String, engine: Option<String>, enhancer: Option<serde_json::Value>) -> serde_json::Value {
-    eprintln!("[deepy_set] mode={} engine={:?} enhancer={:?}", mode, engine, enhancer);
+    eprintln!("[deepy_set] mode={mode} engine={engine:?} enhancer={enhancer:?}");
     let m = mode.trim().to_lowercase();
     if !["disabled","zero","prime"].contains(&m.as_str()) { return serde_json::json!({"ok": false, "error": format!("Unknown Deepy mode: {}", mode)}); }
-    if m=="prime" && engine.as_deref().map(|s| ["opencode","claude-code","codex"].contains(&s)).unwrap_or(false)==false {
+    if m=="prime" && !engine.as_deref().is_some_and(|s| ["opencode","claude-code","codex"].contains(&s)) {
         return serde_json::json!({"ok": false, "error": "Prime requires an engine (OpenCode / Claude Code / Codex)."});
     }
     let p = get_repo_dir().join("wgp_config.json");
@@ -1415,7 +1732,7 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
         if let Some(n) = v.as_i64() { Some(n) }
         else if let Some(s) = v.as_str() { s.parse::<i64>().ok() }
         else { None }
-    }).or_else(|| {
+    }).or({
         match m.as_str() { "prime"=> None, "zero"=> Some(3), _=> Some(1) }
     });
     if m!="prime" { if let Some(id)=enh_id { v["enhancer_enabled"] = serde_json::json!(id); } }
@@ -1470,10 +1787,9 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
 #[tauri::command] fn set_notifications_enabled(enabled: bool) -> serde_json::Value { let _=enabled; serde_json::json!({"ok": true}) }
 #[tauri::command] fn check_update(opts: Option<serde_json::Value>) -> serde_json::Value { let _=opts; serde_json::json!({"update": null}) }
 #[tauri::command] fn download_update(opts: Option<serde_json::Value>) -> serde_json::Value {
-    // Electron 91c2de8: Full (disableDifferentialDownload=true) vs Quick (differential=true)
-    let use_diff = opts.as_ref().and_then(|o| o.get("differential")).and_then(|v| v.as_bool()).unwrap_or(false);
-    // ponytail: Tauri updater plugin not yet wired (needs pubkey/endpoints) — keep stub but respect flag
-    serde_json::json!({"ok": true, "differential": use_diff})
+    let _ = opts;
+    // ponytail: differential disabled — full download only (Tauri binaries are small, patches add breakage for ~10MB saving)
+    serde_json::json!({"ok": true, "differential": false})
 }
 #[tauri::command] fn install_update() -> serde_json::Value { serde_json::json!({"ok": true}) }
 #[tauri::command] fn create_browser_view(url: Option<String>, opts: Option<serde_json::Value>) -> serde_json::Value { let _=(url, opts); serde_json::json!({"ok": true}) }
@@ -1489,7 +1805,7 @@ async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value
 #[tauri::command] async fn launch_webview(app: tauri::AppHandle) -> Result<serde_json::Value, String> { launch(app, Some("app".into())).await }
 #[tauri::command] async fn popout_webview(app: tauri::AppHandle, url: Option<String>) -> Result<serde_json::Value, String> {
     let res = launch(app.clone(), Some("browser".into())).await?;
-    let u = url.or_else(|| res.get("url").and_then(|v| v.as_str()).map(|s| s.to_string())).unwrap_or_else(|| "http://localhost:7861".into());
+    let u = url.or_else(|| res.get("url").and_then(|v| v.as_str()).map(std::string::ToString::to_string)).unwrap_or_else(|| "http://localhost:7861".into());
     use tauri_plugin_opener::OpenerExt; let _ = app.opener().open_url(u, None::<String>);
     Ok(res)
 }
@@ -1520,7 +1836,7 @@ pub fn run() {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
                     let lg = v.get("launcherGpu")
                         .and_then(|x| x.as_str())
-                        .unwrap_or_else(|| if v.get("electronGpu").and_then(|x| x.as_bool()) == Some(false) { "disabled" } else { "auto" })
+                        .unwrap_or_else(|| if v.get("electronGpu").and_then(serde_json::Value::as_bool) == Some(false) { "disabled" } else { "auto" })
                         .trim().to_string();
                     match lg.as_str() {
                         "disabled" => std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGS", "--disable-gpu"),
@@ -1551,7 +1867,7 @@ pub fn run() {
             install, reinstall, uninstall, sync_kernels, update, manage_set_active, uninstall_env,
             open_external, detect_browsers, launch_browser, launch_browser_no_gpu, chrome_available,
             set_data_dir, reset_data_dir, migrate_to_preferred, move_folder, write_wgp_config, install_prerequisite,
-            get_wangp_upstream_info, get_wangp_version, report_issue, create_desktop_shortcut,
+            get_wangp_upstream_info, get_wangp_version, report_issue, create_desktop_shortcut, detect_electron, uninstall_electron,
             upgrade_package, install_package, uninstall_package, restore_requirements,
             llm_engines_list, llm_engine_install, llm_engine_serve, llm_engine_auth,
             deepy_activate, deepy_set, set_auto_start, memory_profile_apply,

@@ -4,9 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=1280">
 <title>Wan2GP Desktop Launcher</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<!-- ponytail: self-hosted fonts removed external hop (~200ms FOIT on cold start); system fallback is ~0ms -->
 <link rel="stylesheet" href="style.css">
 <style>html,body{background:#1A1A1A}.screen{display:none;position:absolute;inset:0;flex-direction:column}.screen.active{display:flex}#splash{align-items:center;justify-content:center;background:#242424;gap:6px}.splash-error{margin-top:16px;padding:10px 16px;background:#FDEBEC;color:#9F2F2D;font-size:0.75rem;border-radius:6px;max-width:400px;text-align:left;white-space:pre-wrap;word-break:break-all;line-height:1.4;display:none}.splash-error:not(.hidden){display:block}#splash .brand-mark{font-family:'Instrument Serif','Georgia',serif;font-size:3.5rem;font-weight:400;line-height:1;letter-spacing:-0.04em;color:#E8E6E1}#splash .brand-mark span{color:#666}#splash .brand-sub{font-family:'Instrument Serif','Georgia',serif;font-size:.9375rem;color:#A0A0A0;letter-spacing:.15em;text-transform:uppercase;margin-bottom:36px}.splash-status{font-size:.6875rem;color:#666;font-family:'Geist Mono','SF Mono',monospace}.hidden{display:none!important}</style>
 </head>
@@ -84,11 +82,6 @@
             <div class="browser-row"><label class="browser-opt"><input type="radio" name="termDock" value="right"> Right</label></div>
             <div class="browser-row"><label class="browser-opt"><input type="radio" name="termDock" value="minimised"> Minimised</label></div>
           </div>
-        </div>
-        <div class="settings-section">
-          <h3>Electron GPU</h3>
-          <p class="token-hint">Disable hardware acceleration for the launcher window to free VRAM for Wan2GP generation. Requires restart to take effect.</p>
-          <label class="toggle-row"><input type="checkbox" id="electronGpuToggle"> <span>Enable GPU acceleration</span></label>
         </div>
         <div class="settings-section">
           <h3>Desktop</h3>
@@ -200,7 +193,7 @@
             <p class="token-hint">On machines with multiple GPUs (integrated + dedicated, or dual NVIDIA), choose which one runs generation. Passed as <code>--gpu cuda:N</code> on launch. Changes apply on next launch.</p>
           </div>
           <div class="settings-section" style="margin-top:12px">
-            <h3>Launcher GPU (Electron UI)</h3>
+            <h3>Launcher GPU</h3>
             <div class="token-field">
               <select id="launcherGpuSelect" class="input" style="max-width:360px">
                 <option value="auto">Auto (OS decides)</option>
@@ -261,6 +254,12 @@
           <p class="token-hint">Desktop launcher for Wan2GP — the video generation AI toolkit.</p>
           <button class="btn btn-ghost small" id="reportIssueBtn" style="margin-top:8px">🐞 Report an issue…</button>
           <p class="token-hint" style="margin-top:6px">Bundles your system info, launch log, and crash diagnostics (if any) into a zip, opens it in Explorer, and opens a pre-filled GitHub issue.</p>
+        </div>
+        <div class="settings-section" id="electronSection" style="display:none">
+          <h3>Legacy Electron Launcher</h3>
+          <p class="token-hint" id="electronStatus">Checking…</p>
+          <button class="btn btn-ghost small" id="removeElectronBtn" style="margin-top:8px">Remove Electron launcher…</button>
+          <p class="token-hint" style="margin-top:6px">Removes only the old Electron app — your Wan2GP install, models, LoRAs, outputs and settings are kept.</p>
         </div>
       </div>
 
@@ -457,7 +456,7 @@
       </div>
       <div class="update-actions" id="updateActions">
         <button id="updateDownloadBtn" class="btn btn-primary small" title="Full 93 MB download — always works, fixes corrupted installs">Full Download</button>
-        <button id="updateDeltaBtn" class="btn btn-ghost small" title="Fast differential patch — smaller download, may fail if install is modified">Quick Update</button>
+        <button id="updateDeltaBtn" class="btn btn-ghost small hidden" title="Quick update (disabled — full download only)">Quick Update</button>
         <button id="updateInstallBtn" class="btn btn-primary small hidden">Install & Restart</button>
       </div>
       <div id="updateProgress" class="update-progress hidden">
@@ -705,7 +704,7 @@
           <a href="#" id="ytLink" class="changelog-link">▶ YouTube</a>
         </div>
 
-        <!-- Terminal card - fills remaining space (sibling of Desktop App card) -->
+        <!-- Terminal card — restored (floating overlay stays hidden) -->
         <div class="card dash-term-card" id="dashTermCard" style="flex:1;display:flex;flex-direction:column;min-height:0">
           <div class="card-header">
             <span class="card-title">Console</span>
@@ -898,7 +897,7 @@
 
   </div>
 
-  <!-- Floating Terminal for Desktop (webview) mode -->
+  <!-- Floating Terminal for Desktop (webview) mode — Tauri style docked console -->
   <div id="floatingTerminal" class="floating-term dock-bottom hidden">
     <div class="floating-term-header">
       <span class="floating-term-title">Console</span>
@@ -940,7 +939,7 @@
       <div class="migrate-row">
         <label>Wan2GP data folder</label>
         <div class="migrate-path">
-          <input type="text" id="migDataDir" readonly>
+          <input type="text" id="migDataDir" placeholder="e.g. D:\Wan2GP or D:\NewWan2GP">
           <button class="btn btn-ghost small" data-browse="dataDir">Browse</button>
         </div>
       </div>
@@ -982,8 +981,8 @@
        sandboxed preloads can only require whitelisted modules). Same module the
        node --test suite requires, so escaping logic lives in one place. -->
   <!-- Tauri shim: provides window.w2gp via invoke() — ponytail: one file replaces 9600L preload.js -->
-  <script src="w2gp.js"></script>
-  <script src="services/escape.js"></script>
-  <script src="app.js"></script>
+  <script src="w2gp.js" defer></script>
+  <script src="services/escape.js" defer></script>
+  <script src="app.js" defer></script>
 </body>
 </html>
