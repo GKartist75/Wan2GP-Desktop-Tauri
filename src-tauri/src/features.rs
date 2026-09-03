@@ -62,7 +62,8 @@ pub fn memory_profile_read() -> serde_json::Value {
             "image_profile": v.get("image_profile").cloned().unwrap_or(serde_json::json!(4)),
             "audio_profile": v.get("audio_profile").cloned().unwrap_or(serde_json::json!(4)),
             "vram_safety_coefficient": v.get("vram_safety_coefficient").cloned().unwrap_or(serde_json::json!(0.8)),
-            "vae_config": v.get("vae_config").cloned().unwrap_or(serde_json::json!(0))
+            "vae_config": v.get("vae_config").cloned().unwrap_or(serde_json::json!(0)),
+            "transformer_quantization": v.get("transformer_quantization").cloned().unwrap_or(serde_json::json!("int8"))
         });
     }}
     serde_json::json!({"video_profile": 4, "image_profile": 4, "audio_profile": 4, "vram_safety_coefficient": 0.8, "vae_config": 0, "transformer_quantization": "int8"})
@@ -107,20 +108,40 @@ pub fn auto_tune_recommend(hw: Option<serde_json::Value>, opts: Option<serde_jso
     let ram_tier = hw.get("ram_tier").and_then(|v| v.as_str()).unwrap_or("low");
     let vram_gb = hw.get("gpu_vram_gb").and_then(serde_json::Value::as_f64).unwrap_or(10.0);
     let failsafe = opts.as_ref().and_then(|o| o.get("failsafe")).and_then(serde_json::Value::as_bool).unwrap_or(false);
-    let (profile, coeff) = if failsafe { (5, 0.6) } else {
+    // No CUDA at all → explicit conservative fallback, clearly labeled (never silent P5).
+    if !failsafe && hw.get("cuda_available").and_then(|v| v.as_bool()) == Some(false) {
+        return serde_json::json!({
+            "video_profile": 4.5, "image_profile": 4.5, "audio_profile": 4.5,
+            "vram_safety_coefficient": 0.70, "vae_config": 0, "transformer_quantization": "int8",
+            "_recommendation_label": "Auto-tune unavailable on this hardware",
+            "_recommendation_reason": "No CUDA-capable GPU detected. Conservative profile applied — generation may be limited.",
+            "packages": ["torch","triton","sageattention"],
+            "kernels": ["nunchaku","gguf"]
+        });
+    }
+    // 7-profile matrix incl. fractional P3.5/P4.5 (mirrors auto-tune.js PROFILE_MATRIX).
+    let (profile, coeff): (f64, f64) = if failsafe { (5.0, 0.6) } else {
         let p = match (vram_tier, ram_tier) {
-            ("high","high")=>1, ("high","low")=>3, ("high","very_low")=>3,
-            ("low","high")=>2, ("low","low")=>4, ("low","very_low")=>5,
-            ("tight","high")=>4, ("tight","low")=>4, _=>5
+            ("high","high")=>1.0, ("high","low")=>3.0, ("high","very_low")=>3.5,
+            ("low","high")=>2.0, ("low","low")=>4.0, ("low","very_low")=>5.0,
+            ("tight","high")=>4.0, ("tight","low")=>4.5, _=>5.0
         };
         let c = if vram_tier=="tight"||vram_tier=="none" {0.7} else {0.8};
         (p,c)
     };
-    let audio = if vram_gb>=12.0 && ![1,3].contains(&profile) {3} else {profile};
+    // Fast-LM-decoder rule: ≥12GB VRAM needs int-profile 1/3 for audio, else inherit.
+    let audio = if vram_gb>=12.0 && ![1.0,3.0].contains(&profile) {3.0} else {profile};
+    let label = if failsafe { "Failsafe · P5 (maximum compatibility)".to_string() } else {
+        match profile.to_string().as_str() {
+            "1" => "HighRAM · HighVRAM", "2" => "HighRAM · LowVRAM", "3" => "LowRAM · HighVRAM",
+            "3.5" => "VeryLowRAM · HighVRAM", "4" => "LowRAM · LowVRAM", "4.5" => "LowRAM · LowVRAM+",
+            _ => "VerylowRAM · LowVRAM",
+        }.to_string()
+    };
     serde_json::json!({
         "video_profile": profile, "image_profile": profile, "audio_profile": audio,
         "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8",
-        "_recommendation_label": format!("P{} {}", profile, if failsafe {"(failsafe)"} else {""}),
+        "_recommendation_label": label,
         "_recommendation_reason": "Auto-tuned for your hardware",
         "packages": ["torch","triton","sageattention"],
         "kernels": ["nunchaku","gguf"]
@@ -638,5 +659,49 @@ mod deepy_roundtrip_tests {
         // restore byte-identical
         std::fs::write(&p, &original).unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), original);
+    }
+}
+
+#[cfg(test)]
+mod autotune_matrix_tests {
+    use super::*;
+    fn rec(vram_tier: &str, ram_tier: &str, vram_gb: f64, failsafe: bool) -> serde_json::Value {
+        auto_tune_recommend(
+            Some(serde_json::json!({"vram_tier": vram_tier, "ram_tier": ram_tier, "gpu_vram_gb": vram_gb, "cuda_available": true})),
+            Some(serde_json::json!({"failsafe": failsafe})),
+        )
+    }
+    #[test]
+    fn matrix_matches_reference() {
+        // (vram, ram) -> (video, audio)
+        let cases = [
+            (("high", "high"), (1.0, 1.0)),
+            (("high", "low"), (3.0, 3.0)),
+            (("high", "very_low"), (3.5, 3.0)), // P3+ with audio fast-decoder rule
+            (("low", "high"), (2.0, 3.0)),
+            (("low", "low"), (4.0, 3.0)),
+            (("low", "very_low"), (5.0, 3.0)),
+            (("tight", "high"), (4.0, 4.0)),
+            (("tight", "low"), (4.5, 4.5)),
+            (("tight", "very_low"), (5.0, 5.0)),
+        ];
+        for ((vt, rt), (v, a)) in cases {
+            let r = rec(vt, rt, if vt == "tight" { 8.0 } else { 16.0 }, false);
+            assert_eq!(r["video_profile"].as_f64().unwrap(), v, "{vt}/{rt} video");
+            assert_eq!(r["audio_profile"].as_f64().unwrap(), a, "{vt}/{rt} audio");
+            assert_eq!(r["vae_config"], 0);
+            assert_eq!(r["transformer_quantization"], "int8");
+        }
+        // failsafe forces P5 + 0.60
+        let r = rec("high", "high", 48.0, true);
+        assert_eq!(r["video_profile"], 5.0);
+        assert_eq!(r["vram_safety_coefficient"], 0.60);
+        // no CUDA → labeled fallback, not silent P4
+        let r = auto_tune_recommend(
+            Some(serde_json::json!({"vram_tier": "none", "ram_tier": "low", "gpu_vram_gb": 0, "cuda_available": false})),
+            None,
+        );
+        assert_eq!(r["video_profile"], 4.5);
+        assert!(r["_recommendation_label"].as_str().unwrap().contains("unavailable"));
     }
 }
