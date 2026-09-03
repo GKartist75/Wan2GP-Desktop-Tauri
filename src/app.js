@@ -30,7 +30,10 @@ function appendLog(text) {
       if (lastLine.trim()) logBuffer.push(lastLine.trim())
       lastLine = ''
       _carriageReturn = false
-    } else {
+    } else if (part !== '') {
+      // NB: skip empty split fragments (chunk ending in \r yields a trailing "").
+      // Treating "" as text would wipe lastLine AND disarm _carriageReturn,
+      // so \r-terminated progress could never display (stuck pre-0% state).
       if (_carriageReturn) {
         lastLine = part
         _carriageReturn = false

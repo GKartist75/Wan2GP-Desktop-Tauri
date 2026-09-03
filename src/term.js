@@ -36,7 +36,10 @@ function appendToBuf(text) {
       if (_lastLine.trim()) buf.push(_lastLine.trim())
       _lastLine = ''
       _carriageReturn = false
-    } else {
+    } else if (part !== '') {
+      // Skip empty split fragments (chunk ending in \r yields a trailing "").
+      // Treating "" as text would wipe _lastLine AND disarm _carriageReturn,
+      // so \r-terminated progress could never display.
       if (_carriageReturn) {
         _lastLine = part
         _carriageReturn = false
