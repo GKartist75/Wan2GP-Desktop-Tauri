@@ -242,6 +242,22 @@ pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::V
         Err(e) => serde_json::json!({"ok": false, "success": false, "error": e.to_string()}),
     }
 }
+#[tauri::command] pub fn llm_engine_uninstall(engine: String) -> serde_json::Value {
+    let res = match engine.as_str() {
+        "claude-code" => match env_python_bin() {
+            None => return serde_json::json!({"ok": false, "success": false, "error": "No active Python environment"}),
+            Some(py) => silent_command(&py).args(["-m", "pip", "uninstall", "-y", "claude-agent-sdk"]).output(),
+        },
+        "codex" => silent_command("npm").args(["uninstall", "-g", "@openai/codex"]).output(),
+        "opencode" => silent_command("npm").args(["uninstall", "-g", "opencode-ai"]).output(),
+        _ => return serde_json::json!({"ok": false, "success": false, "error": "Unknown engine"}),
+    };
+    match res {
+        Ok(o) if o.status.success() => serde_json::json!({"ok": true, "success": true}),
+        Ok(o) => serde_json::json!({"ok": false, "success": false, "error": format!("remove failed: {}", String::from_utf8_lossy(&o.stderr).trim())}),
+        Err(e) => serde_json::json!({"ok": false, "success": false, "error": e.to_string()}),
+    }
+}
 // OpenCode server lifecycle (Wan2GP auto-starts it too; this is the manual toggle).
 // PID-tracked so Start/Stop is honest; other engines have no servable process.
 static OPENCODE_PID: std::sync::OnceLock<std::sync::Mutex<Option<u32>>> = std::sync::OnceLock::new();

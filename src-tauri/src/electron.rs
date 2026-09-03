@@ -51,13 +51,18 @@ use crate::base::*;
         best.unwrap_or(serde_json::json!({"found": false}))
     }
 }
-#[tauri::command] pub async fn uninstall_electron() -> Result<serde_json::Value, String> {
+#[tauri::command] pub async fn uninstall_electron(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    use tauri::Emitter;
+    let log = |m: &str| { crate::base::push_log(m, "setup"); let _ = app.emit("setup-output", m.to_string()); };
     let det = detect_electron();
     if !det.get("found").and_then(|v| v.as_bool()).unwrap_or(false) {
         return Ok(serde_json::json!({"ok": false, "error": "Legacy Electron launcher not found"}));
     }
+    let name = det.get("name").and_then(|v| v.as_str()).unwrap_or("Electron launcher");
     let loc = det.get("installLocation").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    log(&format!("[*] Removing legacy {name}…\n"));
     // best-effort: kill running copies from that dir (not the uninstallers, never us — we live elsewhere)
+    log("[*] Closing any running copies…\n");
     if !loc.is_empty() {
         if let Ok(rd) = std::fs::read_dir(&loc) {
             for e in rd.flatten() {
@@ -89,8 +94,11 @@ use crate::base::*;
     if cmdline.is_empty() { return Ok(serde_json::json!({"ok": false, "error": "No uninstaller registered"})); }
     let (exe, mut args) = split_cmdline(&cmdline);
     if !args.iter().any(|a| a.eq_ignore_ascii_case("/S")) { args.push("/S".into()); } // NSIS silent flag
+    log("[*] Running silent uninstaller (this can take up to a minute)…\n");
     let out = silent_command(&exe).args(&args).output().map_err(|e| e.to_string())?;
     std::thread::sleep(std::time::Duration::from_secs(2));
     let gone = !detect_electron().get("found").and_then(|v| v.as_bool()).unwrap_or(false);
+    if gone { log("[✓] Electron launcher removed — Wan2GP, models and settings kept.\n"); }
+    else { log("[!] Uninstaller finished but the app is still registered — check Add/Remove Programs.\n"); }
     Ok(serde_json::json!({"ok": out.status.success() || gone, "removed": gone, "exit": out.status.code()}))
 }

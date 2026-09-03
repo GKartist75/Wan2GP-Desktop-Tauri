@@ -340,7 +340,8 @@ $('removeElectronBtn')?.addEventListener('click', async function() {
   if (choice !== 'ok') return
   btn.disabled = true
   const orig = btn.textContent
-  btn.textContent = 'Removing…'
+  btn.textContent = 'Removing… (see console)'
+  appendLog('[*] Removing legacy Electron launcher — progress below…')
   try {
     const r = await window.w2gp.uninstallElectron()
     if (r && r.ok) {
@@ -1084,6 +1085,7 @@ async function refreshDashboard(){
   if(status.error||!status.env){
     if (errNote) errNote.textContent = 'Could not read environment status: ' + (status.error || 'no active environment')
     $('envName').textContent='No active environment'
+    window._activeEnvName = ''
     $('envNameHint')?.classList.remove('hidden')
     document.querySelectorAll('.pkg-install-btn, .spec-latest, .spec-update-btn').forEach(function(el) { el.remove() })
     ;['specPython','specTorch','specCuda','specTriton','specSage','specFlash','specDiffusers','specTransformers','specGradio','specAccelerate','specOnnx','specOpencv','specPeft','specHfhub','specBits','specNumpy','specTokenizers','specSparge'].forEach(id=>{ const el=$(id); if(el) el.textContent='—' })
@@ -1093,6 +1095,7 @@ async function refreshDashboard(){
     const spargeEl = $('specSparge'); if (spargeEl) spargeEl.textContent = '—'
   } else {
     $('envName').textContent=status.env.name; $('envType').textContent=status.env.type
+    window._activeEnvName = status.env.name || ''
     $('envNameHint')?.classList.add('hidden')
     // Clear old update/install buttons before re-creating
     document.querySelectorAll('.spec-latest, .spec-update-btn, .pkg-install-btn').forEach(function(el) { el.remove() })
@@ -1363,9 +1366,9 @@ function renderProfileOverview(detail, ids) {
 function refreshEnvUnlink() {
   var btn = $('envUnlinkBtn')
   var restoreBtn = $('envRestoreBtn')
-  var nameEl = $('envName')
-  if (btn && nameEl) {
-    var name = nameEl.textContent
+  // State-driven (not DOM text): envName can lag during coalesced refreshes.
+  var name = window._activeEnvName || ($('envName') && $('envName').textContent) || ''
+  if (btn) {
     if (name && name !== '—' && name !== 'No active environment') {
       btn.style.display = ''; if (restoreBtn) restoreBtn.style.display = ''
       btn.onclick = async () => {
@@ -2427,10 +2430,10 @@ async function refreshLLMEngines() {
     let action = ''
     if (e.install && e.install.mode === 'pip') {
       const done = e.pipInstalled
-      action = `<button class="pip-install-btn llm-install-btn" data-engine="${e.id}" ${done ? 'disabled' : ''}>${done ? '✓ installed' : 'Install ' + e.install.spec}</button>`
+      action = `<button class="pip-install-btn llm-install-btn" data-engine="${e.id}">${done ? 'Reinstall ' + e.install.spec : 'Install ' + e.install.spec}</button>${done ? `<button class="pip-install-btn llm-remove-btn" data-engine="${e.id}">Remove</button>` : ''}`
     } else if (e.install && e.install.mode === 'npm') {
       const done = e.cliOnPath
-      action = `<button class="pip-install-btn llm-install-btn" data-engine="${e.id}" ${done ? 'disabled' : ''}>${done ? '✓ on PATH' : 'Install via npm (@openai/codex)'}</button>`
+      action = `<button class="pip-install-btn llm-install-btn" data-engine="${e.id}">${done ? 'Reinstall via npm' : 'Install via npm (@openai/codex)'}</button>${done ? `<button class="pip-install-btn llm-remove-btn" data-engine="${e.id}">Remove</button>` : ''}`
     } else if (e.external) {
       action = `<span class="spec-value llm-external-hint">External — install via terminal, then it auto-detects.</span>`
     }
@@ -2467,9 +2470,18 @@ async function refreshLLMEngines() {
       const id = btn.dataset.engine
       btn.disabled = true; btn.textContent = 'installing...'
       const r = await window.w2gp.llmEngineInstall(id)
-      btn.textContent = (r && r.success) ? '✓ installed' : 'failed'
       if (r && r.success) { _llmEnginesPromise = null; showToast('✓ engine installed'); refreshLLMEngines() }
-      else showToast('✗ ' + (r && r.error ? r.error : 'install failed'))
+      else { btn.disabled = false; showToast('✗ ' + (r && r.error ? r.error : 'install failed')) }
+    })
+  })
+  list.querySelectorAll('.llm-remove-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.engine
+      if (!confirm('Remove ' + id + ' from this machine?')) return
+      btn.disabled = true; btn.textContent = 'removing...'
+      const r = await window.w2gp.llmEngineUninstall(id)
+      if (r && r.success) { _llmEnginesPromise = null; showToast('✓ engine removed'); refreshLLMEngines() }
+      else { btn.disabled = false; btn.textContent = 'Remove'; showToast('✗ ' + (r && r.error ? r.error : 'remove failed')) }
     })
   })
   list.querySelectorAll('.llm-serve-btn').forEach(btn => {

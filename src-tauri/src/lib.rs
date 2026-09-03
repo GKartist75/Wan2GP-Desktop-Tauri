@@ -65,7 +65,7 @@ pub fn run() {
             system::set_data_dir, system::reset_data_dir, system::migrate_to_preferred, system::move_folder, system::write_wgp_config, install::install_prerequisite,
             updates::get_wangp_upstream_info, updates::get_wangp_version, system::report_issue, system::create_desktop_shortcut, electron::detect_electron, electron::uninstall_electron,
             features::upgrade_package, features::install_package, features::uninstall_package, features::restore_requirements,
-            features::llm_engines_list, features::llm_engine_install, features::llm_engine_serve, features::llm_engine_auth,
+            features::llm_engines_list, features::llm_engine_install, features::llm_engine_uninstall, features::llm_engine_serve, features::llm_engine_auth,
             features::deepy_activate, features::deepy_set, features::set_auto_start, features::memory_profile_apply,
             features::notifier_config, features::notifier_set, features::notifier_test,
             features::set_theme_follow_system, features::set_notifications_enabled,

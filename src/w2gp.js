@@ -83,7 +83,7 @@
     configLoad: () => call('config_load'), configSave: (cfg) => call('config_save', { cfg }),
     deepyStatus: () => call('deepy_status'), deepyActivate: (e) => call('deepy_activate', { engine: e }),
     deepySet: (mode, engine, enhancer) => call('deepy_set', { mode, engine, enhancer }),
-    llmEnginesList: () => call('llm_engines_list'), llmEngineInstall: (e) => call('llm_engine_install', { engine: e }),
+    llmEnginesList: () => call('llm_engines_list'), llmEngineInstall: (e) => call('llm_engine_install', { engine: e }), llmEngineUninstall: (e) => call('llm_engine_uninstall', { engine: e }),
     llmEngineServe: (e, a) => call('llm_engine_serve', { engine: e, action: a }), llmEngineAuth: (e) => call('llm_engine_auth', { engine: e }),
     memoryProfileRead: () => call('memory_profile_read'), memoryProfileApply: (s) => call('memory_profile_apply', { settings: s }),
     notifierConfig: () => call('notifier_config'), notifierSet: (c) => call('notifier_set', { cfg: c }),
