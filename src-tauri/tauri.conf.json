@@ -1,51 +1,51 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "wan2gp-tauri-spike",
-  "version": "0.1.1",
-  "identifier": "com.wangp.desktop-tauri",
-  "build": {
-    "frontendDist": "../src"
-  },
-  "app": {
-    "withGlobalTauri": true,
-    "windows": [
-      {
-        "title": "Wan2GP Desktop (Tauri)",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 1024,
-        "minHeight": 600,
-        "resizable": true,
-        "backgroundColor": "#242424"
-      }
-    ],
-    "security": {
-      "csp": null
-    }
-  },
-  "bundle": {
-    "active": true,
-    "targets": "all",
-    "createUpdaterArtifacts": true,
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ]
-  },
-  "plugins": {
-    "updater": {
-      "active": true,
-      "dialog": false,
-      "endpoints": [
-        "https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/latest/download/latest.json"
-      ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhBNzA1RTQwM0QwM0Q5MjEKUldRaDJRTTlRRjV3aW1MaUtrK1dFdXk3a05QZmVQNnAweUZ4Qm9hUXpVVjRQWFBYK1d5Y1dDWEUK",
-      "windows": {
-        "installMode": "passive"
-      }
-    }
-  }
+    "$schema":  "https://schema.tauri.app/config/2",
+    "productName":  "wan2gp-tauri-spike",
+    "version":  "0.1.1",
+    "identifier":  "com.wangp.desktop-tauri",
+    "build":  {
+                  "frontendDist":  "../src"
+              },
+    "app":  {
+                "withGlobalTauri":  true,
+                "windows":  [
+                                {
+                                    "title":  "Wan2GP Desktop (Tauri)",
+                                    "width":  1280,
+                                    "height":  800,
+                                    "minWidth":  1024,
+                                    "minHeight":  600,
+                                    "resizable":  true,
+                                    "backgroundColor":  "#242424"
+                                }
+                            ],
+                "security":  {
+                                 "csp":  null
+                             }
+            },
+    "bundle":  {
+                   "active":  true,
+                   "targets":  "all",
+                   "createUpdaterArtifacts":  true,
+                   "icon":  [
+                                "icons/32x32.png",
+                                "icons/128x128.png",
+                                "icons/128x128@2x.png",
+                                "icons/icon.icns",
+                                "icons/icon.ico"
+                            ]
+               },
+    "plugins":  {
+                    "updater":  {
+                                    "active":  true,
+                                    "dialog":  false,
+                                    "endpoints":  [
+                                                      "https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/latest/download/latest.json"
+                                                  ],
+                                    "pubkey":  "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhBNzA1RTQwM0QwM0Q5MjEKUldRaDJRTTlRRjV3aW1MaUtrK1dFdXk3a05QZmVQNnAweUZ4Qm9hUXpVVjRQWFBYK1d5Y1dDWEUK",
+                                    "windows":  {
+                                                    "installMode":  "passive"
+                                                }
+                                }
+                }
 }
