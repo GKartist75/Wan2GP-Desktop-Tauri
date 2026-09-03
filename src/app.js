@@ -514,13 +514,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.w2gp.onBvCrashRecovered(() => showToast('Wan2GP view reloaded after a crash'))
 
   // hardware probe — fire-and-forget, fills specs when ready (no await)
-  loadHardware().catch(e => { console.warn('[hw] detectHardware failed', e) })
+  loadHardware().then(s => { if (s) appendLog(`[*] Hardware: ${s.cpu || '?'} · ${s.ram || '?'} RAM · ${s.gpu || '?'} (${s.vram || '?'})`) }).catch(e => { console.warn('[hw] detectHardware failed', e) })
   setTimeout(() => loadHardware().catch(()=>{}), 2000)
+
+  window.w2gp.getDesktopVersion().then(function(v) {
+    if (v) appendLog(`[*] Launcher v${v} ready — dashboard live. Metrics polling every 3s; update checks in background.`)
+  }).catch(() => {})
 
   if (installed.repo && installed.env) {
     // ponytail: fast paint — show dashboard instantly (~300ms), fill versions in background
+    appendLog('[*] Wan2GP install found — loading dashboard…')
     show('dashboard')
-    refreshDashboard() // now ~150ms with 7 pkgs, not 800ms
+    refreshDashboard().then(() => {
+      const env = $('envName')?.textContent || '?'
+      const torch = $('specTorch')?.textContent || '?'
+      appendLog(`[*] Environment ready: ${env} · torch ${torch}`)
+    }).catch(() => {})
     startMetricsPolling()
     // Periodic Wan2GP update re-check while the app is open (30 min) + Desktop (5h).
     // Launch-time check alone misses updates released mid-session; the
@@ -535,6 +544,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     silentSettingsRepair()
   } else {
     $('splashStatus').textContent = 'First-time setup...'
+    appendLog('[*] First run — no Wan2GP install detected. Complete the installer below to set up.')
     const hw = await window.w2gp.detectHardware()
     $('installCpu').textContent=hw.cpu||'—'; $('installRam').textContent=hw.ram||'—'
     $('installGpu').textContent=hw.gpu||'—'; $('installVram').textContent=hw.vram||'—'
@@ -631,6 +641,7 @@ async function loadHardware() {
   const s = await window.w2gp.detectHardware()
   $('specCpu').textContent=s.cpu||'—'; $('specRam').textContent=s.ram||'—'
   $('specGpu').textContent=s.gpu||'—'; $('specVram').textContent=s.vram||'—'
+  return s
 }
 
 // ── Live topbar metrics (CPU/GPU/RAM/VRAM sparklines) ──
