@@ -4,6 +4,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- Launcher update check runs once shortly after boot (5h poll alone left fresh releases unknown for hours)
+
 ## [0.1.3]
 
 - Renamed to Wan2GP Desktop Launcher Tauri (product, binary, installer)
