@@ -4895,7 +4895,7 @@ dependencies = [
 
 [[package]]
 name = "wan2gp-tauri-spike"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "reqwest",
  "serde",

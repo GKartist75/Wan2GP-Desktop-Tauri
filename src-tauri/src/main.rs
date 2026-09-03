@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    wan2gp_tauri_spike_lib::run();
+    wan2gp_desktop_launcher_tauri_lib::run();
 }
