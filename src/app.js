@@ -1395,7 +1395,7 @@ function refreshEnvUnlink() {
     }
   }
 
-const _labelToKey = {'Python':'python','Torch':'torch','CUDA':'cuda','Triton':'triton','Sage Attn':'sageattention','Flash Attn':'flash_attn','Diffusers':'diffusers','Transformers':'transformers','Gradio':'gradio','Accelerate':'accelerate','onnxruntime':'onnxruntime','OpenCV':'opencv','PEFT':'peft','hf_hub':'huggingface_hub','NumPy':'numpy','Tokenizers':'tokenizers'}
+const _labelToKey = {'Python':'python','Torch':'torch','CUDA':'cuda','Triton':'triton','Sage Attn':'sageattention','Flash Attn':'flash_attn','Diffusers':'diffusers','Transformers':'transformers','Gradio':'gradio','Accelerate':'accelerate','onnxruntime':'onnxruntime','OpenCV':'opencv','PEFT':'peft','hf_hub':'huggingface_hub','bitsandbytes':'bitsandbytes','NumPy':'numpy','Tokenizers':'tokenizers'}
 
 $('checkPkgUpdatesBtn').addEventListener('click', async function() {
   this.textContent = 'Checking...'
@@ -1466,7 +1466,7 @@ $('checkPkgUpdatesBtn').addEventListener('click', async function() {
         ev.stopPropagation()
         this.disabled = true; this.textContent = '...'
         if (dot) { dot.classList.remove('has-update','installed','error'); dot.classList.add('installing') }
-        var res = await window.w2gp.upgradePackage(r.name)
+        var res = await window.w2gp.upgradePackage(r.dist || r.name)
         if (res && res.success) {
           this.textContent = '✓'; this.classList.add('done')
           if (dot) { dot.classList.remove('installing','has-update','error'); dot.classList.add('installed') }

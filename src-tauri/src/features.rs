@@ -19,7 +19,15 @@ pub async fn check_package_updates(app: tauri::AppHandle, versions: Option<serde
     let (mut rx, _) = app.shell().command(&py).args(["-m","pip","list","--outdated","--format=json"]).spawn().map_err(|e| e.to_string())?;
     let mut out = String::new();
     while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b) => out.push_str(&String::from_utf8_lossy(&b)), CommandEvent::Stderr(b) => out.push_str(&String::from_utf8_lossy(&b)), _=>{} } }
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) { if let Some(arr) = v.as_array() { let res: Vec<serde_json::Value> = arr.iter().map(|e| serde_json::json!({"name": e.get("name").cloned().unwrap_or(serde_json::Value::Null), "current": e.get("version").cloned().unwrap_or(serde_json::Value::Null), "latest": e.get("latest_version").cloned().unwrap_or(serde_json::Value::Null)})).collect(); return Ok(serde_json::Value::Array(res)); } }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) { if let Some(arr) = v.as_array() { let dist_to_key = |d: &str| -> String { match d.to_lowercase().replace('-', "_").as_str() {
+            "triton_windows" => "triton".into(), "opencv_python" => "opencv".into(),
+            "huggingface_hub" => "huggingface_hub".into(), "spas_sage_attn" => "sageattention".into(),
+            "flash_attn" => "flash_attn".into(), other => other.into(),
+        } };
+        let res: Vec<serde_json::Value> = arr.iter().map(|e| {
+            let dist = e.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            serde_json::json!({"name": dist_to_key(dist), "dist": dist, "installed": e.get("version").cloned().unwrap_or(serde_json::Value::Null), "latest": e.get("latest_version").cloned().unwrap_or(serde_json::Value::Null)})
+        }).collect(); return Ok(serde_json::Value::Array(res)); } }
     Ok(serde_json::json!([]))
 }
 #[tauri::command]
