@@ -197,13 +197,61 @@ pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::V
     ];
     serde_json::json!({"ok": true, "engines": engines, "hasActiveEnv": !env.is_null()})
 }
+// One-click engine installer: claude-code via env pip (pinned), codex/opencode via npm -g.
 #[tauri::command] pub fn llm_engine_install(engine: String) -> serde_json::Value {
-    // ponytail: pip install pinned spec for claude-code, npm for others — mirrors Electron's one-click installer
-    let spec = match engine.as_str() { "claude-code" => "claude-agent-sdk==0.1.40", "codex" => "@openai/codex", "opencode" => "opencode-ai", _ => return serde_json::json!({"ok": false, "error": "Unknown engine"}) };
-    serde_json::json!({"ok": true, "spec": spec})
+    let spec = match engine.as_str() { "claude-code" => "claude-agent-sdk==0.1.40", "codex" => "@openai/codex", "opencode" => "opencode-ai", _ => return serde_json::json!({"ok": false, "success": false, "error": "Unknown engine"}) };
+    let res = match engine.as_str() {
+        "claude-code" => match env_python_bin() {
+            None => return serde_json::json!({"ok": false, "success": false, "error": "No active Python environment"}),
+            Some(py) => std::process::Command::new(&py).args(["-m", "pip", "install", spec]).output(),
+        },
+        _ => std::process::Command::new("npm").args(["install", "-g", spec]).output(),
+    };
+    match res {
+        Ok(o) if o.status.success() => serde_json::json!({"ok": true, "success": true, "spec": spec}),
+        Ok(o) => serde_json::json!({"ok": false, "success": false, "error": format!("install failed: {}", String::from_utf8_lossy(&o.stderr).trim())}),
+        Err(e) => serde_json::json!({"ok": false, "success": false, "error": e.to_string()}),
+    }
 }
-#[tauri::command] pub fn llm_engine_serve(engine: String, action: String) -> serde_json::Value { let _=(engine, action); serde_json::json!({"ok": true}) }
-#[tauri::command] pub fn llm_engine_auth(engine: String) -> serde_json::Value { let _=engine; serde_json::json!({"ok": true}) }
+// OpenCode server lifecycle (Wan2GP auto-starts it too; this is the manual toggle).
+// PID-tracked so Start/Stop is honest; other engines have no servable process.
+static OPENCODE_PID: std::sync::OnceLock<std::sync::Mutex<Option<u32>>> = std::sync::OnceLock::new();
+#[tauri::command] pub fn llm_engine_serve(engine: String, action: String) -> serde_json::Value {
+    if engine != "opencode" {
+        return serde_json::json!({"ok": false, "success": false, "error": "Only OpenCode has a local server"});
+    }
+    if action == "stop" {
+        let pid = OPENCODE_PID.get().and_then(|m| m.lock().ok()).and_then(|mut g| g.take());
+        if let Some(pid) = pid {
+            #[cfg(windows)] { let _ = std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output(); }
+            #[cfg(not(windows))] { let _ = std::process::Command::new("kill").arg(pid.to_string()).output(); }
+        }
+        return serde_json::json!({"ok": true, "success": true, "running": false});
+    }
+    // start: already up (ours or Wan2GP's) → report running instead of double-spawning
+    if std::net::TcpStream::connect("127.0.0.1:4096").is_ok() {
+        return serde_json::json!({"ok": true, "success": true, "running": true, "url": "http://127.0.0.1:4096"});
+    }
+    match std::process::Command::new("opencode").args(["serve", "--hostname", "127.0.0.1", "--port", "4096"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
+        Ok(child) => {
+            if let Ok(mut g) = OPENCODE_PID.get_or_init(|| std::sync::Mutex::new(None)).lock() { *g = Some(child.id()); }
+            std::mem::forget(child); // detach: lives beyond this command
+            serde_json::json!({"ok": true, "success": true, "running": true, "url": "http://127.0.0.1:4096"})
+        }
+        Err(e) => serde_json::json!({"ok": false, "success": false, "error": format!("Could not start opencode (is it installed?): {e}")}),
+    }
+}
+#[tauri::command] pub fn llm_engine_auth(engine: String) -> serde_json::Value {
+    // Auth itself is interactive (browser OAuth / `auth login`) — the UI opens the
+    // guide directly; this just hands out the canonical docs URL per engine.
+    let docs = match engine.as_str() {
+        "claude-code" => "https://code.claude.com/docs/en/authentication",
+        "codex" => "https://developers.openai.com/codex/cli/",
+        "opencode" => "https://opencode.ai/docs",
+        _ => return serde_json::json!({"ok": false, "error": "Unknown engine"}),
+    };
+    serde_json::json!({"ok": true, "docsUrl": docs})
+}
 #[tauri::command] pub fn deepy_status() -> serde_json::Value {
     let p = get_repo_dir().join("wgp_config.json");
     if !p.exists() { return serde_json::json!({"ok": true, "available": false, "reason": "wgp_config.json not found — install Wan2GP first."}); }
@@ -301,9 +349,209 @@ pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::V
     }
     serde_json::json!({"ok": true, "success": true, "applied": applied})
 }
-#[tauri::command] pub fn notifier_config() -> serde_json::Value { serde_json::json!({"ok": true, "config": {}}) }
-#[tauri::command] pub fn notifier_set(cfg: serde_json::Value) -> serde_json::Value { let _=cfg; serde_json::json!({"ok": true}) }
-#[tauri::command] pub fn notifier_test(cfg: Option<serde_json::Value>) -> serde_json::Value { let _=cfg; serde_json::json!({"ok": true}) }
-#[tauri::command] pub fn pulsebar_hide() -> serde_json::Value { serde_json::json!({"ok": true}) }
-#[tauri::command] pub fn set_theme_follow_system(enabled: bool) -> serde_json::Value { let _=enabled; serde_json::json!({"ok": true}) }
+// ── Queue Notifier (Apprise) ──
+// Config lives in desktop-config.json under "notifier". Events are classified
+// from the launch-log stream (port of services/queue-notifier.js) and delivered
+// via the env's apprise (`python -m apprise`). Spawns a thread per delivery so
+// log streaming never blocks.
+static NOTIF_LAST_PCT: std::sync::OnceLock<std::sync::Mutex<Option<u8>>> = std::sync::OnceLock::new();
+static NOTIF_LAST_FIRE: std::sync::OnceLock<std::sync::Mutex<Option<(std::time::Instant, String)>>> = std::sync::OnceLock::new();
+pub(crate) fn notifier_normalize(cfg: &serde_json::Value) -> serde_json::Value {
+    let step = cfg.get("progressStep").and_then(|v| v.as_u64()).unwrap_or(25).clamp(1, 100);
+    serde_json::json!({
+        "enabled": cfg.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+        "url": cfg.get("url").and_then(|v| v.as_str()).unwrap_or("").trim(),
+        "notifyOnComplete": cfg.get("notifyOnComplete").and_then(|v| v.as_bool()).unwrap_or(true),
+        "notifyOnFail": cfg.get("notifyOnFail").and_then(|v| v.as_bool()).unwrap_or(true),
+        "notifyOnProgress": cfg.get("notifyOnProgress").and_then(|v| v.as_bool()).unwrap_or(false),
+        "progressStep": step
+    })
+}
+fn notifier_saved() -> serde_json::Value {
+    notifier_normalize(load_config_value().get("notifier").unwrap_or(&serde_json::Value::Null))
+}
+fn env_python_bin() -> Option<PathBuf> {
+    let env = get_active_env();
+    let raw = env.get("path")?.as_str()?;
+    let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
+    let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
+    py.exists().then_some(py)
+}
+fn apprise_send(url: &str, title: &str, body: &str) -> Result<(), String> {
+    let py = env_python_bin().ok_or_else(|| "No active Python environment".to_string())?;
+    let out = std::process::Command::new(&py).args(["-m", "apprise", "-t", title, "-b", body, url]).output().map_err(|e| e.to_string())?;
+    if out.status.success() { Ok(()) } else {
+        Err(format!("apprise failed: {}", String::from_utf8_lossy(&out.stderr).trim()))
+    }
+}
+pub(crate) fn notifier_fire(kind: &str, text: &str) {
+    let cfg = notifier_saved();
+    if !cfg.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false) { return; }
+    let url = cfg.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if url.is_empty() { return; }
+    let subscribed = match kind {
+        "complete" => cfg.get("notifyOnComplete").and_then(|v| v.as_bool()).unwrap_or(true),
+        "fail" => cfg.get("notifyOnFail").and_then(|v| v.as_bool()).unwrap_or(true),
+        "progress" => cfg.get("notifyOnProgress").and_then(|v| v.as_bool()).unwrap_or(false),
+        _ => false,
+    };
+    if !subscribed { return; }
+    // 10s cooldown per kind (log bursts shouldn't spam phones)
+    if let Some(m) = NOTIF_LAST_FIRE.get() {
+        if let Ok(g) = m.lock() {
+            if let Some((t, k)) = g.as_ref() {
+                if k == kind && t.elapsed() < std::time::Duration::from_secs(10) { return; }
+            }
+        }
+    }
+    if let Ok(mut g) = NOTIF_LAST_FIRE.get_or_init(|| std::sync::Mutex::new(None)).lock() {
+        *g = Some((std::time::Instant::now(), kind.to_string()));
+    }
+    let msg = match kind {
+        "complete" => "Wan2GP: \u{2705} generation finished".to_string(),
+        "fail" => format!("Wan2GP: \u{274C} generation failed\n{}", text.chars().take(280).collect::<String>()),
+        _ => format!("Wan2GP: {text}"),
+    };
+    std::thread::spawn(move || { let _ = apprise_send(&url, "Wan2GP", &msg); });
+}
+const DONE_MARKERS: &[&str] = &["task completed", "generation complete", "finished", "saved to", "output saved", "done in", "job finished", "completed successfully", "\u{2713}", "\u{2714}"];
+const FAIL_MARKERS: &[&str] = &["traceback", "exception", "cuda out of memory", "out of memory", "assertionerror", "runtimeerror", "failed", "error"];
+const FAIL_SKIP: &[&str] = &["0 error", "no error", "error_queue", "errors: 0", "0 errors"];
+// Classify one launch-log line; progress gated on progressStep multiples.
+pub(crate) fn notifier_scan_line(line: &str) {
+    // progress: last NN% in line (tqdm prints 50%|...)
+    let mut pct: Option<u8> = None;
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let mut j = i;
+            while j > 0 && bytes[j - 1].is_ascii_digit() { j -= 1; }
+            if j < i {
+                if let Ok(n) = line[j..i].parse::<u8>() {
+                    if n <= 100 { pct = Some(n); }
+                }
+            }
+        }
+        i += 1;
+    }
+    if let Some(p) = pct {
+        if p < 100 {
+            let cfg = notifier_saved();
+            if cfg.get("notifyOnProgress").and_then(|v| v.as_bool()).unwrap_or(false) {
+                let step = cfg.get("progressStep").and_then(|v| v.as_u64()).unwrap_or(25).max(1);
+                let last = NOTIF_LAST_PCT.get().and_then(|m| m.lock().ok()).and_then(|g| *g).unwrap_or(0);
+                if p / (step as u8) > last / (step as u8) {
+                    if let Ok(mut g) = NOTIF_LAST_PCT.get_or_init(|| std::sync::Mutex::new(None)).lock() { *g = Some(p); }
+                    notifier_fire("progress", &format!("{p}% done"));
+                }
+            }
+            return;
+        }
+    }
+    let low = line.to_lowercase();
+    if FAIL_MARKERS.iter().any(|m| low.contains(m)) && !FAIL_SKIP.iter().any(|s| low.contains(s)) {
+        if let Ok(mut g) = NOTIF_LAST_PCT.get_or_init(|| std::sync::Mutex::new(None)).lock() { *g = None; }
+        notifier_fire("fail", line.trim());
+        return;
+    }
+    if DONE_MARKERS.iter().any(|m| low.contains(m)) {
+        if let Ok(mut g) = NOTIF_LAST_PCT.get_or_init(|| std::sync::Mutex::new(None)).lock() { *g = None; }
+        notifier_fire("complete", line.trim());
+    }
+}
+#[tauri::command] pub fn notifier_config() -> serde_json::Value {
+    serde_json::json!({"ok": true, "config": notifier_saved()})
+}
+#[tauri::command] pub fn notifier_set(cfg: serde_json::Value) -> serde_json::Value {
+    let clean = notifier_normalize(&cfg);
+    if clean.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false)
+        && clean.get("url").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+        return serde_json::json!({"ok": false, "error": "A delivery URL is required when notifications are enabled (Apprise URL, e.g. discord://, tgram://)"});
+    }
+    let mut full = load_config_value();
+    if let Some(m) = full.as_object_mut() { m.insert("notifier".into(), clean.clone()); }
+    match crate::config::config_save(full) {
+        Ok(_) => serde_json::json!({"ok": true, "config": clean}),
+        Err(e) => serde_json::json!({"ok": false, "error": e}),
+    }
+}
+#[tauri::command] pub fn notifier_test(cfg: Option<serde_json::Value>) -> serde_json::Value {
+    let use_cfg = cfg.map(|c| notifier_normalize(&c)).unwrap_or_else(notifier_saved);
+    let url = use_cfg.get("url").and_then(|v| v.as_str()).unwrap_or("");
+    if url.is_empty() { return serde_json::json!({"ok": false, "error": "No Apprise URL set"}); }
+    match apprise_send(url, "Wan2GP", "Wan2GP test notification \u{2705} — your queue notifier works.") {
+        Ok(()) => serde_json::json!({"ok": true}),
+        Err(e) => serde_json::json!({"ok": false, "error": e}),
+    }
+}
+// ── Pulsebar: always-on-top mini progress window ──
+// Progress % is sniffed from the launch stream (same lines the notifier scans).
+// The window (pulsebar.html) polls pulsebar_state; toggle creates/destroys it.
+static PULSE: std::sync::OnceLock<std::sync::Mutex<(Option<u8>, String)>> = std::sync::OnceLock::new();
+pub(crate) fn pulse_sniff(line: &str) {
+    // last NN% wins (tqdm prints 50%|...)
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    let mut pct: Option<u8> = None;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let mut j = i;
+            while j > 0 && bytes[j - 1].is_ascii_digit() { j -= 1; }
+            if j < i {
+                if let Ok(n) = line[j..i].parse::<u8>() { if n <= 100 { pct = Some(n); } }
+            }
+        }
+        i += 1;
+    }
+    let m = PULSE.get_or_init(|| std::sync::Mutex::new((None, String::new())));
+    if let Ok(mut g) = m.lock() {
+        if let Some(p) = pct {
+            *g = (Some(p), format!("Generating… {p}%"));
+        } else {
+            let low = line.to_lowercase();
+            if DONE_MARKERS.iter().any(|mk| low.contains(mk)) { *g = (Some(100), "Done ✓".to_string()); }
+            else if FAIL_MARKERS.iter().any(|mk| low.contains(mk)) && !FAIL_SKIP.iter().any(|s| low.contains(s)) {
+                *g = (None, "Failed ✗".to_string());
+            }
+        }
+    }
+}
+#[tauri::command] pub fn pulsebar_state() -> serde_json::Value {
+    let (pct, label) = PULSE.get().and_then(|m| m.lock().ok()).map(|g| g.clone()).unwrap_or((None, String::new()));
+    serde_json::json!({"pct": pct, "label": label})
+}
+#[tauri::command] pub fn pulsebar_show(app: tauri::AppHandle) -> serde_json::Value {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("pulsebar") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+        return serde_json::json!({"ok": true, "existed": true});
+    }
+    match tauri::WebviewWindowBuilder::new(&app, "pulsebar", tauri::WebviewUrl::App("pulsebar.html".into()))
+        .title("Wan2GP Progress")
+        .inner_size(340.0, 64.0)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .build() {
+        Ok(_) => serde_json::json!({"ok": true}),
+        Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
+    }
+}
+#[tauri::command] pub fn pulsebar_hide(app: tauri::AppHandle) -> serde_json::Value {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("pulsebar") { let _ = w.close(); }
+    serde_json::json!({"ok": true})
+}
+#[tauri::command] pub fn set_theme_follow_system(enabled: bool) -> serde_json::Value {
+    let mut full = load_config_value();
+    if let Some(m) = full.as_object_mut() { m.insert("themeFollowSystem".into(), serde_json::json!(enabled)); }
+    match crate::config::config_save(full) {
+        Ok(_) => serde_json::json!({"ok": true}),
+        Err(e) => serde_json::json!({"ok": false, "error": e}),
+    }
+}
 #[tauri::command] pub fn set_notifications_enabled(enabled: bool) -> serde_json::Value { let _=enabled; serde_json::json!({"ok": true}) }

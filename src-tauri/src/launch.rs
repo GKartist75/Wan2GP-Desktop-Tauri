@@ -15,7 +15,7 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
     // ponytail: if server already listening on :port (desktop→browser switch), reuse it — don't spawn second python on same port (Gradio OSError)
     if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
         let url = format!("http://localhost:{port}");
-        let _ = app.emit("launch-log", format!("[*] Wan2GP already running on :{port} — opening {url}\n"));
+        let m = format!("[*] Wan2GP already running on :{port} — opening {url}\n"); crate::base::push_log(&m, "launch"); let _ = app.emit("launch-log", m);
         return Ok(serde_json::json!({"ok": true, "port": port, "mode": mode, "url": url, "fresh": false}));
     }
     mutating_try("launch")?;
@@ -29,7 +29,7 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
     if gpu_device != "auto" && gpu_device.starts_with("cuda:") && !args.contains(&"--gpu".to_string()) {
         args.push("--gpu".into()); args.push(gpu_device.clone());
     }
-    let emit = |msg: &str| { crate::base::push_log(msg); let _ = app.emit("launch-log", msg.to_string()); };
+    let emit = |msg: &str| { crate::base::push_log(msg, "launch"); let _ = app.emit("launch-log", msg.to_string()); };
     emit(&format!("[*] Launching Wan2GP ({mode}) on :{port}…\n"));
     // GPU assignment log (mirrors Electron 9945990)
     {
@@ -87,14 +87,14 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
         use tauri_plugin_shell::process::CommandEvent;
         let mut rx = rx;
         while let Some(ev) = rx.recv().await {
-            match ev { CommandEvent::Stdout(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s); let _ = app2.emit("launch-log", s); }, CommandEvent::Stderr(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s); let _ = app2.emit("launch-log", s); }, CommandEvent::Terminated(s) => { let _ = app2.emit("wangp-exit", serde_json::json!({"code": s.code})); break; }, _ => {} }
+            match ev { CommandEvent::Stdout(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s, "launch"); let _ = app2.emit("launch-log", s); }, CommandEvent::Stderr(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s, "launch"); let _ = app2.emit("launch-log", s); }, CommandEvent::Terminated(s) => { let _ = app2.emit("wangp-exit", serde_json::json!({"code": s.code})); break; }, _ => {} }
         }
     });
     // wait for port in background (don't hold mutating — launch is done, server boots async)
     let host = "127.0.0.1".to_string();
     let app3 = app.clone();
     std::thread::spawn(move || {
-        for _ in 0..60 { std::thread::sleep(std::time::Duration::from_secs(3)); if std::net::TcpStream::connect(format!("{host}:{port}")).is_ok() { let _ = app3.emit("launch-log", format!("[✓] Wan2GP ready on http://localhost:{port}\n")); break; } }
+        for _ in 0..60 { std::thread::sleep(std::time::Duration::from_secs(3)); if std::net::TcpStream::connect(format!("{host}:{port}")).is_ok() { let m = format!("[✓] Wan2GP ready on http://localhost:{port}\n"); crate::base::push_log(&m, "launch"); let _ = app3.emit("launch-log", m); break; } }
     });
     mutating_done();
     let url = format!("http://localhost:{port}");

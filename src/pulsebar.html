@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Wan2GP Progress</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #111; overflow: hidden; }
+  .pb-wrap { height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 8px 12px; }
+  .pb-top { display: flex; align-items: center; gap: 8px; }
+  .pb-label { flex: 1; font-size: 11px; color: var(--term-green, #9ae6b4); font-family: 'Geist Mono', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pb-close { background: none; border: none; color: #666; cursor: pointer; font-size: 12px; padding: 0 2px; }
+  .pb-close:hover { color: #eee; }
+  .pb-track { height: 6px; background: #222; border-radius: 3px; overflow: hidden; }
+  .pb-fill { height: 100%; width: 0%; background: var(--term-green, #9ae6b4); border-radius: 3px; transition: width 0.4s; }
+</style>
+</head>
+<body>
+<div class="pb-wrap" data-tauri-drag-region>
+  <div class="pb-top" data-tauri-drag-region>
+    <span class="pb-label" id="pbLabel">Wan2GP idle</span>
+    <button class="pb-close" id="pbClose" title="Close">✕</button>
+  </div>
+  <div class="pb-track"><div class="pb-fill" id="pbFill"></div></div>
+</div>
+<script>
+"use strict";
+async function tick() {
+  try {
+    const s = await window.__TAURI__.core.invoke("pulsebar_state");
+    document.getElementById("pbLabel").textContent = s.label || "Wan2GP idle";
+    document.getElementById("pbFill").style.width = (s.pct != null ? s.pct : 0) + "%";
+  } catch {}
+}
+document.getElementById("pbClose").addEventListener("click", () => {
+  window.__TAURI__.core.invoke("pulsebar_hide").catch(() => {});
+});
+tick();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

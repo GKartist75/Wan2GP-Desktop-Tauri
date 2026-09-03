@@ -124,7 +124,7 @@
     memoryProfileRead: () => call('memory_profile_read'), memoryProfileApply: (s) => call('memory_profile_apply', { settings: s }),
     notifierConfig: () => call('notifier_config'), notifierSet: (c) => call('notifier_set', { cfg: c }),
     notifierTest: (c) => call('notifier_test', { cfg: c }), notifierEnsure: () => call('notifier_ensure'),
-    pulsebarHide: () => call('pulsebar_hide'), setAutoStart: (e) => call('set_auto_start', { enabled: e }),
+    pulsebarHide: () => call('pulsebar_hide'), pulsebarShow: () => call('pulsebar_show'), setAutoStart: (e) => call('set_auto_start', { enabled: e }),
     setThemeFollowSystem: (e) => call('set_theme_follow_system', { enabled: e }),
     setNotificationsEnabled: (e) => call('set_notifications_enabled', { enabled: e }),
     checkUpdate: (o) => call('check_update', { opts: o }), downloadUpdate: (o) => call('download_update', { opts: { ...(o||{}), differential: false } }), installUpdate: () => call('install_update'), // ponytail: differential disabled — full only

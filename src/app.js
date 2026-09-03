@@ -198,6 +198,7 @@ function initSettingsToggles() {
   $('followSystemThemeToggle')?.addEventListener('change', async () => {
     const el = $('followSystemThemeToggle')
     await window.w2gp.setThemeFollowSystem(el.checked)
+    if (el.checked) applyTheme(matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
     showToast(el.checked ? 'Theme will follow system' : 'Manual theme control restored')
   })
   $('notificationsToggle')?.addEventListener('change', async () => {
@@ -210,7 +211,8 @@ function initSettingsToggles() {
     const c = await window.w2gp.configLoad()
     c.pulsebar = { enabled: el.checked }
     await window.w2gp.configSave(c)
-    if (!el.checked) window.w2gp.pulsebarHide()
+    if (el.checked) window.w2gp.pulsebarShow()
+    else window.w2gp.pulsebarHide()
     showToast(el.checked ? 'Floating progress bar enabled' : 'Floating progress bar disabled')
   })
   $('autoUpdateToggle')?.addEventListener('change', async () => {
@@ -484,12 +486,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.w2gp.onSetupProfile(p => { $('installProfile').textContent=p; $('installProfileRow').style.display='flex' })
 
   const cfg = cfgPreload || await window.w2gp.configLoad().catch(()=>({}))
-  if (cfg.theme === 'dark') applyTheme('dark')
-
-  // Listen for system theme changes (native theme follow)
-  window.w2gp.onSystemThemeChange(function(theme) {
-    applyTheme(theme)
-  })
+  if (cfg.themeFollowSystem) applyTheme(matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+  else if (cfg.theme === 'dark') applyTheme('dark')
+  // System theme follow (real matchMedia — backend only persists the preference).
+  // The native onSystemThemeChange event never fires in Tauri; this is the mechanism.
+  if (!window.__themeFollowBound) {
+    window.__themeFollowBound = true
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', async () => {
+      try {
+        const c = await window.w2gp.configLoad()
+        if (c.themeFollowSystem) applyTheme(matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+      } catch {}
+    })
+  }
 
   // Embedded-Wan2GP view crashed and was auto-reloaded by the main process.
   window.w2gp.onBvCrashRecovered(() => showToast('Wan2GP view reloaded after a crash'))
@@ -1987,6 +1996,7 @@ $('appBtn').addEventListener('click', async () => {
     // Open the floating terminal per the saved default dock (or stay minimised)
     // ponytail: Tauri desktop embed is iframe, not native BrowserView — don't auto-cover it with the console
     const cfg = await window.w2gp.configLoad()
+    if (cfg.pulsebar && cfg.pulsebar.enabled) window.w2gp.pulsebarShow().catch(() => {})
     const dock = window.__TAURI__ ? 'minimised' : (cfg.termDockDefault || 'bottom')
     if (dock === 'minimised') {
       if (!$('floatingTerminal').classList.contains('hidden')) closeFloatingTerm()

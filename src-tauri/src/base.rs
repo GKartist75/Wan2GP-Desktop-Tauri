@@ -13,13 +13,16 @@ pub(crate) static METRICS_CACHE: OnceLock<Mutex<Option<(std::time::Instant, serd
 pub(crate) static SYSINFO_CACHE: OnceLock<Mutex<sysinfo::System>> = OnceLock::new();
 // Ring buffer of recent server/install log lines backs get_log_history (term window prefill).
 pub(crate) static LOG_HISTORY: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
-pub(crate) fn push_log(text: &str) {
+pub(crate) fn push_log(text: &str, source: &str) {
     if text.is_empty() { return; }
     let m = LOG_HISTORY.get_or_init(|| Mutex::new(Vec::new()));
     if let Ok(mut g) = m.lock() {
         for line in text.replace("\r\n", "\n").replace('\r', "\n").split('\n') {
             let t = line.trim();
             if t.is_empty() { continue; }
+            // launch stream doubles as the notifier event source
+            // (scan before the tqdm skip — progress lives in those fragments)
+            if source == "launch" { crate::features::notifier_scan_line(t); crate::features::pulse_sniff(t); }
             // skip tqdm progress spam (\r-rewritten fragments) — history is for real log lines
             if t.contains("it/s") || t.contains("s/it") { continue; }
             g.push(line.to_string());

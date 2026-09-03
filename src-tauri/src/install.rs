@@ -12,7 +12,7 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
     mutating_try("install")?;
     let env = env_type.unwrap_or("uv".into()); // uv | venv | conda
     let repo = get_repo_dir();
-    let emit = |msg: &str| { crate::base::push_log(msg); let _ = app.emit("setup-output", msg.to_string()); };
+    let emit = |msg: &str| { crate::base::push_log(msg, "setup"); let _ = app.emit("setup-output", msg.to_string()); };
     // hardware-aware header (driver warning surfaces before 20min install)
     let gpu = get_gpu_info_sync();
     let plan = build_install_plan(&gpu);
@@ -122,7 +122,7 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
 pub async fn reinstall(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
     mutating_try("reinstall")?;
     let repo = get_repo_dir();
-    let emit = |msg: &str| { crate::base::push_log(msg); let _ = app.emit("setup-output", msg.to_string()); };
+    let emit = |msg: &str| { crate::base::push_log(msg, "setup"); let _ = app.emit("setup-output", msg.to_string()); };
     emit("[*] Removing existing installation...\n");
     // backup plugins/finetunes (ponytail: xcopy fallback)
     let backup = get_data_dir().join(".reinstall-backup");
@@ -238,7 +238,7 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,Str
     let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python3") };
     if !py.exists() { mutating_done(); return Err("python not found for active env".into()); }
     // ponytail: a058daf — remote fallback + commit/gguf log proves deepbeepmeep leading
-    let emit_log = |msg: &str| { crate::base::push_log(msg); let _ = app.emit("launch-log", msg.to_string()); };
+    let emit_log = |msg: &str| { crate::base::push_log(msg, "setup"); let _ = app.emit("launch-log", msg.to_string()); };
     let cfg: serde_json::Value = if cfg_path.exists() {
         serde_json::from_str(&std::fs::read_to_string(&cfg_path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?
     } else {
@@ -305,9 +305,9 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,Str
                     url = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl".into();
                 }
             }
-            let _ = app.emit("launch-log", format!("[*] sync kernel {name}\n"));
+            let m = format!("[*] sync kernel {name}\n"); crate::base::push_log(&m, "setup"); let _ = app.emit("launch-log", m);
             let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install", &url, "--upgrade"]).spawn().map_err(|e| e.to_string())?;
-            while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s); let _ = app.emit("launch-log", s); }, _=>{} } }
+            while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s, "setup"); let _ = app.emit("launch-log", s); }, _=>{} } }
         }
     }
     mutating_done(); Ok(serde_json::json!({"ok": true, "success": true}))
@@ -318,7 +318,7 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
     let repo = get_repo_dir();
     if !repo.join(".git").exists() { mutating_done(); return Err("not a git repo".into()); }
     let (mut rx, _) = app.shell().command("git").args(["pull"]).current_dir(&repo).spawn().map_err(|e| e.to_string())?;
-    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s); let _ = app.emit("launch-log", s); }, _=>{} } }
+    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s, "setup"); let _ = app.emit("launch-log", s); }, _=>{} } }
     mutating_done(); Ok(serde_json::json!({"ok": true, "success": true}))
 }
 pub(crate) fn fs_extra_fallback_copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
@@ -336,6 +336,6 @@ pub async fn install_prerequisite(app: tauri::AppHandle, tool: String) -> Result
     use tauri_plugin_shell::process::CommandEvent;
     let cmd = match tool.as_str() { "git" => vec!["winget","install","--id","Git.Git","-e"], "uv" => vec!["winget","install","--id","astral-sh.uv","-e"], _ => return Err(format!("unknown tool {tool}")) };
     let (mut rx, _) = app.shell().command(cmd[0]).args(&cmd[1..]).spawn().map_err(|e| e.to_string())?;
-    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s); let _ = app.emit("launch-log", s); }, _=>{} } }
+    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s, "setup"); let _ = app.emit("launch-log", s); }, _=>{} } }
     Ok(serde_json::json!({"ok": true, "success": true}))
 }

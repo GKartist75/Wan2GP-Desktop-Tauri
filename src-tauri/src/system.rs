@@ -296,7 +296,27 @@ pub fn repair_settings() -> serde_json::Value {
         "modelsDefault": ip.get("modelsDefault").and_then(|v| v.as_str()).unwrap_or("")
     })
 }
-#[tauri::command] pub fn notifier_ensure() -> serde_json::Value { serde_json::json!({"ok": true}) }
+#[tauri::command] pub fn notifier_ensure() -> serde_json::Value {
+    // Make sure `apprise` is importable in the active env (needed for delivery).
+    let probe = (|| {
+        let env = get_active_env();
+        let raw = env.get("path")?.as_str()?;
+        let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
+        let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
+        if !py.exists() { return None; }
+        let has = std::process::Command::new(&py).args(["-c", "import apprise"]).output().is_ok_and(|o| o.status.success());
+        Some((py, has))
+    })();
+    let Some((py, has)) = probe else {
+        return serde_json::json!({"ok": false, "error": "No active Python environment"});
+    };
+    if has { return serde_json::json!({"ok": true, "already": true}); }
+    match std::process::Command::new(&py).args(["-m", "pip", "install", "apprise"]).output() {
+        Ok(o) if o.status.success() => serde_json::json!({"ok": true, "already": false}),
+        Ok(o) => serde_json::json!({"ok": false, "error": format!("pip install apprise failed: {}", String::from_utf8_lossy(&o.stderr).trim())}),
+        Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
+    }
+}
 #[tauri::command] pub fn ui_mode_set(mode: Option<String>) -> serde_json::Value {
     let mf = get_data_dir().join("ui_mode.json");
     let _ = std::fs::write(&mf, serde_json::json!({"mode": mode}).to_string());
