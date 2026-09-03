@@ -470,7 +470,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   window.w2gp.onSetupOutput(t => appendLog(t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'').replace(/\x08/g,'')))
 
-  window.w2gp.onLaunchLog(t => appendLog(t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'').replace(/\x08/g,'')))
+  window.w2gp.onLaunchLog(t => {
+    const clean = t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'').replace(/\x08/g,'')
+    appendLog(clean)
+    // Console-first launch: stay on the dashboard while starting, flip to the
+    // Wan2GP view the moment the backend reports ready.
+    if (_pendingDesktopUrl && /Wan2GP ready/.test(clean)) {
+      const u = _pendingDesktopUrl
+      _pendingDesktopUrl = null
+      openDesktopView(u, true)
+    }
+  })
   window.w2gp.onSetupPhase(p => {
     if (p.done) {
       if (prevPhaseId && prevPhaseId !== p.id) taskComplete(prevPhaseId)
@@ -1973,14 +1983,30 @@ let appRunning = false     // desktop-mode (BrowserView) server currently up (bu
 
 // ── Launch in App (BrowserView — renders Gradio reliably on Electron 40; intercepts
 //     /manifest.json to dodge gradio#11553 blank-page bug) ──
-$('appBtn').addEventListener('click', async () => {
-  $('appBtn').disabled = true; $('appBtn').textContent = 'Starting...'
-  $('launchInfo').classList.remove('hidden')
-
+// Opens the Desktop embed for an already-running server (called immediately
+// when the server was already up, or when the backend reports ready).
+let _pendingDesktopUrl = null
+async function openDesktopView(url, fresh) {
+  $('appBtn').disabled = true; $('appBtn').textContent = 'Opening...'
   try {
-    const result = await window.w2gp.launchWebview()
-    currentUrl = result.url
-    const created = await window.w2gp.createBrowserView(result.url, { reload: !!result.fresh })
+    // Hidden-but-alive view (Back to Dashboard keeps it) → just re-show it.
+    // No relaunch, no port traffic, Gradio session untouched.
+    if (!fresh && document.getElementById('tauri-browser-view')) {
+      document.getElementById('tauri-browser-view').style.display = 'flex'
+      $('dashBody').style.display = 'none'
+      $('webviewContainer').classList.remove('hidden')
+      $('launchInfo').classList.add('hidden')
+      showWebviewUI()
+      updateLed('running')
+      updateFtStatus('running')
+      serverMode = 'app'
+      appRunning = true
+      setAppLaunchLabel()
+      window.w2gp.uiModeSet('app')
+      if (browserRunning) resetBrowserLaunchUI()
+      return
+    }
+    const created = await window.w2gp.createBrowserView(url, { reload: !!fresh })
     if (!created || created.error) throw new Error(created && created.error ? created.error : 'failed to create embed')
     $('dashBody').style.display = 'none'
     $('webviewContainer').classList.remove('hidden')
@@ -2013,6 +2039,33 @@ $('appBtn').addEventListener('click', async () => {
   } finally {
     $('appBtn').disabled = false; setAppLaunchLabel()
   }
+}
+$('appBtn').addEventListener('click', async () => {
+  // Server already up behind the dashboard → just open the view.
+  if (appRunning && currentUrl) { openDesktopView(currentUrl, false); return }
+  $('appBtn').disabled = true; $('appBtn').textContent = 'Starting...'
+  $('launchInfo').classList.remove('hidden')
+  appendLog('[*] Starting Wan2GP — watch the console below…')
+  try {
+    const result = await window.w2gp.launchWebview()
+    currentUrl = result.url
+    if (!result.fresh) { openDesktopView(result.url, false); return }
+    // Fresh boot: stay on the dashboard console until the backend reports ready.
+    _pendingDesktopUrl = result.url
+    $('appBtn').textContent = 'Starting… (see console)'
+    // Safety: if ready never arrives (crashed silencer), un-wedge after 3 min.
+    setTimeout(() => {
+      if (_pendingDesktopUrl) {
+        _pendingDesktopUrl = null
+        appendLog('[!] Wan2GP did not report ready — check the console above for errors.')
+        $('appBtn').disabled = false; setAppLaunchLabel()
+      }
+    }, 180000)
+  } catch(e){
+    $('launchInfo').classList.add('hidden')
+    appendLog(`[LAUNCH ERROR] ${e.message}`)
+    $('appBtn').disabled = false; setAppLaunchLabel()
+  }
 })
 
 // Reflect whether the Wan2GP desktop (BrowserView) server is still up behind the
@@ -2033,11 +2086,11 @@ function hideWebviewUI() {
 }
 
 async function closeWebview() {
-  // Close the terminal first — hideTerminal() re-attaches the Wan2GP BrowserView (correct for a
-  // normal terminal toggle-off). Destroy the view LAST so it can't be left compositing on top of
-  // the dashboard when we go back to menu.
+  // Like Electron's BrowserView hide: the iframe STAYS ALIVE but hidden, so
+  // flipping back is instant (no relaunch, no port conflict, Gradio state kept).
+  // Only a real server stop destroys it (see onWangpExit).
   if (!$('floatingTerminal').classList.contains('hidden')) closeFloatingTerm()
-  await window.w2gp.destroyBrowserView()
+  await window.w2gp.hideBrowserView()
   $('webviewContainer').classList.add('hidden')
   $('dashBody').style.display = ''
   hideWebviewUI()
@@ -2045,7 +2098,7 @@ async function closeWebview() {
   window.w2gp.uiModeSet(null)
   // Server is still running behind the dashboard → the launch button becomes "Back to…"
   setAppLaunchLabel()
-  appendLog('[*] Webview closed. Server still running.')
+  appendLog('[*] Back on dashboard. Server still running — flip back anytime.')
 }
 
 $('backToDashboardBtn').addEventListener('click', closeWebview)
@@ -2185,6 +2238,10 @@ $('stopWangpBtn').addEventListener('click', async () => {
 // ── Reset UI when server exits (manual stop or crash) ──
 window.w2gp.onWangpExit(c => {
   appendLog(`${c === 0 ? '[*]' : '[!]'} Wan2GP process exited (code ${c})`)
+  _pendingDesktopUrl = null   // boot failed/went away — don't flip to the view later
+  // Server is really gone: drop the (now stale) embed entirely so the next
+  // open rebuilds it instead of showing a dead page.
+  window.w2gp.destroyBrowserView().catch(() => {})
   if (serverMode === 'app') {
     if (!$('webviewContainer').classList.contains('hidden')) closeWebview()
   } else if (serverMode === 'browser') {
