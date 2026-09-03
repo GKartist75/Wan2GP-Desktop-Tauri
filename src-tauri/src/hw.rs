@@ -1,12 +1,11 @@
 //! GPU / hardware probing and system metrics.
-use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use crate::base::*;
 
 // ── GPU helpers ──
 pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
-    use std::process::Command;
-    if let Ok(out) = Command::new("nvidia-smi").args(["--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"]).output() {
+    
+    if let Ok(out) = silent_command("nvidia-smi").args(["--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"]).output() {
         if out.status.success() {
             let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if !s.is_empty() {
@@ -53,9 +52,9 @@ pub(crate) fn build_install_plan(hw: &serde_json::Value) -> serde_json::Value {
 }
 #[tauri::command]
 pub fn detect_gpus() -> serde_json::Value {
-    use std::process::Command;
+    
     let mut gpus = Vec::new();
-    if let Ok(out) = Command::new("nvidia-smi").args(["--query-gpu=index,name,memory.total", "--format=csv,noheader"]).output() {
+    if let Ok(out) = silent_command("nvidia-smi").args(["--query-gpu=index,name,memory.total", "--format=csv,noheader"]).output() {
         if out.status.success() {
             for line in String::from_utf8_lossy(&out.stdout).lines() {
                 let parts: Vec<&str> = line.split(',').map(str::trim).collect();
@@ -136,7 +135,7 @@ pub(crate) fn get_cached_igpu() -> Option<serde_json::Value> {
     // first call: run WMI, cache result (even None as explicit)
     let mut igpu: Option<serde_json::Value> = None;
     #[cfg(windows)] {
-        if let Ok(wmi_out) = Command::new("powershell").args(["-NoProfile","-Command","Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ForEach-Object { $_.Name + '|' + $_.AdapterRAM }"]).output() {
+        if let Ok(wmi_out) = silent_command("powershell").args(["-NoProfile","-Command","Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ForEach-Object { $_.Name + '|' + $_.AdapterRAM }"]).output() {
             if wmi_out.status.success() {
                 let wmi_s = String::from_utf8_lossy(&wmi_out.stdout).trim().to_string();
                 for ln in wmi_s.lines() {
@@ -189,7 +188,7 @@ pub fn get_system_metrics() -> serde_json::Value {
     }
     // nvidia-smi for VRAM/GPU — per-GPU breakdown + WMI iGPU fallback (mirrors Electron main.js)
     {
-        let out = Command::new("nvidia-smi").args(["--query-gpu=memory.free,memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"]).output();
+        let out = silent_command("nvidia-smi").args(["--query-gpu=memory.free,memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"]).output();
         if let Ok(o) = out { if o.status.success() {
             let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
             if !s.is_empty() {

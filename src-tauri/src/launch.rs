@@ -37,7 +37,7 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
         let hw_name = hw.get("name").and_then(|v| v.as_str()).unwrap_or("?");
         let hw_vendor = hw.get("vendor").and_then(|v| v.as_str()).unwrap_or("?");
         let hw_vram = hw.get("vramMB").and_then(|v| v.as_str()).unwrap_or("0");
-        let gpu_count = std::process::Command::new("nvidia-smi").args(["--query-gpu=index","--format=csv,noheader"]).output().ok().map_or("?".into(), |o| if o.status.success() { String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count().to_string() + " NVIDIA" } else { "?".into() });
+        let gpu_count = silent_command("nvidia-smi").args(["--query-gpu=index","--format=csv,noheader"]).output().ok().map_or("?".into(), |o| if o.status.success() { String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count().to_string() + " NVIDIA" } else { "?".into() });
         let gen_label = if gpu_device=="auto" { format!("auto ({hw_name} )") } else { gpu_device.clone() };
         emit(&format!("[*] GPU assignment — Launcher UI: {launcher_gpu} | Generation: {gen_label} | HW: {hw_name} ({hw_vendor}, {hw_vram}) | Detected: {gpu_count}\n"));
     }
@@ -106,20 +106,20 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
     let mut killed: Vec<u32> = Vec::new();
     if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
         killed.push(pid);
-        #[cfg(windows)] { let _ = std::process::Command::new("taskkill").args(["/pid", &pid.to_string(), "/f", "/t"]).output(); }
-        #[cfg(not(windows))] { let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).output(); }
+        #[cfg(windows)] { let _ = silent_command("taskkill").args(["/pid", &pid.to_string(), "/f", "/t"]).output(); }
+        #[cfg(not(windows))] { let _ = silent_command("kill").arg("-9").arg(pid.to_string()).output(); }
     }
     // find actual LISTENING PID on :7861 via netstat (handles uv shim -> cpython child)
     #[cfg(windows)]
     {
-        if let Ok(out) = std::process::Command::new("cmd").args(["/C", "netstat -ano | findstr LISTENING | findstr :7861"]).output() {
+        if let Ok(out) = silent_command("cmd").args(["/C", "netstat -ano | findstr LISTENING | findstr :7861"]).output() {
             if out.status.success() {
                 let s = String::from_utf8_lossy(&out.stdout);
                 for line in s.lines() {
                     if let Some(pid_str) = line.split_whitespace().last() {
                         if let Ok(pid) = pid_str.parse::<u32>() {
                             if !killed.contains(&pid) {
-                                let _ = std::process::Command::new("taskkill").args(["/pid", &pid.to_string(), "/f", "/t"]).output();
+                                let _ = silent_command("taskkill").args(["/pid", &pid.to_string(), "/f", "/t"]).output();
                                 killed.push(pid);
                             }
                         }
@@ -128,7 +128,7 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
             }
         }
         // fallback: kill any python wgp.py
-        let _ = std::process::Command::new("taskkill").args(["/F", "/IM", "python.exe", "/T"]).output();
+        let _ = silent_command("taskkill").args(["/F", "/IM", "python.exe", "/T"]).output();
     }
     if let Some(m) = WANGP_PID.get() { *m.lock().unwrap() = None; }
     let _ = app.emit("wangp-exit", serde_json::json!({"stopped": true, "killed": killed}));
@@ -176,7 +176,7 @@ serde_json::json!({"ok": true}) }
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
         if std::path::Path::new(&format!("{local}\\Google\\Chrome\\Application\\chrome.exe")).exists() { return true; }
     }
-    std::process::Command::new("where").arg("chrome").output().is_ok_and(|o| o.status.success())
+    silent_command("where").arg("chrome").output().is_ok_and(|o| o.status.success())
 }
 
 #[tauri::command] pub async fn launch_webview(app: tauri::AppHandle) -> Result<serde_json::Value, String> { launch(app, Some("app".into())).await }

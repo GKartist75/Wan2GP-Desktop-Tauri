@@ -12,6 +12,21 @@ pub(crate) static CACHED_IGPU: OnceLock<Mutex<Option<serde_json::Value>>> = Once
 pub(crate) static METRICS_CACHE: OnceLock<Mutex<Option<(std::time::Instant, serde_json::Value)>>> = OnceLock::new();
 pub(crate) static SYSINFO_CACHE: OnceLock<Mutex<sysinfo::System>> = OnceLock::new();
 // Ring buffer of recent server/install log lines backs get_log_history (term window prefill).
+// Spawn helper: CREATE_NO_WINDOW on Windows so probes (nvidia-smi, python,
+// powershell, reg, where…) never flash a conhost window. The shell plugin
+// already hides its own spawns; this covers every std::process call site.
+// Keep a visible console ONLY for taskmgr (user asked to see it).
+#[cfg(windows)]
+pub(crate) fn silent_command(prog: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut c = std::process::Command::new(prog);
+    c.creation_flags(0x08000000);
+    c
+}
+#[cfg(not(windows))]
+pub(crate) fn silent_command(prog: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    std::process::Command::new(prog)
+}
 pub(crate) static LOG_HISTORY: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 pub(crate) fn push_log(text: &str, source: &str) {
     if text.is_empty() { return; }

@@ -40,7 +40,7 @@ pub fn check_package(pkg: String) -> serde_json::Value {
     if let Some(p) = py {
         if p.exists() {
             let code = format!("import importlib.metadata as m; print(m.version({dist:?}))");
-            if let Ok(o) = std::process::Command::new(&p).args(["-c", &code]).output() {
+            if let Ok(o) = silent_command(&p).args(["-c", &code]).output() {
                 if o.status.success() {
                     let v = String::from_utf8_lossy(&o.stdout).trim().to_string();
                     if !v.is_empty() {
@@ -80,7 +80,7 @@ pub fn auto_tune_detect() -> serde_json::Value {
     // RAM via powershell fallback
     let ram_gb = {
         #[cfg(windows)] {
-            std::process::Command::new("powershell").args(["-NoProfile","-Command","[math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB,1)"]).output()
+            silent_command("powershell").args(["-NoProfile","-Command","[math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB,1)"]).output()
                 .ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok()).unwrap_or(32.0)
         }
         #[cfg(not(windows))] { 32.0 }
@@ -172,8 +172,8 @@ pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::V
         if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") }
     });
     let check_cli = |cli: &str| -> bool {
-        #[cfg(windows)] { std::process::Command::new("where").arg(cli).output().is_ok_and(|o| o.status.success()) }
-        #[cfg(not(windows))] { std::process::Command::new("which").arg(cli).output().map(|o| o.status.success()).unwrap_or(false) }
+        #[cfg(windows)] { silent_command("where").arg(cli).output().is_ok_and(|o| o.status.success()) }
+        #[cfg(not(windows))] { silent_command("which").arg(cli).output().map(|o| o.status.success()).unwrap_or(false) }
     };
     // Reuse the get_status version scan (same refresh already ran it — cache is warm)
     // instead of spawning a second cold venv python just for pip show.
@@ -187,7 +187,7 @@ pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::V
         .unwrap_or(false);
     let check_pip = |pkg: &str| -> bool {
         if pkg == "claude-agent-sdk" && cached_sdk { return true; }
-        if let Some(p) = &py { if p.exists() { return std::process::Command::new(p).args(["-m","pip","show",pkg]).output().is_ok_and(|o| o.status.success()); } }
+        if let Some(p) = &py { if p.exists() { return silent_command(p).args(["-m","pip","show",pkg]).output().is_ok_and(|o| o.status.success()); } }
         false
     };
     let engines = vec![
@@ -203,9 +203,9 @@ pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::V
     let res = match engine.as_str() {
         "claude-code" => match env_python_bin() {
             None => return serde_json::json!({"ok": false, "success": false, "error": "No active Python environment"}),
-            Some(py) => std::process::Command::new(&py).args(["-m", "pip", "install", spec]).output(),
+            Some(py) => silent_command(&py).args(["-m", "pip", "install", spec]).output(),
         },
-        _ => std::process::Command::new("npm").args(["install", "-g", spec]).output(),
+        _ => silent_command("npm").args(["install", "-g", spec]).output(),
     };
     match res {
         Ok(o) if o.status.success() => serde_json::json!({"ok": true, "success": true, "spec": spec}),
@@ -223,8 +223,8 @@ static OPENCODE_PID: std::sync::OnceLock<std::sync::Mutex<Option<u32>>> = std::s
     if action == "stop" {
         let pid = OPENCODE_PID.get().and_then(|m| m.lock().ok()).and_then(|mut g| g.take());
         if let Some(pid) = pid {
-            #[cfg(windows)] { let _ = std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output(); }
-            #[cfg(not(windows))] { let _ = std::process::Command::new("kill").arg(pid.to_string()).output(); }
+            #[cfg(windows)] { let _ = silent_command("taskkill").args(["/F", "/PID", &pid.to_string()]).output(); }
+            #[cfg(not(windows))] { let _ = silent_command("kill").arg(pid.to_string()).output(); }
         }
         return serde_json::json!({"ok": true, "success": true, "running": false});
     }
@@ -232,7 +232,7 @@ static OPENCODE_PID: std::sync::OnceLock<std::sync::Mutex<Option<u32>>> = std::s
     if std::net::TcpStream::connect("127.0.0.1:4096").is_ok() {
         return serde_json::json!({"ok": true, "success": true, "running": true, "url": "http://127.0.0.1:4096"});
     }
-    match std::process::Command::new("opencode").args(["serve", "--hostname", "127.0.0.1", "--port", "4096"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
+    match silent_command("opencode").args(["serve", "--hostname", "127.0.0.1", "--port", "4096"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
         Ok(child) => {
             if let Ok(mut g) = OPENCODE_PID.get_or_init(|| std::sync::Mutex::new(None)).lock() { *g = Some(child.id()); }
             std::mem::forget(child); // detach: lives beyond this command
@@ -323,9 +323,9 @@ static OPENCODE_PID: std::sync::OnceLock<std::sync::Mutex<Option<u32>>> = std::s
         let exe = std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
         let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
         let ok = if enabled && !exe.is_empty() {
-            std::process::Command::new("reg").args(["add", key, "/v", "Wan2GPDesktop", "/t", "REG_SZ", "/d", &format!("\"{exe}\""), "/f"]).output().is_ok_and(|o| o.status.success())
+            silent_command("reg").args(["add", key, "/v", "Wan2GPDesktop", "/t", "REG_SZ", "/d", &format!("\"{exe}\""), "/f"]).output().is_ok_and(|o| o.status.success())
         } else {
-            std::process::Command::new("reg").args(["delete", key, "/v", "Wan2GPDesktop", "/f"]).output().is_ok_and(|o| o.status.success())
+            silent_command("reg").args(["delete", key, "/v", "Wan2GPDesktop", "/f"]).output().is_ok_and(|o| o.status.success())
         };
         return serde_json::json!({"ok": ok, "success": ok, "enabled": enabled});
     }
@@ -379,7 +379,7 @@ fn env_python_bin() -> Option<PathBuf> {
 }
 fn apprise_send(url: &str, title: &str, body: &str) -> Result<(), String> {
     let py = env_python_bin().ok_or_else(|| "No active Python environment".to_string())?;
-    let out = std::process::Command::new(&py).args(["-m", "apprise", "-t", title, "-b", body, url]).output().map_err(|e| e.to_string())?;
+    let out = silent_command(&py).args(["-m", "apprise", "-t", title, "-b", body, url]).output().map_err(|e| e.to_string())?;
     if out.status.success() { Ok(()) } else {
         Err(format!("apprise failed: {}", String::from_utf8_lossy(&out.stderr).trim()))
     }

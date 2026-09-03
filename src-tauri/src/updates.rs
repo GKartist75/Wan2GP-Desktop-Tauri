@@ -8,9 +8,9 @@ pub fn get_desktop_version() -> String { env!("CARGO_PKG_VERSION").to_string() }
 pub fn get_wangp_local_version() -> serde_json::Value {
     let repo = get_repo_dir();
     if !repo.join(".git").exists() { return serde_json::Value::Null; }
-    use std::process::Command;
-    let hash = Command::new("git").args(["rev-parse","HEAD"]).current_dir(&repo).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
-    let date = Command::new("git").args(["log","-1","--format=%cI"]).current_dir(&repo).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    
+    let hash = silent_command("git").args(["rev-parse","HEAD"]).current_dir(&repo).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let date = silent_command("git").args(["log","-1","--format=%cI"]).current_dir(&repo).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
     if hash.is_empty() { serde_json::Value::Null } else { serde_json::json!({"hash": hash, "date": date}) }
 }
 #[tauri::command]

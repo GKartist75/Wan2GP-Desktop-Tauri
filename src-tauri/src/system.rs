@@ -11,7 +11,7 @@ pub fn greet(name: &str) -> String {
 #[tauri::command]
 pub fn open_folder(path: String, app: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
-    app.opener().open_path(&path, None::<&str>).map_err(|e| e.to_string()).or_else(|_| std::process::Command::new("explorer").arg(&path).spawn().map(|_| ()).map_err(|e| e.to_string()))
+    app.opener().open_path(&path, None::<&str>).map_err(|e| e.to_string()).or_else(|_| silent_command("explorer").arg(&path).spawn().map(|_| ()).map_err(|e| e.to_string()))
 }
 #[tauri::command]
 pub async fn select_folder(app: tauri::AppHandle) -> Option<String> {
@@ -218,10 +218,10 @@ pub fn repair_settings() -> serde_json::Value {
     let had = eq.exists();
     if had { let _ = std::fs::copy(&eq, bundle.join("error_queue.zip")); }
     let zip = get_data_dir().join(format!("report-{stamp}.zip"));
-    let zip_ok = std::process::Command::new("powershell").args(["-NoProfile","-Command", &format!("Compress-Archive -Path '{}\\*' -DestinationPath '{}' -Force", bundle.display(), zip.display())]).output().is_ok_and(|o| o.status.success());
+    let zip_ok = silent_command("powershell").args(["-NoProfile","-Command", &format!("Compress-Archive -Path '{}\\*' -DestinationPath '{}' -Force", bundle.display(), zip.display())]).output().is_ok_and(|o| o.status.success());
     let zip_path = if zip_ok { zip.to_string_lossy().to_string() } else { String::new() };
     let open_path = if zip_ok { zip.to_string_lossy().to_string() } else { bundle.to_string_lossy().to_string() };
-    #[cfg(windows)] { let _ = std::process::Command::new("explorer").arg(&open_path).spawn(); }
+    #[cfg(windows)] { let _ = silent_command("explorer").arg(&open_path).spawn(); }
     serde_json::json!({"ok": true, "success": true, "logLines": 0, "zipPath": zip_path, "bundleDir": bundle.to_string_lossy().to_string(), "hadErrorQueue": had})
 }
 #[tauri::command] pub fn create_desktop_shortcut() -> serde_json::Value {
@@ -237,7 +237,7 @@ pub fn repair_settings() -> serde_json::Value {
     let desktop = std::env::var("USERPROFILE").map_or(PathBuf::from("C:\\Users\\Public\\Desktop"), |p| PathBuf::from(p).join("Desktop"));
     let lnk = desktop.join("Wan2GP Tauri.lnk");
     let ps = format!("$s=New-Object -ComObject WScript.Shell; $l=$s.CreateShortcut('{}'); $l.TargetPath='{}'; $l.Arguments='wgp.py'; $l.WorkingDirectory='{}'; $l.Description='Wan2GP Tauri'; $l.Save()", lnk.display(), py.display(), repo.display());
-    let ok = std::process::Command::new("powershell").args(["-NoProfile","-Command", &ps]).output().is_ok_and(|o| o.status.success());
+    let ok = silent_command("powershell").args(["-NoProfile","-Command", &ps]).output().is_ok_and(|o| o.status.success());
     if ok { serde_json::json!({"ok": true, "path": lnk.to_string_lossy().to_string()}) } else { serde_json::json!({"ok": false, "error": "Failed to create shortcut"}) }
 }
 #[tauri::command] pub fn create_browser_view(url: Option<String>, opts: Option<serde_json::Value>) -> serde_json::Value { let _=(url, opts); serde_json::json!({"ok": true}) }
@@ -251,7 +251,7 @@ pub fn repair_settings() -> serde_json::Value {
 }
 #[tauri::command] pub fn open_task_manager() -> Result<serde_json::Value,String> {
     #[cfg(windows)] { std::process::Command::new("taskmgr.exe").spawn().map_err(|e| e.to_string())?; }
-    #[cfg(not(windows))] { std::process::Command::new("gnome-system-monitor").spawn().map_err(|e| e.to_string())?; }
+    #[cfg(not(windows))] { silent_command("gnome-system-monitor").spawn().map_err(|e| e.to_string())?; }
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
 // ui_mode persists across renderer reloads so a crash can restore the session.
@@ -304,14 +304,14 @@ pub fn repair_settings() -> serde_json::Value {
         let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
         let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
         if !py.exists() { return None; }
-        let has = std::process::Command::new(&py).args(["-c", "import apprise"]).output().is_ok_and(|o| o.status.success());
+        let has = silent_command(&py).args(["-c", "import apprise"]).output().is_ok_and(|o| o.status.success());
         Some((py, has))
     })();
     let Some((py, has)) = probe else {
         return serde_json::json!({"ok": false, "error": "No active Python environment"});
     };
     if has { return serde_json::json!({"ok": true, "already": true}); }
-    match std::process::Command::new(&py).args(["-m", "pip", "install", "apprise"]).output() {
+    match silent_command(&py).args(["-m", "pip", "install", "apprise"]).output() {
         Ok(o) if o.status.success() => serde_json::json!({"ok": true, "already": false}),
         Ok(o) => serde_json::json!({"ok": false, "error": format!("pip install apprise failed: {}", String::from_utf8_lossy(&o.stderr).trim())}),
         Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),

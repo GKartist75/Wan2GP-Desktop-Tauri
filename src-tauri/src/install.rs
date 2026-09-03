@@ -128,7 +128,7 @@ pub async fn reinstall(app: tauri::AppHandle) -> Result<serde_json::Value,String
     let backup = get_data_dir().join(".reinstall-backup");
     let _ = std::fs::remove_dir_all(&backup);
     let _ = std::fs::create_dir_all(&backup);
-    for sub in ["plugins","finetunes"] { let s = repo.join(sub); if s.exists() { let d = backup.join(sub); let _ = std::process::Command::new("xcopy").args(["/E","/I", s.to_string_lossy().as_ref(), d.to_string_lossy().as_ref()]).output(); } }
+    for sub in ["plugins","finetunes"] { let s = repo.join(sub); if s.exists() { let d = backup.join(sub); let _ = silent_command("xcopy").args(["/E","/I", s.to_string_lossy().as_ref(), d.to_string_lossy().as_ref()]).output(); } }
     if repo.join("wgp_config.json").exists() { let _ = std::fs::copy(repo.join("wgp_config.json"), backup.join("wgp_config.json")); }
     if repo.exists() {
         // ponytail: .electron is the live WebView2 Shared Dictionary — locked while launcher runs, keep it (Electron d186d49+e3e8505)
@@ -143,7 +143,7 @@ pub async fn reinstall(app: tauri::AppHandle) -> Result<serde_json::Value,String
                 let src = e.path(); let dst = trash.join(&name);
                 if std::fs::rename(&src, &dst).is_err() {
                     // locked .git/.uv-cache — clear read-only and retry, then blocking rm fallback
-                    #[cfg(windows)] { let _ = std::process::Command::new("cmd").args(["/C", &format!("attrib -R /S /D \"{}\"", src.display())]).output(); }
+                    #[cfg(windows)] { let _ = silent_command("cmd").args(["/C", &format!("attrib -R /S /D \"{}\"", src.display())]).output(); }
                     if std::fs::rename(&src, &dst).is_err() {
                         let mut moved = false;
                         for _ in 0..5 {
@@ -159,7 +159,7 @@ pub async fn reinstall(app: tauri::AppHandle) -> Result<serde_json::Value,String
             for _ in 0..5 {
                 let git = repo.join(".git");
                 if !git.exists() { break; }
-                #[cfg(windows)] { let _ = std::process::Command::new("cmd").args(["/C", &format!("attrib -R /S /D \"{}\"", git.display())]).output(); }
+                #[cfg(windows)] { let _ = silent_command("cmd").args(["/C", &format!("attrib -R /S /D \"{}\"", git.display())]).output(); }
                 let _ = std::fs::remove_dir_all(&git);
                 if git.exists() { std::thread::sleep(std::time::Duration::from_millis(400)); } else { break; }
             }
@@ -246,9 +246,9 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,Str
         // try curl then powershell (mirrors get_wangp_upstream_info)
         let url = "https://raw.githubusercontent.com/deepbeepmeep/Wan2GP/main/setup_config.json";
         let mut raw = String::new();
-        if let Ok(o) = std::process::Command::new("curl").args(["-sL", url]).output() { if o.status.success() { raw = String::from_utf8_lossy(&o.stdout).to_string(); } }
+        if let Ok(o) = silent_command("curl").args(["-sL", url]).output() { if o.status.success() { raw = String::from_utf8_lossy(&o.stdout).to_string(); } }
         if raw.trim().is_empty() || !raw.trim().starts_with('{') {
-            if let Ok(o) = std::process::Command::new("powershell").args(["-NoProfile","-Command", &format!("(Invoke-WebRequest -Uri '{url}' -UseBasicParsing).Content")]).output() {
+            if let Ok(o) = silent_command("powershell").args(["-NoProfile","-Command", &format!("(Invoke-WebRequest -Uri '{url}' -UseBasicParsing).Content")]).output() {
                 if o.status.success() { let s = String::from_utf8_lossy(&o.stdout).to_string(); if s.trim().starts_with('{') { raw = s; } }
             }
         }
@@ -258,7 +258,7 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,Str
     };
     // log commit + gguf version (a058daf)
     {
-        let head = std::process::Command::new("git").args(["rev-parse","--short","HEAD"]).current_dir(&repo).output().ok().and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None }).unwrap_or("unknown".into());
+        let head = silent_command("git").args(["rev-parse","--short","HEAD"]).current_dir(&repo).output().ok().and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None }).unwrap_or("unknown".into());
         let gguf_url = cfg.get("components").and_then(|c| c.get("kernels")).and_then(|m| m.get("gguf")).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()).unwrap_or("");
         // wheelDistVersion extract: <dist>-<version>-cp... -> version
         let gguf_ver = gguf_url.split('/').next_back().unwrap_or("").split(".whl").next().unwrap_or("").split('-').nth(1).unwrap_or("?");

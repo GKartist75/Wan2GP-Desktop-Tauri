@@ -8,7 +8,7 @@ use crate::base::*;
         let mut best: Option<serde_json::Value> = None;
         // 1) Add/Remove Programs registry scan (per-user + machine hives)
         for hive in ["HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall", "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall", "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"] {
-            let Ok(o) = std::process::Command::new("reg").args(["query", hive, "/s"]).output() else { continue };
+            let Ok(o) = silent_command("reg").args(["query", hive, "/s"]).output() else { continue };
             if !o.status.success() { continue; }
             let s = String::from_utf8_lossy(&o.stdout);
             let (mut name, mut ver, mut un, mut quiet, mut loc) = (String::new(), String::new(), String::new(), String::new(), String::new());
@@ -65,7 +65,7 @@ use crate::base::*;
                 let is_exe = p.extension().and_then(|x| x.to_str()).is_some_and(|x| x.eq_ignore_ascii_case("exe"));
                 let f = p.file_name().and_then(|x| x.to_str()).unwrap_or("");
                 if is_exe && !f.to_lowercase().starts_with("uninstall") {
-                    let _ = std::process::Command::new("taskkill").args(["/F", "/IM", f]).output();
+                    let _ = silent_command("taskkill").args(["/F", "/IM", f]).output();
                 }
             }
         }
@@ -89,7 +89,7 @@ use crate::base::*;
     if cmdline.is_empty() { return Ok(serde_json::json!({"ok": false, "error": "No uninstaller registered"})); }
     let (exe, mut args) = split_cmdline(&cmdline);
     if !args.iter().any(|a| a.eq_ignore_ascii_case("/S")) { args.push("/S".into()); } // NSIS silent flag
-    let out = std::process::Command::new(&exe).args(&args).output().map_err(|e| e.to_string())?;
+    let out = silent_command(&exe).args(&args).output().map_err(|e| e.to_string())?;
     std::thread::sleep(std::time::Duration::from_secs(2));
     let gone = !detect_electron().get("found").and_then(|v| v.as_bool()).unwrap_or(false);
     Ok(serde_json::json!({"ok": out.status.success() || gone, "removed": gone, "exit": out.status.code()}))

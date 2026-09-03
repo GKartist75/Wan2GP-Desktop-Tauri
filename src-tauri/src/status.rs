@@ -1,6 +1,5 @@
 //! Environment status, version scans and prerequisite probes.
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::Mutex;
 use crate::base::*;
 use crate::hw::{get_gpu_info_sync, kernel_profile_key};
@@ -93,7 +92,7 @@ except Exception as e:
     print(f'error:{e}')
 ";
             let _ = std::fs::write(&helper, code);
-            if let Ok(out) = std::process::Command::new(&py_bin).arg(&helper).current_dir(&repo).output() {
+            if let Ok(out) = silent_command(&py_bin).arg(&helper).current_dir(&repo).output() {
                 if out.status.success() {
                     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
                     for part in s.split("||") {
@@ -135,9 +134,9 @@ except Exception as e:
 }
 #[tauri::command]
 pub fn check_python() -> serde_json::Value {
-    use std::process::Command;
+    
     for cmd in ["python", "python3", "py"] {
-        if let Ok(out) = Command::new(cmd).args(["--version"]).output() {
+        if let Ok(out) = silent_command(cmd).args(["--version"]).output() {
             if out.status.success() {
                 let v = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)).trim().to_string();
                 return serde_json::json!({ "found": true, "cmd": cmd, "version": v });
@@ -148,7 +147,7 @@ pub fn check_python() -> serde_json::Value {
 }
 #[tauri::command]
 pub fn check_git() -> serde_json::Value {
-    match Command::new("git").arg("--version").output() {
+    match silent_command("git").arg("--version").output() {
         Ok(out) if out.status.success() => serde_json::json!({ "found": true, "version": String::from_utf8_lossy(&out.stdout).trim() }),
         _ => serde_json::json!({ "found": false, "version": "git not found" }),
     }
@@ -175,8 +174,8 @@ pub fn check_installed() -> serde_json::Value {
 
 #[tauri::command]
 pub fn check_command(cmd: String) -> serde_json::Value {
-    #[cfg(windows)] let probe = Command::new("where").arg(&cmd).output();
-    #[cfg(not(windows))] let probe = Command::new("which").arg(&cmd).output();
+    #[cfg(windows)] let probe = silent_command("where").arg(&cmd).output();
+    #[cfg(not(windows))] let probe = silent_command("which").arg(&cmd).output();
     let found = probe.is_ok_and(|o| o.status.success());
     serde_json::json!({"cmd": cmd, "found": found})
 }
