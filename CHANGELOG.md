@@ -4,6 +4,11 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+## [0.1.3]
+
+- Renamed to Wan2GP Desktop Launcher Tauri (product, binary, installer)
+- Topbar cleanup (port of Electron): refresh button dropped, reload moved after Console, red stop button, title no longer overlaps metrics/buttons
+
 ## [0.1.2]
 
 - Env unlink/restore as compact buttons with state-driven visibility; env name now resolved from backend (fixes vanishing buttons)
