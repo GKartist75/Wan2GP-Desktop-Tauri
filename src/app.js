@@ -2826,11 +2826,7 @@ $('updateCheckBtn').addEventListener('click', (e) => {
   window.w2gp.checkUpdate(e.shiftKey ? { local: true } : undefined)
 })
 $('updateDownloadBtn').addEventListener('click', () => {
-  window.w2gp.downloadUpdate({ differential: false })
-})
-// ponytail: differential disabled — Quick Update now does full download too
-$('updateDeltaBtn')?.addEventListener('click', () => {
-  window.w2gp.downloadUpdate({ differential: false })
+  window.w2gp.downloadUpdate()
 })
 $('updateInstallBtn').addEventListener('click', () => {
   window.w2gp.installUpdate()
@@ -3049,7 +3045,6 @@ window.w2gp.onUpdateStatus((status) => {
       $('updateText').textContent = 'Checking for updates...'
       $('updateBanner').classList.remove('hidden')
       $('updateDownloadBtn').classList.add('hidden')
-      $('updateDeltaBtn')?.classList.add('hidden')
       $('updateInstallBtn').classList.add('hidden')
       $('updateActions').classList.remove('hidden')
       $('updateProgress').classList.add('hidden')
@@ -3063,7 +3058,6 @@ window.w2gp.onUpdateStatus((status) => {
         // Download button instead.
         $('updateText').textContent = `v${status.version} available`
         $('updateDownloadBtn').classList.remove('hidden')
-        $('updateDeltaBtn')?.classList.add('hidden') // ponytail: differential disabled — full only
         $('updateInstallBtn').classList.add('hidden')
         $('updateActions').classList.remove('hidden')
         $('updateProgress').classList.add('hidden')
@@ -3072,7 +3066,6 @@ window.w2gp.onUpdateStatus((status) => {
       } else {
         $('updateText').textContent = `v${status.version} — downloading...`
         $('updateDownloadBtn').classList.add('hidden')
-        $('updateDeltaBtn')?.classList.add('hidden')
         $('updateInstallBtn').classList.add('hidden')
         $('updateActions').classList.add('hidden')
         $('updateProgress').classList.remove('hidden')
@@ -3086,7 +3079,6 @@ window.w2gp.onUpdateStatus((status) => {
       setDesktopUpdateIndicator(false)
       $('updateText').textContent = 'Up to date ✓'
       $('updateDownloadBtn').classList.add('hidden')
-      $('updateDeltaBtn')?.classList.add('hidden')
       $('updateActions').classList.remove('hidden')
       $('updateProgress').classList.add('hidden')
       $('updateBanner').classList.remove('hidden')
@@ -3096,7 +3088,6 @@ window.w2gp.onUpdateStatus((status) => {
     case 'downloading':
       $('updateText').textContent = 'Downloading...'
       $('updateDownloadBtn').classList.add('hidden')
-      $('updateDeltaBtn')?.classList.add('hidden')
       $('updateInstallBtn').classList.add('hidden')
       $('updateActions').classList.add('hidden')
       $('updateProgress').classList.remove('hidden')
@@ -3109,7 +3100,6 @@ window.w2gp.onUpdateStatus((status) => {
       setDesktopUpdateIndicator(false)
       $('updateText').textContent = `v${status.version} downloaded — ready to install`
       $('updateDownloadBtn').classList.add('hidden')
-      $('updateDeltaBtn')?.classList.add('hidden')
       $('updateInstallBtn').classList.remove('hidden')
       $('updateActions').classList.remove('hidden')
       $('updateProgress').classList.add('hidden')
@@ -3122,7 +3112,6 @@ window.w2gp.onUpdateStatus((status) => {
         ? 'GitHub rate limited — add token in Manage settings'
         : `Update error: ${status.message}`
       $('updateDownloadBtn').classList.add('hidden')
-      $('updateDeltaBtn')?.classList.add('hidden')
       $('updateInstallBtn').classList.add('hidden')
       $('updateActions').classList.add('hidden')
       $('updateProgress').classList.add('hidden')

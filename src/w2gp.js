@@ -91,7 +91,7 @@
     setAutoStart: (e) => call('set_auto_start', { enabled: e }),
     setThemeFollowSystem: (e) => call('set_theme_follow_system', { enabled: e }),
     setNotificationsEnabled: (e) => call('set_notifications_enabled', { enabled: e }),
-    checkUpdate: (o) => call('check_update', { opts: o }), downloadUpdate: (o) => call('download_update', { opts: { ...(o||{}), differential: false } }), installUpdate: () => call('install_update'), // ponytail: differential disabled — full only
+    checkUpdate: (o) => call('check_update', { opts: o }), downloadUpdate: (o) => call('download_update', { opts: o }), installUpdate: () => call('install_update'),
     getWangpLocalVersion: () => call('get_wangp_local_version'), getWangpUpstreamInfo: () => call('get_wangp_upstream_info'),
     getDesktopGitInfo: () => call('get_desktop_git_info'), getDesktopVersion: () => call('get_desktop_version'),
     detectElectron: () => call('detect_electron'), uninstallElectron: () => call('uninstall_electron'),

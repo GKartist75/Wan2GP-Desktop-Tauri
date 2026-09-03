@@ -188,7 +188,7 @@ pub(crate) fn downloaded_lock() -> &'static std::sync::Mutex<Option<(String, Vec
             if let Ok(mut g) = pending_lock().lock() { *g = Some(upd); }
             if let Ok(mut g) = downloaded_lock().lock() { *g = Some((ver.clone(), bytes)); }
             let _ = app.emit("update-status", serde_json::json!({"status": "downloaded", "version": ver}));
-            Ok(serde_json::json!({"ok": true, "differential": false}))
+            Ok(serde_json::json!({"ok": true}))
         }
     }
 }
