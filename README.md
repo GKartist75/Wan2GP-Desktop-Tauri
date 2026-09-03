@@ -84,6 +84,14 @@ Through the launcher you get the **full WanGP** — same models, same UI, same p
 
 ---
 
+## 🔥 What's New
+
+> Full history: [CHANGELOG.md](CHANGELOG.md)
+
+- **v0.1.1** — first Tauri feature-complete build: 10-module Rust backend, console-first Desktop launch with hide/show session switching, full 7-profile Auto-Tune, validated Deepy writer, one-click signed updater, Apprise notifier, real per-package upgrades, GGUF kernel knobs that actually apply, legacy Electron removal, full cleanup on close.
+
+---
+
 ## Download & Install
 
 **Coming from the Electron edition?** Install the Tauri build, open **Manage → About → Remove Electron launcher**. Your data carries over automatically — no reinstall of Wan2GP or models needed.
@@ -97,7 +105,7 @@ No Python, no CUDA toolkit, no `pip`, no Node needed beforehand — the installe
 
 ### Launch modes
 
-- **Desktop** — Wan2GP embedded in the launcher, with back/forward/reload, zoom 25–200% and pop-out.
+- **Desktop** — Wan2GP embedded in the launcher, with reload, zoom 25–200%, hide/show switching that keeps your session, and console-first boot (watch the dashboard log, view opens when ready).
 - **Browser** — visible console + auto-opens your browser when ready.
 - **External Terminal** — real Windows Terminal / cmd via generated script; in-app LED + Stop.
 - **No-GPU Chrome** — launch Chrome with GPU disabled to free VRAM for generation.
