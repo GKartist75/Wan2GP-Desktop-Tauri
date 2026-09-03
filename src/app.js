@@ -2045,7 +2045,7 @@ $('appBtn').addEventListener('click', async () => {
   if (appRunning && currentUrl) { openDesktopView(currentUrl, false); return }
   $('appBtn').disabled = true; $('appBtn').textContent = 'Starting...'
   $('launchInfo').classList.remove('hidden')
-  appendLog('[*] Starting Wan2GP — watch the console below…')
+  appendLog('[*] Starting Wan2GP — watch the console below…\n')
   try {
     const result = await window.w2gp.launchWebview()
     currentUrl = result.url

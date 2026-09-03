@@ -31,7 +31,11 @@
     getModelPaths: () => call('get_model_paths'), repairSettings: () => call('repair_settings'),
     getStatus: () => call('get_status'), launch: (mode) => call('launch', { mode }), launchWebview: () => call('launch_webview'),
     stopWangp: () => call('stop_wangp'), popoutWebview: async (url) => { const u = url || 'http://localhost:7861'; try { await call('open_external', { url: u }); } catch {} window.open(u, '_blank'); return {ok:true}; },
-    // ponytail: BrowserView → embedded iframe in webviewContainer (Tauri) — simple, no separate window
+    // ponytail: BrowserView → embedded iframe in webviewContainer (Tauri) — simple, no separate window.
+    // Boot progress lives on the dashboard console (console-first launch), so the
+    // view opens straight onto the live server: direct src, no overlay, no HEAD
+    // poll (Gradio answers HEAD with 405 — the old poll never succeeded and the
+    // overlay got stuck whenever the server was already running).
     createBrowserView: async (url, opts) => {
         const u = url || 'http://localhost:7861';
         // close any previous WebviewWindow if it exists (from previous separate-window attempt)
@@ -44,46 +48,8 @@
         const c = document.createElement('div');
         c.id = 'tauri-browser-view';
         c.style.cssText = 'flex:1;display:flex;flex-direction:column;background:#111;min-height:0;width:100%;height:100%;overflow:hidden;';
-        // ponytail: start blank — no white ERR_CONNECTION_REFUSED flash like Electron's BrowserView `did-finish-load` guard
-        // ponytail: live console instead of static 10s text — streams launch-log (pip/starting) like Electron
-        c.innerHTML = `<div id="tauri-bv-loading" style="position:absolute;inset:0;display:flex;flex-direction:column;padding:12px;background:#111;z-index:1;overflow:hidden;"><div style="color:#aaa;font-size:12px;margin-bottom:8px;">Starting Wan2GP — loading packages…</div><pre id="tauri-bv-log" style="flex:1;margin:0;padding:8px;background:var(--term-bg);color:var(--term-green);font-family:Geist Mono,monospace;font-size:11px;overflow:auto;white-space:pre-wrap;word-break:break-all;border:1px solid #222;border-radius:4px;">Waiting for launch logs…</pre></div><iframe src="about:blank" data-src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write"></iframe>`;
+        c.innerHTML = `<iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write"></iframe>`;
         host.appendChild(c);
-        // ponytail: auto-retry until server ready — fixes black/ERR_CONNECTION_REFUSED when iframe races boot
-        const iframe = c.querySelector('iframe');
-        const loading = c.querySelector('#tauri-bv-loading');
-        const logEl = c.querySelector('#tauri-bv-log');
-        // ponytail: pre-fill from existing buffer (launch started before overlay)
-        if(logEl && window._getLogTail){
-            try { const tail=window._getLogTail(); if(tail && tail.trim()) { logEl.textContent=tail; logEl.scrollTop=logEl.scrollHeight; } } catch{}
-        } else if(logEl && window._logBuffer && window._logBuffer.length){
-            const tail = window._logBuffer.slice(-40).join('\n');
-            logEl.textContent = tail;
-            logEl.scrollTop=logEl.scrollHeight;
-        }
-        const hideLoading = () => { if(loading) loading.style.display='none'; };
-        let logUnlisten = null;
-        try { logUnlisten = await window.__TAURI__.event.listen('launch-log', e=>{
-            const t=(e.payload||'').replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'');
-            if(logEl && loading && loading.style.display!=='none'){
-                if(logEl.textContent.includes('Waiting for launch logs')) logEl.textContent='';
-                logEl.textContent += t;
-                if(logEl.textContent.length>8000) logEl.textContent=logEl.textContent.slice(-8000);
-                logEl.scrollTop=logEl.scrollHeight;
-            }
-            if(t.includes('Wan2GP ready')){ hideLoading(); if(iframe.src.includes('about:blank')) iframe.src=u; }
-        }); } catch{}
-        const _origHide=hideLoading; const hideAndCleanup=()=>{ _origHide(); if(logUnlisten) try{logUnlisten();}catch{}; logUnlisten=null; };
-        // ponytail: only hide on real content load, not about:blank (prevents white flash)
-        iframe.addEventListener('load', () => { if (iframe.src && !iframe.src.includes('about:blank')) hideAndCleanup(); });
-        let tries=0;
-        const poll=setInterval(async()=>{
-            tries++;
-            if(tries>30){ clearInterval(poll); if(loading) loading.textContent='Failed to load — try Open in Browser'; return; }
-            try{
-                const r=await fetch(u,{method:'HEAD',cache:'no-store'});
-                if(r.ok){ hideAndCleanup(); clearInterval(poll); if(iframe.src==='about:blank') iframe.src=u; }
-            }catch{}
-        },2000);
         // hide dashBody, show webviewContainer — app.js also does this, but enforce
         try { const db=document.getElementById('dashBody'); if(db) db.style.display='none'; } catch {}
         // ensure dashBody stays hidden while iframe shows (app.js does this, but enforce)
