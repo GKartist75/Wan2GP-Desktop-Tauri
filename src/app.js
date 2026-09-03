@@ -87,6 +87,10 @@ function show(id) {
   if (Object.values(termDirty).some(Boolean)) renderTerminals()
 }
 function breakPath(p) { if (!p) return p; const zwsp = String.fromCharCode(0x200B); const bs = String.fromCharCode(0x5C); const s = String(p); return s.split(bs).join(bs + zwsp).split('/').join('/' + zwsp); }
+// One file-as-folder guard (pasted Temp pngs chosen as folders) shared by pickers.
+function isFilePickedAsFolder(dir) {
+  return /\.(png|jpg|jpeg|webp|bmp|gif)$/i.test(dir) || String(dir).toLowerCase().includes('orca-paste')
+}
 
 // ── Floating Terminal state/helpers (hoisted so the launch handler can use them) ──
 let _ftVisible = false
@@ -1502,7 +1506,7 @@ async function changeModelFolder(type, key, cfgKey, singular) {
   const dir = await window.w2gp.selectFolder()
   if (!dir) return
   // ponytail: reject file-as-folder (orca-paste Temp png)
-  if (/\.(png|jpg|jpeg|webp|bmp|gif)$/i.test(dir) || dir.toLowerCase().includes('orca-paste')) { alert('Please select a folder, not a file:\n' + dir); return }
+  if (isFilePickedAsFolder(dir)) { alert('Please select a folder, not a file:\n' + dir); return }
   const cur = await window.w2gp.getModelPaths().then(p => ({ ckpts: p?.checkpoints, loras: p?.loras, output: p?.output })[type])
   if (cur && cur.toLowerCase() === dir.toLowerCase()) { window.w2gp.openFolder(dir); return }
   const choice = await window.w2gp.confirmDialog({
@@ -1692,7 +1696,7 @@ $('migrationMoveBtn')?.addEventListener('click', async () => {
   // ponytail: support 4 WAN2GP folder modes — existing vs new × Move vs Just point (like changeModelFolder)
   const newDataDir = $('migDataDir').value.trim()
   // ponytail: reject file-as-folder
-  if (/\.(png|jpg|jpeg|webp|bmp|gif)$/i.test(newDataDir) || newDataDir.toLowerCase().includes('orca-paste')) { alert('Please select a folder, not a file:\n' + newDataDir); resetMigrationUI(); return }
+  if (isFilePickedAsFolder(newDataDir)) { alert('Please select a folder, not a file:\n' + newDataDir); resetMigrationUI(); return }
   const oldDataDir = (window._migPrefs && (window._migPrefs.dataDir || window._migPrefs.legacy)) || (await window.w2gp.getInstallPaths().catch(()=>null))?.dataDir || ''
   let doMove = true
   if (newDataDir && oldDataDir && newDataDir.toLowerCase() !== oldDataDir.toLowerCase()) {
@@ -2097,22 +2101,21 @@ async function checkCrashRecovery() {
 }
 
 // ── BrowserView navigation / zoom (relayed via main process) ──
-function updateNavButtons(state) {
-  if ($('wvBackBtn')) $('wvBackBtn').disabled = !state.canGoBack
-  if ($('wvFwdBtn')) $('wvFwdBtn').disabled = !state.canGoForward
-}
-
-$('wvBackBtn').addEventListener('click', () => window.w2gp.bvNavigate('back'))
-$('wvFwdBtn').addEventListener('click', () => window.w2gp.bvNavigate('forward'))
-$('wvReloadBtn').addEventListener('click', () => window.w2gp.bvNavigate('reload'))
-// Listen for live nav state updates (pushed from main process after each navigation)
-window.w2gp.onBvNavState(updateNavButtons)
+// Back/Forward can't work on a cross-origin iframe (Gradio history is
+// unreachable) — only Reload is offered. Zoom is real: CSS zoom on the embed.
+$('wvReloadBtn').addEventListener('click', () => {
+  const f = document.querySelector('#tauri-browser-view iframe')
+  if (f) f.src = f.src
+})
 let _zoomDebounce = null
 $('zoomSlider').addEventListener('input', () => {
   const pct = parseInt($('zoomSlider').value)
   $('zoomLabel').textContent = pct + '%'
   clearTimeout(_zoomDebounce)
-  _zoomDebounce = setTimeout(() => window.w2gp.bvSetZoom(pct / 100), 120)
+  _zoomDebounce = setTimeout(() => {
+    const f = document.querySelector('#tauri-browser-view iframe')
+    if (f) f.style.zoom = (pct / 100)
+  }, 120)
 })
 
 $('popoutBtn')?.addEventListener('click', () => {
