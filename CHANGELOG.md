@@ -4,6 +4,12 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+## [0.1.2]
+
+- Env unlink/restore as compact buttons with state-driven visibility; env name now resolved from backend (fixes vanishing buttons)
+- Unlink deletes with live console progress instead of freezing the app
+- Release script fixes (version filter, ASCII-only for PS 5.1)
+
 ## [0.1.1] — current spike build
 
 First Tauri feature-complete build (port of the Electron launcher):
