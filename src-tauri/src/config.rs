@@ -161,14 +161,47 @@ pub fn manage_list() -> serde_json::Value {
     atomic_write(&f, &serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
-#[tauri::command] pub fn uninstall_env(name: String) -> Result<serde_json::Value,String> {
-    let f = get_envs_file(); let mut v: serde_json::Value = std::fs::read_to_string(&f).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::json!({"envs":{}}));
-    let path = v.get("envs").and_then(|e| e.get(&name)).and_then(|e| e.get("path")).and_then(|p| p.as_str()).map(|p| if std::path::Path::new(p).is_absolute() { PathBuf::from(p) } else { get_repo_dir().join(p.trim_start_matches(".\\").trim_start_matches("./")) });
-    if let Some(p) = path { let _ = std::fs::remove_dir_all(p); }
+#[tauri::command] pub async fn uninstall_env(app: tauri::AppHandle, name: String) -> Result<serde_json::Value,String> {
+    use tauri::Emitter;
+    let log = |m: &str| { crate::base::push_log(m, "setup"); let _ = app.emit("setup-output", m.to_string()); };
+    let f = get_envs_file(); let mut v: serde_json::Value = std::fs::read_to_string(&f).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::json!({}));
+    let path = v.get("envs").and_then(|e| e.get(&name)).and_then(|e| e.get("path")).and_then(|p| p.as_str()).map(|p| if std::path::Path::new(p).is_absolute() { PathBuf::from(p) } else { get_repo_dir().join(p.trim_start_matches(['.', '\\', '/'])) });
+    // Delete with progress (a venv is 100k+ files — one blocking remove_dir_all looks frozen).
+    if let Some(p) = path.clone() {
+        log("[*] Removing environment folder...
+");
+        let app2 = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            fn rm(path: &Path, n: &mut u64, app: &tauri::AppHandle) {
+                use tauri::Emitter;
+                if let Ok(rd) = std::fs::read_dir(path) {
+                    for e in rd.flatten() {
+                        let p = e.path();
+                        if p.is_dir() && !p.is_symlink() { rm(&p, n, app); let _ = std::fs::remove_dir(&p); }
+                        else { let _ = std::fs::remove_file(&p); }
+                        *n += 1;
+                        if *n % 2000 == 0 {
+                            let m = format!("[*] ...{} files removed
+", *n);
+                            crate::base::push_log(&m, "setup");
+                            let _ = app.emit("setup-output", m);
+                        }
+                    }
+                }
+            }
+            let mut n: u64 = 0;
+            rm(&p, &mut n, &app2);
+            let _ = std::fs::remove_dir(&p);
+            let m = format!("[*] Removed {} files.
+", n);
+            crate::base::push_log(&m, "setup");
+            let _ = app2.emit("setup-output", m);
+        }).await.map_err(|e| e.to_string())?;
+    }
     if let Some(obj) = v.get_mut("envs").and_then(|e| e.as_object_mut()) { obj.remove(&name); }
     if v.get("active").and_then(|a| a.as_str()) == Some(&name) { v["active"] = serde_json::Value::Null; }
     atomic_write(&f, &serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    crate::base::invalidate_path_cache();
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
-
 #[tauri::command] pub fn uv_cache_clean(action: Option<String>) -> serde_json::Value { let _=action; serde_json::json!({"success": true}) }
