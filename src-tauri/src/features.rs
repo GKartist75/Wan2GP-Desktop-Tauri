@@ -57,16 +57,16 @@ pub fn memory_profile_read() -> serde_json::Value {
     // read wgp_config.json memory profile — ponytail: return current profile or default
     let p = get_repo_dir().join("wgp_config.json");
     if let Ok(s) = std::fs::read_to_string(&p) { if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
-        return serde_json::json!({
+        return serde_json::json!({"ok": true, "settings": {
             "video_profile": v.get("video_profile").cloned().unwrap_or(serde_json::json!(4)),
             "image_profile": v.get("image_profile").cloned().unwrap_or(serde_json::json!(4)),
             "audio_profile": v.get("audio_profile").cloned().unwrap_or(serde_json::json!(4)),
             "vram_safety_coefficient": v.get("vram_safety_coefficient").cloned().unwrap_or(serde_json::json!(0.8)),
             "vae_config": v.get("vae_config").cloned().unwrap_or(serde_json::json!(0)),
             "transformer_quantization": v.get("transformer_quantization").cloned().unwrap_or(serde_json::json!("int8"))
-        });
+        }});
     }}
-    serde_json::json!({"video_profile": 4, "image_profile": 4, "audio_profile": 4, "vram_safety_coefficient": 0.8, "vae_config": 0, "transformer_quantization": "int8"})
+    serde_json::json!({"ok": true, "settings": {"video_profile": 4, "image_profile": 4, "audio_profile": 4, "vram_safety_coefficient": 0.8, "vae_config": 0, "transformer_quantization": "int8"}})
 }
 #[tauri::command]
 pub fn auto_tune_detect() -> serde_json::Value {
