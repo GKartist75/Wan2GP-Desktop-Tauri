@@ -149,8 +149,8 @@ WanGP's memory manager (`mmgp`) uses 7 profiles trading VRAM for speed — Auto-
 
 ### Screenshots
 
-![Wan2GP in Desktop with floating console showing live generation progress](screenshots/desktop-live-progress.png)
-*Desktop embed running LTX-2.5 Distilled — floating console streams the live log with progress bars, completed generation in the gallery.*
+![Wan2GP Desktop Launcher — Desktop view with Wan2GP running and the floating console](screenshots/desktop-live-progress.png)
+*The launcher as a whole: topbar with live CPU/GPU/RAM/VRAM sparklines and update LED, Wan2GP (LTX-2.5 Distilled) embedded in Desktop view, floating console streaming the live log with progress bars, finished video in the gallery.*
 
 ---
 
