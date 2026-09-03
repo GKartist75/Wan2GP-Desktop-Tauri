@@ -526,8 +526,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     appendLog('[*] Wan2GP install found — loading dashboard…')
     show('dashboard')
     refreshDashboard().then(() => {
-      const env = $('envName')?.textContent || '?'
-      const torch = $('specTorch')?.textContent || '?'
+      const env = $('envName')?.textContent?.trim() || '—'
+      const torch = $('specTorch')?.textContent?.trim() || '—'
       appendLog(`[*] Environment ready: ${env} · torch ${torch}`)
     }).catch(() => {})
     startMetricsPolling()
