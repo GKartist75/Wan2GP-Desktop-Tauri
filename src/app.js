@@ -2856,22 +2856,6 @@ document.querySelectorAll('input[name="termDock"]').forEach(r => {
 // F12 is built-in DevTools shortcut. The IPC handler in main.js is kept
 // (it opens the BrowserView DevTools when embedded), just no UI button needed.
 
-// Topbar refresh: re-poll dashboard + hardware + a fresh metrics tick
-$('refreshBtn')?.addEventListener('click', async () => {
-  try { refreshDashboard() } catch {}
-  try { loadHardware() } catch {}
-  try {
-    const m = await window.w2gp.getSystemMetrics()
-    if (m) {
-      if (m.ramFree) { const el = $('specRamFree'); if (el) el.textContent = '(' + m.ramFree + ' free)' }
-      if (m.vramFree) { const el = $('specVramFree'); if (el) el.textContent = '(' + m.vramFree + ' free)' }
-      // nudge sparkline redraw via the polling tick
-      if (window.__metricsTick) window.__metricsTick()
-    }
-  } catch {}
-  showToast('Refreshed')
-})
-
 $('tokenSaveBtn')?.addEventListener('click', async () => {
   const token = $('githubTokenInput')?.value
   if (!token) return
