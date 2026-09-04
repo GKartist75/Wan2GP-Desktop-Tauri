@@ -88,6 +88,7 @@ Through the launcher you get the **full WanGP** — same models, same UI, same p
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
+- **v0.2.0** — 🧩 Plugin Manager tab (Status Pro default plugin, favourites auto-install) · ✨ DLSS5 one-click installer with live SHA checklist · Deepy local Qwen3.8 Prime + Claude bridge 0.1.66 + npm/`cmd /C` fix · Auto-Tune Int8 Kernels default-on · maximized window · scoped Stop (only our processes).
 - **v0.1.1** — first Tauri feature-complete build: 10-module Rust backend, console-first Desktop launch with hide/show session switching, full 7-profile Auto-Tune, validated Deepy writer, one-click signed updater, Apprise notifier, real per-package upgrades, GGUF kernel knobs that actually apply, legacy Electron removal, full cleanup on close.
 
 ---
