@@ -115,6 +115,8 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
         emit_phase("done", "Finalize installation", true);
     }
     emit("[*] Install finished.\n");
+    // favourite plugins (Manage → Plugins ★): auto-clone after fresh setup
+    crate::plugins::ensure_favorite_plugins(app.clone()).await;
     mutating_done();
     Ok(serde_json::json!({"ok": true, "success": true}))
 }

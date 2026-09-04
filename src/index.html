@@ -36,6 +36,7 @@
       <button class="settings-tab" data-tab="about">About</button>
       <button class="settings-tab" data-tab="updates">Updates</button>
       <button class="settings-tab" data-tab="autotune">⚡ Auto-Tune</button>
+      <button class="settings-tab" data-tab="plugins">🧩 Plugins</button>
     </div>
     <div class="settings-scroll">
       <div class="settings-tab-content active" data-tab="general">
@@ -258,6 +259,39 @@
           <p class="token-hint" id="electronStatus">Checking…</p>
           <button class="btn btn-ghost small" id="removeElectronBtn" style="margin-top:8px">Remove Electron launcher…</button>
           <p class="token-hint" style="margin-top:6px">Removes only the old Electron app — your Wan2GP install, models, LoRAs, outputs and settings are kept.</p>
+        </div>
+      </div>
+
+      <!-- ═══════ Plugins Tab ═══════ -->
+      <div class="settings-tab-content" data-tab="plugins">
+        <div class="settings-section">
+          <h3>🧩 Wan2GP Plugins</h3>
+          <p class="token-hint">Enable your favourite plugins (e.g. Status Pro) or install new ones from a git URL. Changes apply on next Wan2GP launch.</p>
+        </div>
+        <div class="settings-section">
+          <h3>Installed & Available</h3>
+          <div class="token-field" style="margin-bottom:6px">
+            <button class="btn btn-ghost small" id="pluginRefreshBtn">↻ Refresh library</button>
+            <button class="btn btn-ghost small" id="pluginCheckUpdatesBtn">Check updates</button>
+            <span class="token-hint" id="pluginRefreshStatus" style="margin-left:8px"></span>
+          </div>
+          <div class="token-field" style="margin-bottom:6px">
+            <input type="text" id="pluginSearchInput" class="input" placeholder="Search plugins…" style="max-width:220px">
+            <button class="btn btn-ghost small plugin-sort" data-sort="name">Name</button>
+            <button class="btn btn-ghost small plugin-sort" data-sort="date">Latest</button>
+            <button class="btn btn-ghost small plugin-sort" data-sort="author">Created by</button>
+          </div>
+          <div id="pluginList"><p class="token-hint">Loading…</p></div>
+          <button class="btn btn-primary small" id="pluginSaveBtn" style="margin-top:8px">Save enabled plugins</button>
+          <p class="token-hint" id="pluginSaveStatus" style="margin-top:6px"></p>
+        </div>
+        <div class="settings-section">
+          <h3>Install from URL</h3>
+          <div class="token-field">
+            <input type="text" id="pluginUrlInput" class="input" placeholder="https://github.com/…/…" style="max-width:420px">
+            <button class="btn btn-primary small" id="pluginInstallBtn">Install</button>
+          </div>
+          <p class="token-hint">Clones into <code>plugins/</code>, installs any <code>requirements.txt</code>, and enables it. Progress shows in the console.</p>
         </div>
       </div>
 
