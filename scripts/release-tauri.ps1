@@ -63,7 +63,12 @@ $latest | ConvertTo-Json -Depth 6 | Set-Content $latestPath
 # 4) Publish (latest.json must be on a published release — /latest/download/ 404s on drafts)
 $msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | Where-Object { $_.Name -like "*$Version*" } | Select-Object -First 1
 if (-not $msi) { $msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | Sort-Object LastWriteTime -Descending | Select-Object -First 1 }
+# ponytail: gh drops an empty --notes value ("flag needs an argument"), so only pass it when set.
+$notesArgs = @()
+if ($Notes -and $Notes.Trim()) { $notesArgs = @("--notes", $Notes) }
 gh release create $tag $setup.FullName ($setup.FullName + ".sig") $msi.FullName $latestPath `
-  --repo GKartist75/Wan2GP-Desktop-Tauri --title $tag --notes $Notes
-git push
+  --repo GKartist75/Wan2GP-Desktop-Tauri --title $tag @notesArgs
+# ponytail: bare `git push` fails on branches without upstream tracking — push explicitly.
+$branch = (git branch --show-current).Trim()
+if ($branch) { git push -u origin $branch }
 Write-Host "Released $tag - updater will pick it up from latest.json" -ForegroundColor Green
