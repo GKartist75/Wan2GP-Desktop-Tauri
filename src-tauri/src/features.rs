@@ -71,10 +71,11 @@ pub fn memory_profile_read() -> serde_json::Value {
             "audio_profile": v.get("audio_profile").cloned().unwrap_or(serde_json::json!(4)),
             "vram_safety_coefficient": v.get("vram_safety_coefficient").cloned().unwrap_or(serde_json::json!(0.8)),
             "vae_config": v.get("vae_config").cloned().unwrap_or(serde_json::json!(0)),
-            "transformer_quantization": v.get("transformer_quantization").cloned().unwrap_or(serde_json::json!("int8"))
+            "transformer_quantization": v.get("transformer_quantization").cloned().unwrap_or(serde_json::json!("int8")),
+            "enable_int8_kernels": v.get("enable_int8_kernels").cloned().unwrap_or(serde_json::json!(1))
         }});
     }}
-    serde_json::json!({"ok": true, "settings": {"video_profile": 4, "image_profile": 4, "audio_profile": 4, "vram_safety_coefficient": 0.8, "vae_config": 0, "transformer_quantization": "int8"}})
+    serde_json::json!({"ok": true, "settings": {"video_profile": 4, "image_profile": 4, "audio_profile": 4, "vram_safety_coefficient": 0.8, "vae_config": 0, "transformer_quantization": "int8", "enable_int8_kernels": 1}})
 }
 #[tauri::command]
 pub fn auto_tune_detect() -> serde_json::Value {
@@ -120,7 +121,7 @@ pub fn auto_tune_recommend(hw: Option<serde_json::Value>, opts: Option<serde_jso
     if !failsafe && hw.get("cuda_available").and_then(|v| v.as_bool()) == Some(false) {
         return serde_json::json!({
             "video_profile": 4.5, "image_profile": 4.5, "audio_profile": 4.5,
-            "vram_safety_coefficient": 0.70, "vae_config": 0, "transformer_quantization": "int8",
+            "vram_safety_coefficient": 0.70, "vae_config": 0, "transformer_quantization": "int8", "enable_int8_kernels": 1,
             "_recommendation_label": "Auto-tune unavailable on this hardware",
             "_recommendation_reason": "No CUDA-capable GPU detected. Conservative profile applied — generation may be limited.",
             "packages": ["torch","triton","sageattention"],
@@ -148,7 +149,7 @@ pub fn auto_tune_recommend(hw: Option<serde_json::Value>, opts: Option<serde_jso
     };
     serde_json::json!({
         "video_profile": profile, "image_profile": profile, "audio_profile": audio,
-        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8",
+        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8", "enable_int8_kernels": 1,
         "_recommendation_label": label,
         "_recommendation_reason": "Auto-tuned for your hardware",
         "packages": ["torch","triton","sageattention"],
@@ -220,21 +221,21 @@ pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::V
         false
     };
     let engines = vec![
-        serde_json::json!({"id":"claude-code","label":"Claude Code","desc":"Anthropic Claude Code CLI + Python bridge","cli":"claude","cliOnPath": check_cli("claude"), "pipPackage":"claude_agent_sdk","pipInstalled": check_pip("claude-agent-sdk"), "install":{"mode":"pip","spec":"claude-agent-sdk==0.1.40"}, "external": false, "auth":{"docsUrl":"https://code.claude.com/docs/en/authentication"}, "notes":"Pinned to 0.1.40 - a newer SDK can clobber Wan2GP MCP deps."}),
+        serde_json::json!({"id":"claude-code","label":"Claude Code","desc":"Anthropic Claude Code CLI + Python bridge","cli":"claude","cliOnPath": check_cli("claude"), "pipPackage":"claude_agent_sdk","pipInstalled": check_pip("claude-agent-sdk"), "install":{"mode":"pip","spec":"claude-agent-sdk==0.1.66"}, "external": false, "auth":{"docsUrl":"https://code.claude.com/docs/en/authentication"}, "notes":"Pinned to 0.1.66 - upstream's exact bridge (summarized thinking); a newer SDK can clobber Wan2GP MCP deps."}),
         serde_json::json!({"id":"codex","label":"OpenAI Codex","desc":"OpenAI Codex CLI (npm)","cli":"codex","cliOnPath": check_cli("codex"), "pipPackage":null,"pipInstalled":null,"install":{"mode":"npm","spec":"@openai/codex","global":true}, "external": true, "authHint":"Sign in via a Deepy request in Wan2GP (secure link shown in chat)."}),
-        serde_json::json!({"id":"opencode","label":"OpenCode","desc":"Universal-provider agent","cli":"opencode","cliOnPath": check_cli("opencode"), "pipPackage":null,"pipInstalled":null,"install":{"mode":"npm","spec":"opencode-ai","global":true}, "external": true, "serve":{"cmd":"opencode","args":["serve","--hostname","127.0.0.1","--port","4096"]}, "serverUrl":"http://127.0.0.1:4096", "authHint":"In the OpenCode UI run /connect, pick a provider, follow auth. Wan2GP auto-starts opencode serve."}),
+        serde_json::json!({"id":"opencode","label":"OpenCode","desc":"Universal-provider agent","cli":"opencode","cliOnPath": check_cli("opencode"), "pipPackage":null,"pipInstalled":null,"install":{"mode":"npm","spec":"opencode-ai","global":true}, "external": true, "serve":{"cmd":"opencode","args":["serve","--hostname","127.0.0.1","--port","4096"]}, "serverUrl":"http://127.0.0.1:4096", "serverRunning": std::net::TcpStream::connect("127.0.0.1:4096").is_ok(), "authHint":"In the OpenCode UI run /connect, pick a provider, follow auth. Wan2GP auto-starts opencode serve."}),
     ];
     serde_json::json!({"ok": true, "engines": engines, "hasActiveEnv": !env.is_null()})
 }
 // One-click engine installer: claude-code via env pip (pinned), codex/opencode via npm -g.
 #[tauri::command] pub fn llm_engine_install(engine: String) -> serde_json::Value {
-    let spec = match engine.as_str() { "claude-code" => "claude-agent-sdk==0.1.40", "codex" => "@openai/codex", "opencode" => "opencode-ai", _ => return serde_json::json!({"ok": false, "success": false, "error": "Unknown engine"}) };
+    let spec = match engine.as_str() { "claude-code" => "claude-agent-sdk==0.1.66", "codex" => "@openai/codex", "opencode" => "opencode-ai", _ => return serde_json::json!({"ok": false, "success": false, "error": "Unknown engine"}) };
     let res = match engine.as_str() {
         "claude-code" => match env_python_bin() {
             None => return serde_json::json!({"ok": false, "success": false, "error": "No active Python environment"}),
             Some(py) => silent_command(&py).args(["-m", "pip", "install", spec]).output(),
         },
-        _ => silent_command("npm").args(["install", "-g", spec]).output(),
+        _ => term_tool("npm").args(["install", "-g", spec]).output(),
     };
     match res {
         Ok(o) if o.status.success() => serde_json::json!({"ok": true, "success": true, "spec": spec}),
@@ -248,8 +249,8 @@ pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::V
             None => return serde_json::json!({"ok": false, "success": false, "error": "No active Python environment"}),
             Some(py) => silent_command(&py).args(["-m", "pip", "uninstall", "-y", "claude-agent-sdk"]).output(),
         },
-        "codex" => silent_command("npm").args(["uninstall", "-g", "@openai/codex"]).output(),
-        "opencode" => silent_command("npm").args(["uninstall", "-g", "opencode-ai"]).output(),
+        "codex" => term_tool("npm").args(["uninstall", "-g", "@openai/codex"]).output(),
+        "opencode" => term_tool("npm").args(["uninstall", "-g", "opencode-ai"]).output(),
         _ => return serde_json::json!({"ok": false, "success": false, "error": "Unknown engine"}),
     };
     match res {
@@ -266,7 +267,8 @@ static OPENCODE_PID: std::sync::OnceLock<std::sync::Mutex<Option<u32>>> = std::s
 pub(crate) fn stop_opencode_server() -> bool {
     let pid = OPENCODE_PID.get().and_then(|m| m.lock().ok()).and_then(|mut g| g.take());
     if let Some(pid) = pid {
-        #[cfg(windows)] { let _ = silent_command("taskkill").args(["/F", "/PID", &pid.to_string()]).output(); }
+        // ponytail: /T kills the tree — the tracked PID is now the cmd /C wrapper, not the server itself
+        #[cfg(windows)] { let _ = silent_command("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).output(); }
         #[cfg(not(windows))] { let _ = silent_command("kill").arg(pid.to_string()).output(); }
         return true;
     }
@@ -284,7 +286,7 @@ pub(crate) fn stop_opencode_server() -> bool {
     if std::net::TcpStream::connect("127.0.0.1:4096").is_ok() {
         return serde_json::json!({"ok": true, "success": true, "running": true, "url": "http://127.0.0.1:4096"});
     }
-    match silent_command("opencode").args(["serve", "--hostname", "127.0.0.1", "--port", "4096"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
+    match term_tool("opencode").args(["serve", "--hostname", "127.0.0.1", "--port", "4096"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
         Ok(child) => {
             if let Ok(mut g) = OPENCODE_PID.get_or_init(|| std::sync::Mutex::new(None)).lock() { *g = Some(child.id()); }
             std::mem::forget(child); // detach: lives beyond this command
@@ -323,8 +325,8 @@ pub(crate) fn stop_opencode_server() -> bool {
     eprintln!("[deepy_set] mode={mode} engine={engine:?} enhancer={enhancer:?}");
     let m = mode.trim().to_lowercase();
     if !["disabled","zero","prime"].contains(&m.as_str()) { return serde_json::json!({"ok": false, "error": format!("Unknown Deepy mode: {}", mode)}); }
-    if m=="prime" && !engine.as_deref().is_some_and(|s| ["opencode","claude-code","codex"].contains(&s)) {
-        return serde_json::json!({"ok": false, "error": "Prime requires an engine (OpenCode / Claude Code / Codex)."});
+    if m=="prime" && !engine.as_deref().is_some_and(|s| ["opencode","claude-code","codex","local-qwen38"].contains(&s)) {
+        return serde_json::json!({"ok": false, "error": "Prime requires an engine (OpenCode / Claude Code / Codex / local Qwen3.8 27B)."});
     }
     let p = get_repo_dir().join("wgp_config.json");
     if !p.exists() { return serde_json::json!({"ok": false, "error": "wgp_config.json not found — install Wan2GP first."}); }
@@ -355,6 +357,19 @@ pub(crate) fn stop_opencode_server() -> bool {
     if v.get("llm_engines").is_none() { v["llm_engines"] = serde_json::json!({}); }
     if m=="prime" {
         let eid = engine.clone().unwrap_or_else(|| "opencode".into());
+        if eid == "local-qwen38" {
+            // Local Prime (b71026f): runs on Qwen3.8 VL 27B — upstream requires the
+            // 27B model plus context >= 32000 and Summarize compaction, and the
+            // Configuration UI auto-raises both, so mirror that here.
+            v["enhancer_enabled"] = serde_json::json!(5);
+            v["llm_engines"]["deepy"] = serde_json::json!("qwen38_27b");
+            v["llm_engines"]["prompt_enhancer"] = serde_json::json!("same_as_deepy");
+            if v.get("deepy_context_tokens").and_then(serde_json::Value::as_i64).unwrap_or(0) < 32000 {
+                v["deepy_context_tokens"] = serde_json::json!(32000);
+            }
+            v["deepy_compaction_type"] = serde_json::json!("summarize");
+            v["deepy_repetition_penalty"] = serde_json::json!(true);
+        } else {
         let profile = eng_map(&eid); let exe = exe_map(&eid);
         v["llm_engines"]["deepy"] = serde_json::json!(profile);
         v["llm_engines"]["prompt_enhancer"] = serde_json::json!("same_as_deepy");
@@ -362,6 +377,7 @@ pub(crate) fn stop_opencode_server() -> bool {
         if v["llm_engines"]["profiles"][profile].is_null() { v["llm_engines"]["profiles"][profile] = serde_json::json!({}); }
         v["llm_engines"]["profiles"][profile]["executable"] = serde_json::json!(exe);
         if profile=="opencode" { v["llm_engines"]["profiles"]["opencode"]["base_url"] = serde_json::json!("http://127.0.0.1:4096"); }
+        }
         // Full Prime preset (mirrors shared/deepy/config.py defaults + guidance).
         for (k, val) in [
             ("deepy_prime_custom_system_prompt", serde_json::json!("When several models can satisfy the request, prefer the highest-quality base or full model unless the user explicitly prioritizes speed or names another model.")),
@@ -384,6 +400,7 @@ pub(crate) fn stop_opencode_server() -> bool {
                 ("deepy_vram_mode", serde_json::json!("unload")),
                 ("deepy_context_tokens", serde_json::json!(16386)),
                 ("deepy_kv_cache_quantization", serde_json::json!("auto")),
+                ("deepy_repetition_penalty", serde_json::json!(true)),
                 ("deepy_compaction_type", serde_json::json!("discard")),
                 ("deepy_tool_gen_image", serde_json::json!("Krea 2 Turbo (8 Steps)")),
                 ("deepy_tool_edit_image", serde_json::json!("Flux Klein 9B")),
@@ -401,7 +418,8 @@ pub(crate) fn stop_opencode_server() -> bool {
     if atomic_write(&p, &serde_json::to_string_pretty(&v).unwrap_or_default()).is_err() {
         return serde_json::json!({"ok": false, "error": "failed to write wgp_config.json"});
     }
-    let msg = if m=="prime" { format!("Deepy Prime set to {}", engine.clone().unwrap_or_else(|| "opencode".into())) } else if m=="zero" { "Deepy Zero enabled (local model)".into() } else { "Deepy disabled".into() };
+    let prime_label = match engine.as_deref().unwrap_or("opencode") { "local-qwen38" => "Qwen3.8 VL 27B (local)".into(), other => other.to_string() };
+    let msg = if m=="prime" { format!("Deepy Prime set to {prime_label}") } else if m=="zero" { "Deepy Zero enabled (local model)".into() } else { "Deepy disabled".into() };
     serde_json::json!({"ok": true, "mode": m, "enhancerId": enh_id, "backup": bak.to_string_lossy().to_string(), "message": msg + ". Launch Wan2GP and click \"Ask Deepy\"."})
 }
 #[tauri::command] pub fn deepy_activate(engine: String) -> serde_json::Value { deepy_set("prime".into(), Some(engine), None) }
@@ -428,7 +446,7 @@ pub(crate) fn stop_opencode_server() -> bool {
     let Ok(s) = std::fs::read_to_string(&p) else { return serde_json::json!({"ok": false, "success": false, "error": "wgp_config.json not found"}); };
     let mut cfg: serde_json::Value = match serde_json::from_str(&s) { Ok(v)=>v, Err(e)=> return serde_json::json!({"ok": false, "success": false, "error": format!("corrupted: {}", e)}) };
     let mut applied: Vec<String> = Vec::new();
-    for key in ["video_profile","image_profile","audio_profile","vram_safety_coefficient","vae_config","transformer_quantization"] {
+    for key in ["video_profile","image_profile","audio_profile","vram_safety_coefficient","vae_config","transformer_quantization","enable_int8_kernels"] {
         if let Some(val) = settings.get(key) { cfg[key] = val.clone(); applied.push(key.to_string()); }
     }
     if applied.is_empty() { return serde_json::json!({"ok": true, "success": true, "applied": applied, "unchanged": true}); }

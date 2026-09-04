@@ -2,3 +2,8 @@
 /node_modules
 /src-tauri/target
 dist
+build.log
+build.pid
+release.log
+release.pid
+relnotes-*.md

@@ -5,6 +5,7 @@ mod features;
 mod hw;
 mod install;
 mod launch;
+mod plugins;
 mod status;
 mod system;
 mod updates;
@@ -60,7 +61,7 @@ pub fn run() {
             launch::launch, launch::stop_wangp, system::open_folder, system::select_folder, system::confirm_dialog, system::repair_settings,
             features::check_package, features::check_package_updates, features::deepy_status, features::memory_profile_read,
             features::auto_tune_detect, features::auto_tune_recommend,
-            install::install, install::reinstall, install::uninstall, install::sync_kernels, install::update, config::manage_set_active, config::uninstall_env,
+            install::install, install::reinstall, install::uninstall, install::sync_kernels, install::update, install::dlss5_status, install::install_dlss5, config::manage_set_active, config::uninstall_env,
             launch::open_external, launch::detect_browsers, launch::launch_browser, launch::launch_browser_no_gpu, launch::chrome_available,
             system::set_data_dir, system::reset_data_dir, system::migrate_to_preferred, system::move_folder, system::write_wgp_config, install::install_prerequisite,
             updates::get_wangp_upstream_info, updates::get_wangp_version, system::report_issue, system::create_desktop_shortcut, electron::detect_electron, electron::uninstall_electron,
@@ -68,6 +69,7 @@ pub fn run() {
             features::llm_engines_list, features::llm_engine_install, features::llm_engine_uninstall, features::llm_engine_serve, features::llm_engine_auth,
             features::deepy_activate, features::deepy_set, features::set_auto_start, features::memory_profile_apply,
             features::notifier_config, features::notifier_set, features::notifier_test,
+            plugins::plugins_list, plugins::plugin_install, plugins::plugin_check_update, plugins::plugin_check_updates, plugins::plugin_update, plugins::plugin_uninstall, plugins::plugin_refresh_catalog,
             features::set_theme_follow_system, features::set_notifications_enabled,
             updates::check_update, updates::download_update, updates::install_update,
             system::create_browser_view, system::destroy_browser_view, system::get_log_history, config::uv_cache_clean,

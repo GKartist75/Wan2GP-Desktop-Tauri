@@ -206,36 +206,53 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
 }
 #[tauri::command]
 pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
-    // robust stop: kill stored PID + any PID listening on :7861 (handles shim/child split + stale port)
+    // Scoped stop: ONLY our Wan2GP processes — the tracked child plus any python
+    // running OUR repo's wgp.py (uv-shim/child split, detached terminal mode).
+    // ponytail: the old `taskkill /F /IM python.exe` blanket-killed every Python
+    // on the machine (user scripts, other apps) — never again.
+    let repo = get_repo_dir();
+    let repo_s = repo.to_string_lossy().replace('/', "\\").to_lowercase();
     let mut killed: Vec<u32> = Vec::new();
-    if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
-        killed.push(pid);
+    let mut kill_pid = |pid: u32| {
+        if pid == 0 || killed.contains(&pid) { return; }
         #[cfg(windows)] { let _ = silent_command("taskkill").args(["/pid", &pid.to_string(), "/f", "/t"]).output(); }
         #[cfg(not(windows))] { let _ = silent_command("kill").arg("-9").arg(pid.to_string()).output(); }
+        killed.push(pid);
+    };
+    if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
+        kill_pid(pid);
     }
-    // find actual LISTENING PID on :7861 via netstat (handles uv shim -> cpython child)
+    // our wgp.py by command line (covers shim→child + terminal children, any port)
     #[cfg(windows)]
     {
-        if let Ok(out) = silent_command("cmd").args(["/C", "netstat -ano | findstr LISTENING | findstr :7861"]).output() {
+        let ps = "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object { $_.CommandLine -like '*wgp.py*' } | ForEach-Object { $_.ProcessId + '|' + $_.CommandLine }";
+        if let Ok(out) = silent_command("powershell").args(["-NoProfile", "-Command", ps]).output() {
             if out.status.success() {
-                let s = String::from_utf8_lossy(&out.stdout);
-                for line in s.lines() {
-                    if let Some(pid_str) = line.split_whitespace().last() {
-                        if let Ok(pid) = pid_str.parse::<u32>() {
-                            if !killed.contains(&pid) {
-                                let _ = silent_command("taskkill").args(["/pid", &pid.to_string(), "/f", "/t"]).output();
-                                killed.push(pid);
-                            }
+                for line in String::from_utf8_lossy(&out.stdout).lines() {
+                    let mut parts = line.splitn(2, '|');
+                    if let (Some(pid_s), Some(cmd)) = (parts.next(), parts.next()) {
+                        if let Ok(pid) = pid_s.trim().parse::<u32>() {
+                            if cmd.to_lowercase().replace('/', "\\").contains(&repo_s) { kill_pid(pid); }
                         }
                     }
                 }
             }
         }
-        // fallback: close our external-terminal window by title, then any python wgp.py
+        // our external-terminal window (unique timestamped title)
         if let Some(t) = crate::launch::terminal_title() {
             let _ = silent_command("taskkill").args(["/F", "/FI", &format!("WINDOWTITLE eq {t}*")]).output();
         }
-        let _ = silent_command("taskkill").args(["/F", "/IM", "python.exe", "/T"]).output();
+    }
+    #[cfg(not(windows))]
+    {
+        let pat = repo.join("wgp.py").to_string_lossy().to_string();
+        if let Ok(out) = silent_command("pgrep").args(["-f", &pat]).output() {
+            if out.status.success() {
+                for line in String::from_utf8_lossy(&out.stdout).lines() {
+                    if let Ok(pid) = line.trim().parse::<u32>() { kill_pid(pid); }
+                }
+            }
+        }
     }
     if let Some(m) = WANGP_PID.get() { *m.lock().unwrap() = None; }
     let _ = app.emit("wangp-exit", serde_json::json!({"stopped": true, "killed": killed}));
