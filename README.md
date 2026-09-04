@@ -142,7 +142,9 @@ WanGP's memory manager (`mmgp`) uses 7 profiles trading VRAM for speed — Auto-
 | **12–23 GB** | P2 | **P4 balanced** | P5 |
 | **<12 GB** | P4 | P4+ VRAM saver | **P5 failsafe** |
 
-**Settings written** to `wgp_config.json`: `video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `vae_config` (always Auto), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** checkbox forces P5 for hardware where the recommendation still crashes.
+**Settings written** to `wgp_config.json`: `video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `enable_int8_kernels` (default on — experimental, ~10% faster with INT8 checkpoints, needs Triton), `vae_config` (always Auto), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** checkbox forces P5 for hardware where the recommendation still crashes.
+
+![Auto-Tune — hardware detection, rec/saved tags, and Int8 Kernels default-on](screenshots/autotune-int8.png)
 
 ---
 
@@ -175,7 +177,7 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 | **SpargeAttn** | `0.1.0` | sparsity-aware speed-up alongside Sage |
 | **FlashAttention** | `2.8.3` | memory-efficient exact attention for long/high-res |
 | **Nunchaku** | `1.2.1` | SVD-quantized (NF4/SVDQ) runtime — 4/8-bit models |
-| **GGUF llama.cpp CUDA** | `1.0.13` | CUDA GGUF kernels (Stream-K, quantized KV-cache) |
+| **GGUF llama.cpp CUDA** | `1.0.14` | CUDA GGUF kernels (Stream-K, quantized KV-cache, speculative-workload fix) |
 | **LightX2V** | `0.0.2` | FP4 kernels — **RTX 50xx / sm120+ only** |
 | **bitsandbytes** | `0.49.2` | 8-bit/NF4 dequant for NF4 checkpoints |
 
@@ -185,6 +187,8 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 
 > Upstream: [INSTALLATION.md](https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/INSTALLATION.md)
 
+![Active Environment — installed packages and GPU kernel wheels (RTX_30, GGUF 1.0.14)](screenshots/env-kernel-wheels.png)
+
 ---
 
 ## Deepy — your offline agent
@@ -193,13 +197,37 @@ Configure without editing JSON: **Settings → Deepy** or the Dashboard card.
 
 - **Disabled** — Deepy off; keeps local Prompt Enhancer.
 - **Deepy Zero** — local, no account/key. Qwen VL models.
-- **Deepy Prime** — remote LLM via **OpenCode** (free, local models), **Claude Code** or **Codex** (paid). Prime exposes WanGP's MCP tools.
+- **Deepy Prime** — remote LLM via **OpenCode** (free, local models), **Claude Code** (`claude-agent-sdk==0.1.66` pinned bridge) or **Codex** (paid), or local **Qwen3.8 VL 27B** (needs the 27B model + GGUF 1.0.14; auto-sets 32k context + Summarize). Prime exposes WanGP's MCP tools.
 
 Switching live-re-renders the selector; **Apply** writes a consistent `wgp_config.json` (with backup). Also editable inside WanGP: *Configuration → Prompt Enhancer / Deepy*.
+
+![Deepy Prime — local Qwen3.8 + remote LLM engines with install and server controls](screenshots/deepy-prime-engines.png)
+
+![Deepy Zero — local Qwen model picker (Prompt Enhancer)](screenshots/deepy-zero-models.png)
 
 > New to this? Start with **OpenCode** — the only zero-cost option.
 
 ---
+
+## 🧩 Plugin Manager — Status Pro included
+
+**Manage → Plugins** lists Wan2GP's catalog merged with your installed `plugins/` folder (system vs community grouping), with search, Name/Latest/Author sort, and per-plugin enable checkboxes. From a git URL you can install (clone + `requirements.txt` + enable), per-plugin ↻ check/update, 🗑 uninstall, library refresh, and check-all-updates — all with console progress.
+
+- **Status Pro** is a default plugin: installed automatically on fresh setup and kept enabled (locked checkbox), but still uninstallable — one click reinstalls it.
+- **★ Favourites** auto-install on fresh setup (stored in `desktop-config.json` → `favoritePlugins`).
+- Changes apply on next Wan2GP launch.
+
+![Plugin Manager — community catalog with install, update, and favourites](screenshots/plugins-manager.png)
+
+## ✨ DLSS5 installer — optional NVIDIA upsamplers
+
+Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.2, ReShade 6.8.0, RenoDX 4.70, DLSSNR 310.8.SF-v2, DLSS 310.8.0, Frame Generation 310.7.0) into `C:\Wan2GP\dlss5\` with a live per-component checklist — downloading → SHA-256 ✓ → installed — plus console progress.
+
+![DLSS5 installer — live per-component checklist with SHA-256 verification](screenshots/dlss5-checklist.png)
+
+- Strict consent: type `I ACCEPT` (third-party binaries are community-hosted, unsigned, proprietary — see [docs/DLSS5.md](https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/DLSS5.md)).
+- **Force** backs up + replaces conflicting files. **Stop Wan2GP first.**
+- Needs Windows 11 + RTX 30+ (Neural Rendering, 30 experimental) / RTX 40+ (Frame Generation) + HAGS.
 
 ## 🛠 Build from source
 

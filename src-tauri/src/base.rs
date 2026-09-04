@@ -27,6 +27,21 @@ pub(crate) fn silent_command(prog: impl AsRef<std::ffi::OsStr>) -> std::process:
 pub(crate) fn silent_command(prog: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
     std::process::Command::new(prog)
 }
+// Console tools (npm, opencode, codex) ship as .cmd shims on Windows, which
+// CreateProcess can't launch directly — route through cmd /C like a terminal.
+// (ponytail: bare Command::new("npm") fails with "program not found".)
+#[cfg(windows)]
+pub(crate) fn term_tool(tool: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut c = std::process::Command::new("cmd");
+    c.args(["/C", tool]);
+    c.creation_flags(0x08000000);
+    c
+}
+#[cfg(not(windows))]
+pub(crate) fn term_tool(tool: &str) -> std::process::Command {
+    std::process::Command::new(tool)
+}
 pub(crate) static LOG_HISTORY: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 pub(crate) fn push_log(text: &str, source: &str) {
     if text.is_empty() { return; }

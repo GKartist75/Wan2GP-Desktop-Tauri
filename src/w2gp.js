@@ -88,6 +88,7 @@
     memoryProfileRead: () => call('memory_profile_read'), memoryProfileApply: (s) => call('memory_profile_apply', { settings: s }),
     notifierConfig: () => call('notifier_config'), notifierSet: (c) => call('notifier_set', { cfg: c }),
     notifierTest: (c) => call('notifier_test', { cfg: c }), notifierEnsure: () => call('notifier_ensure'),
+    dlss5Status: () => call('dlss5_status'), installDlss5: (force) => call('install_dlss5', { force: !!force }),
     pluginsList: () => call('plugins_list'), pluginInstall: (url) => call('plugin_install', { url }),
     pluginCheckUpdate: (id) => call('plugin_check_update', { id }), pluginCheckUpdates: () => call('plugin_check_updates'), pluginUpdate: (id) => call('plugin_update', { id }),
     pluginUninstall: (id) => call('plugin_uninstall', { id }),
@@ -108,6 +109,7 @@
     getCrashRecoveryInfo: () => call('get_crash_recovery_info'), uiModeSet: (m) => call('ui_mode_set', { mode: m }),
     // event bridges: Electron ipcRenderer.on → Tauri listen (returns unlisten fn) — with debug log for phases
     onSetupOutput: (cb) => { listen('setup-output', cb); return ()=>{}; },
+    onDlss5Progress: (cb) => { listen('dlss5-progress', cb); return ()=>{}; },
     onSetupPhase: (cb) => { console.log('[w2gp] onSetupPhase registered'); listen('setup-phase', (p)=>{ console.log('[w2gp] setup-phase', p); try{cb(p);}catch(e){console.error(e);} }); return ()=>{}; },
     onSetupProfile: (cb) => { listen('setup-profile', cb); return ()=>{}; },
     onLaunchLog: (cb) => { listen('launch-log', cb); return ()=>{}; },

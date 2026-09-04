@@ -425,7 +425,7 @@ function renderPlugins() {
     cb.type = 'checkbox'; cb.checked = !!p.enabled; cb.dataset.pluginId = p.id
     // ponytail: enabling a non-cloned plugin is a no-op (Wan2GP skips missing dirs) —
     // lock the box until installed so Save can't promise what isn't there.
-    if (p.system) { cb.checked = true; cb.disabled = true }
+    if (p.system || p.locked) { cb.checked = true; cb.disabled = true; if (p.locked) label.title = (p.description ? p.description + ' — ' : '') + 'Default plugin, always enabled.' }
     if (!p.installed) cb.disabled = true
     label.appendChild(cb)
     const badgeBase = (p.system ? 'system' : (p.installed ? 'installed' : 'available')) + (p.version ? ' v' + p.version : '')
@@ -670,6 +670,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupScrollUnfollow('installTermBody','installFollowBtn')
 
   window.w2gp.onSetupOutput(t => appendLog(t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'').replace(/\x08/g,'')))
+  window.w2gp.onDlss5Progress(dlss5OnEvent)
 
   window.w2gp.onLaunchLog(t => {
     const clean = t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'').replace(/\x08/g,'')
@@ -1418,6 +1419,8 @@ async function refreshDashboard(){
   refreshLLMEngines().catch(() => {})
   // Refresh the Deepy Prime activation panel.
   refreshDeepy().catch(() => {})
+  // Refresh the DLSS5 optional-runtime status.
+  refreshDlss5().catch(() => {})
   // Enable/disable no-GPU button based on Chrome availability
   ;(async () => {
     const available = await window.w2gp.chromeAvailable()
@@ -2656,13 +2659,14 @@ async function refreshLLMEngines() {
       action = `<button class="pip-install-btn llm-install-btn" data-engine="${e.id}">${done ? 'Reinstall ' + e.install.spec : 'Install ' + e.install.spec}</button>${done ? `<button class="pip-install-btn llm-remove-btn" data-engine="${e.id}">Remove</button>` : ''}`
     } else if (e.install && e.install.mode === 'npm') {
       const done = e.cliOnPath
-      action = `<button class="pip-install-btn llm-install-btn" data-engine="${e.id}">${done ? 'Reinstall via npm' : 'Install via npm (@openai/codex)'}</button>${done ? `<button class="pip-install-btn llm-remove-btn" data-engine="${e.id}">Remove</button>` : ''}`
+      // ponytail: label used the codex spec for every npm engine (opencode card lied) — use this engine's own spec
+      action = `<button class="pip-install-btn llm-install-btn" data-engine="${e.id}">${done ? 'Reinstall via npm (' + e.install.spec + ')' : 'Install via npm (' + e.install.spec + ')'}</button>${done ? `<button class="pip-install-btn llm-remove-btn" data-engine="${e.id}">Remove</button>` : ''}`
     } else if (e.external) {
       action = `<span class="spec-value llm-external-hint">External — install via terminal, then it auto-detects.</span>`
     }
     let serveBtn = ''
     if (e.serve) {
-      serveBtn = `<button class="pip-install-btn llm-serve-btn" data-engine="${e.id}">Start server</button>`
+      serveBtn = `<button class="pip-install-btn llm-serve-btn" data-engine="${e.id}">${e.serverRunning ? 'Stop server' : 'Start server'}</button>`
     }
     let authBtn = ''
     if (e.auth) {
@@ -2740,7 +2744,9 @@ async function refreshLLMEngines() {
 const DEEPY_PANEL_ENGINES = [
   { id: 'opencode', label: 'OpenCode', paid: false },
   { id: 'claude-code', label: 'Claude Code', paid: true },
-  { id: 'codex', label: 'OpenAI Codex', paid: true }
+  { id: 'codex', label: 'OpenAI Codex', paid: true },
+  // ponytail: b71026f — local Prime runs on Qwen3.8 VL 27B (needs the 27B model + GGUF 1.0.14; backend auto-raises 32k context + Summarize)
+  { id: 'local-qwen38', label: 'Qwen3.8 VL 27B (local)', paid: false }
 ]
 
 // Local-model (Prompt Enhancer) choices shown in the Deepy panel when Deepy is
@@ -2780,6 +2786,8 @@ async function refreshDeepy() {
   } catch (_) {}
 
   const ready = id => {
+    // ponytail: local model lives in Wan2GP — it validates the 27B requirement + downloads on first use, nothing for the launcher to probe
+    if (id === 'local-qwen38') return true
     const e = engines.find(x => x.id === id)
     if (!e) return false
     if (id === 'claude-code') return !!(e.cliOnPath || e.claudeApiKeySet)
@@ -2787,7 +2795,7 @@ async function refreshDeepy() {
   }
 
   const currentProfile = status.currentEngine
-  const profileToUi = { opencode: 'opencode', claude: 'claude-code', codex: 'codex' }
+  const profileToUi = { opencode: 'opencode', claude: 'claude-code', codex: 'codex', qwen38_27b: 'local-qwen38' }
   const currentUi = profileToUi[currentProfile] || null
   const currentMode = status.mode || 'disabled'
   const currentEnhancer = (typeof status.enhancerEnabled === 'number') ? status.enhancerEnabled : null
@@ -2903,6 +2911,78 @@ async function refreshDeepy() {
     ev.preventDefault()
     await window.w2gp.openExternal('https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/DEEPY.md')
   }
+}
+// ── DLSS5 optional runtime (upstream scripts/install_dlss5.ps1) ──
+async function refreshDlss5() {
+  const msg = $('dlss5StatusMsg'), btn = $('dlss5InstallBtn')
+  if (!msg || !btn) return
+  let s = null
+  try { s = await window.w2gp.dlss5Status() } catch (e) { msg.textContent = '✗ ' + e.message; btn.disabled = true; return }
+  if (!s || !s.ok) { msg.textContent = (s && s.error) || 'Wan2GP not installed'; btn.disabled = true; return }
+  btn.disabled = false
+  msg.textContent = s.complete ? `✓ DLSS 5 installed (${s.present}/${s.total} files).`
+    : s.installed ? `Partial DLSS 5 install (${s.present}/${s.total} files) — reinstall, or tick Force to replace.`
+    : 'DLSS 5 not installed — optional NVIDIA upsampler runtime.'
+}
+$('dlss5InstallBtn')?.addEventListener('click', () => {
+  $('dlss5AcceptInput').value = ''; $('dlss5ConfirmBtn').disabled = true
+  $('dlss5Modal').style.display = 'flex'; $('dlss5AcceptInput').focus()
+})
+$('dlss5AcceptInput')?.addEventListener('input', e => { $('dlss5ConfirmBtn').disabled = (e.target.value !== 'I ACCEPT') })
+$('dlss5CancelBtn')?.addEventListener('click', () => { $('dlss5Modal').style.display = 'none' })
+// ── DLSS5 live checklist (docs/DLSS5.md: pinned SHA-256 per component) ──
+// ponytail: the script owns integrity — rows only mirror its Downloading /
+// verified / Installed lines. True byte-% isn't in the script output, so the
+// downloading state is honest (no fake progress bar).
+const DLSS5_PKGS = [
+  { id: 'workers', label: 'Workers v1.1.2' },
+  { id: 'reshade', label: 'ReShade 6.8.0' },
+  { id: 'renodx', label: 'RenoDX DLSS5 4.70' },
+  { id: 'dlssnr', label: 'DLSSNR 310.8.SF-v2' },
+  { id: 'dlss', label: 'DLSS Super Resolution 310.8.0' },
+  { id: 'dlssg', label: 'DLSS Frame Generation 310.7.0' }
+]
+let _dlss5State = {}, _dlss5LastPkg = null, _dlss5Files = 0, _dlss5Done = false
+function renderDlss5Progress() {
+  const box = $('dlss5Progress')
+  if (!box) return
+  if (!Object.keys(_dlss5State).length && !_dlss5Done && !_dlss5Files) { box.innerHTML = ''; box.style.display = 'none'; return }
+  box.style.display = 'block'
+  box.innerHTML = DLSS5_PKGS.filter(p => _dlss5State[p.id]).map(p => {
+    const s = _dlss5State[p.id]
+    const done = s.phase === 'verified'
+    const icon = done ? '<span class="dot-ok">●</span>' : '<span>…</span>'
+    const note = done && s.sha ? '✓ SHA ' + s.sha.slice(0, 12) + '…' : 'downloading…'
+    return `<div class="spec-row"><span class="spec-label">${icon} ${p.label}</span><span class="spec-value">${note}</span></div>`
+  }).join('') + (_dlss5Files ? `<div class="spec-row"><span class="spec-label">Files installed</span><span class="spec-value">${_dlss5Files}</span></div>` : '')
+    + (_dlss5Done ? '<div class="pip-advanced-hint" style="color:#4ADE80">✓ DLSS 5 components installed — restart Wan2GP.</div>' : '')
+}
+function dlss5OnEvent(d) {
+  if (!d || !d.phase) return
+  if (d.phase === 'downloading' && d.pkg && d.pkg !== 'other') { _dlss5State[d.pkg] = { phase: 'downloading' }; _dlss5LastPkg = d.pkg }
+  else if (d.phase === 'verified' && _dlss5LastPkg) { _dlss5State[_dlss5LastPkg] = { phase: 'verified', sha: d.sha || '' } }
+  else if (d.phase === 'installed' || d.phase === 'present') { _dlss5Files++ }
+  else if (d.phase === 'done') { _dlss5Done = true }
+  else return
+  renderDlss5Progress()
+}
+$('dlss5ConfirmBtn')?.addEventListener('click', async () => {
+  _dlss5State = {}; _dlss5LastPkg = null; _dlss5Files = 0; _dlss5Done = false; renderDlss5Progress()
+  $('dlss5Modal').style.display = 'none'
+  const force = !!$('dlss5ForceChk')?.checked
+  const btn = $('dlss5InstallBtn'); btn.disabled = true
+  const orig = btn.textContent; btn.textContent = 'Installing…'
+  appendLog('[*] Installing DLSS 5 runtime — progress below…')
+  try {
+    const r = await window.w2gp.installDlss5(force)
+    if (r && r.ok) showToast(r.complete ? '✓ DLSS 5 installed — restart Wan2GP' : '⏳ ' + (r.hint || 'Partial install — see console'))
+    else showToast('✗ ' + ((r && r.error) || 'install failed'))
+  } catch (e) { showToast('✗ ' + e.message) }
+  finally { btn.disabled = false; btn.textContent = orig; refreshDlss5() }
+})
+for (const id of ['dlss5DocsLink', 'dlss5DocsLink2']) {
+  const a = $(id)
+  if (a) a.onclick = async (ev) => { ev.preventDefault(); await window.w2gp.openExternal('https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/DLSS5.md') }
 }
 
 $('llmEnginesRefresh')?.addEventListener('click', () => { _llmEnginesPromise = null; refreshLLMEngines() })
@@ -3413,6 +3493,8 @@ function memProfileCollect() {
   const co = $('memCoeff').value
   const ve = $('memVae').value
   const q = $('memQuant').value
+  const i8 = $('memInt8') ? $('memInt8').value : ''
+  if (i8 !== '') s.enable_int8_kernels = Number(i8)
   if (vp) s.video_profile = Number(vp)
   if (ip) s.image_profile = Number(ip)
   if (ap) s.audio_profile = Number(ap)
@@ -3440,11 +3522,13 @@ const MEM_FIELDS = {
   audio_profile: { sel: 'memAudioProfile', rec: 'recAudioProfile', saved: 'savedAudioProfile' },
   vram_safety_coefficient: { sel: 'memCoeff', rec: 'recCoeff', saved: 'savedCoeff' },
   vae_config: { sel: 'memVae', rec: 'recVae', saved: 'savedVae' },
-  transformer_quantization: { sel: 'memQuant', rec: 'recQuant', saved: 'savedQuant' }
+  transformer_quantization: { sel: 'memQuant', rec: 'recQuant', saved: 'savedQuant' },
+  enable_int8_kernels: { sel: 'memInt8', rec: 'recInt8', saved: 'savedInt8' }
 }
 function fmtVal(key, v) {
   if (v == null || v === '') return '—'
   if (key === 'vae_config') return v + (Number(v) === 0 ? ' (AUTO)' : '')
+  if (key === 'enable_int8_kernels') return Number(v) === 1 ? 'Enabled (if Triton)' : 'Disabled'
   return String(v)
 }
 
@@ -3477,7 +3561,8 @@ function memProfileFromRecommendation(rec) {
     audio_profile: rec.audio_profile,
     vram_safety_coefficient: rec.vram_safety_coefficient,
     vae_config: rec.vae_config != null ? rec.vae_config : 0, // AUTO unless Detect set a fixed value
-    transformer_quantization: rec.transformer_quantization
+    transformer_quantization: rec.transformer_quantization,
+    enable_int8_kernels: rec.enable_int8_kernels != null ? rec.enable_int8_kernels : 1
   }, { mode: 'recommend' })
 }
 

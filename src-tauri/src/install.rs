@@ -341,3 +341,85 @@ pub async fn install_prerequisite(app: tauri::AppHandle, tool: String) -> Result
     while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s, "setup"); let _ = app.emit("launch-log", s); }, _=>{} } }
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
+
+const DLSS5_FILES: &[&str] = &["host/nr-depth-worker.exe", "host/dxgi.dll", "host/renodx-dlss5.addon64", "host/nvngx_dlssnr.dll", "dlss/nvngx_dlss.dll", "dlssg/nvngx_dlssg.dll", "dlssg/dlssg-worker.exe"];
+
+#[tauri::command]
+pub fn dlss5_status() -> serde_json::Value {
+    let repo = get_repo_dir();
+    if !repo.join("wgp.py").exists() { return serde_json::json!({"ok": false, "error": "Wan2GP not installed"}); }
+    let present: Vec<&str> = DLSS5_FILES.iter().copied().filter(|f| repo.join("dlss5").join(f).exists()).collect();
+    serde_json::json!({"ok": true, "installed": !present.is_empty(), "complete": present.len() == DLSS5_FILES.len(), "present": present.len(), "total": DLSS5_FILES.len()})
+}
+
+// Optional DLSS5 runtime (docs/DLSS5.md): runs Wan2GP's own Install-DLSS5.ps1.
+// Consent ("I ACCEPT") is taken in the UI modal, so the script gets
+// -AcceptThirdPartyRisk and never blocks on Read-Host. Verdict comes from
+// re-probing dlss5/, not from parsing script output.
+// Best-effort classification of Install-DLSS5.ps1 output into checklist events.
+// The script stays the integrity authority (pinned SHA-256 + NVIDIA sig check);
+// this only mirrors its Downloading / verified / Installed lines to the UI.
+fn dlss5_classify(app: &tauri::AppHandle, chunk: &str) {
+    let pkg = |name: &str| -> &str {
+        let n = name.to_lowercase();
+        if n.contains("workers") { "workers" }
+        else if n.contains("reshade") { "reshade" }
+        else if n.contains("renodx") { "renodx" }
+        else if n.contains("dlssnr") { "dlssnr" }
+        else if n.contains("frame generation") { "dlssg" }
+        else if n.contains("super resolution") { "dlss" }
+        else { "other" }
+    };
+    for raw in chunk.split('\n') {
+        let t = raw.trim().trim_end_matches('.').trim();
+        if t.is_empty() { continue; }
+        let ev = if let Some(name) = t.strip_prefix("Downloading ") {
+            Some(serde_json::json!({"phase": "downloading", "pkg": pkg(name), "label": name.trim()}))
+        } else if let Some(sha) = t.strip_prefix("verified ") {
+            Some(serde_json::json!({"phase": "verified", "sha": sha.trim()}))
+        } else if let Some(p) = t.strip_prefix("Installed: ") {
+            Some(serde_json::json!({"phase": "installed", "path": p.trim()}))
+        } else if let Some(p) = t.strip_prefix("Already installed: ") {
+            Some(serde_json::json!({"phase": "present", "path": p.trim()}))
+        } else if t.contains("DLSS 5 components are installed") {
+            Some(serde_json::json!({"phase": "done"}))
+        } else { None };
+        if let Some(ev) = ev { let _ = app.emit("dlss5-progress", ev); }
+    }
+}
+
+#[tauri::command]
+pub async fn install_dlss5(app: tauri::AppHandle, force: bool) -> Result<serde_json::Value,String> {
+    mutating_try("install-dlss5")?;
+    #[cfg(not(windows))] { mutating_done(); return Err("DLSS5 is Windows-only".into()); }
+    let repo = get_repo_dir();
+    let emit = |msg: &str| { crate::base::push_log(msg, "setup"); let _ = app.emit("setup-output", msg.to_string()); };
+    if !repo.join("wgp.py").exists() { mutating_done(); return Err("Wan2GP not installed".into()); }
+    let ps1 = repo.join("scripts/install_dlss5.ps1");
+    if !ps1.exists() { mutating_done(); return Err("install_dlss5.ps1 not found — update Wan2GP first".into()); }
+    emit("[*] Installing DLSS5 runtime (upstream script — progress below)…\n");
+    emit("[*] Stop Wan2GP first — files under dlss5/ can't be replaced while in use.\n");
+    let mut args = vec!["-NoProfile".to_string(), "-ExecutionPolicy".into(), "Bypass".into(), "-File".into(), ps1.to_string_lossy().to_string(), "-WanGPRoot".into(), repo.to_string_lossy().to_string(), "-AcceptThirdPartyRisk".into()];
+    if force { args.push("-Force".into()); }
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (mut rx, _) = app.shell().command("powershell").args(&arg_refs).spawn().map_err(|e| e.to_string())?;
+    let mut spawn_err = false;
+    while let Some(ev) = rx.recv().await {
+        match ev {
+            CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => {
+                let s = String::from_utf8_lossy(&b).to_string();
+                emit(&s);
+                dlss5_classify(&app, &s);
+            }
+            CommandEvent::Error(e) => { emit(&format!("[!] {e}\n")); spawn_err = true; }
+            _ => {}
+        }
+    }
+    let st = dlss5_status();
+    let complete = st.get("complete").and_then(|v| v.as_bool()).unwrap_or(false);
+    let installed = st.get("installed").and_then(|v| v.as_bool()).unwrap_or(false);
+    mutating_done();
+    if complete && !spawn_err { return Ok(serde_json::json!({"ok": true, "success": true, "complete": true})); }
+    if installed { return Ok(serde_json::json!({"ok": true, "success": true, "complete": false, "hint": "Partial install — see console; rerun with Force if files conflict."})); }
+    Err("DLSS5 install failed — see console output".into())
+}
