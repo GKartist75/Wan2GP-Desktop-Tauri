@@ -116,9 +116,44 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
     let launch_cfg = load_config_value();
     let hf_token = launch_cfg.get("hfToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let claude_key = launch_cfg.get("claudeApiKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    // bootstrap shim — minimal PYTHONUNBUFFERED + isatty patch so tqdm bars stream
-    let boot = repo.join(".wan2gp-bootstrap.py");
-    let _ = std::fs::write(&boot, "import runpy,sys,os; os.environ['PYTHONUNBUFFERED']='1'\nrunpy.run_path('wgp.py',run_name='__main__')");
+    // Bootstrap shim (Electron parity): lies isatty()=True so tqdm +
+    // huggingface_hub bars render even though stdout is piped, not a tty.
+    // Fresh temp file per launch (never repo-local): %TEMP% cleaners or a
+    // stale copy used to break launches with cryptic errors until restart.
+    // ponytail: Electron's z-image VAE monkeypatch deliberately NOT ported — crash fix, separate issue.
+    let boot = {
+        let tmp = std::env::temp_dir();
+        for stale in std::fs::read_dir(&tmp).into_iter().flatten().flatten() {
+            let n = stale.file_name().to_string_lossy().to_string();
+            if n.starts_with("wan2gp-bootstrap-") && n.ends_with(".py") { let _ = std::fs::remove_file(stale.path()); }
+        }
+        tmp.join(format!("wan2gp-bootstrap-{}-{}.py", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)))
+    };
+    let _ = std::fs::write(&boot, r#"import os, sys, runpy
+os.environ['PYTHONUNBUFFERED'] = '1'
+os.environ['TQDM_MININTERVAL'] = '0'
+os.environ['TQDM_MINITERS'] = '1'
+os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '0'
+os.environ['HF_HUB_ENABLE_HF_TRANSFER'] = '0'
+os.environ.setdefault('TERM', 'xterm-256color')
+class _Tty:
+    def __init__(self, inner): self._inner = inner
+    def isatty(self): return True
+    def fileno(self):
+        try: return self._inner.fileno()
+        except OSError: raise
+    def __getattr__(self, n): return getattr(self._inner, n)
+sys.stdout = _Tty(sys.stdout)
+sys.stderr = _Tty(sys.stderr)
+sys.__stdout__ = sys.stdout
+sys.__stderr__ = sys.stderr
+print('[bootstrap] active', flush=True)
+sys.argv = sys.argv[1:]
+d = os.path.dirname(os.path.abspath(sys.argv[0]))
+if d not in sys.path: sys.path.insert(0, d)
+runpy.run_path(sys.argv[0], run_name='__main__')
+"#);
+    args.insert(0, boot.to_string_lossy().to_string()); // py <boot> wgp.py … (target = argv[1])
     // resolve python for active env
     let env = get_active_env();
     let py = if let Some(raw) = env.get("path").and_then(|p| p.as_str()) {
@@ -142,7 +177,7 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
     let mut cmd = cmd;
     // set env via std::env for child inheritance as fallback
     // (shell plugin also inherits process env, so set temporarily)
-    if !hf_token.is_empty() { std::env::set_var("HF_TOKEN", &hf_token); }
+    if !hf_token.is_empty() { std::env::set_var("HF_TOKEN", &hf_token); std::env::set_var("HUGGINGFACE_HUB_TOKEN", &hf_token); }
     if !claude_key.is_empty() { std::env::set_var("ANTHROPIC_API_KEY", &claude_key); }
     // GGUF CUDA kernel knobs from Manage → GGUF CUDA Kernel (docs/INSTALLATION.md parity).
     // std::env persists in OUR process across launches, so always reconcile:
@@ -175,6 +210,9 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
     // Live progress bars (mirrors Electron terminal env): redraw every iteration.
     std::env::set_var("TQDM_MININTERVAL", "0");
     std::env::set_var("TQDM_MINITERS", "1");
+    // Bars on for piped output; classic hf_hub path (hf_transfer has its own non-tqdm progress).
+    std::env::set_var("HF_HUB_DISABLE_PROGRESS_BARS", "0");
+    std::env::set_var("HF_HUB_ENABLE_HF_TRANSFER", "0");
     std::env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
     // External-terminal mode: visible console window running wgp.py (run.bat style).
     // Not a child we stream — the user owns the window; Stop also kills by title.
