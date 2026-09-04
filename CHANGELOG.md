@@ -2,6 +2,10 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.2.1] — 2026-09-04
+
+- Live console download bars: bootstrap shim actually wired into launch (isatty patch, HF progress env, `HUGGINGFACE_HUB_TOKEN` mirror, per-launch temp file) — model/LoRA downloads stream tqdm bars
+
 ## [Unreleased]
 
 - Launcher update check runs once shortly after boot (5h poll alone left fresh releases unknown for hours)
