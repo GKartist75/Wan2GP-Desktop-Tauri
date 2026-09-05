@@ -2,6 +2,10 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [Unreleased]
+
+- Resolved install stack renders again (was fed the wrong backend shape, so it never appeared) — now with GPU/CUDA/Python/uv/profile, free disk, and target verdict
+
 ## [0.4.0] — 2026-09-05
 
 No more silent failures: every step of install, reuse, migrate and launch is checked, reported honestly, and recoverable.
