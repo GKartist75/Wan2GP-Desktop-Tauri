@@ -88,6 +88,7 @@ Through the launcher you get the **full WanGP** — same models, same UI, same p
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
+- **v0.3.0** — DLSS5 status counts all 8 runtime files (+ `host/nvngx.dll`), README tracks workers v1.1.3; update check runs once shortly after boot.
 - **v0.2.1** — live console download bars (bootstrap fix).
 - **v0.2.0** — 🧩 Plugin Manager tab (Status Pro default plugin, favourites auto-install) · ✨ DLSS5 one-click installer with live SHA checklist · Deepy local Qwen3.8 Prime + Claude bridge 0.1.66 + npm/`cmd /C` fix · Auto-Tune Int8 Kernels default-on · maximized window · scoped Stop (only our processes).
 - **v0.1.3** — renamed to Wan2GP Desktop Launcher Tauri (product, binary, installer); topbar cleanup (Electron port): reload after Console, red stop button, no title overlap.
@@ -225,7 +226,7 @@ Switching live-re-renders the selector; **Apply** writes a consistent `wgp_confi
 
 ## ✨ DLSS5 installer — optional NVIDIA upsamplers
 
-Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.2, ReShade 6.8.0, RenoDX 4.70, DLSSNR 310.8.SF-v2, DLSS 310.8.0, Frame Generation 310.7.0) into `C:\Wan2GP\dlss5\` with a live per-component checklist — downloading → SHA-256 ✓ → installed — plus console progress.
+Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReShade 6.8.0, RenoDX 4.70, DLSSNR 310.8.SF-v2, DLSS 310.8.0, Frame Generation 310.7.0) into `C:\Wan2GP\dlss5\` with a live per-component checklist — downloading → SHA-256 ✓ → installed — plus console progress.
 
 ![DLSS5 installer — live per-component checklist with SHA-256 verification](screenshots/dlss5-checklist.png)
 
