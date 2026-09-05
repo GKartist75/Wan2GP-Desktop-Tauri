@@ -520,6 +520,40 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
             return Err(e);
         }
     }
+    // venv mode on Windows needs `py -3.11` (Electron parity: isolated shim
+    // instead of a global Python install). Without a launcher, setup.py dies
+    // looking for it even when a perfect uv-managed copy exists.
+    #[cfg(windows)]
+    let mut saved_path: Option<String> = None;
+    #[cfg(windows)]
+    if env == "venv" {
+        let shim_ok = silent_command("py").args(["-3.11", "-c", "import sys"]).output().is_ok_and(|o| o.status.success());
+        if !shim_ok {
+            let wanted = pinned_python_wanted();
+            match ensure_uv_python(&app, &emit, &wanted).await {
+                Ok(uvpy) => {
+                    let shim_dir = get_data_dir().join(".py-shim");
+                    let _ = std::fs::create_dir_all(&shim_dir);
+                    // Batch shim: strips the -3.11 selector, delegates the rest.
+                    let shim = format!("@echo off\r\nsetlocal enabledelayedexpansion\r\nset \"args=%*\"\r\nset \"args=!args:-3.11 =!\"\r\nif \"!args!\"==\"%*\" set \"args=!args:-3.11=!\"\r\n\"{uvpy}\" !args!\r\nexit /b %errorlevel%\r\n");
+                    let _ = std::fs::write(shim_dir.join("py.cmd"), &shim);
+                    let _ = std::fs::write(shim_dir.join("py.bat"), &shim);
+                    let old = std::env::var("PATH").unwrap_or_default();
+                    let add = shim_dir.to_string_lossy().to_string();
+                    if !old.split(';').any(|p| p.eq_ignore_ascii_case(&add)) {
+                        std::env::set_var("PATH", format!("{add};{old}"));
+                    }
+                    saved_path = Some(old);
+                    if silent_command("py").args(["-3.11", "-c", "import sys"]).output().is_ok_and(|o| o.status.success()) {
+                        emit("[*] py launcher shim ready (isolated Python, no global install)\n");
+                    } else {
+                        emit("[!] py shim created but `py -3.11` still not found — venv setup may fail; install Python 3.11 (Download button) or use the uv env type.\n");
+                    }
+                }
+                Err(e) => { mutating_done(); return Err(e); }
+            }
+        }
+    }
     // run setup.py with the env's python (hardware-aware: setup.py reads setup_config.json + GPU)
     {
         let (py, args): (String, Vec<String>) = if env.as_str() == "conda" { ("conda".into(), vec!["run".into(), "-p".into(), env_path.to_string_lossy().to_string(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) } else {
@@ -600,6 +634,9 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
             }
         }
         let code = exit_code.unwrap_or(-1);
+        // Restore PATH before any return below (shim prepend is install-scoped).
+        #[cfg(windows)]
+        if let Some(old) = saved_path { std::env::set_var("PATH", old); }
         if code != 0 {
             // setup.py failed — report honestly, no false "Installation complete!".
             // (ATFGriff: exit 2 from `uv venv --python 3.11.14` was swallowed here.)
@@ -942,6 +979,57 @@ pub(crate) fn fs_extra_fallback_copy_dir(src: &Path, dst: &Path) -> Result<(), S
     }
     Ok(())
 }
+/// Re-read the registry PATH (HKCU + HKLM) into this process after a
+/// winget install, so newly installed tools resolve WITHOUT a launcher
+/// restart. Merges registry entries into the live PATH (deduplicated) —
+/// never removes anything. Windows-only; no-op elsewhere.
+#[cfg(windows)]
+fn refresh_path_from_registry() {
+    let mut additions: Vec<String> = Vec::new();
+    for (hk, sub) in [
+        ("HKCU", "Environment"),
+        ("HKLM", "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment"),
+    ] {
+        let target = format!("{hk}\\{sub}");
+        let Ok(o) = silent_command("reg").args(["query", &target, "/v", "Path"]).output() else { continue };
+        if !o.status.success() { continue; }
+        for line in String::from_utf8_lossy(&o.stdout).lines() {
+            let low = line.to_lowercase();
+            let Some(pos) = low.find("reg_expand_sz").or_else(|| low.find("reg_sz")) else { continue };
+            let after_type = line[pos..].split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+            if after_type.is_empty() { continue; }
+            // Expand %VAR% against the live environment.
+            let mut expanded = after_type;
+            let mut i = 0;
+            while i < expanded.len() {
+                let rest = &expanded[i..];
+                let Some(a) = rest.find('%') else { break };
+                let a = a + i;
+                let Some(b) = expanded[a + 1..].find('%') else { break };
+                let b = b + a + 1;
+                let name = expanded[a + 1..b].to_string();
+                match std::env::var(&name) {
+                    Ok(v) => { expanded.replace_range(a..=b, &v); i = a + v.len(); }
+                    Err(_) => { i = b + 1; }
+                }
+            }
+            for part in expanded.split(';').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                additions.push(part.to_string());
+            }
+        }
+    }
+    if additions.is_empty() { return; }
+    let cur = std::env::var("PATH").unwrap_or_default();
+    let mut merged = cur.clone();
+    for a in &additions {
+        if !cur.split(';').any(|p| p.eq_ignore_ascii_case(a)) {
+            merged.push(';');
+            merged.push_str(a);
+        }
+    }
+    std::env::set_var("PATH", merged);
+}
+
 #[tauri::command]
 pub async fn install_prerequisite(app: tauri::AppHandle, tool: String) -> Result<serde_json::Value,String> {
     use tauri_plugin_shell::ShellExt;
@@ -973,8 +1061,23 @@ pub async fn install_prerequisite(app: tauri::AppHandle, tool: String) -> Result
         }
     }
     if failed { return Err(format!("{tool} install failed — see output above (winget needs network; some packages need admin approval)")); }
-    emit(&format!("[✓] {tool} installed — restart the launcher so PATH picks it up.\n"));
-    Ok(serde_json::json!({"ok": true, "success": true}))
+    // Pick up the new PATH without a restart when possible (winget-only on
+    // Windows; elsewhere the package manager owns it).
+    #[cfg(windows)]
+    refresh_path_from_registry();
+    #[cfg(not(windows))]
+    return Err(format!("{tool} is installed via winget (Windows-only path) — install it with your system package manager instead, then retry."));
+    #[cfg(windows)]
+    {
+        let probe = match tool.as_str() { "git" => "git", "uv" => "uv", "python" => "python", "conda" => "conda", _ => "" };
+        let ready = !probe.is_empty() && silent_command("where").arg(probe).output().is_ok_and(|o| o.status.success());
+        if ready {
+            emit(&format!("[✓] {tool} installed and on PATH — continuing…\n"));
+            return Ok(serde_json::json!({"ok": true, "success": true, "ready": true}));
+        }
+        emit(&format!("[✓] {tool} installed — restart the launcher so PATH picks it up.\n"));
+        return Ok(serde_json::json!({"ok": true, "success": true, "ready": false}));
+    }
 }
 
 // Pinned manifest mirrors upstream scripts/install_dlss5.ps1: one row per installed
