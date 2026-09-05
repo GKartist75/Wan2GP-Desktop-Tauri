@@ -342,15 +342,18 @@ pub async fn install_prerequisite(app: tauri::AppHandle, tool: String) -> Result
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
 
-// Pinned manifest mirrors upstream scripts/install_dlss5.ps1 (labels + download SHA-256).
-// ponytail: the backend owns labels/SHAs so the panel can't go stale like the old hardcoded frontend copy.
-const DLSS5_PKGS: &[(&str, &str, &str, &[&str])] = &[
-  ("workers", "Workers v1.1.3", "EC470D8EB990CC04FE142C037B2F9E84C1D59A70B111DF51F110767897F5B0C2", &["host/nr-depth-worker.exe", "host/nvngx.dll", "dlssg/dlssg-worker.exe"]),
-  ("reshade", "ReShade 6.8.0", "AFE4C8F13048306307983B8B3D41D5BF00A86820440B0E57DEA10950E1176445", &["host/dxgi.dll"]),
-  ("renodx", "RenoDX DLSS5 4.70", "D6E356D01B429AF6288F488A4926C44F1D779A7D4586EE8C79D04D3A09A536E6", &["host/renodx-dlss5.addon64"]),
-  ("dlssnr", "DLSSNR 310.8.SF-v2", "1DA35941894994EB087E017577829E492454E9BAE3A6A9397027069CEB74955C", &["host/nvngx_dlssnr.dll"]),
-  ("dlss", "DLSS Super Resolution 310.8.0", "FB481660F7E952B87F91760E3AFD7F9DC14CD2C3361B470E948D6346E4323009", &["dlss/nvngx_dlss.dll"]),
-  ("dlssg", "DLSS Frame Generation 310.7.0", "BFA977FB4451718C7D4A2217518DFC1AD30D77CE0EA026253C82BE96F5B9D35A", &["dlssg/nvngx_dlssg.dll"]),
+// Pinned manifest mirrors upstream scripts/install_dlss5.ps1: one row per installed
+// file (path, package id, version, expected file SHA-256).
+// ponytail: the backend owns versions/SHAs so the panel can't go stale like the old hardcoded frontend copy.
+const DLSS5_FILES: &[(&str, &str, &str, &str)] = &[
+  ("host/nr-depth-worker.exe", "workers", "Workers v1.1.3", "F8E2967912E5D596E8E36049370487B83620B0CB5845937B681CF835BAFC6D0B"),
+  ("host/nvngx.dll", "workers", "Workers v1.1.3", "58191F4D38288C6BFBDA47EF56911D32052A9789E65714F4583F426E01464638"),
+  ("dlssg/dlssg-worker.exe", "workers", "Workers v1.1.3", "D93084633E0AAB4A08C43A5EE240176716EF73D87F06F35C2293509FBFC8BD00"),
+  ("host/dxgi.dll", "reshade", "ReShade 6.8.0", "0CEE63F9C9F13F3AC909C5B4903F4DBB4B719A7AB3B4F13B0DEAF83C814B94F7"),
+  ("host/renodx-dlss5.addon64", "renodx", "RenoDX DLSS5 4.70", "D5ADF82EB44B065F4C590AC91FE824BAB07AFEA0EB9F994BDE936710C8593952"),
+  ("host/nvngx_dlssnr.dll", "dlssnr", "DLSSNR 310.8.SF-v2", "6EB209E764F39872625DEBD6ABAF45E2BB6322F6F270F781F70C059AE30B3927"),
+  ("dlss/nvngx_dlss.dll", "dlss", "DLSS Super Resolution 310.8.0", "C85F971CE023C9F3492FC7455F0B01A24BA18EA39636407A846902C4360B0B7E"),
+  ("dlssg/nvngx_dlssg.dll", "dlssg", "DLSS Frame Generation 310.7.0", "135EAF0733C1E37381A8C28ABCF7A862404A54132B81787C04E35D09EFC5E36F"),
 ];
 
 #[tauri::command]
@@ -358,13 +361,12 @@ pub fn dlss5_status() -> serde_json::Value {
     let repo = get_repo_dir();
     if !repo.join("wgp.py").exists() { return serde_json::json!({"ok": false, "error": "Wan2GP not installed"}); }
     let dlss5 = repo.join("dlss5");
-    let (mut present, mut total) = (0usize, 0usize);
-    let pkgs: Vec<serde_json::Value> = DLSS5_PKGS.iter().map(|(id, label, sha, files)| {
-        let n = files.iter().filter(|f| dlss5.join(f).exists()).count();
-        present += n; total += files.len();
-        serde_json::json!({"id": id, "label": label, "sha": sha, "installed": n == files.len(), "present": n, "total": files.len()})
+    let files: Vec<serde_json::Value> = DLSS5_FILES.iter().map(|(path, pkg, version, sha)| {
+        let ok = dlss5.join(path).exists();
+        serde_json::json!({"id": path, "pkg": pkg, "version": version, "sha": sha, "installed": ok})
     }).collect();
-    serde_json::json!({"ok": true, "installed": present > 0, "complete": present == total, "present": present, "total": total, "packages": pkgs})
+    let present = files.iter().filter(|f| f["installed"].as_bool().unwrap_or(false)).count();
+    serde_json::json!({"ok": true, "installed": present > 0, "complete": present == files.len(), "present": present, "total": files.len(), "files": files})
 }
 
 // Optional DLSS5 runtime (docs/DLSS5.md): runs Wan2GP's own Install-DLSS5.ps1.
