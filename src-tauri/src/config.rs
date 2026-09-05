@@ -37,26 +37,33 @@ pub fn get_install_paths() -> serde_json::Value {
     })
 }
 
+/// Free/total bytes for the disk hosting `p` (longest-prefix mount match).
+/// Shared by get_disk_space and python_preflight (uv's own data dir).
+pub(crate) fn disk_for_path(p: &str) -> Option<(u64, u64)> {
+    use sysinfo::{Disks, DiskRefreshKind};
+    let disks = Disks::new_with_refreshed_list_specifics(DiskRefreshKind::nothing().with_storage());
+    let mut best: Option<&sysinfo::Disk> = None;
+    let mut best_len = 0usize;
+    for d in disks.list() {
+        let mp = d.mount_point().to_string_lossy().to_string();
+        if p.to_lowercase().starts_with(&mp.to_lowercase()) && mp.len() > best_len {
+            best_len = mp.len();
+            best = Some(d);
+        }
+    }
+    best.map(|d| (d.available_space(), d.total_space()))
+}
+
 #[tauri::command]
 pub fn get_disk_space(path: Option<String>) -> serde_json::Value {
     let p = path.unwrap_or_else(|| get_data_dir().to_string_lossy().to_string());
     // Use sysinfo Disks — ~0ms, no powershell spawn (was 400ms)
+    if let Some((free, total)) = disk_for_path(&p) {
+        return serde_json::json!({"path": p, "free": free, "total": total});
+    }
     {
         use sysinfo::{Disks, DiskRefreshKind};
         let disks = Disks::new_with_refreshed_list_specifics(DiskRefreshKind::nothing().with_storage());
-        // match longest prefix mount_point that is parent of p
-        let mut best: Option<&sysinfo::Disk> = None;
-        let mut best_len = 0usize;
-        for d in disks.list() {
-            let mp = d.mount_point().to_string_lossy().to_string();
-            if p.to_lowercase().starts_with(&mp.to_lowercase()) && mp.len() > best_len {
-                best_len = mp.len();
-                best = Some(d);
-            }
-        }
-        if let Some(d) = best {
-            return serde_json::json!({"path": p, "free": d.available_space(), "total": d.total_space()});
-        }
         // fallback: first disk
         if let Some(d) = disks.list().first() {
             return serde_json::json!({"path": p, "free": d.available_space(), "total": d.total_space()});
@@ -119,7 +126,27 @@ pub fn validate_install() -> serde_json::Value {
     let mut errors: Vec<String> = Vec::new();
     if !repo.join("wgp.py").exists() { errors.push("wgp.py not found — not installed".into()); }
     if !repo.join("setup_config.json").exists() { errors.push("setup_config.json missing".into()); }
-    if get_active_env().is_null() { errors.push("no active env".into()); }
+    let env = get_active_env();
+    if env.is_null() {
+        errors.push("no active env".into());
+    } else if let Some(raw) = env.get("path").and_then(|p| p.as_str()) {
+        // Reuse is only honest if the interpreter exists AND runs (a stale
+        // envs.json entry or a half-deleted venv must fail here, not on the
+        // dashboard after "Use existing & go to Dashboard").
+        let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { repo.join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
+        if !base.exists() {
+            errors.push(format!("env folder missing on disk: {}", base.display()));
+        } else {
+            #[cfg(windows)] let py = base.join("Scripts\\python.exe");
+            #[cfg(not(windows))] let py = base.join("bin/python");
+            if !py.exists() {
+                errors.push(format!("env python missing ({} broken) — repair the environment", base.display()));
+            } else {
+                let runs = silent_command(&py).arg("-c").arg("import sys").output().is_ok_and(|o| o.status.success());
+                if !runs { errors.push("env python won't start — reinstall/repair the environment".into()); }
+            }
+        }
+    }
     serde_json::json!({"ok": errors.is_empty(), "errors": errors})
 }
 #[tauri::command]
@@ -165,43 +192,136 @@ pub fn manage_list() -> serde_json::Value {
     use tauri::Emitter;
     let log = |m: &str| { crate::base::push_log(m, "setup"); let _ = app.emit("setup-output", m.to_string()); };
     let f = get_envs_file(); let mut v: serde_json::Value = std::fs::read_to_string(&f).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::json!({}));
-    let path = v.get("envs").and_then(|e| e.get(&name)).and_then(|e| e.get("path")).and_then(|p| p.as_str()).map(|p| if std::path::Path::new(p).is_absolute() { PathBuf::from(p) } else { get_repo_dir().join(p.trim_start_matches(['.', '\\', '/'])) });
-    // Delete with progress (a venv is 100k+ files — one blocking remove_dir_all looks frozen).
-    if let Some(p) = path.clone() {
-        log("[*] Removing environment folder...
-");
-        let app2 = app.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            fn rm(path: &Path, n: &mut u64, app: &tauri::AppHandle) {
-                use tauri::Emitter;
-                if let Ok(rd) = std::fs::read_dir(path) {
-                    for e in rd.flatten() {
-                        let p = e.path();
-                        if p.is_dir() && !p.is_symlink() { rm(&p, n, app); let _ = std::fs::remove_dir(&p); }
-                        else { let _ = std::fs::remove_file(&p); }
-                        *n += 1;
-                        if *n % 2000 == 0 {
-                            let m = format!("[*] ...{} files removed
-", *n);
-                            crate::base::push_log(&m, "setup");
-                            let _ = app.emit("setup-output", m);
+    let entry = v.get("envs").and_then(|e| e.get(&name)).cloned();
+    let Some(entry) = entry else { return Err("Environment not found".into()); };
+    let etype = entry.get("type").and_then(|t| t.as_str()).unwrap_or("?");
+    log(&format!("[{name}] type: {etype}\n"));
+    if let Some(raw) = entry.get("path").and_then(|p| p.as_str()) {
+        if etype != "none" {
+            let repo = get_repo_dir();
+            let p = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { repo.join(raw.trim_start_matches(['.', '\\', '/'])) };
+            log(&format!("[{name}] path: {}\n", p.display()));
+            // SECURITY (mirrors Electron ensureInsideRepo): never delete outside the repo.
+            if !p.starts_with(&repo) {
+                log(&format!("[{name}] SECURITY: env path outside repo — skipped deletion\n"));
+                return Err("Environment path outside repo — deletion blocked".into());
+            }
+            if p.exists() {
+                // Size + top-level contents first, so the console shows what is being
+                // removed (Electron parity) — then delete with progress. A venv is
+                // 100k+ files, so all of it runs on a background thread.
+                let app2 = app.clone();
+                let name2 = name.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    use tauri::Emitter;
+                    let say = |m: String| { crate::base::push_log(&m, "setup"); let _ = app2.emit("setup-output", m); };
+                    fn du(path: &Path, acc: &mut u64) {
+                        if let Ok(rd) = std::fs::read_dir(path) {
+                            for e in rd.flatten() {
+                                let q = e.path();
+                                if q.is_dir() && !q.is_symlink() { du(&q, acc); }
+                                else if let Ok(m) = e.metadata() { *acc += m.len(); }
+                            }
                         }
                     }
-                }
+                    let mut bytes: u64 = 0;
+                    du(&p, &mut bytes);
+                    if bytes > 0 {
+                        let human = if bytes >= 1073741824 { format!("{:.1} GB", bytes as f64 / 1073741824.0) }
+                            else if bytes >= 1048576 { format!("{:.1} MB", bytes as f64 / 1048576.0) }
+                            else { format!("{:.1} KB", bytes as f64 / 1024.0) };
+                        say(format!("[{name2}] size: {human}\n"));
+                    }
+                    if let Ok(rd) = std::fs::read_dir(&p) {
+                        let top: Vec<String> = rd.flatten().take(20).map(|e| e.file_name().to_string_lossy().to_string()).collect();
+                        if !top.is_empty() { say(format!("[{name2}] contents:\n  {}\n", top.join("\n  "))); }
+                    }
+                    // Delete with progress + retries: a locked file (running python,
+                    // open terminal) fails once — retry with backoff before giving up
+                    // on it, so one stubborn handle can't silently leave residue.
+                    // Trust log: every directory entered is printed, plus a live
+                    // current-file line (\r overwrites in place — no flooding) and
+                    // the 2000-file milestones. Live lines skip the history buffer.
+                    fn rm_tree(root: &Path, path: &Path, n: &mut u64, app: &tauri::AppHandle, name: &str, depth: usize, last_live: &mut std::time::Instant) {
+                        use tauri::Emitter;
+                        if let Ok(rd) = std::fs::read_dir(path) {
+                            for e in rd.flatten() {
+                                let q = e.path();
+                                if q.is_dir() && !q.is_symlink() {
+                                    if depth <= 1 {
+                                        let rel = q.strip_prefix(root).unwrap_or(&q).to_string_lossy().to_string();
+                                        let m = format!("[{name}] removing {rel}\\…\n");
+                                        crate::base::push_log(&m, "setup");
+                                        let _ = app.emit("setup-output", m);
+                                    }
+                                    rm_tree(root, &q, n, app, name, depth + 1, last_live);
+                                    rm_retry(|| std::fs::remove_dir(&q).map_err(|e| e.to_string()));
+                                } else {
+                                    rm_retry(|| std::fs::remove_file(&q).map_err(|e| e.to_string()));
+                                }
+                                *n += 1;
+                                if *n % 2000 == 0 {
+                                    let m = format!("[{name}] …{n} files removed\n");
+                                    crate::base::push_log(&m, "setup");
+                                    let _ = app.emit("setup-output", m);
+                                    *last_live = std::time::Instant::now();
+                                } else if last_live.elapsed() > std::time::Duration::from_millis(500) {
+                                    *last_live = std::time::Instant::now();
+                                    let rel = q.strip_prefix(root).unwrap_or(&q).to_string_lossy().to_string();
+                                    let _ = app.emit("setup-output", format!("\r[{name}] removing {rel}"));
+                                }
+                            }
+                        }
+                    }
+                    fn rm_retry(mut op: impl FnMut() -> Result<(), String>) {
+                        for attempt in 0..6 {
+                            if op().is_ok() { return; }
+                            if attempt < 5 { std::thread::sleep(std::time::Duration::from_millis(300)); }
+                        }
+                    }
+                    let mut n: u64 = 0;
+                    let mut last_live = std::time::Instant::now();
+                    rm_tree(&p, &p, &mut n, &app2, &name2, 0, &mut last_live);
+                    rm_retry(|| std::fs::remove_dir(&p).map_err(|e| e.to_string()));
+                    if p.exists() {
+                        // Second sweep entry-by-entry so one locked subdir can't shield the rest.
+                        if let Ok(rd) = std::fs::read_dir(&p) {
+                            for e in rd.flatten() {
+                                let q = e.path();
+                                if q.is_dir() && !q.is_symlink() { rm_tree(&p, &q, &mut n, &app2, &name2, 1, &mut last_live); }
+                                rm_retry(|| if q.is_dir() && !q.is_symlink() { std::fs::remove_dir(&q).map_err(|e| e.to_string()) } else { std::fs::remove_file(&q).map_err(|e| e.to_string()) });
+                            }
+                        }
+                        rm_retry(|| std::fs::remove_dir(&p).map_err(|e| e.to_string()));
+                    }
+                    if p.exists() {
+                        say(format!("[{name2}] some files are locked by another process (close it / retry); remaining: {}\n", p.display()));
+                    } else {
+                        say(format!("[{name2}] folder removed ({n} files)\n"));
+                    }
+                }).await.map_err(|e| e.to_string())?;
+            } else {
+                log(&format!("[{name}] folder not found on disk, removing from registry\n"));
             }
-            let mut n: u64 = 0;
-            rm(&p, &mut n, &app2);
-            let _ = std::fs::remove_dir(&p);
-            let m = format!("[*] Removed {} files.
-", n);
-            crate::base::push_log(&m, "setup");
-            let _ = app2.emit("setup-output", m);
-        }).await.map_err(|e| e.to_string())?;
+        }
     }
     if let Some(obj) = v.get_mut("envs").and_then(|e| e.as_object_mut()) { obj.remove(&name); }
-    if v.get("active").and_then(|a| a.as_str()) == Some(&name) { v["active"] = serde_json::Value::Null; }
+    // If it was active, switch to the first remaining env (Electron parity) —
+    // leaving active=null strands the dashboard on "No active environment".
+    if v.get("active").and_then(|a| a.as_str()) == Some(&name) {
+        let next = v.get("envs").and_then(|e| e.as_object()).and_then(|m| m.keys().next().cloned());
+        if let Some(nx) = next {
+            v["active"] = serde_json::Value::String(nx.clone());
+            log(&format!("[*] Switched active env to '{nx}'\n"));
+        } else {
+            v["active"] = serde_json::Value::Null;
+            log("[*] No environments remaining\n");
+        }
+    }
     atomic_write(&f, &serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     crate::base::invalidate_path_cache();
+    if let Some(m) = crate::base::LAST_STATUS.get() { *m.lock().unwrap() = None; }
+    log(&format!("[{name}] uninstalled\n"));
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command] pub fn uv_cache_clean(action: Option<String>) -> serde_json::Value { let _=action; serde_json::json!({"success": true}) }

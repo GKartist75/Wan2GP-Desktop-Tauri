@@ -166,18 +166,148 @@ pub fn repair_settings() -> serde_json::Value {
     if looks_like_file_path(&p.to_string_lossy()) {
         return Err("Please select a folder, not a file".into());
     }
-    let ov = data_dir_override_file(); atomic_write(&ov, p.to_string_lossy().as_ref()).map_err(|e| e.to_string())?; invalidate_path_cache(); Ok(serde_json::json!({"ok": true, "success": true}))
-}
-#[tauri::command] pub fn reset_data_dir() -> serde_json::Value { let _=std::fs::remove_file(data_dir_override_file()); invalidate_path_cache(); serde_json::json!({"ok": true}) }
-#[tauri::command] pub fn migrate_to_preferred(choices: Option<serde_json::Value>) -> serde_json::Value { let _=choices; serde_json::json!({"ok": true}) }
-#[tauri::command] pub fn move_folder(src: String, dst: String) -> Result<serde_json::Value,String> {
-    let s = PathBuf::from(&src); let d = PathBuf::from(&dst);
-    if std::fs::rename(&s, &d).is_err() {
-        // cross-device fallback — copy then remove
-        if s.is_dir() { fs_extra_fallback_copy_dir(&s, &d)?; std::fs::remove_dir_all(&s).map_err(|e| e.to_string())?; }
-        else { std::fs::copy(&s, &d).map_err(|e| e.to_string())?; std::fs::remove_file(&s).map_err(|e| e.to_string())?; }
+    // Reject a bare drive root (X:\ or X:) — the UI auto-resolves those to
+    // <root>\Wan2GP before calling, so this is defense-in-depth (Electron parity).
+    {
+        let s = p.to_string_lossy().trim().replace('/', "\\");
+        let t = s.trim_end_matches('\\');
+        let is_root = t.len() == 2 && t.as_bytes()[1] == b':' && t.as_bytes()[0].is_ascii_alphabetic();
+        if is_root {
+            return Err(format!("drive-root: pick a folder such as {}\\Wan2GP, not a bare drive root", t));
+        }
     }
+    let ov = data_dir_override_file(); atomic_write(&ov, p.to_string_lossy().as_ref()).map_err(|e| e.to_string())?; invalidate_path_cache();
+    // User deliberately pointed elsewhere — drop the last-known-install marker
+    // so first-run doesn't nag about the abandoned location.
+    let marker = home_dir().join(".wan2gp-tauri-installed");
+    if std::fs::read_to_string(&marker).ok().is_some_and(|s| s.trim() != p.to_string_lossy().trim()) { let _ = std::fs::remove_file(&marker); }
     Ok(serde_json::json!({"ok": true, "success": true}))
+}
+#[tauri::command] pub fn reset_data_dir() -> serde_json::Value { let _=std::fs::remove_file(data_dir_override_file()); let _=std::fs::remove_file(home_dir().join(".wan2gp-tauri-installed")); invalidate_path_cache(); serde_json::json!({"ok": true}) }
+#[tauri::command] pub fn migrate_to_preferred(choices: Option<serde_json::Value>) -> serde_json::Value { let _=choices; serde_json::json!({"ok": true}) }
+/// Shared cross-device move used by move_folder and reinstall (model
+/// relocation before wipe). Emits migration-progress 0-100 on the slow path.
+pub(crate) async fn move_path_inner(app: &tauri::AppHandle, s: &Path, d: &Path) -> Result<serde_json::Value, String> {
+    use tauri::Emitter;
+    if !s.exists() { return Err("Source folder not found".into()); }
+    // Fast path: same-volume rename (instant, no progress needed).
+    if std::fs::rename(s, d).is_ok() && !s.exists() {
+        return Ok(serde_json::json!({"ok": true, "success": true, "mode": "rename"}));
+    }
+    // Slow path: cross-device copy with live progress, then tolerant remove +
+    // verify. Previously this was a silent blocking copy — the migration modal's
+    // progress bar never moved and locked files left a silent half-state.
+    if !s.is_dir() {
+        if let Some(par) = d.parent() { std::fs::create_dir_all(par).map_err(|e| e.to_string())?; }
+        std::fs::copy(s, d).map_err(|e| e.to_string())?;
+        let (a, b) = (std::fs::metadata(s).map(|m| m.len()).unwrap_or(0), std::fs::metadata(d).map(|m| m.len()).unwrap_or(1));
+        if a != b { return Err("Copy verification failed (size mismatch)".into()); }
+        std::fs::remove_file(s).map_err(|e| e.to_string())?;
+        return Ok(serde_json::json!({"ok": true, "success": true, "mode": "copy"}));
+    }
+    fn count(path: &Path, acc: &mut u64) {
+        if let Ok(rd) = std::fs::read_dir(path) {
+            for e in rd.flatten() {
+                *acc += 1;
+                let q = e.path();
+                if q.is_dir() && !q.is_symlink() { count(&q, acc); }
+            }
+        }
+    }
+    fn copy_tree(src: &Path, dst: &Path, done: &mut u64, total: u64, app: &tauri::AppHandle) -> Result<(), String> {
+        use tauri::Emitter;
+        std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+        let entries = std::fs::read_dir(src).map_err(|e| e.to_string())?;
+        for e in entries.flatten() {
+            let q = e.path(); let t = dst.join(e.file_name());
+            if q.is_dir() && !q.is_symlink() { copy_tree(&q, &t, done, total, app)?; }
+            else { std::fs::copy(&q, &t).map_err(|e| e.to_string())?; }
+            *done += 1;
+            if *done % 100 == 0 && total > 0 {
+                let _ = app.emit("migration-progress", (*done * 100 / total).min(100) as i64);
+            }
+        }
+        Ok(())
+    }
+    fn rm_retry(op: impl Fn() -> std::io::Result<()>) {
+        for attempt in 0..6 {
+            if op().is_ok() { return; }
+            if attempt < 5 { std::thread::sleep(std::time::Duration::from_millis(400)); }
+        }
+    }
+    fn rm_tree(path: &Path) {
+        if let Ok(rd) = std::fs::read_dir(path) {
+            for e in rd.flatten() {
+                let q = e.path();
+                if q.is_dir() && !q.is_symlink() { rm_tree(&q); rm_retry(|| std::fs::remove_dir(&q)); }
+                else { rm_retry(|| std::fs::remove_file(&q)); }
+            }
+        }
+    }
+    let (s2, d2, app2) = (s.to_path_buf(), d.to_path_buf(), app.clone());
+    let r = tauri::async_runtime::spawn_blocking(move || -> Result<(u64, u64), String> {
+        use tauri::Emitter;
+        let mut total: u64 = 0;
+        count(&s2, &mut total);
+        let mut done: u64 = 0;
+        copy_tree(&s2, &d2, &mut done, total, &app2)?;
+        let _ = app2.emit("migration-progress", 100);
+        // Verify: every source file landed at dst (compare counts).
+        let (mut a, mut b) = (0u64, 0u64);
+        count(&s2, &mut a); count(&d2, &mut b);
+        Ok((a.min(b), a))
+    }).await.map_err(|e| e.to_string())?;
+    let (copied, total) = r.map_err(|e| e.to_string())?;
+    if copied < total {
+        return Err(format!("Only {copied}/{total} entries copied to {} — disk full or unreadable files? Source left untouched.", d.display()));
+    }
+    // Remove the source, tolerating locked files, then verify.
+    let s3 = s.to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || { rm_tree(&s3); rm_retry(|| std::fs::remove_dir(&s3)); }).await.map_err(|e| e.to_string())?;
+    if s.exists() {
+        return Err(format!("Files moved to {}, but the old folder couldn't be fully removed (files locked by a running program?) — close anything using {} and delete it manually. Your data is safe at the new location.", d.display(), s.display()));
+    }
+    Ok(serde_json::json!({"ok": true, "success": true, "mode": "copy", "entries": total}))
+}
+#[tauri::command] pub async fn move_folder(app: tauri::AppHandle, src: String, dst: String) -> Result<serde_json::Value,String> {
+    move_path_inner(&app, &PathBuf::from(&src), &PathBuf::from(&dst)).await
+}
+/// Folder size with top-level breakdown — backs the reinstall backup dialog
+/// ("Wan2GP can be big when models live inside the repo").
+#[tauri::command] pub async fn folder_size(path: String) -> Result<serde_json::Value,String> {
+    let p = PathBuf::from(&path);
+    if !p.exists() { return Err("Folder not found".into()); }
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        fn du(path: &Path, acc: &mut u64) {
+            if let Ok(rd) = std::fs::read_dir(path) {
+                for e in rd.flatten() {
+                    let q = e.path();
+                    if q.is_dir() && !q.is_symlink() { du(&q, acc); }
+                    else if let Ok(m) = e.metadata() { *acc += m.len(); }
+                }
+            }
+        }
+        let mut total: u64 = 0;
+        let mut entries: Vec<serde_json::Value> = Vec::new();
+        if p.is_dir() {
+            if let Ok(rd) = std::fs::read_dir(&p) {
+                for e in rd.flatten() {
+                    let q = e.path();
+                    let is_dir = q.is_dir() && !q.is_symlink();
+                    let mut b: u64 = 0;
+                    if is_dir { du(&q, &mut b); }
+                    else { b = e.metadata().map(|m| m.len()).unwrap_or(0); }
+                    total += b;
+                    entries.push(serde_json::json!({"name": e.file_name().to_string_lossy().to_string(), "bytes": b, "isDir": is_dir}));
+                }
+            }
+        } else {
+            total = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+        }
+        entries.sort_by(|a, b| b.get("bytes").and_then(|x| x.as_u64()).unwrap_or(0).cmp(&a.get("bytes").and_then(|x| x.as_u64()).unwrap_or(0)));
+        (total, entries)
+    }).await.map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({"ok": true, "success": true, "path": path, "bytes": out.0, "entries": out.1}))
 }
 #[tauri::command] pub fn write_wgp_config(cfg: serde_json::Value) -> Result<serde_json::Value, String> {
     // ponytail: reject file-as-folder (Temp\orca-paste-*.png was pasted as folder)

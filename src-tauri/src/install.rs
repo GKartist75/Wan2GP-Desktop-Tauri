@@ -1,10 +1,327 @@
 //! Wan2GP install / reinstall / uninstall / kernel sync / core update.
+//! Hardened installer: target-folder triage (classify_target), exact-pinned
+//! Python preflight via uv (ensure_uv_python, port of Electron installPython),
+//! and setup.py exit-code propagation (no more false "Installation complete!").
 use tauri::Emitter;
 use std::path::{Path, PathBuf};
 use crate::base::*;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 use crate::{hw::{build_install_plan, get_gpu_info_sync, kernel_profile_key}, status::get_active_env};
+
+/// Pull the first X.Y[.Z] out of a version string ("3.11.14", "3.11", ">=3.11").
+fn scan_version(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let mut j = i;
+            let mut dots = 0;
+            while j < bytes.len() && (bytes[j].is_ascii_digit() || (bytes[j] == b'.' && dots < 2)) {
+                if bytes[j] == b'.' { dots += 1; }
+                j += 1;
+            }
+            let cand = s[i..j].trim_matches('.');
+            if cand.contains('.') && cand.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                return cand.to_string();
+            }
+            i = j;
+        } else { i += 1; }
+    }
+    String::new()
+}
+
+/// Exact Python pin setup.py will request via `uv venv --python X`.
+/// Read from the freshly-cloned setup_config.json when present (per-profile
+/// `python`, else common global keys) so an upstream pin bump can't silently
+/// re-open the ATFGriff hole; falls back to the README matrix (GTX 10xx →
+/// 3.10.9, everything else 3.11.14). A minor-only value ("3.11") maps to the
+/// known-good patch — requesting the *minor* is what caused the original
+/// failure (uv provisions 3.11.x while setup.py demands the exact patch).
+pub(crate) fn pinned_python_wanted() -> String {
+    let repo = get_repo_dir();
+    if let Ok(s) = std::fs::read_to_string(repo.join("setup_config.json")) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+            let gpu = get_gpu_info_sync();
+            let profile = kernel_profile_key(
+                gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
+                gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""));
+            let mut cands: Vec<&serde_json::Value> = Vec::new();
+            if let Some(p) = v.get("gpu_profiles").and_then(|g| g.get(&profile)).and_then(|p| p.get("python")) { cands.push(p); }
+            for key in ["python", "python_version"] {
+                if let Some(p) = v.get(key) { cands.push(p); }
+            }
+            if let Some(p) = v.get("components").and_then(|c| c.get("python")) { cands.push(p); }
+            for c in cands {
+                let ver = scan_version(c.as_str().unwrap_or(""));
+                if ver.is_empty() { continue; }
+                if ver.chars().filter(|c| *c == '.').count() >= 2 { return ver; }
+                // minor-only (upstream uses "3.11"): resolve the exact patch
+                // from components.python.<minor>.ver, fallback to known-good.
+                if ver.starts_with("3.") {
+                    if let Some(exact) = v.get("components").and_then(|c| c.get("python"))
+                        .and_then(|p| p.get(ver.as_str())).and_then(|e| e.get("ver"))
+                        .and_then(|x| x.as_str())
+                    {
+                        let full = scan_version(exact);
+                        if full.chars().filter(|c| *c == '.').count() >= 2 { return full; }
+                    }
+                    if ver.starts_with("3.11") { return "3.11.14".into(); }
+                    if ver.starts_with("3.10") { return "3.10.9".into(); }
+                }
+                return ver;
+            }
+        }
+    }
+    let gpu = get_gpu_info_sync();
+    let vendor = gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or("");
+    let name = gpu.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    if kernel_profile_key(vendor, name) == "GTX_10" { "3.10.9".into() } else { "3.11.14".into() }
+}
+
+/// Run a uv subcommand, stream its output to the console, return (exit_ok, output).
+async fn uv_capture(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + Sync, args: &[&str]) -> (bool, String) {
+    let (mut rx, _child) = match app.shell().command("uv").args(args).spawn() {
+        Ok(t) => t,
+        Err(e) => return (false, e.to_string()),
+    };
+    let mut out = String::new();
+    let mut code: Option<i32> = None;
+    while let Some(ev) = rx.recv().await {
+        match ev {
+            CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => {
+                let s = String::from_utf8_lossy(&b).to_string();
+                out.push_str(&s); emit(&s);
+            }
+            CommandEvent::Terminated(p) => { code = p.code; }
+            CommandEvent::Error(e) => { out.push_str(&e); }
+            _ => {}
+        }
+    }
+    (code.unwrap_or(-1) == 0, out)
+}
+
+/// Port of Electron installPython(): make sure `uv` can hand setup.py the exact
+/// pinned interpreter *before* the 20-minute install starts. Verifies the
+/// interpreter actually executes (a corrupted managed install still shows up
+/// in `uv python list`), force-reinstalls when broken.
+async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + Sync, wanted: &str) -> Result<String, String> {
+    // Never let a user/system config with `python-downloads = "never"` silently
+    // break provisioning — spawned processes inherit our env.
+    std::env::set_var("UV_PYTHON_DOWNLOADS", "automatic");
+    emit(&format!("[*] Ensuring Python {wanted} via uv (setup.py needs this exact version)…\n"));
+    // Best-effort self-update first: an old uv doesn't know new patches exist
+    // (3.11.14) and fails with the same "No interpreter found" error.
+    // Harmless when offline or already current — failures are ignored.
+    let _ = uv_capture(app, &emit, &["self", "update"]).await;
+    let (ok, _) = uv_capture(app, &emit, &["python", "install", wanted]).await;
+    if !ok {
+        return Err(format!("uv could not provision Python {wanted}. Fix: run `uv self update`, then `uv python install {wanted}` in a terminal and retry. If offline, install Python {wanted} from https://www.python.org/downloads/ and retry."));
+    }
+    // Resolve + verify it runs.
+    let verify = |p: &str| -> bool {
+        silent_command(p).arg("-c").arg("import sys").output().is_ok_and(|o| o.status.success())
+    };
+    let find = || silent_command("uv").args(["python", "find", wanted]).output().ok()
+        .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None })
+        .filter(|s| !s.is_empty());
+    if let Some(p) = find() {
+        if verify(&p) { emit(&format!("[*] Python {wanted} ready: {p}\n")); return Ok(p); }
+        emit(&format!("[!] Managed Python {wanted} is broken (found at {p} but won't run). Forcing a clean reinstall…\n"));
+        let (re_ok, _) = uv_capture(app, &emit, &["python", "install", "--reinstall", wanted]).await;
+        if !re_ok {
+            // Older uv without --reinstall: uninstall + install.
+            let _ = uv_capture(app, &emit, &["python", "uninstall", wanted]).await;
+            let (ok2, _) = uv_capture(app, &emit, &["python", "install", wanted]).await;
+            if !ok2 { return Err(format!("Python {wanted} is corrupted and reinstall failed. Fix: `uv python uninstall {wanted}` then `uv python install {wanted}`, or install Python {wanted} from https://www.python.org/downloads/.")); }
+        }
+        if let Some(p2) = find() {
+            if verify(&p2) { emit(&format!("[*] Python {wanted} reinstalled: {p2}\n")); return Ok(p2); }
+        }
+        return Err(format!("Python {wanted} still won't run after reinstall. Fix: install Python {wanted} from https://www.python.org/downloads/ and retry."));
+    }
+    Err(format!("uv installed Python {wanted} but `uv python find {wanted}` can't locate it. Fix: `uv self update` and retry."))
+}
+
+/// Check-only preflight for the installer checklist UI (no downloads).
+/// Covers BOTH drives of a split install: the target drive (J: — venv,
+/// wheels, models) and uv's own data drive (C: — managed Pythons live in
+/// %APPDATA%\uv\python, as ATFGriff's log shows). A full C: fails the
+/// Python download even when J: has terabytes free.
+#[tauri::command]
+pub fn python_preflight() -> serde_json::Value {
+    let wanted = pinned_python_wanted();
+    let uv_ver = silent_command("uv").arg("--version").output().ok()
+        .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None });
+    let path = silent_command("uv").args(["python", "find", &wanted]).output().ok()
+        .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None })
+        .filter(|s| !s.is_empty());
+    let runs = path.as_ref().is_some_and(|p| silent_command(p).arg("-c").arg("import sys").output().is_ok_and(|o| o.status.success()));
+    let downloads_blocked = std::env::var("UV_PYTHON_DOWNLOADS").is_ok_and(|v| v.eq_ignore_ascii_case("never"));
+    // Where would `uv python install` put the interpreter? Explicit override,
+    // else uv's default data dir (Windows: %APPDATA%\uv).
+    let uv_data_dir = std::env::var("UV_PYTHON_INSTALL_DIR").ok().filter(|s| !s.is_empty()).or_else(|| {
+        std::env::var("APPDATA").ok().map(|a| format!("{a}\\uv"))
+    }).unwrap_or_default();
+    let uv_data_free_gb = if uv_data_dir.is_empty() { None } else {
+        crate::config::disk_for_path(&uv_data_dir).map(|(free, _)| free as f64 / 1073741824.0)
+    };
+    let cramped_c = uv_data_free_gb.is_some_and(|gb| gb < 2.0);
+    let mut hint = if uv_ver.is_none() {
+        "uv not found — install it (Manage → prerequisite) and retry".to_string()
+    } else if downloads_blocked {
+        "UV_PYTHON_DOWNLOADS=never is set — the launcher overrides it during install".to_string()
+    } else if path.is_none() {
+        format!("Python {wanted} not cached yet — the installer will download it automatically")
+    } else if !runs {
+        format!("Managed Python {wanted} looks corrupted — the installer will force a reinstall")
+    } else { String::new() };
+    if cramped_c {
+        hint = format!("{}uv's own data drive ({} — {:.1} GB free) is nearly full, so the Python download itself may fail. Free space there too.", if hint.is_empty() { String::new() } else { hint + " " }, uv_data_dir, uv_data_free_gb.unwrap_or(0.0));
+    }
+    serde_json::json!({
+        "wanted": wanted, "uvVersion": uv_ver, "path": path,
+        "runs": runs, "ok": uv_ver.is_some() && !downloads_blocked && !cramped_c && (path.is_none() || runs),
+        "hint": hint, "uvDataDir": uv_data_dir, "uvDataFreeGb": uv_data_free_gb,
+    })
+}
+
+/// Pinokio-managed folder? Markers (pinokio.js/pinokio.json/.pinokio) live in
+/// the app dir or up to two levels above it (`api/<name>.git/app` layout),
+/// so check self + parent + grandparent. Returns the marker dir, if any.
+/// A Pinokio install has its own lifecycle scripts and env — installing,
+/// env-repairing or wiping inside it would corrupt it, so install()/reinstall()
+/// refuse and the UI guides to fresh-install + reuse its model folders.
+pub(crate) fn pinokio_root(repo: &Path) -> Option<PathBuf> {
+    let mut cur = Some(repo);
+    for _ in 0..3 {
+        let dir = cur?;
+        if dir.join("pinokio.js").exists() || dir.join("pinokio.json").exists() || dir.join(".pinokio").exists() {
+            return Some(dir.to_path_buf());
+        }
+        cur = dir.parent();
+    }
+    None
+}
+
+/// Target-folder triage: what is already in the install location?
+/// Verdicts: empty | ours_healthy | ours_broken_env | repo_no_env |
+/// pinokio | foreign. The installer UI turns this into Fresh / Adopt-Reuse /
+/// Pick-another-folder choices instead of silently merging over unknowns.
+#[tauri::command]
+pub fn classify_target() -> serde_json::Value {
+    let repo = get_repo_dir();
+    let no_target = serde_json::json!({
+        "verdict": "empty", "repo": repo.to_string_lossy().to_string(),
+        "exists": false, "entries": [], "hint": "Empty folder — clean install."});
+    if !repo.exists() { return no_target; }
+    let mut entries: Vec<String> = Vec::new();
+    let mut count = 0usize;
+    if let Ok(rd) = std::fs::read_dir(&repo) {
+        for e in rd.flatten() {
+            count += 1;
+            if entries.len() < 12 { entries.push(e.file_name().to_string_lossy().to_string()); }
+        }
+    }
+    if count == 0 { return no_target; }
+    // Only our own bookkeeping files (e.g. desktop-config.json written at boot)
+    // means "empty" for install purposes — don't scare fresh users.
+    const BENIGN: &[&str] = &["desktop-config.json", ".uv-cache", "envs.json"];
+    if entries.len() == count && entries.iter().all(|n| BENIGN.contains(&n.as_str())) { return no_target; }
+    let has_wgp = repo.join("wgp.py").exists();
+    let has_git = repo.join(".git").exists();
+    // Upstream remote without spawning git: read .git/config.
+    let remote: Option<String> = std::fs::read_to_string(repo.join(".git").join("config")).ok()
+        .and_then(|s| s.lines().find(|l| l.trim_start().starts_with("url ="))
+            .map(|l| l.trim_start()["url =".len()..].trim().to_string()));
+    let mut envs = serde_json::Map::new();
+    for ed in ["env_uv", "env_venv", "env_conda"] {
+        let base = repo.join(ed);
+        if !base.exists() { continue; }
+        #[cfg(windows)] let py = base.join("Scripts\\python.exe");
+        #[cfg(not(windows))] let py = base.join("bin/python");
+        envs.insert(ed.into(), serde_json::json!({"exists": true, "healthy": py.exists()}));
+    }
+    let any_healthy = envs.values().any(|e| e.get("healthy").and_then(|h| h.as_bool()).unwrap_or(false));
+    let managed_active = !crate::status::get_active_env().is_null();
+    let has_config = repo.join("wgp_config.json").exists();
+    let pinokio_dir = pinokio_root(&repo);
+    let pinokio = pinokio_dir.is_some();
+    let stale_tmp: Vec<String> = entries.iter().filter(|n| n.starts_with(".wan2gp-clone-tmp-")).cloned().collect();
+    let models = ["ckpts", "loras", "outputs"].iter()
+        .filter(|d| repo.join(d).exists()).map(|d| d.to_string()).collect::<Vec<_>>();
+    let (verdict, hint) = if pinokio {
+        ("pinokio", "Reusing Pinokio's Wan2GP install directly is not possible — Pinokio owns that folder's lifecycle and environment. Install fresh into an empty folder and reuse Pinokio's model folders instead (no re-downloads, Pinokio keeps working).")
+    } else if has_wgp && any_healthy {
+        ("ours_healthy", "A working Wan2GP install is already here — you can reuse it instead of reinstalling.")
+    } else if has_wgp && !envs.is_empty() {
+        ("ours_broken_env", "Wan2GP repo is here but its Python environment is broken/incomplete — repair keeps your models and settings.")
+    } else if has_wgp {
+        ("repo_no_env", "Wan2GP repo without a Python environment — install just the environment, no re-clone needed.")
+    } else {
+        ("foreign", "Folder isn't empty and isn't a Wan2GP install — pick an empty folder or wipe it first so upstream files can't collide.")
+    };
+    serde_json::json!({
+        "verdict": verdict, "hint": hint,
+        "repo": repo.to_string_lossy().to_string(), "entries": entries, "entryCount": count,
+        "hasRepo": has_wgp, "hasGit": has_git, "gitRemote": remote,
+        "envs": envs, "managedActive": managed_active, "hasConfig": has_config,
+        "pinokio": pinokio, "pinokioRoot": pinokio_dir.map(|p| p.to_string_lossy().to_string()),
+        "staleCloneTmp": stale_tmp, "modelDirs": models,
+    })
+}
+
+/// Classify uv's piped download lines into live install-progress events for
+/// the installer's download panel (piped uv shows no byte-bars of its own,
+/// but it prints "Downloading X (Y MiB)" → "Prepared/Installed N" →
+/// "+ x==ver" — enough for per-file rows with sizes and versions).
+fn install_progress_classify(app: &tauri::AppHandle, chunk: &str) {
+    for raw in chunk.split('\n') {
+        let t = raw.trim();
+        if t.is_empty() { continue; }
+        let low = t.to_lowercase();
+        let ev = if let Some(rest) = low.strip_prefix("downloading ") {
+            let (name, size) = rest.split_once('(')
+                .map(|(n, s)| (n.trim().to_string(), s.trim_end_matches(')').trim().to_string()))
+                .unwrap_or((rest.to_string(), String::new()));
+            // skip venv/python bootstraps noise — keep real wheels
+            if name.is_empty() { continue; }
+            Some(serde_json::json!({"phase": "downloading", "pkg": name, "size": size}))
+        } else if let Some(rest) = t.strip_prefix("Resolved ") {
+            let n = rest.split_whitespace().next().unwrap_or("?");
+            Some(serde_json::json!({"phase": "resolved", "count": n}))
+        } else if t.starts_with("Prepared ") {
+            Some(serde_json::json!({"phase": "prepared"}))
+        } else if t.starts_with("Installed ") {
+            Some(serde_json::json!({"phase": "installed-batch"}))
+        } else if let Some(stripped) = t.strip_prefix("+ ") {
+            if let Some((pkg, ver)) = stripped.split_once("==") {
+                Some(serde_json::json!({"phase": "package-installed", "pkg": pkg.trim(), "version": ver.trim()}))
+            } else { None }
+        } else { None };
+        if let Some(ev) = ev { let _ = app.emit("install-progress", ev); }
+    }
+}
+fn install_failure_hint(tail: &str) -> String {
+    let low = tail.to_lowercase();
+    if low.contains("no interpreter found for python") {
+        let ver = pinned_python_wanted();
+        return format!("uv couldn't provision Python {ver} (exact pin from setup.py). Fix: `uv self update`, then `uv python install {ver}`, and retry. Offline? Install Python {ver} from https://www.python.org/downloads/ and retry.");
+    }
+    if low.contains("no space left on device") || low.contains("not enough space") || low.contains("disk full") {
+        return "Disk full on the install drive — free space (50+ GB recommended) and retry.".into();
+    }
+    if low.contains("permission denied") || low.contains("access is denied") || low.contains("winerror 5") {
+        return "Files locked or access denied — close programs using the install folder, exclude it from antivirus/ransomware protection, and retry.".into();
+    }
+    if low.contains("failed to fetch") || low.contains("connection reset") || low.contains("temporary failure in name resolution") || low.contains("proxy") {
+        return "Network error fetching packages — check connection/proxy/VPN and retry.".into();
+    }
+    if low.contains("git clone failed") || low.contains("could not resolve host: github.com") {
+        return "GitHub unreachable — check connection/proxy and retry.".into();
+    }
+    format!("setup.py failed — see the console output above for the failing command.")
+}
 
 #[tauri::command]
 pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serde_json::Value,String> {
@@ -20,6 +337,12 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
     if let Some(w)=plan["driverWarning"].as_str() { if !w.is_empty() { emit(&format!("[warn] {w}\n")); } }
     emit(&format!("[env] requested: {env}\n"));
     let emit_phase = |id: &str, label: &str, done: bool| { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": done})); };
+    // Never install/repair inside a Pinokio-managed tree (own lifecycle + env).
+    // Fresh-install elsewhere and point the model folders at its library.
+    if let Some(where_) = pinokio_root(&repo) {
+        mutating_done();
+        return Err(format!("This folder is Pinokio-managed ({}). Installing here would corrupt Pinokio's Wan2GP. Pick an empty folder and reuse Pinokio's ckpts/loras/outputs as your model folders — no re-downloads, Pinokio keeps working.", where_.display()));
+    }
     if repo.join("wgp.py").exists() {
         emit_phase("clone", "Clone Wan2GP repository", true);
     } else {
@@ -68,9 +391,15 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
     };
     // If a previous half-created env blocks setup.py, remove only stale env (python.exe missing).
     // Don't delete a valid env on every Install — that would force full re-download (slow).
-    let stale = env_path.exists() && !env_path.join(if cfg!(windows){"Scripts\\python.exe"} else {"bin/python"}).exists();
-    if stale {
-        emit(&format!("[*] Removing stale env at {} …\n", env_path.display()));
+    // Also catch present-but-broken: python.exe exists but won't run (interrupted
+    // venv creation). Without this, a Retry fails the same way forever.
+    #[cfg(windows)] let py_exe = env_path.join("Scripts\\python.exe");
+    #[cfg(not(windows))] let py_exe = env_path.join("bin/python");
+    let stale = env_path.exists() && !py_exe.exists();
+    let broken = env != "conda" && py_exe.exists()
+        && silent_command(&py_exe).arg("-c").arg("import sys").output().is_ok_and(|o| !o.status.success());
+    if stale || broken {
+        emit(&format!("[*] Removing {} env at {} …\n", if broken { "broken" } else { "stale" }, env_path.display()));
         let _ = std::fs::remove_dir_all(&env_path);
     }
     // fix: hardlink warning when cache (C:) and target (D:) differ → move cache to repo/.uv-cache on same drive so hardlink works (fast)
@@ -78,6 +407,31 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
     let _ = std::fs::create_dir_all(&uv_cache);
     std::env::set_var("UV_CACHE_DIR", uv_cache.to_string_lossy().to_string());
     // don't force copy — hardlink on same drive is faster; warning disappears when cache is on D:
+    // Always allow uv to download the pinned interpreter (a user/system
+    // `python-downloads = "never"` config otherwise fails with
+    // "No interpreter found for Python X" — ATFGriff's exact error).
+    std::env::set_var("UV_PYTHON_DOWNLOADS", "automatic");
+    // Clean leftover clone-tmp dirs from previously interrupted installs.
+    if let Ok(rd) = std::fs::read_dir(&repo) {
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().to_string();
+            if n.starts_with(".wan2gp-clone-tmp-") {
+                let _ = std::fs::remove_dir_all(e.path());
+                emit(&format!("[*] Removed leftover {n} from an interrupted install.\n"));
+            }
+        }
+    }
+    // Pre-provision the exact Python setup.py will demand via
+    // `uv venv --python X` (uv env only — conda/venv bring their own).
+    // Fail fast here with a copy-paste fix instead of 10 minutes in.
+    if env == "uv" {
+        let wanted = pinned_python_wanted();
+        emit_phase("venv", "Create Python virtual environment", false);
+        if let Err(e) = ensure_uv_python(&app, &emit, &wanted).await {
+            mutating_done();
+            return Err(e);
+        }
+    }
     // run setup.py with the env's python (hardware-aware: setup.py reads setup_config.json + GPU)
     {
         let (py, args): (String, Vec<String>) = if env.as_str() == "conda" { ("conda".into(), vec!["run".into(), "-p".into(), env_path.to_string_lossy().to_string(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) } else {
@@ -87,23 +441,84 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
             else { (py_bin, vec!["setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) }
         };
         let (mut rx, _child) = app.shell().command(&py).args(args).current_dir(&repo).spawn().map_err(|e| e.to_string())?;
-        // track which phases we've started
+        // track which phases we've started / finished — done events fire once:
+        // the sliding window re-matches old tokens every chunk, and the
+        // frontend completes the RUNNING phase on any foreign done event.
         let mut phases = std::collections::HashSet::new();
+        let mut phases_done = std::collections::HashSet::new();
         let mut do_phase = |id: &str, label: &str| { if phases.insert(id.to_string()) { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": false})); } };
-        let done_phase = |id: &str, label: &str| { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": true})); };
+        let mut done_phase = |id: &str, label: &str| { if phases_done.insert(id.to_string()) { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": true})); } };
+        let mut tail = String::new();
+        let mut exit_code: Option<i32> = None;
+        // Sliding window: shell chunks split anywhere, so markers spanning a
+        // boundary ("[2/3]", "+ torch==…") are matched against the tail.
+        let mut window = String::new();
         while let Some(ev) = rx.recv().await {
-            let txt = match ev { CommandEvent::Stdout(b) => String::from_utf8_lossy(&b).to_string(), CommandEvent::Stderr(b) => String::from_utf8_lossy(&b).to_string(), _ => continue };
-            emit(&txt);
-            let low = txt.to_lowercase();
-            if low.contains("[1/3]") || low.contains("preparing environment") { do_phase("venv", "Create Python virtual environment"); }
-            if low.contains("[2/3]") || low.contains("installing torch") { done_phase("venv", "Create Python virtual environment"); do_phase("torch", "Install PyTorch + CUDA"); }
-            if low.contains("[3/3]") || low.contains("installing requirements") { done_phase("torch", "Install PyTorch + CUDA"); do_phase("reqs", "Install Python dependencies"); }
-            if low.contains("triton-windows") && low.contains("installed") { done_phase("reqs", "Install Python dependencies"); done_phase("triton", "Install Triton compiler"); }
-            if low.contains("sageattention") && low.contains("installed") { do_phase("sage", "Install Sage Attention kernel"); done_phase("sage", "Install Sage Attention kernel"); }
-            if low.contains("spas-sage") || low.contains("sparge") { do_phase("flash", "Install Flash Attention"); }
-            if low.contains("flash-attn") && low.contains("installed") { done_phase("flash", "Install Flash Attention"); do_phase("kernels", "Install GPU kernels (nunchaku/GGUF)"); }
-            if low.contains("nunchaku") && low.contains("installed") { /* kernels still running */ }
-            if low.contains("llamacpp") && low.contains("installed") { done_phase("kernels", "Install GPU kernels (nunchaku/GGUF)"); }
+            match ev {
+                CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => {
+                    let txt = String::from_utf8_lossy(&b).to_string();
+                    emit(&txt);
+                    install_progress_classify(&app, &txt);
+                    tail.push_str(&txt);
+                    if tail.len() > 8000 { tail.drain(..tail.len() - 8000); }
+                    window.push_str(&txt.to_lowercase());
+                    if window.len() > 600 { window.drain(..window.len() - 600); }
+                    let low = window.as_str();
+                    // Phase starts: setup.py's own "[*] Install <Component>" headers
+                    // (e.g. "[*] Install Flash Attention spas-sage-attn") plus the
+                    // [1/3]-style tags and uv's download lines as backstops.
+                    if low.contains("[1/3]") || low.contains("preparing environment") { do_phase("venv", "Create Python virtual environment"); }
+                    if low.contains("[2/3]") || low.contains("installing torch") || low.contains("download.pytorch.org") { done_phase("venv", "Create Python virtual environment"); do_phase("torch", "Install PyTorch + CUDA"); }
+                    if low.contains("[3/3]") || low.contains("installing requirements") || low.contains("-r requirements") { done_phase("torch", "Install PyTorch + CUDA"); do_phase("reqs", "Install Python dependencies"); }
+                    if let Some(h) = low.split("[*] install").nth(1) {
+                        // Component header — check flash/sparge before sage
+                        // ("spas-sage-attn" contains "sage").
+                        if h.starts_with("flash") || h.contains("spas-sage") || h.contains("sparge") { do_phase("flash", "Install Flash Attention"); }
+                        else if h.contains("sage") { do_phase("sage", "Install Sage Attention kernel"); }
+                        else if h.contains("triton") { do_phase("triton", "Install Triton compiler"); }
+                        else if h.contains("torch") || h.contains("cuda") { done_phase("venv", "Create Python virtual environment"); do_phase("torch", "Install PyTorch + CUDA"); }
+                        else if h.contains("nunchaku") || h.contains("gguf") || h.contains("kernel") || h.contains("lightx2v") { do_phase("kernels", "Install GPU kernels (nunchaku/GGUF)"); }
+                        else if h.contains("requirement") { done_phase("torch", "Install PyTorch + CUDA"); do_phase("reqs", "Install Python dependencies"); }
+                    }
+                    if low.contains("downloading triton") || low.contains("+ triton") { do_phase("triton", "Install Triton compiler"); }
+                    if low.contains("downloading sageattention") || low.contains("+ sageattention") { do_phase("sage", "Install Sage Attention kernel"); }
+                    if low.contains("downloading flash") || low.contains("+ flash") { do_phase("flash", "Install Flash Attention"); }
+                    if low.contains("downloading nunchaku") || low.contains("+ nunchaku") { do_phase("kernels", "Install GPU kernels (nunchaku/GGUF)"); }
+                    // Completions: uv's "+ <pkg>==" resolved lines (each arrives
+                    // separately from "Installed 1 package", so single tokens).
+                    if low.contains("+ torch==") { done_phase("torch", "Install PyTorch + CUDA"); }
+                    if low.contains("+ triton") { done_phase("reqs", "Install Python dependencies"); done_phase("triton", "Install Triton compiler"); }
+                    if low.contains("+ sageattention") { done_phase("sage", "Install Sage Attention kernel"); }
+                    if low.contains("+ spas-sage") || low.contains("+ sparge") { /* sparge done — flash-attn still ahead */ }
+                    if low.contains("+ flash") { done_phase("flash", "Install Flash Attention"); }
+                    if low.contains("+ llamacpp") || low.contains("+ lightx2v") { done_phase("kernels", "Install GPU kernels (nunchaku/GGUF)"); }
+                    // setup.py's own finale. (NOT "is now active" — it prints that
+                    // at env activation too, which would complete everything
+                    // while kernels still download. The end-of-stream block below
+                    // is the backstop.)
+                    if low.contains("automatic install complete") {
+                        done_phase("venv", "Create Python virtual environment");
+                        done_phase("torch", "Install PyTorch + CUDA");
+                        done_phase("reqs", "Install Python dependencies");
+                        done_phase("triton", "Install Triton compiler");
+                        done_phase("sage", "Install Sage Attention kernel");
+                        done_phase("flash", "Install Flash Attention");
+                        done_phase("kernels", "Install GPU kernels (nunchaku/GGUF)");
+                    }
+                }
+                CommandEvent::Terminated(p) => { exit_code = p.code; }
+                CommandEvent::Error(e) => { tail.push_str(&e); emit(&format!("[!] {e}\n")); }
+                _ => {}
+            }
+        }
+        let code = exit_code.unwrap_or(-1);
+        if code != 0 {
+            // setup.py failed — report honestly, no false "Installation complete!".
+            // (ATFGriff: exit 2 from `uv venv --python 3.11.14` was swallowed here.)
+            let hint = install_failure_hint(&tail);
+            emit(&format!("[!] setup.py exited with code {code}.\n[!] {hint}\n"));
+            mutating_done();
+            return Err(format!("Install failed (setup.py exited code {code}). {hint}"));
         }
         done_phase("venv", "Create Python virtual environment");
         done_phase("torch", "Install PyTorch + CUDA");
@@ -114,27 +529,87 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
         done_phase("kernels", "Install GPU kernels (nunchaku/GGUF)");
         emit_phase("done", "Finalize installation", true);
     }
+    // Post-install smoke test: exit 0 from setup.py is not proof the env works
+    // (ATFGriff got exit 2 AND a success message; subtler breakage can exit 0).
+    // Gate favourite-plugins + "Installation complete!" on torch importing
+    // and the GPU being visible from inside the new env.
+    if env == "uv" || env == "venv" {
+        #[cfg(windows)] let smoke_py = env_path.join("Scripts\\python.exe");
+        #[cfg(not(windows))] let smoke_py = if env == "uv" { env_path.join("bin/python") } else { env_path.join("bin/python3") };
+        emit("[*] Verifying install: importing torch in the new environment…\n");
+        let smoke = silent_command(&smoke_py).args(["-c", "import torch; print('torch ' + torch.__version__ + ' cuda=' + str(torch.cuda.is_available()))"]).current_dir(&repo).output();
+        match smoke {
+            Ok(o) if o.status.success() => {
+                let line = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                emit(&format!("[✓] Smoke test passed: {line}\n"));
+                let vendor = get_gpu_info_sync().get("vendor").and_then(|v| v.as_str()).unwrap_or("").to_uppercase();
+                if vendor == "NVIDIA" && !line.contains("cuda=True") {
+                    mutating_done();
+                    return Err("Install finished but torch can't see the NVIDIA GPU (cuda=False) — likely a driver/CUDA mismatch. Update to NVIDIA R580+, reboot, then repair the environment.".into());
+                }
+            }
+            _ => {
+                mutating_done();
+                return Err(format!("Install finished but `import torch` fails in {} — the environment is broken. Retry the install (the broken env is removed automatically) or report it with Copy diagnostics.", smoke_py.display()));
+            }
+        }
+    }
     emit("[*] Install finished.\n");
+    // Remember where the working install lives (next to the data-dir override
+    // in the home dir, so it survives drive changes). If the drive letter
+    // changes or the drive disconnects later, first-run warns instead of
+    // silently showing a blank installer.
+    let _ = atomic_write(&home_dir().join(".wan2gp-tauri-installed"), repo.to_string_lossy().as_ref());
     // favourite plugins (Manage → Plugins ★): auto-clone after fresh setup
     crate::plugins::ensure_favorite_plugins(app.clone()).await;
     mutating_done();
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command]
-pub async fn reinstall(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
+pub async fn reinstall(app: tauri::AppHandle, options: Option<serde_json::Value>) -> Result<serde_json::Value,String> {
     mutating_try("reinstall")?;
     let repo = get_repo_dir();
     let emit = |msg: &str| { crate::base::push_log(msg, "setup"); let _ = app.emit("setup-output", msg.to_string()); };
     emit("[*] Removing existing installation...\n");
-    // backup plugins/finetunes (ponytail: xcopy fallback)
+    // A wipe inside a Pinokio tree would destroy Pinokio's install — refuse.
+    if let Some(where_) = pinokio_root(&repo) {
+        mutating_done();
+        return Err(format!("This folder is Pinokio-managed ({}). Wiping it would destroy Pinokio's Wan2GP. Uninstall from inside Pinokio instead, or pick another folder.", where_.display()));
+    }
+    // Optional model relocation FIRST (backup dialog: move libraries out before
+    // the wipe). Aborts before touching anything when a move fails.
+    let mut moved_models: Vec<String> = Vec::new();
+    if let Some(moves) = options.as_ref().and_then(|o| o.get("moveModels")).and_then(|m| m.as_array()) {
+        for mv in moves {
+            let from = mv.get("from").and_then(|x| x.as_str()).unwrap_or("");
+            let to = mv.get("to").and_then(|x| x.as_str()).unwrap_or("");
+            if from.is_empty() || to.is_empty() { continue; }
+            // Never move the repo itself, and never move INTO the wiped folder.
+            let low = |p: &str| p.to_lowercase();
+            if low(from) == low(&repo.to_string_lossy()) { emit(&format!("[!] Skipping move of the repo itself: {from}\n")); continue; }
+            if low(to).starts_with(&low(&repo.to_string_lossy())) { emit(&format!("[!] Skipping move into the wiped folder (would be deleted): {to}\n")); continue; }
+            emit(&format!("[*] Moving models out before wipe: {from} → {to}\n"));
+            match crate::system::move_path_inner(&app, Path::new(from), Path::new(to)).await {
+                Ok(_) => moved_models.push(format!("{from} → {to}")),
+                Err(e) => { mutating_done(); return Err(format!("Could not move models ({e}). Wipe aborted — nothing deleted.")); }
+            }
+        }
+    }
+    // backup plugins/finetunes (ponytail: xcopy fallback) — skippable via dialog.
+    let want_backup = options.as_ref().and_then(|o| o.get("backup")).and_then(|b| b.as_bool()).unwrap_or(true);
+    if !want_backup {
+        emit("[!] Backup skipped by user choice — plugins/finetunes/settings will be deleted.\n");
+    } else {
     let backup = get_data_dir().join(".reinstall-backup");
     let _ = std::fs::remove_dir_all(&backup);
     let _ = std::fs::create_dir_all(&backup);
     for sub in ["plugins","finetunes"] { let s = repo.join(sub); if s.exists() { let d = backup.join(sub); let _ = silent_command("xcopy").args(["/E","/I", s.to_string_lossy().as_ref(), d.to_string_lossy().as_ref()]).output(); } }
     if repo.join("wgp_config.json").exists() { let _ = std::fs::copy(repo.join("wgp_config.json"), backup.join("wgp_config.json")); }
+    }
     if repo.exists() {
         // ponytail: .electron is the live WebView2 Shared Dictionary — locked while launcher runs, keep it (Electron d186d49+e3e8505)
-        const KEEP: &[&str] = &[".electron"];
+        // .reinstall-backup must survive too (data_dir == repo on default installs) — restore_backup() merges it back after install.
+        const KEEP: &[&str] = &[".electron", ".reinstall-backup"];
         let trash = repo.with_file_name(format!("{}.trash-{}", repo.file_name().unwrap_or_default().to_string_lossy(), std::process::id()));
         let mut ok = true;
         if let Ok(ents) = std::fs::read_dir(&repo) {
@@ -176,24 +651,70 @@ pub async fn reinstall(app: tauri::AppHandle) -> Result<serde_json::Value,String
     }
     let _ = std::fs::remove_file(get_envs_file());
     let _ = std::fs::remove_dir_all(get_data_dir().join(".py-shim"));
-    mutating_done(); Ok(serde_json::json!({"ok": true, "success": true}))
+    mutating_done(); Ok(serde_json::json!({"ok": true, "success": true, "movedModels": moved_models}))
+}
+/// Merge the reinstall backup back after a fresh install (plugins/finetunes/
+/// wgp_config.json). Previously the backup was written but never restored —
+/// and wiped with everything else when data_dir == repo. Only entries missing
+/// from the fresh clone are moved back (upstream ships its own system
+/// plugins); a conflicting wgp_config.json is kept aside, never overwritten.
+#[tauri::command]
+pub async fn restore_backup(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
+    use tauri::Emitter;
+    let repo = get_repo_dir();
+    let backup = get_data_dir().join(".reinstall-backup");
+    let emit = |msg: &str| { crate::base::push_log(msg, "setup"); let _ = app.emit("setup-output", msg.to_string()); };
+    if !backup.exists() { return Ok(serde_json::json!({"ok": true, "success": true, "restored": []})); }
+    let mut restored: Vec<String> = Vec::new();
+    for sub in ["plugins", "finetunes"] {
+        let s = backup.join(sub);
+        if !s.exists() { continue; }
+        let d = repo.join(sub);
+        let _ = std::fs::create_dir_all(&d);
+        if let Ok(rd) = std::fs::read_dir(&s) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                let dst = d.join(&name);
+                if dst.exists() { continue; } // fresh clone's own copy wins
+                if std::fs::rename(e.path(), &dst).is_ok() { restored.push(format!("{sub}/{name}")); }
+            }
+        }
+    }
+    let bc = backup.join("wgp_config.json");
+    if bc.exists() {
+        if !repo.join("wgp_config.json").exists() {
+            if std::fs::copy(&bc, repo.join("wgp_config.json")).is_ok() { restored.push("wgp_config.json".into()); }
+        } else if std::fs::copy(&bc, repo.join("wgp_config.backup.json")).is_ok() {
+            restored.push("wgp_config.backup.json (your old settings — review & merge manually)".into());
+        }
+    }
+    let _ = std::fs::remove_dir_all(&backup);
+    emit(&format!("[*] Backup restored: {}\n", if restored.is_empty() { "nothing new (fresh defaults kept)".into() } else { restored.join(", ") }));
+    Ok(serde_json::json!({"ok": true, "success": true, "restored": restored}))
 }
 #[tauri::command]
-pub async fn uninstall(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
+pub async fn uninstall(app: tauri::AppHandle, options: Option<serde_json::Value>) -> Result<serde_json::Value,String> {
     use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
     mutating_try("uninstall")?;
     let repo = get_repo_dir();
     if !repo.exists() { mutating_done(); return Err("Wan2GP not installed".into()); }
-    if !app.dialog().message("Uninstall Wan2GP?
-
-Removes the app, its Python environment and packages.").title("Uninstall Wan2GP").kind(MessageDialogKind::Info).blocking_show() {
+    if let Some(where_) = pinokio_root(&repo) {
         mutating_done();
-        return Ok(serde_json::json!({"cancelled": true}));
+        return Err(format!("This folder is Pinokio-managed ({}). Uninstall it from inside Pinokio — the launcher won't touch it.", where_.display()));
     }
-    let keep = app.dialog().message("Keep your downloaded files?
-
-OK = keep checkpoints, LoRAs and outputs (reinstall reuses them).
-Cancel = delete everything.").title("Keep models?").kind(MessageDialogKind::Info).blocking_show();
+    // Explicit choice comes from the uninstall modal (Keep my models /
+    // Delete everything / Cancel-abort). Legacy callers without options get
+    // the old native confirms.
+    let keep = match options.as_ref().and_then(|o| o.get("keepModels")).and_then(|k| k.as_bool()) {
+        Some(k) => k,
+        None => {
+            if !app.dialog().message("Uninstall Wan2GP?\n\nRemoves the app, its Python environment and packages.").title("Uninstall Wan2GP").kind(MessageDialogKind::Info).blocking_show() {
+                mutating_done();
+                return Ok(serde_json::json!({"cancelled": true}));
+            }
+            app.dialog().message("Keep your downloaded files? (OK = keep, Cancel = delete)").title("Keep models?").kind(MessageDialogKind::Info).blocking_show()
+        }
+    };
     // Stop a running server first (locked files won't delete).
     let _ = crate::launch::stop_wangp(app.clone());
     // Keep-dirs under the repo survive; outside-repo model folders survive on their own.
@@ -228,6 +749,7 @@ Cancel = delete everything.").title("Keep models?").kind(MessageDialogKind::Info
         }
     } else { None };
     crate::base::invalidate_path_cache();
+    let _ = std::fs::remove_file(home_dir().join(".wan2gp-tauri-installed"));
     mutating_done();
     Ok(serde_json::json!({"success": true, "keptFiles": keep && !kept_paths.is_empty(), "keptPaths": kept_paths, "leftoverFolder": leftover}))
 }

@@ -165,6 +165,19 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             if alt.exists() { alt.to_string_lossy().to_string() } else { raw.to_string() }
         } else { cand.to_string_lossy().to_string() }
     } else { "python".to_string() };
+    // Pre-flight: the interpreter must exist, run, AND import torch.
+    // (Screenshot: after the failed install there was no env, launch fell back
+    // to system `python` and died with `ModuleNotFoundError: No module named
+    // 'torch'.) Refuse here with directions instead of a traceback there.
+    {
+        let torch_ok = silent_command(&py).args(["-c", "import torch; print(torch.__version__)"]).output().is_ok_and(|o| o.status.success());
+        if !torch_ok {
+            mutating_done();
+            let reason = if env.is_null() { "no Python environment is installed" } else { "the environment's Python can't import torch (install incomplete or env broken)" };
+            emit(&format!("[!] Launch blocked: {reason} [{py}].\n"));
+            return Err(format!("Cannot launch: {reason}. Finish the install first (installer re-opens automatically), or repair the environment — launching now would crash on `import torch`."));
+        }
+    }
     emit(&format!("[*] Python: {py}\n"));
     emit(&format!("[*] Port: {port}\n"));
     use tauri_plugin_shell::ShellExt;
@@ -301,28 +314,54 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
 
 // ── misc stubs to unblock frontend (return safe defaults) ──
 #[tauri::command] pub fn open_external(url: Option<String>) { let _=url; }
+/// Expand Windows %VAR% placeholders case-insensitively. The old code only
+/// replaced exact-case and lowercase forms, but Windows env names come back
+/// UPPERCASE (LOCALAPPDATA) — so a literal `%LocalAppData%` never matched and
+/// every LocalAppData-only browser (Brave, Opera, Vivaldi) was permanently
+/// reported "not installed" and couldn't be selected.
+fn expand_win_env(s: &str) -> String {
+    let mut out = s.to_string();
+    let vars: Vec<(String, String)> = std::env::vars().collect();
+    for (k, v) in &vars {
+        let needle = format!("%{k}%").to_uppercase();
+        loop {
+            let up = out.to_uppercase();
+            match up.find(&needle) {
+                Some(pos) => out.replace_range(pos..pos + needle.len(), v),
+                None => break,
+            }
+        }
+    }
+    out
+}
+/// Install-location candidates per browser (user-level LocalAppData first,
+/// then system-wide Program Files — Brave/Opera/Vivaldi all support those).
+fn browser_candidates(id: &str) -> &[&str] {
+    match id {
+        "chrome" => &["%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe", "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe", "%LocalAppData%\\Google\\Chrome\\Application\\chrome.exe"],
+        "edge" => &["%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe", "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe"],
+        "firefox" => &["%ProgramFiles%\\Mozilla Firefox\\firefox.exe", "%ProgramFiles(x86)%\\Mozilla Firefox\\firefox.exe", "%LocalAppData%\\Mozilla Firefox\\firefox.exe"],
+        "brave" => &["%LocalAppData%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", "%ProgramFiles%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", "%ProgramFiles(x86)%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"],
+        "opera" => &["%LocalAppData%\\Programs\\Opera\\launcher.exe", "%ProgramFiles%\\Opera\\launcher.exe", "%ProgramFiles(x86)%\\Opera\\launcher.exe"],
+        "vivaldi" => &["%LocalAppData%\\Vivaldi\\Application\\vivaldi.exe", "%ProgramFiles%\\Vivaldi\\Application\\vivaldi.exe", "%ProgramFiles(x86)%\\Vivaldi\\Application\\vivaldi.exe"],
+        _ => &[],
+    }
+}
 #[tauri::command] pub fn detect_browsers() -> serde_json::Value {
     // mirrors Electron WELL_KNOWN_BROWSERS with win env expansion
     let cfg = load_config_value(); let def = cfg.get("defaultBrowser").and_then(|v| v.as_str()).unwrap_or("system").to_string();
-    let expand = |p: &str| {
-        let mut s = p.to_string();
-        for (k,v) in std::env::vars() { s = s.replace(&format!("%{k}%"), &v); s = s.replace(&format!("%{}%", k.to_lowercase()), &v); }
-        // handle (x86)
-        if let Ok(pf86) = std::env::var("ProgramFiles(x86)") { s = s.replace("%ProgramFiles(x86)%", &pf86); }
-        s
-    };
     let browsers = vec![
-        ("chrome", "Google Chrome", vec!["%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe","%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe","%LocalAppData%\\Google\\Chrome\\Application\\chrome.exe"]),
-        ("edge", "Microsoft Edge", vec!["%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe","%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe"]),
-        ("firefox","Firefox", vec!["%ProgramFiles%\\Mozilla Firefox\\firefox.exe","%ProgramFiles(x86)%\\Mozilla Firefox\\firefox.exe"]),
-        ("brave","Brave", vec!["%LocalAppData%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"]),
-        ("opera","Opera", vec!["%LocalAppData%\\Programs\\Opera\\launcher.exe"]),
-        ("vivaldi","Vivaldi", vec!["%LocalAppData%\\Vivaldi\\Application\\vivaldi.exe"]),
+        ("chrome", "Google Chrome"),
+        ("edge", "Microsoft Edge"),
+        ("firefox", "Firefox"),
+        ("brave", "Brave"),
+        ("opera", "Opera"),
+        ("vivaldi", "Vivaldi"),
     ];
     let mut out = Vec::new();
-    for (id, name, wins) in browsers {
+    for (id, name) in browsers {
         let mut path: Option<String> = None;
-        for cand in wins { let ep = expand(cand); if std::path::Path::new(&ep).exists() { path = Some(ep); break; } }
+        for cand in browser_candidates(id) { let ep = expand_win_env(cand); if std::path::Path::new(&ep).exists() { path = Some(ep); break; } }
         out.push(serde_json::json!({"id": id, "name": name, "installed": path.is_some(), "path": path}));
     }
     serde_json::json!({"browsers": out, "defaultBrowser": def})
@@ -336,35 +375,32 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
     let chosen = load_config_value().get("defaultBrowser").and_then(|v| v.as_str()).unwrap_or("system").to_string();
     // "system" (or anything unresolved) → OS default via opener.
     let exe = if chosen == "system" { None } else { find_browser_exe(&chosen) };
+    // A stale selection (browser uninstalled after being picked) used to fall
+    // back to the system default with zero explanation — "it didn't use it".
+    if chosen != "system" && exe.is_none() {
+        let m = format!("[!] Default browser '{chosen}' not found — opened with the system default instead. Reinstall it or pick another in Manage → Default Browser.\n");
+        crate::base::push_log(&m, "launch"); let _ = app.emit("launch-log", m);
+    }
     match exe {
         None => match app.opener().open_url(u, None::<String>) {
             Ok(()) => serde_json::json!({"ok": true, "success": true, "via": "system"}),
             Err(e) => serde_json::json!({"ok": false, "success": false, "error": e.to_string()}),
         },
-        Some(path) => match silent_command(&path).arg(&u).spawn() {
-            Ok(_) => serde_json::json!({"ok": true, "success": true, "via": chosen}),
-            Err(e) => serde_json::json!({"ok": false, "success": false, "error": e.to_string()}),
-        },
+        Some(path) => {
+            use tauri::Emitter;
+            let m = format!("[*] Opening with {chosen}: {path}\n");
+            crate::base::push_log(&m, "launch"); let _ = app.emit("launch-log", m);
+            match silent_command(&path).arg(&u).spawn() {
+                Ok(_) => serde_json::json!({"ok": true, "success": true, "via": chosen}),
+                Err(e) => serde_json::json!({"ok": false, "success": false, "error": e.to_string()}),
+            }
+        }
     }
 }
 // Resolve a known browser id to its exe (same candidates as detect_browsers).
 fn find_browser_exe(id: &str) -> Option<String> {
-    let cands: &[&str] = match id {
-        "chrome" => &["%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe", "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe", "%LocalAppData%\\Google\\Chrome\\Application\\chrome.exe"],
-        "edge" => &["%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe", "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe"],
-        "firefox" => &["%ProgramFiles%\\Mozilla Firefox\\firefox.exe", "%ProgramFiles(x86)%\\Mozilla Firefox\\firefox.exe"],
-        "brave" => &["%LocalAppData%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"],
-        "opera" => &["%LocalAppData%\\Programs\\Opera\\launcher.exe"],
-        "vivaldi" => &["%LocalAppData%\\Vivaldi\\Application\\vivaldi.exe"],
-        _ => return None,
-    };
-    for c in cands {
-        let mut s = c.to_string();
-        for (k, v) in std::env::vars() {
-            s = s.replace(&format!("%{k}%"), &v);
-            s = s.replace(&format!("%{}%", k.to_lowercase()), &v);
-        }
-        if let Ok(pf86) = std::env::var("ProgramFiles(x86)") { s = s.replace("%ProgramFiles(x86)%", &pf86); }
+    for c in browser_candidates(id) {
+        let s = expand_win_env(c);
         if std::path::Path::new(&s).exists() { return Some(s); }
     }
     None

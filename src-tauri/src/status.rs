@@ -175,7 +175,13 @@ pub fn check_installed() -> serde_json::Value {
     let repo = get_repo_dir();
     let has_repo = repo.join("wgp.py").exists();
     let has_env = !get_active_env().is_null();
-    serde_json::json!({"repo": has_repo, "env": has_env})
+    // Previous install location now missing (external drive disconnected or
+    // drive letter changed)? Report it so first-run can say so explicitly.
+    let missing_prev = std::fs::read_to_string(home_dir().join(".wan2gp-tauri-installed")).ok()
+        .map(|s| s.trim().to_string()).filter(|p| !p.is_empty())
+        .filter(|p| !std::path::Path::new(p).join("wgp.py").exists())
+        .filter(|_| !has_repo);
+    serde_json::json!({"repo": has_repo, "env": has_env, "missingPrevious": missing_prev})
 }
 
 #[tauri::command]

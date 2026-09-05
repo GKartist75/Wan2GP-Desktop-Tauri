@@ -313,6 +313,11 @@
           <button class="btn btn-primary small" id="manageUpdateDesktopBtn">↻ Check Desktop Updates</button>
           <p class="token-hint" id="manageUpdateDesktopStatus" style="margin-top:6px"></p>
         </div>
+        <div class="settings-section">
+          <h3>Setup</h3>
+          <p class="token-hint">Re-open the installer — fresh install, repair, reuse or migrate, with all pre-flight checks.</p>
+          <button class="btn btn-ghost small" id="manageRunSetupBtn">🧭 Run Setup again</button>
+        </div>
       </div>
       <div class="settings-tab-content" data-tab="autotune">
         <div class="settings-section">
@@ -558,6 +563,7 @@
             <span class="env-type-tag" id="envType"></span>
             <button class="env-unlink-btn" id="envUnlinkBtn" title="Uninstall active environment">unlink</button>
             <button class="env-restore-btn" id="envRestoreBtn" title="Reinstall all packages from requirements.txt">restore</button>
+            <button class="env-restore-btn" id="envReinstallBtn" title="Recreate the whole environment (Python, PyTorch, packages, kernels). Models & settings are kept.">reinstall</button>
             <button class="btn btn-ghost small" id="checkPkgUpdatesBtn" title="Check PyPI for package updates" style="margin-left:auto;padding:1px 6px;font-size:0.55rem;line-height:1.4">↻ Check Updates</button>
           </div>
           <p class="token-hint" style="margin:6px 12px 0">↻ Check Updates queries PyPI for newer versions. Updating a single package (e.g. torch) can break the env (CUDA mismatch, black frames) — use <em>restore</em> to reinstall the tested <code>requirements.txt</code>.</p>
@@ -761,7 +767,7 @@
 
         <!-- Desktop links bar (relocated from removed Desktop App info card) -->
         <div class="links-bar">
-          <a href="#" id="desktopRepoLink" class="changelog-link">GKartist75/wan2gp-desktop →</a>
+          <a href="#" id="desktopRepoLink" class="changelog-link">GKartist75/Wan2GP-Desktop-Tauri →</a>
           <span class="changelog-sep">·</span>
           <a href="#" id="discussionsLink" class="changelog-link">💬 Discussions</a>
           <span class="changelog-sep">·</span>
@@ -835,7 +841,7 @@
           <button class="btn btn-ghost small" id="clearAppDataPath" title="Reset to default">✕</button>
         </div>
         <div id="installRootWarn" class="install-root-warn hidden"></div>
-        <p class="path-hint">Where the Wan2GP repo, Python venv/env, and settings live. Default <code>C:\Wan2GP</code> on a fast SSD with 50+ GB free. Keep it OUT of AppData so it isn't buried in a roaming profile. Always pick a <strong>folder</strong> — a bare drive root is not allowed.</p>
+        <p class="path-hint">Where the Wan2GP repo, Python venv/env, and settings live. Default <code>C:\Wan2GP</code> on a fast SSD with 50+ GB free. Keep it OUT of AppData so it isn't buried in a roaming profile. Picking a bare drive root automatically uses <code>&lt;root&gt;\Wan2GP</code>.</p>
         <div id="moveToPreferredWrap" class="migrate-note hidden">
           <span class="migrate-warn">⚠ Your Wan2GP data is currently inside your roaming AppData profile (<code id="currentDataDirPath">…</code>).</span>
           <button class="btn btn-primary small" id="moveToPreferredBtn">Migrate to new location</button>
@@ -869,6 +875,17 @@
       </div>
 
       <button id="installStartBtn">Install</button>
+
+      <!-- Target-folder verdict (classify_target): Fresh / Adopt-Reuse / warn -->
+      <div id="targetVerdict" class="install-stack" style="display:none">
+        <div class="ipkgs-header">Install location check</div>
+        <div id="targetVerdictBody"></div>
+        <div class="reinstall-buttons" style="margin-top:8px">
+          <button class="btn btn-primary small" id="targetAdoptBtn" style="display:none">Install / repair environment</button>
+          <button class="btn btn-primary small" id="targetUseModelsBtn" style="display:none">Reuse its models in a fresh install</button>
+          <button class="btn btn-ghost small" id="targetBrowseBtn" style="display:none">Choose empty folder…</button>
+        </div>
+      </div>
 
       <!-- Hardware info -->
       <div class="install-hw">
@@ -911,12 +928,20 @@
         <div class="ikernels-list" id="installKernelsList"></div>
       </div>
 
+      <!-- Live downloads (parsed from uv output — per-file rows + versions) -->
+      <div class="install-progress" id="installProgress" style="display:none">
+        <div class="ipkgs-header">Downloads <span id="installProgressCount" class="ipo-profile-badge"></span></div>
+        <div id="installProgressList"></div>
+      </div>
+
       <!-- Resolved stack (pre-flight) -->
       <div class="install-stack" id="installStack" style="display:none">
         <div class="ipkgs-header">Resolved install stack</div>
         <div class="istack-grid" id="installStackGrid"></div>
         <div class="istack-warn" id="installStackWarn"></div>
+        <div class="istack-warn" id="modelDiskGates"></div>
         <button class="btn btn-ghost small" id="validateInstallBtn" style="margin-top:8px;display:none">Validate installation</button>
+        <button class="btn btn-ghost small" id="copyDiagnosticsBtn" style="margin-top:8px;display:none">Copy diagnostics</button>
       </div>
 
       <!-- Reinstall choice (shown when Wan2GP already installed) -->
@@ -1035,7 +1060,58 @@
       </div>
       <div class="modal-actions">
         <button class="btn btn-ghost" id="migrationCancelBtn">Cancel</button>
+        <button class="btn btn-ghost" id="migrationPointBtn" title="Don't move anything — just use the Wan2GP install already in that folder">Just switch to it</button>
         <button class="btn btn-primary" id="migrationMoveBtn">Move &amp; restart</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reinstall backup chooser (size + model relocation before wipe) -->
+  <div id="backupModal" class="modal-overlay hidden">
+    <div class="modal migration-modal">
+      <div class="modal-header">
+        <span class="modal-title">Reinstall — protect your files first</span>
+        <button class="modal-close" id="backupCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <p class="modal-sub">A fresh reinstall <strong>wipes the install folder</strong>. That can be tens–hundreds of GB when model libraries live inside it. Back up the small stuff, and move big model folders somewhere safe first.</p>
+      <div class="migrate-row">
+        <label>Install folder size</label>
+        <div class="migrate-path"><span id="backupSizeSummary" class="ipath-val">calculating…</span></div>
+      </div>
+      <div id="backupBreakdown" style="margin:4px 0 8px 0"></div>
+      <div class="migrate-row">
+        <label class="browser-opt"><input type="checkbox" id="backupIncludeCheckbox" checked> Back up custom plugins, finetunes &amp; settings <span class="istack-hint">(small, fast — restored automatically after install)</span></label>
+      </div>
+      <div id="backupModelsSection" style="display:none">
+        <div class="ipkgs-header" style="margin:8px 0 4px 0">Model folders inside the install location</div>
+        <p class="modal-sub">These live <strong>inside</strong> the wiped folder. Move them elsewhere now, or they are deleted.</p>
+        <div id="backupModelsRows"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="backupCancelBtn">Cancel</button>
+        <button class="btn btn-ghost" id="backupSkipBtn" title="Wipe everything without any backup">Wipe without backup</button>
+        <button class="btn btn-primary" id="backupGoBtn">Backup &amp; continue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Uninstall chooser (explicit verbs — no OK/Cancel trap) -->
+  <div id="uninstallModal" class="modal-overlay hidden">
+    <div class="modal migration-modal">
+      <div class="modal-header">
+        <span class="modal-title">Uninstall Wan2GP?</span>
+        <button class="modal-close" id="uninstallCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <p class="modal-sub">Removes the app, its Python environment and all packages. The Desktop launcher itself stays installed. Your downloaded models are often tens of GB — what should happen to them?</p>
+      <div id="uninstallModelsRows" style="margin:4px 0 8px 0"><span class="istack-hint">checking model folders…</span></div>
+      <div id="uninstallAgreeRow" style="display:none;margin:4px 0 8px 0">
+        <p class="modal-sub" style="color:var(--signal-red)">This cannot be undone. Type <code>AGREE</code> to continue:</p>
+        <div class="migrate-path"><input type="text" id="uninstallAgreeInput" placeholder="AGREE" autocomplete="off"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="uninstallCancelBtn">Cancel (keep everything)</button>
+        <button class="btn btn-ghost" id="uninstallDeleteBtn" style="color:var(--signal-red);border-color:var(--signal-red)">Delete everything</button>
+        <button class="btn btn-primary" id="uninstallKeepBtn">Keep my models</button>
       </div>
     </div>
   </div>
