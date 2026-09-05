@@ -14,8 +14,10 @@
     checkInstalled: () => call('check_installed'), detectGpu: () => call('detect_gpu'), detectGpus: () => call('detect_gpus'),
     detectHardware: () => call('detect_hardware'), getHardwareProfile: () => call('get_hardware_profile'), getSystemMetrics: () => call('get_system_metrics'),
     autoTuneDetect: () => call('auto_tune_detect'), autoTuneRecommend: (hw, opts) => call('auto_tune_recommend', { hw, opts }),
-    install: (envType) => call('install', { envType }), reinstall: () => call('reinstall'), uninstall: () => call('uninstall'),
+    install: (envType) => call('install', { envType }), reinstall: (opts) => call('reinstall', { options: opts ?? null }), uninstall: (opts) => call('uninstall', { options: opts ?? null }),
     update: () => call('update'), syncKernels: () => call('sync_kernels'), installPlan: () => call('install_plan'), validateInstall: () => call('validate_install'),
+    classifyTarget: () => call('classify_target'), pythonPreflight: () => call('python_preflight'),
+    restoreBackup: () => call('restore_backup'),
     manageList: () => call('manage_list'), manageSetActive: (name) => call('manage_set_active', { name }), uninstallEnv: (name) => call('uninstall_env', { name }),
     uvCacheInfo: () => call('uv_cache_info'), uvCacheSize: () => call('uv_cache_size'), uvCacheClean: (a) => call('uv_cache_clean', { action: a }),
     checkCommand: (cmd) => call('check_command', { cmd }), installPrerequisite: (tool) => call('install_prerequisite', { tool }),
@@ -23,6 +25,7 @@
     openFolder: (p) => call('open_folder', { path: p }), setDataDir: (dir) => call('set_data_dir', { dir }),
     resetDataDir: () => call('reset_data_dir'), migrateToPreferred: (c) => call('migrate_to_preferred', { choices: c }),
     moveFolder: (src, dst) => call('move_folder', { src, dst }), migrateChoose: () => call('migrate_choose'),
+    folderSize: (path) => call('folder_size', { path }),
     isDataDirRoaming: () => call('is_data_dir_roaming'),
     writeWgpConfig: (cfg) => call('write_wgp_config', { cfg }), selectFolder: () => call('select_folder'),
     confirmDialog: async (opts) => {
@@ -110,6 +113,7 @@
     // event bridges: Electron ipcRenderer.on → Tauri listen (returns unlisten fn) — with debug log for phases
     onSetupOutput: (cb) => { listen('setup-output', cb); return ()=>{}; },
     onDlss5Progress: (cb) => { listen('dlss5-progress', cb); return ()=>{}; },
+    onInstallProgress: (cb) => { listen('install-progress', cb); return ()=>{}; },
     onSetupPhase: (cb) => { console.log('[w2gp] onSetupPhase registered'); listen('setup-phase', (p)=>{ console.log('[w2gp] setup-phase', p); try{cb(p);}catch(e){console.error(e);} }); return ()=>{}; },
     onSetupProfile: (cb) => { listen('setup-profile', cb); return ()=>{}; },
     onLaunchLog: (cb) => { listen('launch-log', cb); return ()=>{}; },

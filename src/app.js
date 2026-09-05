@@ -82,6 +82,9 @@ function setupScrollUnfollow(bodyId, btnId) {
 }
 
 const $ = id => document.getElementById(id)
+// Tauri invoke() rejects with the raw backend string, not an Error object —
+// reading e.message would print "undefined". Normalizes both shapes.
+function errText(e) { return (e && e.message) || (e == null ? 'unknown error' : e) }
 function show(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); $(id).classList.add('active')
   // Flush console output buffered while the terminal was offscreen (e.g. the
@@ -429,8 +432,19 @@ function renderPlugins() {
     if (!p.installed) cb.disabled = true
     label.appendChild(cb)
     const badgeBase = (p.system ? 'system' : (p.installed ? 'installed' : 'available')) + (p.version ? ' v' + p.version : '')
-    const badges = [badgeBase].concat(p.author ? ['by ' + p.author] : []).concat(_pluginUpdates[p.id] ? ['⇪ ' + _pluginUpdates[p.id] + ' update(s)'] : []).join(' · ')
-    label.appendChild(document.createTextNode(' ' + p.name + ' (' + badges + ')'))
+    const badges = [badgeBase].concat(p.author ? ['by ' + p.author] : []).join(' · ')
+    label.appendChild(document.createTextNode(' ' + p.name + ' (' + badges))
+    // Available update: amber row wash + bold badge (was a grey text fragment).
+    const updCount = _pluginUpdates[p.id]
+    if (updCount) {
+      row.classList.add('plugin-has-update')
+      label.appendChild(document.createTextNode(' · '))
+      const ub = document.createElement('span')
+      ub.className = 'plugin-update-badge'
+      ub.textContent = '⇪ ' + updCount + ' update(s)'
+      label.appendChild(ub)
+    }
+    label.appendChild(document.createTextNode(')'))
     if (p.description) label.title = p.description
     row.appendChild(label)
     // ★ favourite (auto-installed on fresh setup) — needs a URL to reinstall from
@@ -609,7 +623,7 @@ async function loadBrowserList() {
         appendLog(`[*] Default browser set to: ${r.value}`)
       })
     })
-  } catch (e) { appendLog(`[!] Browser detection failed: ${e.message}`) }
+  } catch (e) { appendLog(`[!] Browser detection failed: ${errText(e)}`) }
 }
 // ── Theme ──
 function applyTheme(theme) {
@@ -671,6 +685,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   window.w2gp.onSetupOutput(t => appendLog(t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'').replace(/\x08/g,'')))
   window.w2gp.onDlss5Progress(dlss5OnEvent)
+  window.w2gp.onInstallProgress(installProgressOnEvent)
 
   window.w2gp.onLaunchLog(t => {
     const clean = t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'').replace(/\x08/g,'')
@@ -681,7 +696,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const p = _pendingOpen
       _pendingOpen = null
       if (p.kind === 'desktop') openDesktopView(p.url, true)
-      else openBrowserView(p.url, p.noGpu).catch(e => appendLog(`[LAUNCH ERROR] ${e.message}`))
+      else openBrowserView(p.url, p.noGpu).catch(e => appendLog(`[LAUNCH ERROR] ${errText(e)}`))
     }
   })
   window.w2gp.onSetupPhase(p => {
@@ -748,6 +763,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   } else {
     $('splashStatus').textContent = 'First-time setup...'
     appendLog('[*] First run — no Wan2GP install detected. Complete the installer below to set up.')
+    // External drive disconnected or letter changed (e.g. J:\WanGPApp was there
+    // and now isn't)? Say so explicitly instead of a blank "first run".
+    if (installed && installed.missingPrevious) {
+      appendLog('[!] Previous install not found: ' + installed.missingPrevious)
+      appendLog('[!] If that is an external drive, reconnect it (check the drive letter) and restart the launcher — or install fresh / pick the new location below.')
+      $('installSubtitle').textContent = 'Previous install at ' + installed.missingPrevious + ' is missing — reconnect the drive, or set up again below.'
+      try { showToast('⚠ Previous install folder missing — reconnect the drive or reinstall') } catch {}
+    }
     const hw = await window.w2gp.detectHardware()
     $('installCpu').textContent=hw.cpu||'—'; $('installRam').textContent=hw.ram||'—'
     $('installGpu').textContent=hw.gpu||'—'; $('installVram').textContent=hw.vram||'—'
@@ -764,7 +787,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     } catch {}
     show('installer')
-    $('installSubtitle').textContent = 'Select environment type, then click Install'
+    if (!(installed && installed.missingPrevious)) $('installSubtitle').textContent = 'Select environment type, then click Install'
+    // Target-folder triage: ATFGriff's J:\\WanGPApp wasn't empty (Pinokio? previous
+    // attempt?) and we merged blindly over it. Show what's there first.
+    refreshTargetVerdict().catch(function() {})
+    refreshModelDiskGates().catch(function() {})
     $('installStartBtn').classList.remove('hidden')
     $('envTypeSelect').classList.remove('disabled')
     document.querySelectorAll('.env-type-btn').forEach(b => b.disabled = false)
@@ -796,36 +823,54 @@ document.addEventListener('DOMContentLoaded', async () => {
         sage: 'ipoSage', sparge: 'ipoSparge', flash: 'ipoFlash', kernels: 'ipoKernels'
       })
     })
-    // Pre-flight resolved stack (CUDA build, driver/disk gates) — audit hardening
+    // Pre-flight resolved stack: GPU/CUDA/driver/disk gates + exact Python pin.
+    // (Tauri install_plan shape: { plan: {gpuName,vendor,cuda,torch,driverWarning,profile}, disk: {free,total} }.)
     window.w2gp.installPlan().then(function(r) {
-      if (!r || !r.ok) return
+      if (!r || !r.plan) return
       const grid = $('installStackGrid')
       const warn = $('installStackWarn')
       const stack = $('installStack')
       if (!grid) return
       const p = r.plan
+      const freeBytes = (r.disk && r.disk.free != null) ? r.disk.free : null
+      const freeGb = freeBytes != null ? (freeBytes / 1073741824).toFixed(1) : '?'
       const rows = [
         ['GPU', p.gpuName || p.vendor],
         ['CUDA build', p.cuda],
         ['PyTorch', p.torch],
-        ['Python', p.python],
-        ['Env', p.envType],
-        ['Attention kernels', (p.attention && p.attention.length) ? p.attention.join(', ') : '—'],
-        ['Free disk', r.disk.freeGb + ' GB']
+        ['Profile', (p.profile || '').replace(/_/g, ' ')],
+        ['Free disk', freeGb + ' GB']
       ]
-      grid.innerHTML = rows.map(function(row) {
-        return '<div class="istack-row"><span class="istack-k">' + escHtml(row[0]) + '</span><span class="istack-v">' + escHtml(row[1]) + '</span></div>'
-      }).join('')
+      const renderRows = function() {
+        grid.innerHTML = rows.map(function(row) {
+          return '<div class="istack-row"><span class="istack-k">' + escHtml(row[0]) + '</span><span class="istack-v">' + escHtml(row[1]) + '</span></div>'
+        }).join('')
+      }
+      renderRows()
+      // Exact Python pin setup.py will demand via `uv venv --python X`
+      // (pythonPreflight is check-only — the download happens on Install).
+      window.w2gp.pythonPreflight().then(function(pf) {
+        if (!pf || !pf.wanted) return
+        const uvTag = pf.uvVersion ? ' (' + pf.uvVersion.split(' ').slice(0, 2).join(' ') + ')' : ''
+        const state = !pf.uvVersion ? '✗ uv not found'
+          : pf.path && pf.runs ? '✓ ' + pf.wanted + ' ready'
+          : pf.path ? '⚠ ' + pf.wanted + ' corrupted — auto-reinstall on Install'
+          : '⬇ ' + pf.wanted + ' — auto-download on Install'
+        rows.push(['Python' + uvTag, state])
+        renderRows()
+        if (pf.hint && warn) warn.innerHTML += '<div class="istack-hint">' + escHtml(pf.hint) + '</div>'
+      }).catch(function() {})
       const warns = []
       if (p.driverWarning) warns.push(p.driverWarning)
-      if (r.disk && r.disk.warn) warns.push(r.disk.warn)
+      if (freeBytes != null && freeBytes < 10 * 1073741824) warns.push('Only ' + freeGb + ' GB free — 50+ GB recommended (models are tens–hundreds of GB).')
       let warnHtml = warns.length ? warns.map(function(w) { return '<div class="istack-w">⚠ ' + escHtml(w) + '</div>' }).join('') : ''
-      if (r.softWarn) warnHtml += '<div class="istack-hint">This is a compatibility warning, not a hard block — install can continue but generation may fall back to CPU.</div>'
+      if (freeBytes != null && freeBytes >= 10 * 1073741824 && freeBytes < 50 * 1073741824) warnHtml += '<div class="istack-hint">' + freeGb + ' GB free is tight — models alone can exceed 50 GB. A non-system drive is recommended.</div>'
       warn.innerHTML = warnHtml
       stack.style.display = ''
-      // Block install only when a hard gate trips (old NVIDIA cu130 driver, or no disk).
+      // Hard block only when install can't succeed (cu130 driver too old, or ~no disk).
       const startBtn = $('installStartBtn')
-      if (startBtn && r.blocked) {
+      const hardBlocked = /R580/.test(p.driverWarning || '') || (freeBytes != null && freeBytes < 10 * 1073741824)
+      if (startBtn && hardBlocked) {
         startBtn.disabled = true
         startBtn.title = 'Resolve the warnings above before installing'
         startBtn.textContent = 'Install blocked — see warnings'
@@ -1008,7 +1053,18 @@ document.querySelectorAll('.env-type-btn').forEach(btn => {
 })
 
 $('installStartBtn').addEventListener('click', startInstall)
-$('reinstallFreshBtn').addEventListener('click', () => doInstall(null, 'reinstall'))
+$('reinstallFreshBtn').addEventListener('click', async () => {
+  // Backup dialog first: show folder size + offer model relocation.
+  // Cancel (null) aborts; {skip:true} wipes without backup.
+  const choice = await showReinstallBackupModal().catch(() => null)
+  if (!choice) { appendLog('[*] Reinstall cancelled.') ; return }
+  if (choice.skip) {
+    if (!window.confirm('Really wipe without any backup? Custom plugins, finetunes, settings and any models inside the folder will be deleted.')) return
+    doInstall(null, 'reinstall', { backup: false })
+    return
+  }
+  doInstall(null, 'reinstall', choice)
+})
 $('reinstallUpdateBtn').addEventListener('click', () => doInstall(null, 'update'))
 $('reinstallSkipBtn').addEventListener('click', () => doInstall(null, 'skip'))
 
@@ -1053,27 +1109,34 @@ function reflectRootBlock(rootPath) {
 $('browseAppDataPath')?.addEventListener('click', async () => {
   const folder = await window.w2gp.selectFolder()
   if (!folder) return
-  // Bare drive root: can't install on it, but offer to use <root>\Wan2GP so the
-  // user doesn't have to re-browse. Accept -> apply; Cancel -> keep the block.
+  // Bare drive root: don't block — show it resolved to <root>\Wan2GP and use
+  // that (backend rejects raw roots too, defense in depth).
   if (isDriveRoot(folder)) {
     const suggested = pathJoin(folder, 'Wan2GP')
-    if (window.confirm('You selected a drive root (' + folder + '). Installing directly on a drive root is not allowed.\n\nInstall into ' + suggested + ' instead?')) {
-      const res = await window.w2gp.setDataDir(suggested)
-      if (res && res.ok === false && res.error === 'drive-root') { _pendingRoot = suggested; reflectRootBlock(suggested); return }
-      _pendingRoot = null
-      loadPaths()
-    } else {
-      _pendingRoot = folder
-      reflectRootBlock(folder)
+    appendLog('[*] Drive root selected (' + folder + ') — using ' + suggested + ' instead.')
+    showToast('Using ' + suggested)
+    try {
+      await window.w2gp.setDataDir(suggested)
+    } catch (e) {
+      appendLog('[!] Could not set install folder: ' + ((e && e.message) || e))
+      _pendingRoot = suggested
+      reflectRootBlock(suggested)
+      return
     }
+    _pendingRoot = null
+    loadPaths()
     return
   }
   _pendingRoot = null
-  const res = await window.w2gp.setDataDir(folder)
-  if (res && res.ok === false && res.error === 'drive-root') {
-    _pendingRoot = folder
-    reflectRootBlock(folder)
-    return
+  try {
+    await window.w2gp.setDataDir(folder)
+  } catch (e) {
+    if (/drive-root/.test((e && e.message) || String(e))) {
+      _pendingRoot = folder
+      reflectRootBlock(folder)
+      return
+    }
+    throw e
   }
   loadPaths()
 })
@@ -1104,6 +1167,8 @@ function setModelPath(type, folder) {
     else if (type === 'loras') _modelLoras = ''
     else _modelOutput = ''
   }
+  // Model drive changed → re-gate disk space (installer screen only).
+  try { if ($('installer') && $('installer').classList.contains('active')) refreshModelDiskGates().catch(function() {}) } catch {}
 }
 
 async function browseModelFolder(type) {
@@ -1184,19 +1249,22 @@ async function startInstall(){
     document.querySelectorAll('.env-type-btn').forEach(b => b.disabled = false)
   }
 
-  // Check prerequisites
-  var hasGit = await window.w2gp.checkCommand('git')
+  // Check prerequisites (check_command returns {cmd, found} — an object is
+  // always truthy, so compare .found; previously a missing tool sailed through
+  // and failed 10 minutes into setup.py instead of showing the help card).
+  const hasCmd = async (c) => { try { const r = await window.w2gp.checkCommand(c); return !!(r && r.found) } catch { return false } }
+  var hasGit = await hasCmd('git')
   if (!hasGit) { appendLog('[!] Git not found — showing install help'); showPrereqHelp('Git not found', 'Git is required to clone the Wan2GP repository. Click Download to install it silently, or use the manual button.', 'https://git-scm.com/downloads', 'git'); return }
   if (selectedEnvType === 'venv') {
-    var hasPy = await window.w2gp.checkCommand('python')
+    var hasPy = await hasCmd('python')
     if (!hasPy) { appendLog('[!] Python not found — showing install help'); showPrereqHelp('Python not found', 'Python 3.10 or 3.11 is required for venv installs. Click Download to install Python 3.11 silently, or select uv/conda above.', 'https://www.python.org/downloads/', 'python'); return }
   }
   if (selectedEnvType === 'uv') {
-    var hasUv = await window.w2gp.checkCommand('uv')
+    var hasUv = await hasCmd('uv')
     if (!hasUv) { appendLog('[!] uv not found — showing install help'); showPrereqHelp('uv not found', 'uv is required for uv installs. Click Download to install it via PowerShell, or select venv/conda above.', 'https://docs.astral.sh/uv/#installation', 'uv'); return }
   }
   if (selectedEnvType === 'conda') {
-    var hasConda = await window.w2gp.checkCommand('conda')
+    var hasConda = await hasCmd('conda')
     if (!hasConda) { appendLog('[!] Conda not found — showing install help'); showPrereqHelp('Conda not found', 'Miniconda is required for conda installs. Click Download to install it silently, or select venv/uv above.', 'https://docs.anaconda.com/miniconda/', 'conda'); return }
   }
   show('installer'); resetTasks()
@@ -1206,25 +1274,142 @@ async function startInstall(){
   $('installSubtitle').textContent='Setting up Wan2GP...'
   const installed = await window.w2gp.checkInstalled()
   if(installed.repo) {
-    $('reinstallChoice').classList.remove('hidden')
-    $('installSubtitle').textContent='Wan2GP is already installed.'
+    // The verdict card owns the choices (healthy → Keep/Update/Skip trio,
+    // broken → adopt/repair, pinokio → models reuse) so stale buttons can
+    // never offer Keep/Skip for a folder that holds no install.
+    await refreshTargetVerdict().catch(() => null)
     return
   }
   doInstall(installed)
 }
 
-async function doInstall(installed, mode) {
+// Reinstall backup dialog: folder size + breakdown, backup checkbox,
+// per-model Move-to rows with Browse. Resolves {backup, moveModels} |
+// {skip:true} | null (cancel). Model destinations must be OUTSIDE the wiped folder.
+function showReinstallBackupModal() {
+  return new Promise(async (resolve) => {
+    const modal = $('backupModal')
+    if (!modal) { resolve({ backup: true, moveModels: [] }); return }
+    const done = (v) => { modal.classList.add('hidden'); resolve(v) }
+    $('backupCloseBtn').onclick = () => done(null)
+    $('backupCancelBtn').onclick = () => done(null)
+    $('backupSkipBtn').onclick = () => done({ skip: true })
+    const sumEl = $('backupSizeSummary'), bdEl = $('backupBreakdown')
+    const secEl = $('backupModelsSection'), rowsEl = $('backupModelsRows')
+    sumEl.textContent = 'calculating…'; bdEl.innerHTML = ''
+    secEl.style.display = 'none'; rowsEl.innerHTML = ''
+    $('backupIncludeCheckbox').checked = true
+    modal.classList.remove('hidden')
+    // Gather: repo path, size breakdown, model locations.
+    const paths = await window.w2gp.getInstallPaths().catch(() => null)
+    const repo = (paths && paths.repo) || ''
+    let size = null
+    try { size = await window.w2gp.folderSize(repo) } catch (e) { size = { error: e.message } }
+    if (!size || size.error) {
+      sumEl.textContent = 'size unavailable (' + ((size && size.error) || 'unknown') + ')'
+    } else {
+      sumEl.textContent = fmtBytes(size.bytes) + ' total'
+      bdEl.innerHTML = (size.entries || []).slice(0, 8).map(function(e) {
+        return '<div class="istack-row"><span class="istack-k">' + escHtml(e.name) + '</span><span class="istack-v">' + escHtml(fmtBytes(e.bytes)) + '</span></div>'
+      }).join('')
+    }
+    const entryBytes = {}
+    for (const e of ((size && size.entries) || [])) entryBytes[e.name.toLowerCase()] = e.bytes
+    // Which model folders live INSIDE the wiped repo?
+    const mp = await window.w2gp.getModelPaths().catch(() => null)
+    const norm = (p) => (p || '').replace(/\//g, '\\')
+    const abs = (p) => (/^[A-Za-z]:\\/.test(p || '') || /\\\\/.test(p || '')) ? norm(p) : norm(repo + '\\' + (p || ''))
+    const inside = (p) => { const a = abs(p).toLowerCase(); return a.startsWith(repo.toLowerCase().replace(/\\+$/, '') + '\\') }
+    const found = []
+    const repoNorm = repo.toLowerCase().replace(/\\+$/, '')
+    const push = (type, label, from, trusted) => {
+      if (!from) return
+      const a = abs(from)
+      if (a.toLowerCase() === repoNorm) return // '.' == the repo itself — never offer to move it
+      if (!inside(from) || found.some((f) => f.from.toLowerCase() === a.toLowerCase())) return
+      found.push({ type, label, from: a, trusted: !!trusted })
+    }
+    if (mp) {
+      push('ckpts', 'Checkpoints', mp.checkpoints, true)
+      push('loras', 'LoRAs', mp.loras, true)
+      push('output', 'Output', mp.output, true)
+    }
+    // Default subdirs count too (ckpts/, loras/, outputs/ under the repo).
+    for (const [sub, type, label] of [['ckpts', 'ckpts', 'Checkpoints'], ['loras', 'loras', 'LoRAs'], ['outputs', 'output', 'Output'], ['output', 'output', 'Output']]) {
+      push(type, label, repo + '\\' + sub, false)
+    }
+    // Untrusted (default-subdir) rows need a size entry proving they exist;
+    // config-listed rows are trusted as-is.
+    const rows = found.filter(function(f) {
+      if (f.trusted) return true
+      const base = f.from.split('\\').pop().toLowerCase()
+      return Object.prototype.hasOwnProperty.call(entryBytes, base)
+    })
+    const dsts = {}
+    $('backupGoBtn').onclick = function() {
+      const moveModels = []
+      rows.forEach(function(r, i) { if (dsts[i]) moveModels.push({ type: r.type, from: r.from, to: dsts[i] }) })
+      done({ backup: $('backupIncludeCheckbox').checked, moveModels })
+    }
+    if (!rows.length) return
+    secEl.style.display = ''
+    rowsEl.innerHTML = ''
+    rows.forEach(function(r, i) {
+      const base = r.from.split('\\').pop().toLowerCase()
+      const div = document.createElement('div')
+      div.className = 'migrate-row'
+      div.innerHTML = '<label>' + escHtml(r.label + ' (' + fmtBytes(entryBytes[base]) + ')') + '</label>' +
+        '<div class="migrate-path"><input type="text" id="backupDst' + i + '" readonly placeholder="stays — will be deleted">' +
+        '<button class="btn btn-ghost small" id="backupBrowse' + i + '">Move to…</button></div>' +
+        '<div class="istack-hint">' + escHtml(r.from) + '</div>'
+      rowsEl.appendChild(div)
+      $('backupBrowse' + i).onclick = async function() {
+        const dir = await window.w2gp.selectFolder().catch(() => null)
+        if (!dir) return
+        if (isDriveRoot(dir)) { alert('Pick a folder, not a drive root.'); return }
+        if (dir.toLowerCase().startsWith(repo.toLowerCase().replace(/\\+$/, '') + '\\')) { alert('Destination must be OUTSIDE the wiped folder — it would be deleted too.'); return }
+        dsts[i] = dir
+        $('backupDst' + i).value = dir
+        $('backupDst' + i).title = dir
+      }
+    })
+  })
+}
+
+async function doInstall(installed, mode, opts) {
   $('reinstallChoice').classList.add('hidden')
+  installProgressReset()
   if (mode === 'skip') {
-    show('dashboard'); refreshDashboard()
+    // Reuse must earn it: a stale envs.json or half-deleted venv used to sail
+    // through to a broken dashboard. Validate first, offer repair on failure.
+    appendLog('[*] Checking existing install health before reuse…')
+    let v = null
+    try { v = await window.w2gp.validateInstall() } catch (e) { v = { ok: false, errors: [e.message || String(e)] } }
+    if (v && v.ok) {
+      appendLog('[*] Existing install healthy — reusing.')
+      show('dashboard'); refreshDashboard()
+      return
+    }
+    appendLog('[!] Existing install failed checks: ' + ((v && v.errors && v.errors.join('; ')) || 'unknown'))
+    $('installSubtitle').textContent = 'Existing install needs repair — see issues above'
+    try { await refreshTargetVerdict() } catch {}
+    showToast('✗ Existing install failed health checks — repair instead of reusing')
     return
   }
   let skipClone = false
   if (mode === 'reinstall') {
     $('installSubtitle').textContent='Removing existing installation...'
     appendLog('[*] Removing existing Wan2GP installation...')
-    const ok = await window.w2gp.reinstall()
-    if (!ok) {
+    const ok = await window.w2gp.reinstall(opts || null)
+    if (ok && ok.movedModels && ok.movedModels.length) {
+      appendLog('[*] Models relocated: ' + ok.movedModels.join('; '))
+      // Adopt the new locations so wgp_config.json points at them post-install.
+      for (const m of (opts && opts.moveModels) || []) {
+        if (m.type === 'ckpts') _modelCkpts = m.to
+        else if (m.type === 'loras') _modelLoras = m.to
+        else if (m.type === 'output') _modelOutput = m.to
+      }
+    }    if (!ok) {
       appendLog('[!] Reinstall aborted — the existing installation could not be removed (files likely locked by a running process or a terminal open in the folder).')
       appendLog('[!] Close any terminal/Explorer window open in the Wan2GP folder, then retry.')
       showToast('✗ Could not remove existing installation')
@@ -1262,6 +1447,14 @@ async function doInstall(installed, mode) {
       $('installProfile').textContent=profile; $('installProfileRow').style.display='flex'
     } catch {}
     try {
+      // Fresh reinstall wiped the repo — merge the .reinstall-backup back first
+      // (custom plugins/finetunes/old settings), then apply model paths on top.
+      if (mode === 'reinstall') {
+        try {
+          const rb = await window.w2gp.restoreBackup()
+          if (rb && rb.restored && rb.restored.length) appendLog('[*] Restored from backup: ' + rb.restored.join(', '))
+        } catch (e) { appendLog('[!] Backup restore failed: ' + e.message + ' — files remain in .reinstall-backup') }
+      }
       const modelCfg = {}
       if (_modelCkpts) modelCfg.checkpointsPaths = [_modelCkpts, '.']
       if (_modelLoras) modelCfg.lorasRoot = _modelLoras
@@ -1269,14 +1462,234 @@ async function doInstall(installed, mode) {
       await window.w2gp.writeWgpConfig(modelCfg)
       appendLog(`[*] wgp_config.json updated: ckpts=${_modelCkpts || '(default)'}, loras=${_modelLoras || '(default)'}`)
     } catch (e) {
-      appendLog(`[!] Failed to write model config: ${e.message}`)
+      appendLog(`[!] Failed to write model config: ${errText(e)}`)
     }
     taskComplete('done'); $('installSubtitle').textContent='Wan2GP is ready!'; appendLog('[*] Installation complete!')
     const vb = $('validateInstallBtn')
     if (vb) { vb.style.display = ''; vb.disabled = false; vb.textContent = 'Validate installation' }
     setTimeout(()=>{ show('dashboard'); refreshDashboard(); startMetricsPolling() }, 1200)
-  } catch(e){ taskComplete('done',true); $('installSubtitle').textContent='Installation failed'; appendLog(`[ERROR] ${e.message}`) }
+  } catch(e){
+    // Honest failure: fail any still-running task, offer Retry + diagnostics.
+    // (Previously only 'done' was marked and the Install button stayed hidden.)
+    taskComplete('done',true)
+    document.querySelectorAll('.task.active').forEach(function(t) {
+      t.className = 'task fail'
+      const ic = t.querySelector('.task-icon'); if (ic) ic.textContent = '✕'
+      const st = t.querySelector('.task-status'); if (st) st.textContent = 'failed'
+    })
+    $('installSubtitle').textContent = 'Installation failed — see console output above'
+    appendLog(`[ERROR] ${(e && e.message) || e}`)
+    const sb = $('installStartBtn')
+    if (sb) { sb.classList.remove('hidden'); sb.disabled = false; sb.textContent = 'Retry install' }
+    const cdb = $('copyDiagnosticsBtn')
+    if (cdb) { cdb.style.display = ''; cdb.onclick = copyDiagnostics }
+    showToast('✗ Install failed — fix the issue above, then Retry')
+  }
 }
+
+// Model-drive disk gates: checkpoints/LoRAs/outputs may live on other drives
+// (or the same one) — the app-drive check in the install stack doesn't cover
+// them, and a model library eats tens–hundreds of GB. Warn <50 GB, block <10.
+function driveRootOf(p) {
+  const m = /^([A-Za-z]:\\)/.exec(p || '')
+  return m ? m[1].toUpperCase() : (p || '')
+}
+let _gatesRun = 0
+async function refreshModelDiskGates() {
+  const box = $('modelDiskGates')
+  if (!box) return
+  const my = ++_gatesRun // superseded runs abort before painting
+  const targets = [['Checkpoints', _modelCkpts], ['LoRAs', _modelLoras], ['Output', _modelOutput]]
+    .filter(function(t) { return t[1] && !isDriveRoot(t[1]) })
+  if (!targets.length) { if (my === _gatesRun) { box.innerHTML = ''; window._modelDriveBlocked = false } return }
+  const seen = new Set()
+  let html = '', blocked = false
+  for (const [label, p] of targets) {
+    const root = driveRootOf(p)
+    if (seen.has(root)) continue
+    seen.add(root)
+    let d = null
+    try { d = await window.w2gp.getDiskSpace(p) } catch { continue }
+    if (my !== _gatesRun) return
+    if (!d || d.free == null || d.total == null) continue
+    const gb = d.free / 1073741824
+    if (gb < 10) {
+      blocked = true
+      html += '<div class="istack-w">⛔ ' + escHtml(label + ' drive ' + root + ' has only ' + gb.toFixed(1) + ' GB free — a model library needs tens of GB. Pick a roomier drive.') + '</div>'
+    } else if (gb < 50) {
+      html += '<div class="istack-hint">⚠ ' + escHtml(label + ' drive ' + root + ': ' + gb.toFixed(1) + ' GB free — tight for a model library.') + '</div>'
+    }
+  }
+  if (my !== _gatesRun) return
+  box.innerHTML = html
+  window._modelDriveBlocked = blocked
+  const startBtn = $('installStartBtn')
+  if (blocked && startBtn) {
+    startBtn.disabled = true
+    startBtn.title = 'Free space on the model drive(s) before installing'
+    startBtn.textContent = 'Install blocked — model drive full'
+  }
+}
+
+// Copy a diagnostics bundle (hardware + paths + python preflight + log tail)
+// for Discord/GitHub reports — ATFGriff-class issues arrive without this.
+async function copyDiagnostics() {
+  let info = ''
+  try {
+    const parts = await Promise.all([
+      window.w2gp.detectHardware().catch(() => null),
+      window.w2gp.getInstallPaths().catch(() => null),
+      window.w2gp.pythonPreflight().catch(() => null),
+      window.w2gp.classifyTarget().catch(() => null)
+    ])
+    info = 'Hardware: ' + JSON.stringify(parts[0]) + '\nPaths: ' + JSON.stringify(parts[1]) +
+      '\nPython: ' + JSON.stringify(parts[2]) + '\nTarget: ' + JSON.stringify(parts[3]) + '\n\n'
+  } catch {}
+  const tail = (typeof window._getLogTail === 'function') ? window._getLogTail() : ''
+  try { await navigator.clipboard.writeText(info + tail); showToast('✓ Diagnostics copied — paste it in Discord/GitHub') }
+  catch { showToast('✗ Copy failed — select the console text manually') }
+}
+
+// Target-folder triage UI: what is already in the install location?
+// Verdicts from classify_target: empty | ours_healthy | ours_broken_env |
+// repo_no_env | pinokio | foreign.
+async function refreshTargetVerdict() {
+  const box = $('targetVerdict'), body = $('targetVerdictBody')
+  const adopt = $('targetAdoptBtn'), browse = $('targetBrowseBtn'), useModels = $('targetUseModelsBtn')
+  if (!box || !body) return
+  let t = null
+  try { t = await window.w2gp.classifyTarget() } catch { box.style.display = 'none'; return null }
+  if (!t || !t.verdict) { box.style.display = 'none'; return null }
+  const v = t.verdict
+  if (adopt) adopt.style.display = 'none'
+  if (browse) browse.style.display = 'none'
+  if (useModels) useModels.style.display = 'none'
+  const startBtn = $('installStartBtn')
+  if (v === 'empty') {
+    box.style.display = 'none'
+    // No install here → no Keep / reuse choices either.
+    $('reinstallChoice')?.classList.add('hidden')
+    // Restore the label if a previous verdict changed it (pinokio/foreign only —
+    // never touch driver/disk hard blocks, the installPlan block owns those).
+    if (startBtn && (startBtn.textContent.startsWith('Install anyway') || startBtn.textContent.startsWith('Install blocked — Pinokio'))) {
+      startBtn.textContent = 'Install'
+      startBtn.disabled = false
+      startBtn.title = ''
+    }
+    return t
+  }
+  box.style.display = ''
+  const envNames = (t.envs && Object.keys(t.envs).join(', ')) || ''
+  if (v === 'ours_healthy') {
+    body.innerHTML = '<div class="istack-ok">✓ ' + escHtml(t.hint || '') + '</div>'
+    // Reuse path: the existing reinstall choice owns reuse / update / fresh.
+    $('reinstallChoice')?.classList.remove('hidden')
+    $('installSubtitle').textContent = 'Wan2GP is already installed.'
+  } else if (v === 'repo_no_env' || v === 'ours_broken_env') {
+    // Adopt button covers this — the generic Keep/Update/Skip trio doesn't apply.
+    $('reinstallChoice')?.classList.add('hidden')
+    body.innerHTML = '<div class="istack-w">⚠ ' + escHtml(t.hint || '') + '</div>' +
+      (envNames ? '<div class="istack-hint">Env folders found: ' + escHtml(envNames) + ' — repair recreates the broken one, keeps models & settings.</div>' : '')
+    if (adopt) {
+      adopt.style.display = ''
+      adopt.textContent = 'Install / repair environment (keeps models & settings)'
+      adopt.onclick = function() { resetTasks(); doInstall(null, 'update') }
+    }
+    $('installSubtitle').textContent = 'Wan2GP repo found — environment missing or broken.'
+  } else { // pinokio | foreign
+    const isPinokio = (v === 'pinokio')
+    const icon = isPinokio ? '🧩' : '⚠'
+    let detail = 'Folder: ' + (t.repo || '') + ' (' + (t.entryCount || 0) + ' entries'
+    if (t.hasConfig) detail += ', has wgp_config.json'
+    if (t.modelDirs && t.modelDirs.length) detail += ', model dirs: ' + t.modelDirs.join(', ')
+    detail += ').'
+    // For Pinokio libraries, show what we found + sizes (proves reuse is worth it).
+    if (isPinokio && t.modelDirs && t.modelDirs.length) {
+      try {
+        const sz = await window.w2gp.folderSize(t.repo).catch(() => null)
+        const byName = {}
+        for (const e of ((sz && sz.entries) || [])) byName[e.name.toLowerCase()] = e.bytes
+        const lines = t.modelDirs.map(function(d) {
+          const b = byName[d.toLowerCase()]
+          return d + (b != null ? ' (' + fmtBytes(b) + ')' : '')
+        })
+        detail += ' Reusable library: ' + lines.join(', ') + '.'
+      } catch {}
+    }
+    body.innerHTML = '<div class="istack-w">' + icon + ' ' + escHtml(t.hint || '') + '</div>' +
+      '<div class="istack-hint">' + escHtml(detail) + (isPinokio ? '' : ' Installing here merges upstream over unknown files — an empty folder is safer.') + '</div>'
+    if (browse) { browse.style.display = ''; browse.onclick = function() { $('browseAppDataPath')?.click() } }
+    // Foreign content → no Keep / reuse choices either.
+    $('reinstallChoice')?.classList.add('hidden')
+    if (isPinokio) {
+      // Hard stop: backend install/reinstall/uninstall refuse Pinokio trees too.
+      if (startBtn) { startBtn.disabled = true; startBtn.title = 'Pick an empty folder first — installing into a Pinokio tree would corrupt it.'; startBtn.textContent = 'Install blocked — Pinokio folder' }
+      $('reinstallChoice')?.classList.add('hidden')
+      if (useModels && t.modelDirs && t.modelDirs.length) {
+        useModels.style.display = ''
+        useModels.onclick = function() { usePinokioModels(t) }
+      }
+      $('installSubtitle').textContent = 'Pinokio-managed Wan2GP found — reuse its models in a fresh install below.'
+    } else if (startBtn && !startBtn.disabled) {
+      startBtn.textContent = 'Install anyway (folder not empty)'
+    }
+    if (v === 'foreign') $('installSubtitle').textContent = 'This folder holds unknown files — install into an empty folder, or wipe it first.'
+  }
+  return t
+}
+
+// Pinokio reuse: point OUR model folders at the Pinokio library (no re-downloads,
+// Pinokio keeps working untouched), then let the user pick an empty install folder.
+// NOTE: writes desktop-config only — wgp_config.json here belongs to Pinokio.
+async function usePinokioModels(t) {
+  const repo = (t && t.repo) || ''
+  const sep = '\\'
+  const pick = async (type, sub) => {
+    const p = repo.replace(/\\+$/, '') + sep + sub
+    setModelPath(type, p)
+    try {
+      const cfg = await window.w2gp.configLoad()
+      if (type === 'ckpts') cfg.modelCkptsPath = p
+      else if (type === 'loras') cfg.modelLorasPath = p
+      else cfg.modelOutputPath = p
+      await window.w2gp.configSave(cfg)
+    } catch {}
+  }
+  const dirs = (t && t.modelDirs) || []
+  // Map upstream subdir names to our folder types.
+  for (const d of dirs) {
+    const low = d.toLowerCase()
+    if (low === 'ckpts' || low === 'checkpoints') await pick('ckpts', d)
+    else if (low === 'loras') await pick('loras', d)
+    else if (low === 'outputs' || low === 'output') await pick('output', d)
+  }
+  appendLog('[*] Model folders now point at the Pinokio library — its install stays untouched.')
+  showToast('✓ Reusing Pinokio models — now pick an empty install folder')
+  try { await refreshModelDiskGates() } catch {}
+  $('browseAppDataPath')?.click()
+}
+
+// (Re)open the installer screen in a fresh state — used by Manage → Run Setup
+// again and after uninstall. Never lands on the dashboard without an install.
+async function openInstallerFresh(subtitle) {
+  resetTasks()
+  installProgressReset()
+  show('installer')
+  $('installSubtitle').textContent = subtitle || 'Select environment type, then click Install'
+  const sb = $('installStartBtn')
+  if (sb) { sb.classList.remove('hidden'); sb.disabled = false; sb.textContent = 'Install' }
+  $('envTypeSelect')?.classList.remove('disabled')
+  document.querySelectorAll('.env-type-btn').forEach(b => b.disabled = false)
+  await loadPaths().catch(() => null)
+  try { await refreshTargetVerdict().catch(() => null) } catch {}
+  try { await refreshModelDiskGates().catch(() => null) } catch {}
+}
+
+$('manageRunSetupBtn')?.addEventListener('click', async () => {
+  closeSettings()
+  appendLog('[*] Opening Setup — pick fresh install, repair, reuse or migrate.')
+  await openInstallerFresh()
+})
 
 $('settingsOverlay').addEventListener('click', closeSettings)
 
@@ -1297,7 +1710,9 @@ async function refreshDashboard(){
   ])
   // Launch buttons only make sense when Wan2GP is actually installed
   try {
-    setLaunchButtonsInstalled(!!(instRes && instRes.repo))
+    // Launch buttons need a repo AND an active env — repo alone (failed
+    // install, wiped env) used to launch system `python` into a torch traceback.
+    setLaunchButtonsInstalled(!!(instRes && instRes.repo && status.env && !status.error))
   } catch {}
   // Show a visible error note if the status call failed (so the panel is never
   // silently blank — this is exactly the blank-dashboard bug we hit before).
@@ -1307,6 +1722,7 @@ async function refreshDashboard(){
     if (errNote) errNote.textContent = 'Could not read environment status: ' + (status.error || 'no active environment')
     $('envName').textContent='No active environment'
     window._activeEnvName = ''
+    window._activeEnvType = ''
     window._hasActiveEnv = false
     $('envNameHint')?.classList.remove('hidden')
     document.querySelectorAll('.pkg-install-btn, .spec-latest, .spec-update-btn').forEach(function(el) { el.remove() })
@@ -1318,6 +1734,7 @@ async function refreshDashboard(){
   } else {
     $('envName').textContent=status.env.name; $('envType').textContent=status.env.type
     window._activeEnvName = status.env.name || ''
+    window._activeEnvType = status.env.type || 'uv'
     window._hasActiveEnv = true
     $('envNameHint')?.classList.add('hidden')
     // Clear old update/install buttons before re-creating
@@ -1410,7 +1827,7 @@ async function refreshDashboard(){
   document.querySelectorAll('.env-detail .spec-row').forEach(function(r) { r.classList.remove('has-update','up-to-date') })
   $('checkPkgUpdatesBtn').textContent = '↻ Check Updates'
   $('checkPkgUpdatesBtn').disabled = false
-  refreshEnvUnlink()
+  refreshEnvUnlink(!!(instRes && instRes.repo))
   // Warn if model checkpoints/LoRAs still live in a roaming AppData profile.
   checkModelsPathWarning()
   // Warn RTX 40/50 users still on the broken fp8 SageAttention wheel to sync.
@@ -1588,26 +2005,34 @@ function renderProfileOverview(detail, ids) {
 }
 
 // ── Env unlink button visibility ──
-function refreshEnvUnlink() {
+// Shown only when a repo is present AND an env is known-active: with no
+// install the buttons used to stay clickable and fail (or "clean" a stale
+// registry entry with no context).
+function refreshEnvUnlink(hasRepo) {
   var btn = $('envUnlinkBtn')
   var restoreBtn = $('envRestoreBtn')
+  var reinstallBtn = $('envReinstallBtn')
+  var hideAll = function() { if (btn) btn.style.display = 'none'; if (restoreBtn) restoreBtn.style.display = 'none'; if (reinstallBtn) reinstallBtn.style.display = 'none' }
+  if (hasRepo === false) { hideAll(); return }
   // State-driven: shown whenever an env is known-active, hidden otherwise.
   var hasEnv = window._hasActiveEnv === true
   var name = (hasEnv && window._activeEnvName) || ''
   if (btn) {
     if (name && name !== '—' && name !== 'No active environment') {
-      btn.style.display = ''; if (restoreBtn) restoreBtn.style.display = ''
+      btn.style.display = ''; if (restoreBtn) restoreBtn.style.display = ''; if (reinstallBtn) reinstallBtn.style.display = ''
       btn.onclick = async () => {
           if (!confirm('Uninstall environment "' + name + '"?')) return
           btn.disabled = true; btn.textContent = '...'
           appendLog('[*] Uninstalling environment ' + name + '...')
-          var r = await window.w2gp.uninstallEnv(name)
+          try {
+            var r = await window.w2gp.uninstallEnv(name)
+            if (r && r.success) { appendLog('[*] Environment ' + name + ' uninstalled.'); refreshDashboard() }
+            else showToast((r && r.error) || 'Failed')
+          } catch (e) { showToast(errText(e)) }
           btn.disabled = false; btn.textContent = 'unlink'
-          if (r && r.success) { appendLog('[*] Environment ' + name + ' uninstalled.'); refreshDashboard() }
-          else showToast(r?.error || 'Failed')
         }
       } else {
-        btn.style.display = 'none'; if (restoreBtn) restoreBtn.style.display = 'none'
+        hideAll()
       }
     }
     // Restore button handler
@@ -1616,10 +2041,35 @@ function refreshEnvUnlink() {
         if (!confirm('Reinstall all packages from requirements.txt? This will restore pinned versions.')) return
         restoreBtn.disabled = true; restoreBtn.textContent = '...'
         appendLog('[*] Restoring packages from requirements.txt...')
-        var r = await window.w2gp.restoreRequirements()
+        try {
+          var r = await window.w2gp.restoreRequirements()
+          if (r && r.success) { appendLog('[*] Requirements restored.'); setTimeout(refreshDashboard, 2000) }
+          else showToast((r && r.error) || 'Failed')
+        } catch (e) { showToast(errText(e)) }
         restoreBtn.disabled = false; restoreBtn.textContent = 'restore'
-        if (r && r.success) { appendLog('[*] Requirements restored.'); setTimeout(refreshDashboard, 2000) }
-        else showToast(r?.error || 'Failed')
+      }
+    }
+    // Full reinstall: delete the env and run the whole setup again (fresh
+    // venv, pinned Python, PyTorch+CUDA, requirements, kernels, smoke test).
+    // Restore only re-pips requirements into the existing venv — this fixes
+    // broken interpreters, wrong torch builds and corrupt venvs. Models,
+    // plugins and settings are untouched (they live outside the env folder).
+    if (reinstallBtn) {
+      reinstallBtn.onclick = async () => {
+        const envType = window._activeEnvType || 'uv'
+        if (!window.confirm('Recreate the "' + name + '" environment from scratch?\n\nFresh venv, Python, PyTorch + CUDA, packages and kernels (takes a while — watch the console). Models, plugins and settings are kept.')) return
+        reinstallBtn.disabled = true; reinstallBtn.textContent = 'working…'
+        appendLog('[*] Reinstalling environment ' + name + ' from scratch (' + envType + ') — progress below…')
+        try {
+          const u = await window.w2gp.uninstallEnv(name)
+          if (!u || !u.success) throw new Error((u && u.error) || 'env removal failed')
+          appendLog('[*] Old env removed — running full setup…')
+          const r = await window.w2gp.install(envType)
+          if (r && (r.success || r.ok)) { appendLog('[*] Environment reinstalled.'); showToast('✓ Environment reinstalled') }
+          else showToast('✗ ' + ((r && r.error) || 'reinstall failed — see console'))
+        } catch (e) { appendLog('[!] Reinstall failed: ' + errText(e)); showToast('✗ ' + errText(e)) }
+        reinstallBtn.disabled = false; reinstallBtn.textContent = 'reinstall'
+        refreshDashboard()
       }
     }
   }
@@ -1790,11 +2240,11 @@ $('dashBrowseOutput').addEventListener('click', () => changeModelFolder('output'
 
 $('desktopRepoLink').addEventListener('click', (e) => {
   e.preventDefault()
-  window.w2gp.openExternal('https://github.com/GKartist75/wan2gp-desktop')
+  window.w2gp.openExternal('https://github.com/GKartist75/Wan2GP-Desktop-Tauri')
 })
 $('discussionsLink').addEventListener('click', (e) => {
   e.preventDefault()
-  window.w2gp.openExternal('https://github.com/GKartist75/wan2gp-desktop/discussions')
+  window.w2gp.openExternal('https://github.com/GKartist75/Wan2GP-Desktop-Tauri/discussions')
 })
 $('ytLink').addEventListener('click', (e) => {
   e.preventDefault()
@@ -1858,6 +2308,9 @@ async function loadPaths(skipModelPaths) {
     if (_modelOutput || savedOutput) setModelPath('output', _modelOutput || savedOutput)
     else setModelPath('output', pathJoin(md, 'outputs'))
   }
+  // Re-triage the target folder when the installer screen is showing
+  // (Browse / reset changes the location — verdict must follow).
+  try { if ($('installer') && $('installer').classList.contains('active')) { refreshTargetVerdict().catch(function() {}); refreshModelDiskGates().catch(function() {}) } } catch {}
 }
 // Tiny path join that tolerates both separators in the renderer (no node path).
 function pathJoin(a, b) { return (a || '').replace(/[\\/]+$/, '') + '\\' + b }
@@ -1938,28 +2391,20 @@ document.querySelectorAll('#migrationModal [data-browse]').forEach(btn => {
     } catch {}
   })
 })
-$('migrationMoveBtn')?.addEventListener('click', async () => {
+async function runMigration(doMove) {
   if (_migBusy) return
-  // ponytail: support 4 WAN2GP folder modes — existing vs new × Move vs Just point (like changeModelFolder)
+  // The two modal buttons own the choice now (Move vs Just-switch) — no
+  // second popup. Same folder ⇒ nothing to move regardless of button.
   const newDataDir = $('migDataDir').value.trim()
   // ponytail: reject file-as-folder
   if (isFilePickedAsFolder(newDataDir)) { alert('Please select a folder, not a file:\n' + newDataDir); resetMigrationUI(); return }
   const oldDataDir = (window._migPrefs && (window._migPrefs.dataDir || window._migPrefs.legacy)) || (await window.w2gp.getInstallPaths().catch(()=>null))?.dataDir || ''
-  let doMove = true
-  if (newDataDir && oldDataDir && newDataDir.toLowerCase() !== oldDataDir.toLowerCase()) {
-    const c = await window.w2gp.confirmDialog({
-      title: 'Move files or just point?',
-      message: 'Change Wan2GP folder to:\n  ' + newDataDir,
-      detail: 'Old: ' + oldDataDir + '\n\n• Move existing files = physically move repo/venv/settings to new folder (existing or new — created if needed)\n• Just point = switch to new/existing folder without moving (empty or already-filled)',
-      buttons: ['Move existing files', 'Just point (no move)', 'Cancel'],
-      defaultId: 0, cancelId: 2
-    })
-    if (c === 'cancel') return
-    doMove = (c === 'move')
-  } else if (newDataDir && oldDataDir && newDataDir.toLowerCase() === oldDataDir.toLowerCase()) { doMove = false }
+  if (newDataDir && oldDataDir && newDataDir.toLowerCase() === oldDataDir.toLowerCase()) doMove = false
   _migBusy = true
-  const btn = $('migrationMoveBtn')
-  btn.disabled = true
+  const moveBtn = $('migrationMoveBtn'), pointBtn = $('migrationPointBtn')
+  if (moveBtn) moveBtn.disabled = true
+  if (pointBtn) pointBtn.disabled = true
+  const btn = (doMove ? moveBtn : pointBtn) || moveBtn
   btn.textContent = doMove ? 'Moving…' : 'Switching…'
   const prog = $('migrationProgress')
   if (prog) { prog.classList.remove('hidden'); setMigrationProgress(0) }
@@ -1970,9 +2415,11 @@ $('migrationMoveBtn')?.addEventListener('click', async () => {
     output: $('migOutput').value
   }
   if (!choices.dataDir) { alert('Choose a Wan2GP data folder.'); resetMigrationUI(); return }
+  // Bare drive root ⇒ resolve to <root>\Wan2GP like the installer Browse does.
   if (isDriveRoot(choices.dataDir)) {
-    alert('Install/move into a folder, not a drive root.\n\nPick a folder such as D:\\Wan2GP (use Browse if unsure), then Move & restart.')
-    resetMigrationUI(); return
+    choices.dataDir = pathJoin(choices.dataDir, 'Wan2GP')
+    $('migDataDir').value = choices.dataDir
+    appendLog('[*] Drive root selected — using ' + choices.dataDir + ' instead.')
   }
   try {
     // ponytail: 4 modes for Wan2GP folder — existing/new × Move vs Just point
@@ -1992,10 +2439,12 @@ $('migrationMoveBtn')?.addEventListener('click', async () => {
     btn.textContent = 'Restarting…'
     setTimeout(()=> location.reload(), 900)
   } catch (e) {
-    alert('Migration failed: ' + e.message)
+    alert('Migration failed: ' + errText(e))
     resetMigrationUI()
   }
-})
+}
+$('migrationMoveBtn')?.addEventListener('click', () => runMigration(true))
+$('migrationPointBtn')?.addEventListener('click', () => runMigration(false))
 // Show live copy progress (only the slow cross-volume/copy-fallback path emits
 // this — the common instant rename path finishes before any paint).
 function setMigrationProgress(pct) {
@@ -2008,6 +2457,8 @@ function resetMigrationUI() {
   _migBusy = false
   const btn = $('migrationMoveBtn')
   if (btn) { btn.disabled = false; btn.textContent = 'Move & restart' }
+  const pt = $('migrationPointBtn')
+  if (pt) { pt.disabled = false; pt.textContent = 'Just switch to it' }
   const prog = $('migrationProgress')
   if (prog) { prog.classList.add('hidden'); setMigrationProgress(0) }
 }
@@ -2158,7 +2609,7 @@ $('browserBtn').addEventListener('click', async () => {
     btn.textContent = 'Starting… (see console)'
     armPendingTimeout()
   } catch(e){
-    appendLog(`[LAUNCH ERROR] ${e.message}`)
+    appendLog(`[LAUNCH ERROR] ${errText(e)}`)
     $('launchInfo').classList.add('hidden')
     btn.disabled = false
     if (!browserRunning) btn.textContent = 'Launch Wan2GP in Browser'
@@ -2181,7 +2632,7 @@ $('browserNoGpuBtn').addEventListener('click', async () => {
     btn.textContent = 'Starting… (see console)'
     armPendingTimeout()
   } catch(e){
-    appendLog(`[LAUNCH ERROR] ${e.message}`)
+    appendLog(`[LAUNCH ERROR] ${errText(e)}`)
     $('launchInfo').classList.add('hidden')
     btn.disabled = false
     if (!browserRunning) btn.textContent = 'Launch in Chrome (no GPU script)'
@@ -2207,7 +2658,7 @@ $('termBtn').addEventListener('click', async () => {
     $('browserNoGpuBtn').style.display = 'none'
     $('launchInfo').classList.add('hidden')
   } catch(e){
-    appendLog(`[LAUNCH ERROR] ${e.message}`)
+    appendLog(`[LAUNCH ERROR] ${errText(e)}`)
     $('launchInfo').classList.add('hidden')
   } finally {
     $('termBtn').disabled = false
@@ -2286,7 +2737,7 @@ async function openDesktopView(url, fresh) {
     $('dashBody').style.display = ''
     $('webviewContainer').classList.add('hidden')
     hideWebviewUI()
-    appendLog(`[LAUNCH ERROR] ${e.message}`)
+    appendLog(`[LAUNCH ERROR] ${errText(e)}`)
   } finally {
     $('appBtn').disabled = false; setAppLaunchLabel()
   }
@@ -2307,7 +2758,7 @@ $('appBtn').addEventListener('click', async () => {
     armPendingTimeout()
   } catch(e){
     $('launchInfo').classList.add('hidden')
-    appendLog(`[LAUNCH ERROR] ${e.message}`)
+    appendLog(`[LAUNCH ERROR] ${errText(e)}`)
     $('appBtn').disabled = false; setAppLaunchLabel()
   }
 })
@@ -2477,7 +2928,10 @@ $('stopWangpBtn').addEventListener('click', async () => {
 
 // ── Reset UI when server exits (manual stop or crash) ──
 window.w2gp.onWangpExit(c => {
-  appendLog(`${c === 0 ? '[*]' : '[!]'} Wan2GP process exited (code ${c})`)
+  // Payload shapes: {code: n|null} on process end, {stopped:true} on manual stop.
+  // (Was interpolating the whole object → "exited (code [object Object])".)
+  const code = (c && typeof c === 'object') ? (c.code ?? (c.stopped ? 0 : '?')) : c
+  appendLog(`${code === 0 ? '[*]' : '[!]'} Wan2GP process exited (code ${code})`)
   _pendingOpen = null   // boot failed/went away — don't open anything later
   // Server is really gone: drop the (now stale) embed entirely so the next
   // open rebuilds it instead of showing a dead page.
@@ -2957,6 +3411,57 @@ function renderDlss5Progress() {
   }).join('')
     + (_dlss5Done ? '<div class="pip-advanced-hint" style="color:#4ADE80">✓ DLSS 5 components installed — restart Wan2GP.</div>' : '')
 }
+// ── Installer live downloads (per-file rows from uv output) ──
+const _installDl = new Map()
+let _installDlDone = 0, _installDlPaint = 0, _installDlQueued = false
+function installProgressReset() {
+  _installDl.clear(); _installDlDone = 0; _installDlPaint = 0; _installDlQueued = false
+  const box = $('installProgress'); if (box) box.style.display = 'none'
+  const list = $('installProgressList'); if (list) list.innerHTML = ''
+  const cnt = $('installProgressCount'); if (cnt) cnt.textContent = ''
+}
+function installProgressOnEvent(d) {
+  if (!d || !d.phase) return
+  if (d.phase === 'downloading' && d.pkg) {
+    const r = _installDl.get(d.pkg) || { size: '', state: 'downloading', version: '' }
+    if (!r.size && d.size) r.size = d.size
+    r.state = 'downloading'
+    _installDl.set(d.pkg, r)
+  } else if (d.phase === 'package-installed' && d.pkg) {
+    const r = _installDl.get(d.pkg) || { size: '', state: 'installed', version: '' }
+    r.state = 'installed'
+    if (d.version) r.version = d.version
+    _installDl.set(d.pkg, r)
+    _installDlDone++
+  } else if (d.phase === 'resolved') {
+    // count shown via map size; nothing to store
+  } else return
+  // Throttle paints: full innerHTML re-render restarts the bar animation.
+  const now = Date.now()
+  if (now - _installDlPaint < 500) {
+    if (!_installDlQueued) { _installDlQueued = true; setTimeout(function() { _installDlQueued = false; installProgressPaint() }, 500) }
+    return
+  }
+  installProgressPaint()
+}
+function installProgressPaint() {
+  _installDlPaint = Date.now()
+  const box = $('installProgress'), list = $('installProgressList')
+  if (!box || !list || !_installDl.size) return
+  box.style.display = ''
+  const names = [..._installDl.keys()].slice(-40)
+  list.innerHTML = names.map(function(n) {
+    const r = _installDl.get(n)
+    const st = r.state === 'installed'
+      ? '<span class="iprog-state installed">✓ ' + escHtml(r.version || 'done') + '</span>'
+      : '<span class="iprog-state downloading">⬇ ' + escHtml(r.size || '…') + '</span>'
+    return '<div class="iprog-row"><div class="iprog-top"><span class="iprog-name" title="' + escHtml(n) + '">' + escHtml(n) + '</span>' + st + '</div>' +
+      '<div class="iprog-bar' + (r.state === 'installed' ? ' done' : '') + '"><div></div></div></div>'
+  }).join('')
+  const cnt = $('installProgressCount')
+  if (cnt) cnt.textContent = _installDlDone + '/' + _installDl.size + ' installed'
+}
+
 function dlss5OnEvent(d) {
   if (!d || !d.phase) return
   if (d.phase === 'downloading' && d.pkg && d.pkg !== 'other') { for (const f of _dlss5Rows) if (f.pkg === d.pkg) _dlss5State[f.id] = 'downloading'; _dlss5LastPkg = d.pkg }
@@ -3833,12 +4338,73 @@ $('manageUpdateDesktopBtn')?.addEventListener('click', function(e) {
 });
 
 // ── Uninstall Wan2GP (Manage → General → danger section) ──
+// Uninstall via explicit 3-choice modal (the old native OK/Cancel confused:
+// Cancel sounded like abort but meant "delete everything").
+async function openUninstallModal() {
+  const modal = $('uninstallModal')
+  if (!modal) return null
+  const rows = $('uninstallModelsRows')
+  rows.innerHTML = '<span class="istack-hint">checking model folders…</span>'
+  modal.classList.remove('hidden')
+  // Fill model folders + sizes so the choice is informed.
+  try {
+    const mp = await window.w2gp.getModelPaths().catch(() => null)
+    const items = [['Checkpoints', mp && mp.checkpoints], ['LoRAs', mp && mp.loras], ['Output', mp && mp.output]]
+      .filter(([, p]) => p && p !== '.')
+    if (!items.length) {
+      rows.innerHTML = '<span class="istack-hint">No separate model folders configured.</span>'
+    } else {
+      rows.innerHTML = ''
+      for (const [label, p] of items) {
+        let sizeTxt = ''
+        try {
+          const sz = await window.w2gp.folderSize(p).catch(() => null)
+          if (sz && sz.bytes != null) sizeTxt = ' (' + fmtBytes(sz.bytes) + ')'
+        } catch {}
+        const div = document.createElement('div')
+        div.className = 'istack-row'
+        div.innerHTML = '<span class="istack-k">' + escHtml(label) + '</span><span class="istack-v">' + escHtml(p + sizeTxt) + '</span>'
+        rows.appendChild(div)
+      }
+    }
+  } catch {}
+  return new Promise((resolve) => {
+    const done = (v) => { modal.classList.add('hidden'); resolve(v) }
+    const agreeRow = $('uninstallAgreeRow'), agreeInput = $('uninstallAgreeInput'), delBtn = $('uninstallDeleteBtn')
+    // Reset the AGREE gate on every open.
+    if (agreeRow) agreeRow.style.display = 'none'
+    if (agreeInput) agreeInput.value = ''
+    if (delBtn) { delBtn.disabled = false; delBtn.textContent = 'Delete everything' }
+    $('uninstallCloseBtn').onclick = () => done(null)
+    $('uninstallCancelBtn').onclick = () => done(null)
+    $('uninstallKeepBtn').onclick = () => done({ keepModels: true })
+    delBtn.onclick = () => {
+      // Two-step: first click reveals the gate, second (with AGREE) deletes.
+      if (agreeRow && agreeRow.style.display === 'none') {
+        agreeRow.style.display = ''
+        delBtn.disabled = true
+        delBtn.textContent = 'Type AGREE above'
+        agreeInput?.focus()
+        return
+      }
+      if ((agreeInput?.value || '').trim() === 'AGREE') done({ keepModels: false })
+    }
+    if (agreeInput) agreeInput.oninput = () => {
+      const ok = agreeInput.value.trim() === 'AGREE'
+      delBtn.disabled = !ok
+      delBtn.textContent = ok ? 'Confirm delete' : 'Type AGREE above'
+    }
+  })
+}
+
 $('uninstallBtn')?.addEventListener('click', async function() {
+  const choice = await openUninstallModal().catch(() => null)
+  if (!choice) { appendLog('[*] Uninstall cancelled.') ; return }
   this.disabled = true
   this.textContent = 'Uninstalling...'
-  appendLog('[*] Uninstalling Wan2GP...')
+  appendLog('[*] Uninstalling Wan2GP' + (choice.keepModels ? ' (keeping models)…' : ' (deleting everything)…'))
   try {
-    const r = await window.w2gp.uninstall()
+    const r = await window.w2gp.uninstall(choice)
     if (r && r.cancelled) {
       appendLog('[*] Uninstall cancelled.')
     } else if (r && r.success) {
@@ -3855,14 +4421,15 @@ $('uninstallBtn')?.addEventListener('click', async function() {
       }
       showToast('✓ Wan2GP uninstalled' + (r.keptFiles ? ' (files kept)' : '') + (r.leftoverFolder ? ' (empty folder left)' : ''))
       setLaunchButtonsInstalled(false)
-      show('dashboard'); refreshDashboard()
+      // Nothing installed → back to the installer, not the dashboard.
+      await openInstallerFresh('Wan2GP removed — install fresh below.')
     } else {
       appendLog('[!] Uninstall failed: ' + ((r && r.error) || 'unknown'))
       showToast('✗ ' + ((r && r.error) || 'Uninstall failed'))
     }
   } catch (e) {
-    appendLog('[!] Uninstall error: ' + e.message)
-    showToast('✗ ' + e.message)
+    appendLog('[!] Uninstall error: ' + errText(e))
+    showToast('✗ ' + errText(e))
   } finally {
     this.disabled = false
     this.textContent = 'Uninstall Wan2GP…'

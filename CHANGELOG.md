@@ -2,18 +2,44 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.4.0] — 2026-09-05
+
+No more silent failures: every step of install, reuse, migrate and launch is checked, reported honestly, and recoverable.
+
+**Install tells the truth**
+- `setup.py` exit code propagated with actionable hints — a dead install can never report `Installation complete!` again; failure offers Retry + Copy diagnostics
+- Success gated on a post-install smoke test (`import torch` + CUDA visible on NVIDIA), not just exit code 0
+- Task list tracks what `setup.py` actually emits (`[*] Install <Component>` headers + uv package lines) — phases no longer stick on PENDING mid-install
+- Exact Python pin preflight (`uv self update` → provision → run-verify → force-reinstall if corrupt, downloads forced on, uv data-drive space checked); pin read from upstream `setup_config.json` so the next bump can't re-open the hole
+- Missing-tool checks (`git`/`uv`/`python`/`conda`) actually trigger now
+
+**Reuse, migrate & clean, safely**
+- Target-folder triage: empty / healthy / broken-env / repo-no-env / Pinokio / foreign, with Fresh / Install-repair / Choose-empty-folder choices instead of blind merges
+- "Use existing" validates first (python exists + runs) and offers repair on failure
+- Reinstall always asks first: backup dialog with folder sizes, optional plugins/settings backup (restored automatically), per-model Move-to… rows
+- `move_folder` has live progress, locked-file tolerance and post-verify; model-drive disk gates (warn <50 GB, block <10 GB per drive)
+- Pinokio trees detected and refused (install/repair/wipe/uninstall) — one-click "reuse its models in a fresh install" instead; reusing a Pinokio install directly is not supported
+- Drive roots auto-resolve (`J:\` → `J:\Wan2GP`); picked folders stick even before they exist (fixed fallback to `C:\Wan2GP`); missing previous install (disconnected drive) warns instead of a blank first run
+- Keep/Update/Skip choices only appear for healthy installs; uninstall and post-uninstall return to the installer, never an empty dashboard
+- Manage → Updates has "🧭 Run Setup again"; uninstall is an explicit Keep my models / Delete everything (sizes shown, AGREE to confirm) / Cancel modal
+- Migration modal: explicit Move & restart vs Just switch to it (no second popup, drive roots auto-resolve)
+- Live download panel during install: per-file rows with sizes, animated bars and installed versions parsed from uv output
+- Active Environment has "reinstall": full env recreate (venv, Python, torch, kernels, smoke test) — "restore" only re-pips requirements
+
+**Launch & everyday polish**
+- Launch pre-flights `import torch` and refuses with directions instead of a traceback; exit codes render as numbers; Launch buttons need repo + active env
+- Default browser honored: Brave/Opera/Vivaldi detected (fixed `%LocalAppData%` expansion + Program Files candidates); fallback is logged, successful launches log the browser used
+- Installer overview shows full per-profile versions (Triton/Sage/Sparge/Flash, kernel labels) like Electron
+- Plugin updates highlighted (amber row + bold badge); env unlink narrates deletions (per-directory lines + live current file); unlink/restore hidden without a repo; `[LAUNCH ERROR] undefined` fixed everywhere
+
 ## [0.3.1] — 2026-09-05
 
 - DLSS5 panel always shows all 8 runtime files with package version + expected per-file SHA-256 (green ✓ when present, red — not installed when missing); backend owns the pinned manifest so labels can't go stale
-
-## [Unreleased]
 
 ## [0.3.0] — 2026-09-05
 
 - DLSS5 status now counts `host/nvngx.dll` (8 files, was 7) and README tracks workers v1.1.3 (upstream `33eb156`)
 - Launcher update check runs once shortly after boot (5h poll alone left fresh releases unknown for hours)
-
-## [Unreleased]
 
 ## [0.2.1] — 2026-09-04
 

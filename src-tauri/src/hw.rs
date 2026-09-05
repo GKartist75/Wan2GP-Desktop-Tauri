@@ -98,9 +98,46 @@ pub fn detect_hardware() -> serde_json::Value {
     serde_json::json!({"cpu": cpu, "ram": ram, "gpu": gpu_name, "vram": vram_str})
 }
 
+/// Friendly component labels (mirrors Electron COMP_LABEL — same strings).
+fn comp_label(code: &str) -> String {
+    match code {
+        "cu128" => "PyTorch 2.7.1 + CUDA 12.8".into(),
+        "cu130" => "PyTorch 2.10.0 + CUDA 13.0".into(),
+        "rocm65" => "PyTorch (ROCm 6.5)".into(),
+        "mps" => "PyTorch (MPS)".into(),
+        "v33" => "Triton < 3.3".into(),
+        "v34" => "Triton < 3.4".into(),
+        "latest" => "Triton (latest)".into(),
+        "v1" => "Sage Attention 1.0.6".into(),
+        "v211" => "Sage Attention 2.1.1".into(),
+        "v220" | "v220_cu13" => "Sage Attention 2.2.0 (CUDA 13)".into(),
+        "v010_cu128" => "Sparge 0.1.0 (CUDA 12.8)".into(),
+        "v010_cu13" => "Sparge 0.1.0 (CUDA 13)".into(),
+        "v210" => "Flash Attention 2.8.3".into(),
+        other => other.to_string(),
+    }
+}
+
+/// Kernel display names (mirrors Electron KERNEL_DISPLAY).
+fn kernel_display(key: &str) -> (&str, &str) {
+    match key {
+        "nunchaku" | "nunchaku_cu13" => ("Nunchaku", "nunchaku"),
+        "gguf" | "llamacpp_gguf_cuda" => ("GGUF (llamacpp)", "llamacpp_gguf_cuda"),
+        "lightx2v" | "light2xv" | "lightx2v_kernel" => ("LightX2V", "lightx2v_kernel"),
+        "sageattention" => ("SageAttention", "sageattention"),
+        "spas_sage_attn" => ("Sparge (Sage)", "spas_sage_attn"),
+        "flash_attn" => ("FlashAttention", "flash_attn"),
+        "bitsandbytes" => ("bitsandbytes NF4", "bitsandbytes"),
+        _ => (key, key),
+    }
+}
+
 #[tauri::command]
 pub fn get_hardware_profile() -> serde_json::Value {
-    // mirrors Electron get-hardware-profile — returns profile string + packages/kernels so frontend .join() never crashes
+    // Full per-profile version matrix (mirrors Electron get-hardware-profile).
+    // The Tauri port only sent python/torch, so the overview showed '—' for
+    // Triton/Sage/Sparge/Flash and bare keys for kernel wheels.
+    struct Prof { python: &'static str, torch: &'static str, triton: Option<&'static str>, sage: Option<&'static str>, sparge: Option<&'static str>, flash: Option<&'static str>, kernels: &'static [&'static str] }
     let gpus = detect_gpus();
     let vram_mb = gpus.as_array().and_then(|a| a.first()).and_then(|g| g.get("vramMB")).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
     let vram_gb = vram_mb / 1024.0;
@@ -108,21 +145,45 @@ pub fn get_hardware_profile() -> serde_json::Value {
     let vendor = gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
     let name = gpu.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let key = kernel_profile_key(vendor, name);
-    let (profile_str, packages, kernels) = match key.as_str() {
-        "RTX_50" => ("RTX_50", vec!["torch","triton","sageattention","spas_sage_attn","flash_attn"], vec!["nunchaku","lightx2v","gguf"]),
-        "RTX_40" | "RTX_30" | "RTX_20" => (key.as_str(), vec!["torch","triton","sageattention","spas_sage_attn","flash_attn"], vec!["nunchaku","gguf"]),
-        "GTX_10" => ("GTX_10", vec!["torch"], vec![] as Vec<&str>),
-        _ => (key.as_str(), vec!["torch"], vec![] as Vec<&str>),
+    let (profile_str, prof) = match key.as_str() {
+        "GTX_10" => ("GTX_10", Prof { python: "3.10.9", torch: "2.7.1 CU12.8", triton: None, sage: None, sparge: None, flash: None, kernels: &[] }),
+        "RTX_20" => ("RTX_20", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("1.0.6"), sparge: None, flash: Some("2.8.3"), kernels: &["nunchaku", "gguf"] }),
+        "RTX_30" => ("RTX_30", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku", "gguf"] }),
+        "RTX_40" => ("RTX_40", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku", "gguf"] }),
+        "RTX_50" => ("RTX_50", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku", "lightx2v", "gguf"] }),
+        "MPS" => ("MPS", Prof { python: "3.11.14", torch: "MPS", triton: None, sage: None, sparge: None, flash: None, kernels: &[] }),
+        k if k.starts_with("AMD") => ("AMD", Prof { python: "3.11.14", torch: "ROCm 6.5", triton: None, sage: None, sparge: None, flash: None, kernels: &[] }),
+        _ => (key.as_str(), Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku", "gguf"] }),
     };
+    // Package chips with versions (Electron order + emoji).
+    let mut packages: Vec<String> = Vec::new();
+    packages.push(format!("🐍 Python {}", prof.python));
+    packages.push(format!("🔥 PyTorch {}", prof.torch));
+    if let Some(t) = prof.triton { packages.push(format!("⚡ Triton ({t})")); }
+    if let Some(s) = prof.sage { packages.push(format!("🌀 Sage Attn {s}")); }
+    if let Some(s) = prof.sparge { packages.push(format!("🌊 Sparge Attn {s}")); }
+    if let Some(f) = prof.flash { packages.push(format!("💥 Flash Attn {f}")); }
+    packages.push("📋 50+ reqs (diffusers, gradio, opencv, moviepy…)".into());
+    let kernel_labels: Vec<String> = prof.kernels.iter().map(|k| kernel_display(k).0.to_string()).collect();
+    let detail = serde_json::json!({
+        "profile": profile_str,
+        "python": prof.python,
+        "torch": prof.torch,
+        "triton": prof.triton.map(comp_label).unwrap_or("—".into()),
+        "sage": prof.sage.map(comp_label).unwrap_or("—".into()),
+        "sparge": prof.sparge.map(comp_label).unwrap_or("—".into()),
+        "flash": prof.flash.map(comp_label).unwrap_or("—".into()),
+        "kernels": kernel_labels,
+    });
     let pnum = if vram_gb >= 24.0 { 1 } else if vram_gb >= 12.0 { 4 } else { 5 };
     serde_json::json!({
         "profile": profile_str,
         "vramGb": vram_gb,
         "profileNum": pnum,
-        "detail": { "kernels": kernels.clone(), "python": "3.11.14", "torch": "2.10.0 CU13", "profile": profile_str },
+        "detail": detail,
         "packages": packages,
-        "kernels": kernels.iter().map(|k| serde_json::json!({"label": *k, "dist": *k})).collect::<Vec<_>>(),
-        "kernelsRaw": kernels
+        "kernels": prof.kernels.iter().map(|k| { let (label, dist) = kernel_display(k); serde_json::json!({"label": label, "dist": dist}) }).collect::<Vec<_>>(),
+        "kernelsRaw": prof.kernels
     })
 }
 

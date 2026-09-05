@@ -106,6 +106,11 @@ pub(crate) fn get_data_dir_uncached() -> PathBuf {
                     let p = PathBuf::from(&d);
                     if p.is_absolute() && p.exists() { return p; }
                     if !p.exists() {
+                        // Fresh pick (e.g. D:\Wan2GP auto-resolved from D:\) doesn't
+                        // exist yet — honor it while its parent drive is alive
+                        // (install creates it). Fall back only when the parent is
+                        // gone too (disconnected drive / changed letter).
+                        if p.parent().is_some_and(|par| par.exists()) { return p; }
                         let legacy = std::path::Path::new(&d).join("wgp.py");
                         let nested = PathBuf::from(&d).join("Wan2GP").join("wgp.py");
                         if legacy.exists() || nested.exists() { return PathBuf::from(d); }

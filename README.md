@@ -71,7 +71,7 @@ Through the launcher you get the **full WanGP** — same models, same UI, same p
 
 ## Key features — What the launcher adds
 
-- 🚀 **One-click install** — detects your GPU, shows exactly what it will install (Git, Python 3.11, PyTorch + CUDA, attention kernels), then does it. Missing Git/Python/uv? One click installs silently — no PATH editing. Reads NVIDIA RTX 20/30/40/50, AMD, Apple Silicon and picks the matching PyTorch + CUDA/ROCm build before installing.
+- 🚀 **One-click install** — detects your GPU, shows exactly what it will install (Git, Python 3.11, PyTorch + CUDA, attention kernels), pre-flights it all (Python pin, disk space on every drive, drivers, folder triage), then does it with live progress and honest errors. Missing Git/Python/uv? One click installs silently — no PATH editing. Reads NVIDIA RTX 20/30/40/50, AMD, Apple Silicon and picks the matching PyTorch + CUDA/ROCm build before installing.
 - 🎯 **Always the right kernels** — per-GPU wheel set from WanGP's own `setup_config.json`. Re-syncs on install and every update. No stale wheels when upstream bumps them. Isolated Python 3.11 `uv` env with pinned deps.
 - 📂 **Clean data layout** — `C:\Wan2GP` (app) + `C:\Wan2GP-Models` (models) by default, out of roaming AppData. **Both are pre-filled defaults — pick any drive/folder at install.**
 - 🖥️ **Flexible launch** — Desktop (in-app embed), Browser, or External Terminal; pop-out, zoom, browser picker.
@@ -79,8 +79,9 @@ Through the launcher you get the **full WanGP** — same models, same UI, same p
 - 📂 **Paths migrate** — move installs between drives from Dashboard → Paths, no freeze, no leftovers, cross-drive safe.
 - 🛡️ **Crash-proof UI** — crash recovery restores your session instead of stranding you on a blank screen.
 - 🧹 **Electron → Tauri switch** — Manage → About finds the legacy Electron launcher and uninstalls it silently. Wan2GP, models, LoRAs, outputs and settings are kept.
+- 🧩 **Pinokio coexistence** — Pinokio-managed installs are detected and left untouched (reusing one directly isn't supported); one click reuses their model library in a fresh install, no re-downloads.
 
-> **⚡ CUDA 13 stack on modern RTX cards.** RTX 20/30/40/50 get **PyTorch 2.10 + CUDA 13** — SageAttention 2.2 (RTX 30/40) / 1.0.6 (RTX 20), FlashAttention 2.8.3, SpargeAttention (30/40/50), LightX2V (RTX 50), Nunchaku INT4/FP4 + **GGUF 1.0.13** + **bitsandbytes 0.49.2** (NF4). GTX 10/16 stay on **CUDA 12.8** (no R580 needed); every other NVIDIA card needs **R580+** and is checked before install.
+> **⚡ CUDA 13 stack on modern RTX cards.** RTX 20/30/40/50 get **PyTorch 2.10 + CUDA 13** — SageAttention 2.2 (RTX 30/40) / 1.0.6 (RTX 20), FlashAttention 2.8.3, SpargeAttention (30/40/50), LightX2V (RTX 50), Nunchaku INT4/FP4 + **GGUF 1.0.14** + **bitsandbytes 0.49.2** (NF4). GTX 10/16 stay on **CUDA 12.8** (no R580 needed); every other NVIDIA card needs **R580+** and is checked before install.
 
 ---
 
@@ -88,6 +89,7 @@ Through the launcher you get the **full WanGP** — same models, same UI, same p
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
+- **v0.4.0 — hardened installer.** No more silent failures: target-folder triage (fresh / repair / reuse / migrate), exact-Python preflight, honest exit codes with Retry + diagnostics, post-install torch+CUDA smoke test, reinstall backup dialog with model relocation, Pinokio detection with one-click model reuse, launch guards, and truthful phase tracking.
 - **v0.3.1** — DLSS5 panel shows all 8 files with versions + per-file SHAs (installed / not installed).
 - **v0.3.0** — DLSS5 status counts all 8 runtime files (+ `host/nvngx.dll`), README tracks workers v1.1.3; update check runs once shortly after boot.
 - **v0.2.1** — live console download bars (bootstrap fix).
@@ -178,7 +180,7 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 |-------|---------------|---------------|
 | **Python** (uv) | `3.11.14` (RTX 20–50) / `3.10.9` (GTX 10) | venv interpreter |
 | **PyTorch + CUDA** | `2.10.0` + CUDA 13.0 | tensor + GPU runtime |
-| **Triton** | `latest` (3.7.1) | JIT for custom CUDA/attention kernels on Windows |
+| **Triton** | `latest` (3.8.x) | JIT for custom CUDA/attention kernels on Windows |
 | **SageAttention** | `1.0.6` (RTX 20) / `2.2.0` (RTX 30–50) | fused attention — big speed-up |
 | **SpargeAttn** | `0.1.0` | sparsity-aware speed-up alongside Sage |
 | **FlashAttention** | `2.8.3` | memory-efficient exact attention for long/high-res |
