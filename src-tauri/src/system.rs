@@ -1,7 +1,7 @@
 //! Folders, dialogs, data-dir management, reports, shortcuts, view shims.
 use std::path::{Path, PathBuf};
 use crate::base::*;
-use crate::{hw::get_gpu_info_sync, install::fs_extra_fallback_copy_dir, status::get_active_env};
+use crate::{hw::get_gpu_info_sync, status::get_active_env};
 
 #[tauri::command]
 pub fn greet(name: &str) -> String {

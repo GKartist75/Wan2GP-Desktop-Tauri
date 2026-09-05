@@ -102,9 +102,11 @@ async fn uv_capture(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + Sync, a
 }
 
 /// Port of Electron installPython(): make sure `uv` can hand setup.py the exact
-/// pinned interpreter *before* the 20-minute install starts. Verifies the
-/// interpreter actually executes (a corrupted managed install still shows up
-/// in `uv python list`), force-reinstalls when broken.
+/// pinned interpreter *before* the 20-minute install starts. Order matters:
+/// find FIRST (a manually installed exact Python counts — setup.py's
+/// `uv venv --python X` reuses discovered interpreters), provision second.
+/// Aborting on a failed download while a usable copy sits on disk was
+/// exactly the "installed 3.11 manually but still not found" complaint.
 async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + Sync, wanted: &str) -> Result<String, String> {
     // Never let a user/system config with `python-downloads = "never"` silently
     // break provisioning — spawned processes inherit our env.
@@ -114,33 +116,116 @@ async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + S
     // (3.11.14) and fails with the same "No interpreter found" error.
     // Harmless when offline or already current — failures are ignored.
     let _ = uv_capture(app, &emit, &["self", "update"]).await;
-    let (ok, _) = uv_capture(app, &emit, &["python", "install", wanted]).await;
-    if !ok {
-        return Err(format!("uv could not provision Python {wanted}. Fix: run `uv self update`, then `uv python install {wanted}` in a terminal and retry. If offline, install Python {wanted} from https://www.python.org/downloads/ and retry."));
-    }
-    // Resolve + verify it runs.
-    let verify = |p: &str| -> bool {
-        silent_command(p).arg("-c").arg("import sys").output().is_ok_and(|o| o.status.success())
+    // Resolve + verify the EXACT pin actually executes (a neighbouring patch
+    // or a corrupted copy won't satisfy setup.py — report it, don't use it).
+    let verify_exact = |p: &str| -> Option<String> {
+        silent_command(p).arg("-c").arg("import sys; print(sys.version)").output().ok()
+            .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().split_whitespace().next().unwrap_or("").to_string()) } else { None })
+            .filter(|v| v.starts_with(wanted))
     };
     let find = || silent_command("uv").args(["python", "find", wanted]).output().ok()
         .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None })
         .filter(|s| !s.is_empty());
+    // 1) Fast path: already provisioned or uv-discoverable (managed OR a
+    // manually installed exact copy on PATH/registry/launcher).
     if let Some(p) = find() {
-        if verify(&p) { emit(&format!("[*] Python {wanted} ready: {p}\n")); return Ok(p); }
-        emit(&format!("[!] Managed Python {wanted} is broken (found at {p} but won't run). Forcing a clean reinstall…\n"));
+        if let Some(v) = verify_exact(&p) {
+            emit(&format!("[*] Python {wanted} ready: {p} ({v})\n"));
+            return Ok(p);
+        }
+        emit(&format!("[!] Found Python at {p} but it won't run — forcing a clean reinstall…\n"));
+    }
+    // 2) Provision via uv.
+    let (dl_ok, _) = uv_capture(app, &emit, &["python", "install", wanted]).await;
+    if dl_ok {
+        if let Some(p) = find() {
+            if let Some(v) = verify_exact(&p) {
+                emit(&format!("[*] Python {wanted} ready: {p} ({v})\n"));
+                return Ok(p);
+            }
+        }
+    }
+    // 3) Download failed but a usable copy may still exist (uv venv reuses
+    // discovered interpreters, so setup.py can proceed without any download).
+    if !dl_ok {
+        emit(&format!("[!] uv could not download Python {wanted} — checking for a manually installed copy…\n"));
+        if let Some(p) = find() {
+            if let Some(v) = verify_exact(&p) {
+                emit(&format!("[*] Using existing Python {wanted}: {p} ({v}) — setup.py will reuse it.\n"));
+                return Ok(p);
+            }
+        }
+    }
+    // 4) Force reinstall of a corrupted managed copy, then give up with
+    // diagnostics (list what IS installed so the fix is obvious).
+    if dl_ok {
+        emit(&format!("[!] Managed Python {wanted} is broken (found but won't run). Forcing a clean reinstall…\n"));
         let (re_ok, _) = uv_capture(app, &emit, &["python", "install", "--reinstall", wanted]).await;
         if !re_ok {
             // Older uv without --reinstall: uninstall + install.
             let _ = uv_capture(app, &emit, &["python", "uninstall", wanted]).await;
             let (ok2, _) = uv_capture(app, &emit, &["python", "install", wanted]).await;
-            if !ok2 { return Err(format!("Python {wanted} is corrupted and reinstall failed. Fix: `uv python uninstall {wanted}` then `uv python install {wanted}`, or install Python {wanted} from https://www.python.org/downloads/.")); }
+            if !ok2 { return Err(diagnose_python_fail(wanted)); }
         }
-        if let Some(p2) = find() {
-            if verify(&p2) { emit(&format!("[*] Python {wanted} reinstalled: {p2}\n")); return Ok(p2); }
+        if let Some(p) = find() {
+            if let Some(v) = verify_exact(&p) {
+                emit(&format!("[*] Python {wanted} reinstalled: {p} ({v})\n"));
+                return Ok(p);
+            }
         }
-        return Err(format!("Python {wanted} still won't run after reinstall. Fix: install Python {wanted} from https://www.python.org/downloads/ and retry."));
     }
-    Err(format!("uv installed Python {wanted} but `uv python find {wanted}` can't locate it. Fix: `uv self update` and retry."))
+    Err(diagnose_python_fail(wanted))
+}
+
+/// Final failure message with discovery diagnostics: enumerate system Pythons
+/// so "I installed 3.11 manually" turns into "found 3.11.9 at P — need
+/// exactly 3.11.14" instead of a bare "not found".
+fn diagnose_python_fail(wanted: &str) -> String {
+    fn ver_of(prog: &str, args: &[&str]) -> Option<String> {
+        silent_command(prog).args(args).arg("-c").arg("import sys; print(sys.version)").output().ok()
+            .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().split_whitespace().next().unwrap_or("").to_string()) } else { None })
+            .filter(|v| !v.is_empty())
+    }
+    let mut cands: Vec<String> = Vec::new();
+    // PATH (skip the Microsoft Store shim — it opens the Store, not Python).
+    if let Ok(o) = silent_command("where").arg("python").output() {
+        if o.status.success() {
+            for line in String::from_utf8_lossy(&o.stdout).lines() {
+                let p = line.trim();
+                if !p.is_empty() && !p.to_lowercase().contains("windowsapps") { cands.push(p.to_string()); }
+            }
+        }
+    }
+    #[cfg(windows)]
+    for fixed in [
+        std::env::var("LOCALAPPDATA").ok().map(|a| format!("{a}\\Programs\\Python\\Python311\\python.exe")),
+        Some("C:\\Python311\\python.exe".into()),
+        Some("C:\\Program Files\\Python311\\python.exe".into()),
+    ].into_iter().flatten() {
+        if !cands.iter().any(|c| c.eq_ignore_ascii_case(&fixed)) { cands.push(fixed); }
+    }
+    #[cfg(not(windows))]
+    for fixed in ["/usr/bin/python3.11", "/usr/local/bin/python3.11"] {
+        if !cands.contains(&fixed.to_string()) { cands.push(fixed.into()); }
+    }
+    let mut lines: Vec<String> = Vec::new();
+    for c in &cands {
+        match ver_of(c, &[]) {
+            Some(v) => lines.push(format!("  found Python {v} at {c}")),
+            None => lines.push(format!("  {c} (not runnable)")),
+        }
+    }
+    if let Some(v) = ver_of("py", &["-3.11"]) {
+        lines.push(format!("  found Python {v} via py launcher (-3.11)"));
+    }
+    let found_txt = if lines.is_empty() { "  (no Python 3.11 found on PATH, in registry spots, or via py launcher)".into() } else { lines.join("\n") };
+    format!("uv could not provision Python {wanted}, and no usable copy was found.\n\
+        What we found:\n{found_txt}\n\
+        setup.py needs EXACTLY {wanted} (a neighbouring patch like 3.11.9 does not count).\n\
+        Fix options:\n\
+        1. Let uv fetch it: `uv self update`, then `uv python install {wanted}` — needs network to python-build-standalone (check proxy/VPN/antivirus; uv downloads live under %APPDATA%\\uv).\n\
+        2. Install exactly Python {wanted} from https://www.python.org/downloads/ — tick \u{201c}Add python.exe to PATH\u{201d} during setup, then retry.\n\
+        3. Already installed 3.11 manually? It must be exactly {wanted} (see versions above), reachable via PATH or `py -3.11`, and NOT the Microsoft Store stub (Settings → Apps → Advanced app settings → App execution aliases → turn Python off), then retry.")
 }
 
 /// Check-only preflight for the installer checklist UI (no downloads).
@@ -156,7 +241,10 @@ pub fn python_preflight() -> serde_json::Value {
     let path = silent_command("uv").args(["python", "find", &wanted]).output().ok()
         .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None })
         .filter(|s| !s.is_empty());
-    let runs = path.as_ref().is_some_and(|p| silent_command(p).arg("-c").arg("import sys").output().is_ok_and(|o| o.status.success()));
+    // Version-exact: a neighbouring patch (or a dead exe) must read as NOT ok.
+    let runs = path.as_ref().is_some_and(|p| silent_command(p).arg("-c").arg("import sys; print(sys.version)").output().ok()
+        .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().split_whitespace().next().unwrap_or("").to_string()) } else { None })
+        .is_some_and(|v| v.starts_with(&wanted)));
     let downloads_blocked = std::env::var("UV_PYTHON_DOWNLOADS").is_ok_and(|v| v.eq_ignore_ascii_case("never"));
     // Where would `uv python install` put the interpreter? Explicit override,
     // else uv's default data dir (Windows: %APPDATA%\uv).
@@ -858,9 +946,34 @@ pub(crate) fn fs_extra_fallback_copy_dir(src: &Path, dst: &Path) -> Result<(), S
 pub async fn install_prerequisite(app: tauri::AppHandle, tool: String) -> Result<serde_json::Value,String> {
     use tauri_plugin_shell::ShellExt;
     use tauri_plugin_shell::process::CommandEvent;
-    let cmd = match tool.as_str() { "git" => vec!["winget","install","--id","Git.Git","-e"], "uv" => vec!["winget","install","--id","astral-sh.uv","-e"], _ => return Err(format!("unknown tool {tool}")) };
+    // Silent winget installs (Electron parity: git + uv + python + conda).
+    // Previously python/conda fell into `unknown tool` and the help card's
+    // Download button died with a toast — and output went to the wrong channel.
+    let cmd: Vec<&str> = match tool.as_str() {
+        "git" => vec!["winget","install","--id","Git.Git","-e","--accept-package-agreements","--accept-source-agreements","--silent"],
+        "uv" => vec!["winget","install","--id","astral-sh.uv","-e","--accept-package-agreements","--accept-source-agreements","--silent"],
+        "python" => vec!["winget","install","--id","Python.Python.3.11","-e","--accept-package-agreements","--accept-source-agreements","--silent"],
+        "conda" => vec!["winget","install","--id","Anaconda.Miniconda3","-e","--accept-package-agreements","--accept-source-agreements","--silent"],
+        _ => return Err(format!("unknown tool {tool}")),
+    };
+    let emit = |msg: &str| { crate::base::push_log(msg, "setup"); let _ = app.emit("setup-output", msg.to_string()); };
+    emit(&format!("[*] Installing {tool} via winget (silent, a few minutes)…\n"));
     let (mut rx, _) = app.shell().command(cmd[0]).args(&cmd[1..]).spawn().map_err(|e| e.to_string())?;
-    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s, "setup"); let _ = app.emit("launch-log", s); }, _=>{} } }
+    let mut failed = false;
+    while let Some(ev) = rx.recv().await {
+        match ev {
+            CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => {
+                let s = String::from_utf8_lossy(&b).to_string();
+                crate::base::push_log(&s, "setup");
+                let _ = app.emit("setup-output", s);
+            }
+            CommandEvent::Terminated(p) => { if p.code != Some(0) { failed = true; } }
+            CommandEvent::Error(e) => { failed = true; emit(&format!("[!] {e}\n")); }
+            _ => {}
+        }
+    }
+    if failed { return Err(format!("{tool} install failed — see output above (winget needs network; some packages need admin approval)")); }
+    emit(&format!("[✓] {tool} installed — restart the launcher so PATH picks it up.\n"));
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
 

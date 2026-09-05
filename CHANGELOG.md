@@ -4,6 +4,7 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- Python fallback that counts: preflight finds before downloading (a manually installed exact Python is accepted — setup.py's `uv venv` reuses the same discovery, so the env gets built from it), exact-version verify everywhere, and failure messages that list what was actually found plus the three fixes
 - Resolved install stack renders again (was fed the wrong backend shape, so it never appeared) — now with GPU/CUDA/Python/uv/profile, free disk, and target verdict
 
 ## [0.4.0] — 2026-09-05
