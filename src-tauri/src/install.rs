@@ -342,7 +342,7 @@ pub async fn install_prerequisite(app: tauri::AppHandle, tool: String) -> Result
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
 
-const DLSS5_FILES: &[&str] = &["host/nr-depth-worker.exe", "host/dxgi.dll", "host/renodx-dlss5.addon64", "host/nvngx_dlssnr.dll", "dlss/nvngx_dlss.dll", "dlssg/nvngx_dlssg.dll", "dlssg/dlssg-worker.exe"];
+const DLSS5_FILES: &[&str] = &["host/nr-depth-worker.exe", "host/nvngx.dll", "host/dxgi.dll", "host/renodx-dlss5.addon64", "host/nvngx_dlssnr.dll", "dlss/nvngx_dlss.dll", "dlssg/nvngx_dlssg.dll", "dlssg/dlssg-worker.exe"];
 
 #[tauri::command]
 pub fn dlss5_status() -> serde_json::Value {

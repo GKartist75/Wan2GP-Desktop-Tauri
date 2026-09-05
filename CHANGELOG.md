@@ -8,6 +8,7 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- DLSS5 status now counts `host/nvngx.dll` (8 files, was 7) and README tracks workers v1.1.3 (upstream `33eb156`)
 - Launcher update check runs once shortly after boot (5h poll alone left fresh releases unknown for hours)
 
 ## [0.2.0] — 2026-09-04
