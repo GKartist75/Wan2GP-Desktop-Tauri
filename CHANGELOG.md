@@ -2,14 +2,16 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
-## [0.2.1] — 2026-09-04
-
-- Live console download bars: bootstrap shim actually wired into launch (isatty patch, HF progress env, `HUGGINGFACE_HUB_TOKEN` mirror, per-launch temp file) — model/LoRA downloads stream tqdm bars
-
-## [Unreleased]
+## [0.3.0] — 2026-09-05
 
 - DLSS5 status now counts `host/nvngx.dll` (8 files, was 7) and README tracks workers v1.1.3 (upstream `33eb156`)
 - Launcher update check runs once shortly after boot (5h poll alone left fresh releases unknown for hours)
+
+## [Unreleased]
+
+## [0.2.1] — 2026-09-04
+
+- Live console download bars: bootstrap shim actually wired into launch (isatty patch, HF progress env, `HUGGINGFACE_HUB_TOKEN` mirror, per-launch temp file) — model/LoRA downloads stream tqdm bars
 
 ## [0.2.0] — 2026-09-04
 
