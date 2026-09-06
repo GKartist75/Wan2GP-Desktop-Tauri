@@ -3434,10 +3434,10 @@ async function refreshDlss5() {
   renderDlss5Progress()
 }
 $('dlss5InstallBtn')?.addEventListener('click', () => {
-  $('dlss5AcceptInput').value = ''; $('dlss5ConfirmBtn').disabled = true
-  $('dlss5Modal').classList.remove('hidden'); $('dlss5AcceptInput').focus()
+  $('dlss5AcceptChk').checked = false; $('dlss5ConfirmBtn').disabled = true
+  $('dlss5Modal').classList.remove('hidden'); $('dlss5AcceptChk').focus()
 })
-$('dlss5AcceptInput')?.addEventListener('input', e => { $('dlss5ConfirmBtn').disabled = (e.target.value !== 'I ACCEPT') })
+$('dlss5AcceptChk')?.addEventListener('change', e => { $('dlss5ConfirmBtn').disabled = !e.target.checked })
 $('dlss5CancelBtn')?.addEventListener('click', () => { $('dlss5Modal').classList.add('hidden') })
 // ── DLSS5 file overview: one always-visible row per installed file (path +
 // version + expected SHA from the backend manifest) with installed /
