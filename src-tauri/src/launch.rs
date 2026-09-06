@@ -3,7 +3,7 @@ use tauri::Emitter;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use crate::base::*;
-use crate::{hw::get_gpu_info_sync, status::get_active_env};
+use crate::{hw::{get_gpu_info_sync, kernel_profile_key}, status::get_active_env};
 
 // Quote-aware split for Extra Launch Args (keeps "--teacache \"a b\"" together).
 fn split_launch_args(s: &str) -> Vec<String> {
@@ -216,6 +216,38 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             std::env::var("WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE").unwrap_or("auto".into()),
             std::env::var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K").unwrap_or("1".into()),
             std::env::var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16").unwrap_or("0".into())));
+    }
+    // AMD GPU profile env from setup_config.json (e.g. HSA_OVERRIDE_GFX_VERSION).
+    // Neither setup.py nor wgp.py exports these today — verified: only
+    // setup_config.json references HSA_OVERRIDE — yet the per-arch values
+    // (11.0.0/11.5.1/12.0.1) exist precisely so TheRock wheels detect the
+    // right gfx target. Set what's configured, remove stale leftovers
+    // (same reconcile pattern as the GGUF knobs above). Values come
+    // verbatim from upstream's file — never invented here.
+    {
+        let gpu = get_gpu_info_sync();
+        let profile = kernel_profile_key(gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""), gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""));
+        let env_map = std::fs::read_to_string(repo.join("setup_config.json")).ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|c| c.get("gpu_profiles").and_then(|p| p.get(&profile)).and_then(|pr| pr.get("env")).cloned())
+            .unwrap_or(serde_json::Value::Null);
+        // Keys this launcher owns: anything upstream ever puts under a
+        // profile's `env` today is just the HSA override — remove it when
+        // the active profile doesn't declare it (e.g. after switching GPUs).
+        const MANAGED_AMD_ENV: &[&str] = &["HSA_OVERRIDE_GFX_VERSION"];
+        if let Some(obj) = env_map.as_object() {
+            for (k, val) in obj {
+                if let Some(s) = val.as_str() {
+                    std::env::set_var(k, s);
+                    emit(&format!("[i] GPU profile env: {k}={s}\n"));
+                }
+            }
+        }
+        for key in MANAGED_AMD_ENV {
+            if env_map.get(*key).and_then(|v| v.as_str()).is_none() {
+                std::env::remove_var(key);
+            }
+        }
     }
     std::env::set_var("PYTHONUNBUFFERED", "1");
     std::env::set_var("PYTHONUTF8", "1");
