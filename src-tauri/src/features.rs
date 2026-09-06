@@ -2,8 +2,6 @@
 use tauri::Emitter;
 use std::path::PathBuf;
 use crate::base::*;
-use tauri_plugin_shell::process::CommandEvent;
-use tauri_plugin_shell::ShellExt;
 use crate::{hw::get_gpu_info_sync, status::get_active_env};
 
 #[tauri::command]
@@ -160,29 +158,41 @@ pub fn auto_tune_recommend(hw: Option<serde_json::Value>, opts: Option<serde_jso
 // ── Phase 2-5: remaining 65 handlers as thin stubs (real logic behind shell/fs plugins) ──
 #[tauri::command]
 pub async fn upgrade_package(app: tauri::AppHandle, pkg: String) -> Result<serde_json::Value,String> {
+    pip_spec_ok(&pkg).map_err(|e| format!("blocked: {e}"))?;
     let env = get_active_env(); let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
     let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
     if !py.exists() { return Err("python not found".into()); }
-    let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install","--upgrade", &pkg]).spawn().map_err(|e| e.to_string())?;
-    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
+    let py_s = py.to_string_lossy().to_string();
+    let emit = |m: &str| { let _ = app.emit("launch-log", m.to_string()); };
+    if !run_logged(&app, &py_s, &["-m","pip","install","--upgrade", &pkg], None, emit).await {
+        return Err(format!("pip upgrade {pkg} failed — see console output"));
+    }
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command]
 pub async fn install_package(app: tauri::AppHandle, pkg: String) -> Result<serde_json::Value,String> {
+    pip_spec_ok(&pkg).map_err(|e| format!("blocked: {e}"))?;
     let env = get_active_env(); let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
     let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
     if !py.exists() { return Err("python not found".into()); }
-    let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install", &pkg]).spawn().map_err(|e| e.to_string())?;
-    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
+    let py_s = py.to_string_lossy().to_string();
+    let emit = |m: &str| { let _ = app.emit("launch-log", m.to_string()); };
+    if !run_logged(&app, &py_s, &["-m","pip","install", &pkg], None, emit).await {
+        return Err(format!("pip install {pkg} failed — see console output"));
+    }
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command]
 pub async fn uninstall_package(app: tauri::AppHandle, pkg: String) -> Result<serde_json::Value,String> {
+    pip_spec_ok(&pkg).map_err(|e| format!("blocked: {e}"))?;
     let env = get_active_env(); let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
     let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
     if !py.exists() { return Err("python not found".into()); }
-    let (mut rx, _) = app.shell().command(&py).args(["-m","pip","uninstall","-y", &pkg]).spawn().map_err(|e| e.to_string())?;
-    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
+    let py_s = py.to_string_lossy().to_string();
+    let emit = |m: &str| { let _ = app.emit("launch-log", m.to_string()); };
+    if !run_logged(&app, &py_s, &["-m","pip","uninstall","-y", &pkg], None, emit).await {
+        return Err(format!("pip uninstall {pkg} failed — see console output"));
+    }
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command]
@@ -190,8 +200,11 @@ pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::V
     let repo = get_repo_dir(); let env = get_active_env(); let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { repo.join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
     let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
     if !py.exists() { return Err("python not found".into()); }
-    let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install","-r", "requirements.txt"]).current_dir(&repo).spawn().map_err(|e| e.to_string())?;
-    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let _ = app.emit("launch-log", String::from_utf8_lossy(&b).to_string()); }, _=>{} } }
+    let py_s = py.to_string_lossy().to_string();
+    let emit = |m: &str| { let _ = app.emit("launch-log", m.to_string()); };
+    if !run_logged(&app, &py_s, &["-m","pip","install","-r", "requirements.txt"], Some(&repo), emit).await {
+        return Err("requirements restore failed — see console output".into());
+    }
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command] pub fn llm_engines_list() -> serde_json::Value {

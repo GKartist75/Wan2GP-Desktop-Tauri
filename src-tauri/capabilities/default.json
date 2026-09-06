@@ -6,9 +6,6 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "shell:default",
-    "dialog:default",
-    "fs:default",
     "updater:default"
   ]
 }

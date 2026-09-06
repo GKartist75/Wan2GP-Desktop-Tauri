@@ -186,8 +186,9 @@ pub fn check_installed() -> serde_json::Value {
 
 #[tauri::command]
 pub fn check_command(cmd: String) -> serde_json::Value {
-    #[cfg(windows)] let probe = silent_command("where").arg(&cmd).output();
-    #[cfg(not(windows))] let probe = silent_command("which").arg(&cmd).output();
-    let found = probe.is_ok_and(|o| o.status.success());
+    // Windows: tool_usable filters the Store shim (a bare `where` hit is not
+    // proof of a runnable binary — see base::tool_usable).
+    #[cfg(windows)] let found = tool_usable(&cmd);
+    #[cfg(not(windows))] let found = silent_command("which").arg(&cmd).output().is_ok_and(|o| o.status.success());
     serde_json::json!({"cmd": cmd, "found": found})
 }

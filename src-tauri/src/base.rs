@@ -267,3 +267,131 @@ pub(crate) fn split_cmdline(s: &str) -> (String, Vec<String>) {
 }
 
 pub(crate) static WANGP_PID: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
+
+/// Validate a pip specifier before it reaches `pip install/upgrade/uninstall`.
+/// Rust port of services/pip-spec.js `assertSafePipSpec` — keep the two in
+/// sync (same accept/reject table, same comments). Rejects pip options
+/// (pip parses argv options itself — no shell needed for `--opt=val` to take
+/// effect), shell metacharacters, path separators, and non-https URLs.
+/// Accepted: bare name, name with PEP 440 pin, https .whl/.tar.gz/.zip URL.
+pub(crate) fn pip_spec_ok(spec: &str) -> Result<(), String> {
+    if spec.is_empty() { return Err("empty package spec".into()); }
+    // Whitespace / shell metacharacters outright. `<` and `>` are allowed:
+    // they are valid PEP 440 operators (>=, <=) and argv has no shell, so
+    // they can never cause redirection. (is_whitespace covers the JS \s class
+    // and then some — strictly stronger than pip-spec.js, same verdicts.)
+    if spec.chars().any(|c| c.is_whitespace() || ";&|$`(){}'\"".contains(c)) {
+        return Err("unsafe characters in package spec".into());
+    }
+    // Direct wheel/URL install (no shell chars already guaranteed).
+    if let Some(rest) = spec.strip_prefix("https://") {
+        let base = rest.split('?').next().unwrap_or("");
+        let ok_ext = base.ends_with(".whl") || base.ends_with(".tar.gz") || base.ends_with(".zip");
+        if base.is_empty() || !ok_ext { return Err("bad wheel URL (https + .whl/.tar.gz/.zip only)".into()); }
+        return Ok(());
+    }
+    if spec.contains('/') || spec.contains('\\') { return Err("path separators not allowed".into()); }
+    // Split a possible version specifier: name [OP version] (==, >=, <=, ~=, !=, >, <).
+    let cut = spec.find(|c| "<>=!~".contains(c));
+    let (name, tail) = match cut {
+        Some(i) => (&spec[..i], &spec[i..]),
+        None => (spec, ""),
+    };
+    let mut nc = name.chars();
+    match nc.next() {
+        Some(c) if c.is_ascii_alphabetic() => {}
+        _ => return Err(format!("bad package name: {name}")),
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) {
+        return Err(format!("bad package name: {name}"));
+    }
+    if !tail.is_empty() {
+        let op_len = ["==", ">=", "<=", "~=", "!="].iter()
+            .find(|op| tail.starts_with(**op)).map(|s| s.len())
+            .unwrap_or_else(|| if tail.starts_with('<') || tail.starts_with('>') { 1 } else { 0 });
+        if op_len == 0 || tail[op_len..].is_empty()
+            || !tail[op_len..].chars().all(|c| c.is_ascii_alphanumeric() || "._:*!+-".contains(c)) {
+            return Err("malformed version pin".into());
+        }
+    }
+    // Must not look like an option even after all the above.
+    if spec.starts_with('-') { return Err("pip options are not accepted here".into()); }
+    Ok(())
+}
+
+#[cfg(test)]
+mod pip_spec_tests {
+    use super::pip_spec_ok;
+    #[test]
+    fn accepts_well_formed_specs() {
+        for s in [
+            "claude-agent-sdk",
+            "claude-agent-sdk==0.1.66",
+            "foo>=1.0",
+            "torch<=2.10.0",
+            "pkg~=1.4.2",
+            "pkg!=1.0",
+            "pkg>1.0",
+            "pkg<2.0",
+            "https://download.pytorch.org/whl/foo-1.0-py3-none-any.whl",
+            "https://example.com/a.tar.gz?x=1",
+        ] { assert!(pip_spec_ok(s).is_ok(), "should accept {s}"); }
+    }
+    #[test]
+    fn rejects_dangerous_specs() {
+        for s in [
+            "", "-r", "-r requirements.txt", "-e .", "--index-url", "--index-url=https://evil/x",
+            "--no-deps", "-c evil.conf", "foo; rm -rf", "foo|bar", "foo&bar", "foo$(bar)",
+            "foo`bar`", "foo bar", "../evil", "a/b", "http://evil/x.whl",
+            "https://evil/x.exe", "--upgrade", "-U", "-q foo",
+        ] { assert!(pip_spec_ok(s).is_err(), "should reject {s}"); }
+    }
+}
+
+/// PATH probe that refuses to count the Microsoft Store stub as a real tool.
+/// `where python` succeeds on the Store shim (it only opens the Store), so a
+/// bare exit-status check reports "installed" on machines with no Python.
+/// Same filter diagnose_python_fail applies — centralized here so probe_tool
+/// and check_command can't drift again. Windows-only; elsewhere every
+/// `which` hit is a real binary.
+#[cfg(windows)]
+pub(crate) fn tool_usable(cmd: &str) -> bool {
+    silent_command("where").arg(cmd).output().ok()
+        .and_then(|o| o.status.success().then(|| String::from_utf8_lossy(&o.stdout).to_string()))
+        .is_some_and(|s| s.lines().any(|l| {
+            let p = l.trim();
+            !p.is_empty() && !p.to_lowercase().contains("windowsapps")
+        }))
+}
+
+/// Spawn a shell-plugin child, stream stdout+stderr to `emit`, and return
+/// true iff the exit code is 0. The single choke point for fallible backend
+/// commands (pip install/upgrade/uninstall, git pull, per-kernel sync) so a
+/// failure can never again read as success. `Terminated.code == None`
+/// (killed/signalled) counts as failure.
+pub(crate) async fn run_logged(
+    app: &tauri::AppHandle,
+    prog: &str,
+    args: &[&str],
+    dir: Option<&Path>,
+    emit: impl Fn(&str),
+) -> bool {
+    use tauri_plugin_shell::{ShellExt, process::CommandEvent};
+    let mut cmd = app.shell().command(prog);
+    cmd = cmd.args(args);
+    if let Some(d) = dir { cmd = cmd.current_dir(d); }
+    let (mut rx, _) = match cmd.spawn() {
+        Ok(t) => t,
+        Err(e) => { emit(&format!("[!] spawn failed ({prog}): {e}\n")); return false; }
+    };
+    let mut code: Option<i32> = None;
+    while let Some(ev) = rx.recv().await {
+        match ev {
+            CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => emit(&String::from_utf8_lossy(&b)),
+            CommandEvent::Terminated(p) => { code = p.code; }
+            CommandEvent::Error(e) => emit(&format!("[!] {e}\n")),
+            _ => {}
+        }
+    }
+    code == Some(0)
+}

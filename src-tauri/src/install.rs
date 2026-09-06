@@ -163,7 +163,7 @@ async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + S
     if !dl_ok {
         emit("[*] uv itself may be broken — reinstalling uv from the official installer…\n");
         #[cfg(windows)]
-        let reinstalled = run_capture(app, &emit, "powershell", &["-NoProfile", "-Command", "& { iwr -useb https://astral.sh/uv/install.ps1 | iex }"]).await.0;
+        let reinstalled = run_capture(app, &emit, "powershell", &["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "& { iwr -useb https://astral.sh/uv/install.ps1 | iex }"]).await.0;
         #[cfg(not(windows))]
         let reinstalled = run_capture(app, &emit, "sh", &["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"]).await.0;
         if reinstalled {
@@ -224,14 +224,25 @@ fn diagnose_python_fail(wanted: &str) -> String {
     }
     let mut cands: Vec<String> = Vec::new();
     // PATH (skip the Microsoft Store shim — it opens the Store, not Python).
-    if let Ok(o) = silent_command("where").arg("python").output() {
-        if o.status.success() {
-            for line in String::from_utf8_lossy(&o.stdout).lines() {
-                let p = line.trim();
-                if !p.is_empty() && !p.to_lowercase().contains("windowsapps") { cands.push(p.to_string()); }
-            }
-        }
-    }
+    // `where` is Windows-only; POSIX uses `which -a` (a bare `where` probe
+    // just fails there and the diagnostic comes back empty).
+    #[cfg(windows)]
+    let path_hits: Vec<String> = silent_command("where").arg("python").output().ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines()
+            .map(|l| l.trim().to_string())
+            .filter(|p| !p.is_empty() && !p.to_lowercase().contains("windowsapps"))
+            .collect())
+        .unwrap_or_default();
+    #[cfg(not(windows))]
+    let path_hits: Vec<String> = silent_command("which").args(["-a", "python3.11"]).output().ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines()
+            .map(|l| l.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .collect())
+        .unwrap_or_default();
+    cands.extend(path_hits);
     #[cfg(windows)]
     for fixed in [
         std::env::var("LOCALAPPDATA").ok().map(|a| format!("{a}\\Programs\\Python\\Python311\\python.exe")),
@@ -466,6 +477,16 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
     if let Some(where_) = pinokio_root(&repo) {
         mutating_done();
         return Err(format!("This folder is Pinokio-managed ({}). Installing here would corrupt Pinokio's Wan2GP. Pick an empty folder and reuse Pinokio's ckpts/loras/outputs as your model folders — no re-downloads, Pinokio keeps working.", where_.display()));
+    }
+    // Fail fast on a full target drive: a complete install needs tens of GB
+    // (env alone is ~10 GB before models). Dying of ENOSPC 15 minutes into
+    // setup.py helps nobody — abort here with a copy-paste fix instead.
+    if let Some((free, _)) = crate::config::disk_for_path(&repo.to_string_lossy()) {
+        let free_gb = free as f64 / 1073741824.0;
+        if free_gb < 10.0 {
+            mutating_done();
+            return Err(format!("Only {free_gb:.1} GB free on the install drive ({}). A full install needs 50+ GB (env alone is ~10 GB before models). Free space or pick another folder, then retry — nothing was downloaded.", repo.display()));
+        }
     }
     if repo.join("wgp.py").exists() {
         emit_phase("clone", "Clone Wan2GP repository", true);
@@ -952,7 +973,6 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,Str
     }
     let gpu = get_gpu_info_sync(); let profile = kernel_profile_key(gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""), gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""));
     let kernels = cfg.get("gpu_profiles").and_then(|p| p.get(&profile)).and_then(|pr| pr.get("kernels")).and_then(|k| k.as_array()).cloned().unwrap_or_default();
-    use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
     let sage_safe = load_config_value().get("sageSafe").and_then(serde_json::Value::as_bool) != Some(false); // ponytail: default safe post6 (1348e5b) — only false opts into upstream post4
     // ponytail: Sage wheel is not in gpu_profiles[RTX_30].kernels (only nunchaku+gguf) — handle it separately like Electron's setSageAttentionSafe
     let mut all_kernels = kernels.clone();
@@ -962,6 +982,7 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,Str
             all_kernels.push(serde_json::json!("sage"));
         }
     }
+    let mut failed: Vec<String> = Vec::new();
     for k in all_kernels {
         if let Some(name) = k.as_str() {
             // find wheel url — nunchaku/gguf are under components.kernels, sage is under components.sage[profile.sage]
@@ -991,19 +1012,29 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,Str
                 }
             }
             let m = format!("[*] sync kernel {name}\n"); crate::base::push_log(&m, "setup"); let _ = app.emit("launch-log", m);
-            let (mut rx, _) = app.shell().command(&py).args(["-m","pip","install", &url, "--upgrade"]).spawn().map_err(|e| e.to_string())?;
-            while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s, "setup"); let _ = app.emit("launch-log", s); }, _=>{} } }
+            let emit_k = |s: &str| { crate::base::push_log(s, "setup"); let _ = app.emit("launch-log", s.to_string()); };
+            let py_s = py.to_string_lossy().to_string();
+            if !run_logged(&app, &py_s, &["-m","pip","install", url.as_str(), "--upgrade"], None, emit_k).await {
+                failed.push(name.to_string());
+            }
         }
     }
-    mutating_done(); Ok(serde_json::json!({"ok": true, "success": true}))
+    mutating_done();
+    if !failed.is_empty() {
+        return Err(format!("kernel sync failed for: {} — see console output", failed.join(", ")));
+    }
+    Ok(serde_json::json!({"ok": true, "success": true}))
 }
 #[tauri::command]
 pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
     mutating_try("update")?;
     let repo = get_repo_dir();
     if !repo.join(".git").exists() { mutating_done(); return Err("not a git repo".into()); }
-    let (mut rx, _) = app.shell().command("git").args(["pull"]).current_dir(&repo).spawn().map_err(|e| e.to_string())?;
-    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s, "setup"); let _ = app.emit("launch-log", s); }, _=>{} } }
+    let emit = |m: &str| { crate::base::push_log(m, "setup"); let _ = app.emit("launch-log", m.to_string()); };
+    if !run_logged(&app, "git", &["pull"], Some(&repo), emit).await {
+        mutating_done();
+        return Err("git pull failed — see console output (offline? diverged branch?)".into());
+    }
     mutating_done(); Ok(serde_json::json!({"ok": true, "success": true}))
 }
 pub(crate) fn fs_extra_fallback_copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
@@ -1110,13 +1141,64 @@ fn probe_tool(tool: &str) -> bool {
     match tool {
         "git" => on_path("git"),
         "uv" => on_path("uv") || exists(format!("{home}\\.local\\bin\\uv.exe")) || exists(format!("{home}\\.cargo\\bin\\uv.exe")),
-        "python" => on_path("python") || on_path("py"),
+        "python" => tool_usable("python") || tool_usable("py"),
         "conda" => on_path("conda")
             || exists(format!("{home}\\Miniconda3\\condabin\\conda.bat"))
             || exists(format!("{home}\\Miniconda3\\Scripts\\conda.exe"))
             || exists(format!("{home}\\Anaconda3\\condabin\\conda.bat")),
         _ => false,
     }
+}
+
+/// Does this interpreter report exactly the wanted X.Y.Z?
+/// (`sys.version` prints e.g. "3.11.14 ..." — the first token must start with
+/// the full pin; a neighbouring patch like 3.11.9 does not count.)
+#[cfg(windows)]
+fn python_matches_pin(prog: &str, extra_args: &[&str], wanted: &str) -> bool {
+    let mut args: Vec<&str> = extra_args.to_vec();
+    args.extend(["-c", "import sys; print(sys.version)"]);
+    silent_command(prog).args(&args).output().ok()
+        .and_then(|o| o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().split_whitespace().next().unwrap_or("").to_string()))
+        .is_some_and(|v| v.starts_with(wanted))
+}
+
+/// SHA-256 of a downloaded installer matches the pinned value? Downloads are
+/// TLS-only by default; a pin turns a MITM (or a truncated download) into a
+/// loud refusal instead of executed bytes. Streamed — the git installer is ~120 MB.
+#[cfg(windows)]
+fn verify_sha256(path: &str, expected_hex: &str, emit: &impl Fn(String)) -> bool {
+    use sha2::Digest;
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) => { emit(format!("[!] checksum: cannot read {path}: {e}\n")); return false; }
+    };
+    let mut hasher = sha2::Sha256::new();
+    if std::io::copy(&mut file, &mut hasher).is_err() {
+        emit(format!("[!] checksum: failed reading {path}\n"));
+        return false;
+    }
+    let got = format!("{:x}", hasher.finalize());
+    if got.eq_ignore_ascii_case(expected_hex) { return true; }
+    emit(format!("[!] CHECKSUM MISMATCH for {path}\n    got      {got}\n    expected {expected_hex}\n    refusing to run it — re-download manually from the official site.\n"));
+    false
+}
+
+/// (file-version, tag) of the newest Git for Windows, e.g.
+/// ("2.55.0.5", "v2.55.0.windows.5"). None when the API is unreachable —
+/// callers fall back to the pinned release.
+#[cfg(windows)]
+async fn latest_git_release() -> Option<(String, String)> {
+    let v: serde_json::Value = reqwest::Client::builder().user_agent("wan2gp-tauri")
+        .timeout(std::time::Duration::from_secs(10)).build().ok()?
+        .get("https://api.github.com/repos/git-for-windows/git/releases/latest")
+        .send().await.ok()?
+        .error_for_status().ok()?
+        .json().await.ok()?;
+    let tag = v.get("tag_name")?.as_str()?;
+    let base = tag.strip_prefix('v').unwrap_or(tag).split(".windows").next()?;
+    let n = tag.rsplit('.').next()?;
+    if base.is_empty() || !n.chars().all(|c| c.is_ascii_digit()) { return None; }
+    Some((format!("{base}.{n}"), tag.to_string()))
 }
 
 /// Official installers, used when winget is missing or fails (LTSC, removed
@@ -1133,27 +1215,58 @@ async fn official_fallback(app: &tauri::AppHandle, tool: &str) -> bool {
     match tool {
         "uv" => {
             emit("[*] Installing uv via the official script…\n".into());
-            run_live(app, "powershell", vec!["-NoProfile".into(), "-Command".into(), "& { iwr -useb https://astral.sh/uv/install.ps1 | iex }".into()]).await
+            run_live(app, "powershell", vec!["-NoProfile".into(), "-ExecutionPolicy".into(), "Bypass".into(), "-Command".into(), "& { iwr -useb https://astral.sh/uv/install.ps1 | iex }".into()]).await
         }
         "git" => {
-            // NOTE: update periodically — https://git-scm.com/download/win
-            let url = "https://github.com/git-for-windows/git/releases/download/v2.49.0.windows.1/Git-2.49.0-64-bit.exe";
-            let dest = format!("{tmp}\\Git-2.49.0-64-bit.exe");
+            // Live-resolve the newest release; pinned fallback keeps offline installs working.
+            // The SHA pin covers the pinned fallback only — a newer live release is TLS-only (logged).
+            const FALLBACK_TAG: &str = "v2.55.0.windows.5";
+            const FALLBACK_VER: &str = "2.55.0.5";
+            const FALLBACK_SHA: &str = "d065a4e23c3d9a6b5073d609b5be0830227ec3ca053c083ba385061ddfaf94c6";
+            let (ver, tag) = latest_git_release().await
+                .unwrap_or((FALLBACK_VER.to_string(), FALLBACK_TAG.to_string()));
+            let mut url = format!("https://github.com/git-for-windows/git/releases/download/{tag}/Git-{ver}-64-bit.exe");
+            let mut dest = format!("{tmp}\\Git-{ver}-64-bit.exe");
+            let mut sha: Option<&str> = if ver.as_str() == FALLBACK_VER { Some(FALLBACK_SHA) } else { None };
             emit("[*] Downloading Git for Windows (~120 MB)…\n".into());
-            if !run_live(app, "powershell", download(url, &dest)).await { return false; }
+            if !run_live(app, "powershell", download(&url, &dest)).await || !std::path::Path::new(&dest).exists() {
+                if ver.as_str() != FALLBACK_VER {
+                    // Live asset name changed or offline — retry the pinned release.
+                    emit(format!("[!] Git {ver} download failed — retrying pinned Git {FALLBACK_VER}…\n"));
+                    url = format!("https://github.com/git-for-windows/git/releases/download/{FALLBACK_TAG}/Git-{FALLBACK_VER}-64-bit.exe");
+                    dest = format!("{tmp}\\Git-{FALLBACK_VER}-64-bit.exe");
+                    sha = Some(FALLBACK_SHA);
+                    if !run_live(app, "powershell", download(&url, &dest)).await { return false; }
+                } else { return false; }
+            }
+            match sha {
+                Some(s) if !verify_sha256(&dest, s, &emit) => return false,
+                None => emit(format!("[!] No pinned checksum for Git {ver} — trusting TLS.\n")),
+                _ => {}
+            }
             emit("[*] Installing silently — a couple of minutes…\n".into());
             run_live(app, &dest, vec!["/VERYSILENT".into(), "/NORESTART".into(), "/SUPPRESSMSGBOXES".into(), "/CLOSEAPPLICATIONS".into()]).await
         }
         "python" => {
-            // NOTE: keep in step with setup.py's pin (currently 3.11.14).
-            let url = "https://www.python.org/ftp/python/3.11.14/python-3.11.14-amd64.exe";
-            let dest = format!("{tmp}\\python-3.11.14-amd64.exe");
+            // python.org publishes NO binary installer for 3.11.14 (source-only
+            // security release — the old 3.11.14 URL 404s). 3.11.9 is the newest
+            // 3.11 with an official amd64 installer: good enough as a `py -3.11`
+            // source, while the exact 3.11.14 pin still comes via uv
+            // (python-build-standalone) — unaffected by this fallback. SHA
+            // pinned (hashed from python.org over TLS).
+            let url = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe";
+            let dest = format!("{tmp}\\python-3.11.9-amd64.exe");
+            const SHA: &str = "5ee42c4eee1e6b4464bb23722f90b45303f79442df63083f05322f1785f5fdde";
             emit("[*] Downloading Python 3.11 (~25 MB)…\n".into());
             if !run_live(app, "powershell", download(url, &dest)).await { return false; }
+            if !verify_sha256(&dest, SHA, &emit) { return false; }
             emit("[*] Installing silently — a couple of minutes…\n".into());
             run_live(app, &dest, vec!["/quiet".into(), "InstallAllUsers=0".into(), "PrependPath=1".into(), "Include_test=0".into()]).await
         }
         "conda" => {
+            // Trust surface (documented, not fixed): Miniconda3-latest is a moving
+            // target with no hash sidecar, so it cannot be SHA-pinned without
+            // freezing a version that would rot. TLS-only — same trust as setup.py itself.
             let url = "https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe";
             let dest = format!("{tmp}\\Miniconda3-latest-Windows-x86_64.exe");
             let home = std::env::var("USERPROFILE").unwrap_or("C:\\Users\\Default".into());
@@ -1188,6 +1301,24 @@ async fn install_prerequisite_windows(app: tauri::AppHandle, tool: String) -> Re
     if !ok { return Err(format!("{tool} install failed — see output above (needs network; some packages need admin approval; check antivirus)")); }
     // Pick up the new PATH without a restart when possible.
     refresh_path_from_registry();
+    // winget's Python.Python.3.11 is latest 3.11.x, but setup.py demands the
+    // exact pin (pinned_python_wanted, e.g. 3.11.14). No usable python at all
+    // → take the (pinned 3.11.9) official installer; a real-but-neighbouring
+    // patch → keep it (uv provisions the exact pin automatically at install
+    // time) instead of pointlessly stacking a second interpreter.
+    if tool == "python" {
+        let wanted = pinned_python_wanted();
+        if !python_matches_pin("python", &[], &wanted) && !python_matches_pin("py", &["-3.11"], &wanted) {
+            if probe_tool(&tool) {
+                emit(&format!("[*] winget's Python isn't exactly {wanted} — keeping it; the installer provisions exactly {wanted} via uv automatically.\n"));
+            } else {
+                emit(&format!("[!] winget's Python isn't exactly {wanted} and no usable python found — installing the pinned build…\n"));
+                ok = official_fallback(&app, &tool).await;
+                if !ok { return Err(format!("{tool} install failed — see output above (needs network; some packages need admin approval; check antivirus)")); }
+                refresh_path_from_registry();
+            }
+        }
+    }
     if probe_tool(&tool) {
         emit(&format!("[✓] {tool} installed and on PATH — continuing…\n"));
         return Ok(serde_json::json!({"ok": true, "success": true, "ready": true}));
@@ -1224,6 +1355,9 @@ pub fn dlss5_status() -> serde_json::Value {
 }
 
 // Optional DLSS5 runtime (docs/DLSS5.md): runs Wan2GP's own Install-DLSS5.ps1.
+// Trust surface (documented, not fixed): upstream script executed with Bypass —
+// same trust as setup.py itself. Integrity comes from the pinned SHA-256
+// manifest above (verdict re-probes dlss5/, not script output).
 // Consent ("I ACCEPT") is taken in the UI modal, so the script gets
 // -AcceptThirdPartyRisk and never blocks on Read-Host. Verdict comes from
 // re-probing dlss5/, not from parsing script output.

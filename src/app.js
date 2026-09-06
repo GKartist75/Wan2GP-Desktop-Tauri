@@ -2939,6 +2939,7 @@ window.w2gp.onWangpExit(c => {
   // (Was interpolating the whole object → "exited (code [object Object])".)
   const code = (c && typeof c === 'object') ? (c.code ?? (c.stopped ? 0 : '?')) : c
   appendLog(`${code === 0 ? '[*]' : '[!]'} Wan2GP process exited (code ${code})`)
+  const exitMode = serverMode // capture before teardown below nulls it
   _pendingOpen = null   // boot failed/went away — don't open anything later
   // Server is really gone: drop the (now stale) embed entirely so the next
   // open rebuilds it instead of showing a dead page.
@@ -2954,7 +2955,46 @@ window.w2gp.onWangpExit(c => {
   $('stopWangpBtn').style.display = 'none'
   updateLed('stopped')
   updateFtStatus('stopped')
+  // Config-skew recovery: wgp.py died with KeyError on a settings key —
+  // wgp_config.json exists but misses keys the installed wgp.py requires
+  // (partial write after a failed install, or an ancient config after an
+  // update). Offer backup + reset + relaunch instead of a dead dashboard.
+  if (code !== 0 && code !== '?' && !window._configCrashOffered) {
+    try {
+      const tail = (typeof window._getLogTail === 'function') ? window._getLogTail() : ''
+      const m = tail.match(/KeyError:\s*'([^']+)'/)
+      if (m && /wgp\.py/.test(tail)) {
+        window._configCrashOffered = true
+        offerConfigReset(m[1], exitMode)
+      }
+    } catch {}
+  }
 })
+
+async function offerConfigReset(missingKey, mode) {
+  appendLog(`[!] Wan2GP crashed: settings file is missing '${missingKey}' (outdated or partial wgp_config.json).`)
+  showToast(`✗ Settings missing '${missingKey}' — reset offered`)
+  const choice = await window.w2gp.confirmDialog({
+    title: 'Settings file outdated?',
+    message: `Wan2GP crashed because wgp_config.json is missing '${missingKey}'.`,
+    detail: 'Back it up and reset to defaults? Wan2GP regenerates the full file on next launch (models stay where they are).'
+  })
+  window._configCrashOffered = false
+  if (choice !== 'ok') return
+  try {
+    const r = await window.w2gp.resetWgpConfig()
+    if (r && (r.success || r.ok)) {
+      appendLog('[*] Settings backed up to ' + (r.backup || 'wgp_config.bak-*.json') + ' — relaunching with fresh defaults…')
+      showToast('✓ Settings reset — relaunching')
+      setTimeout(function() {
+        // Reuse the dashboard buttons' full logic (validation, boot flow).
+        const b = (mode === 'browser') ? $('browserBtn') : $('appBtn')
+        if (b && !b.disabled) b.click()
+        else showToast('Press Launch to start Wan2GP with fresh settings')
+      }, 800)
+    } else showToast('✗ Reset failed: ' + ((r && r.error) || 'unknown'))
+  } catch (e) { showToast('✗ ' + errText(e)) }
+}
 
 // ── Floating Terminal (Desktop/webview mode only) ──
 function updateFtStatus(state) {
@@ -3040,8 +3080,11 @@ $('taskMgrBtn').addEventListener('click',()=>{ window.w2gp.openTaskManager() })
 // Node-side mirror lives in services/normalize-pip-spec.js for unit tests.)
 function normalizePipSpec(raw) {
   let s = (raw || '').trim()
-  const m = s.match(/^(?:py(?:thon)?\s+-m\s+)?pip\s+install\s+/i)
+  const m = s.match(/^(?:py(?:thon)?\s+-m\s+)?pip3?\s+install\s+/i)
   if (m) s = s.slice(m[0].length).trim()
+  // Strip pip flags (`pip install foo --upgrade` → `foo`). UX only — the
+  // backend re-validates. Must match services/normalize-pip-spec.js.
+  s = s.split(/\s+/).filter((t) => !t.startsWith('-')).join(' ')
   return s
 }
 $('pipInstallBtn').addEventListener('click', async () => {
@@ -3069,12 +3112,14 @@ function updatePipCmdPreview() {
   if (!input || !preview || !text) return
   const spec = normalizePipSpec(input.value)
   if (!spec) { preview.style.display = 'none'; return }
-  // Reuse the same validation the launcher applies (kept in sync with main.js).
-  const name = spec.split(/[<>=!~]/)[0].replace(/\s/g, '')
-  const okName = /^[A-Za-z0-9._-]+$/.test(name) && /^[A-Za-z]/.test(name)
-  const hasInjection = /[;&|<>$`(){}'"]/.test(spec) || /\s-{1,2}[a-zA-Z]/.test(spec)
-  if (!okName) { preview.style.display = 'flex'; preview.classList.add('pip-cmd-bad'); text.textContent = '✗ Invalid package name' }
-  else if (hasInjection) { preview.style.display = 'flex'; preview.classList.add('pip-cmd-bad'); text.textContent = '✗ Flags/shell characters are blocked for safety' }
+  // Single source of truth: the same validator the backend enforces
+  // (services/pip-spec.js, exposed as window.PipSpec by the script tag in
+  // index.html). No inline copy — the old one wrongly blocked `<>` (valid
+  // PEP 440 operators), so `foo>=1.0` previewed as blocked but installed fine.
+  const check = window.PipSpec
+    ? window.PipSpec.assertSafePipSpec(spec)
+    : { ok: false, reason: 'validator missing' }
+  if (!check.ok) { preview.style.display = 'flex'; preview.classList.add('pip-cmd-bad'); text.textContent = '✗ Blocked: ' + (check.reason || 'invalid spec') }
   else { preview.style.display = 'flex'; preview.classList.remove('pip-cmd-bad'); text.textContent = 'pip install ' + spec + '   (runs in the active env)' }
 }
 $('pipInput').addEventListener('input', updatePipCmdPreview)
@@ -3389,11 +3434,11 @@ async function refreshDlss5() {
   renderDlss5Progress()
 }
 $('dlss5InstallBtn')?.addEventListener('click', () => {
-  $('dlss5AcceptInput').value = ''; $('dlss5ConfirmBtn').disabled = true
-  $('dlss5Modal').style.display = 'flex'; $('dlss5AcceptInput').focus()
+  $('dlss5AcceptChk').checked = false; $('dlss5ConfirmBtn').disabled = true
+  $('dlss5Modal').classList.remove('hidden'); $('dlss5AcceptChk').focus()
 })
-$('dlss5AcceptInput')?.addEventListener('input', e => { $('dlss5ConfirmBtn').disabled = (e.target.value !== 'I ACCEPT') })
-$('dlss5CancelBtn')?.addEventListener('click', () => { $('dlss5Modal').style.display = 'none' })
+$('dlss5AcceptChk')?.addEventListener('change', e => { $('dlss5ConfirmBtn').disabled = !e.target.checked })
+$('dlss5CancelBtn')?.addEventListener('click', () => { $('dlss5Modal').classList.add('hidden') })
 // ── DLSS5 file overview: one always-visible row per installed file (path +
 // version + expected SHA from the backend manifest) with installed /
 // not-installed state. Live install events only override the phase mid-install;
@@ -3480,7 +3525,7 @@ function dlss5OnEvent(d) {
 }
 $('dlss5ConfirmBtn')?.addEventListener('click', async () => {
   _dlss5LastPkg = null; _dlss5State = {}; _dlss5Done = false; renderDlss5Progress()
-  $('dlss5Modal').style.display = 'none'
+  $('dlss5Modal').classList.add('hidden')
   const force = !!$('dlss5ForceChk')?.checked
   const btn = $('dlss5InstallBtn'); btn.disabled = true
   const orig = btn.textContent; btn.textContent = 'Installing…'

@@ -673,13 +673,14 @@
           <p class="path-hint" style="margin-top:4px"><em>Stop Wan2GP first — files under <code>dlss5/</code> can't be replaced while in use.</em></p>
         </div>
 
-        <!-- Strict-consent modal: type I ACCEPT to run the third-party installer. -->
-        <div id="dlss5Modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99;align-items:center;justify-content:center">
-          <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:18px;max-width:520px;margin:10vh auto">
+        <!-- Strict-consent modal: type I ACCEPT to run the third-party installer.
+             Same convention as migrationModal/backupModal below: hidden via the
+             `hidden` class, shown by removing it. -->
+        <div id="dlss5Modal" class="modal-overlay hidden">
+          <div class="modal-box">
             <h3 style="margin:0 0 8px">Install DLSS 5 runtime?</h3>
-            <p class="path-hint">This downloads native third-party binaries (NVIDIA DLSS, ReShade, RenoDX, DLSSNR 310.8.SF-v2 — community-hosted, unsigned, proprietary) with GPU and filesystem access. Wan2GP does not grant redistribution rights or guarantee these files. Continue only if you accept the copyright, licensing, and security risks. Details: <a id="dlss5DocsLink2" href="#" style="color:var(--accent)">docs/DLSS5.md</a></p>
-            <p class="path-hint">Type <code>I ACCEPT</code> to continue:</p>
-            <input type="text" id="dlss5AcceptInput" class="input" placeholder="I ACCEPT" style="width:100%;margin-bottom:10px" autocomplete="off">
+            <p class="path-hint">This downloads and runs native third-party binaries — NVIDIA DLSS, ReShade, RenoDX and DLSSNR 310.8.SF-v2. They are community-hosted, unsigned and proprietary, with GPU and filesystem access. Wan2GP grants no redistribution rights and guarantees nothing about these files. Details: <a id="dlss5DocsLink2" href="#" style="color:var(--accent)">docs/DLSS5.md</a></p>
+            <label class="path-hint" style="display:flex;gap:8px;align-items:flex-start;margin:10px 0 12px;cursor:pointer"><input type="checkbox" id="dlss5AcceptChk" style="margin-top:2px"> <span>I accept the copyright, licensing, and security risks above.</span></label>
             <div style="display:flex;gap:8px;justify-content:flex-end">
               <button class="btn btn-ghost" id="dlss5CancelBtn">Cancel</button>
               <button class="btn btn-primary" id="dlss5ConfirmBtn" disabled>Install</button>
@@ -1123,6 +1124,7 @@
   <!-- Tauri shim: provides window.w2gp via invoke() — ponytail: one file replaces 9600L preload.js -->
   <script src="w2gp.js" defer></script>
   <script src="services/escape.js" defer></script>
+  <script src="services/pip-spec.js" defer></script>
   <script src="app.js" defer></script>
 </body>
 </html>

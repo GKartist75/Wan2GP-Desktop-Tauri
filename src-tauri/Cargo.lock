@@ -4897,12 +4897,13 @@ dependencies = [
 
 [[package]]
 name = "wan2gp-desktop-launcher-tauri"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "chrono",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "sysinfo",
  "tauri",
  "tauri-build",
