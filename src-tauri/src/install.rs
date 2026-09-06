@@ -458,6 +458,44 @@ fn install_failure_hint(tail: &str) -> String {
     format!("setup.py failed — see the console output above for the failing command.")
 }
 
+/// Quick `import torch` probe: Some(version) iff torch imports (no CUDA
+/// judgment — just "is there a torch?"). Cheap enough to run before every
+/// install; distinguishes a finished env from a failed-halfway one.
+fn torch_probe(py: &Path) -> Option<String> {
+    if !py.exists() { return None; }
+    silent_command(py).args(["-c", "import torch; print(torch.__version__)"]).output().ok()
+        .and_then(|o| o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string()))
+        .filter(|v| !v.is_empty())
+}
+
+/// Full env verification: torch imports AND (on NVIDIA) the GPU is visible.
+/// Ok(torch_line) on success; Err(message) otherwise. Shared by the
+/// pre-install reuse check and the post-install gate so both judge by the
+/// same rule. A cuda=False Err contains "cuda=False" (driver gap —
+/// reinstalling won't fix it); any other Err means a broken env.
+fn smoke_verify(py: &Path, repo: &Path) -> Result<String, String> {
+    let out = silent_command(py).args(["-c", "import torch; print('torch ' + torch.__version__ + ' cuda=' + str(torch.cuda.is_available()))"]).current_dir(repo).output()
+        .map_err(|e| format!("`import torch` failed to spawn ({e})"))?;
+    if !out.status.success() {
+        return Err("`import torch` fails in the environment".into());
+    }
+    let line = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let vendor = get_gpu_info_sync().get("vendor").and_then(|v| v.as_str()).unwrap_or("").to_uppercase();
+    if vendor == "NVIDIA" && !line.contains("cuda=True") {
+        return Err("torch can't see the NVIDIA GPU (cuda=False) — likely a driver/CUDA mismatch. Update to NVIDIA R580+, reboot, then repair the environment.".into());
+    }
+    Ok(line)
+}
+
+/// Looks like a transient network failure (worth one automatic setup.py retry)?
+/// Mirrors install_failure_hint's network arms plus uv's own retry wording.
+fn is_network_failure(tail: &str) -> bool {
+    let low = tail.to_lowercase();
+    ["failed to fetch", "operation timed out", "connection reset", "temporary failure",
+     "could not resolve", "name resolution", "network is unreachable", "connection timed out",
+     "connect error", "request failed after"].iter().any(|m| low.contains(m))
+}
+
 #[tauri::command]
 pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serde_json::Value,String> {
     
@@ -534,17 +572,42 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
         "venv" => repo.join("env_venv"),
         _ => repo.join("env_uv"),
     };
-    // If a previous half-created env blocks setup.py, remove only stale env (python.exe missing).
-    // Don't delete a valid env on every Install — that would force full re-download (slow).
-    // Also catch present-but-broken: python.exe exists but won't run (interrupted
-    // venv creation). Without this, a Retry fails the same way forever.
+    // Completion marker — written only after the smoke test passes. setup.py
+    // cannot resume into an existing env dir (`uv venv` refuses it), so a
+    // Retry after ANY failed/interrupted run must start the env clean, while
+    // a finished install must never re-download. The old stale/broken check
+    // missed the common case (healthy python, torch never installed) and
+    // retried straight into the venv-exists crash. Marker separates the two.
+    let marker = repo.join(".wan2gp-install-ok");
     #[cfg(windows)] let py_exe = env_path.join("Scripts\\python.exe");
     #[cfg(not(windows))] let py_exe = env_path.join("bin/python");
-    let stale = env_path.exists() && !py_exe.exists();
-    let broken = env != "conda" && py_exe.exists()
-        && silent_command(&py_exe).arg("-c").arg("import sys").output().is_ok_and(|o| !o.status.success());
-    if stale || broken {
-        emit(&format!("[*] Removing {} env at {} …\n", if broken { "broken" } else { "stale" }, env_path.display()));
+    let marked_same_env = std::fs::read_to_string(&marker).ok()
+        .is_some_and(|s| s.split_whitespace().next() == Some(env.as_str()));
+    // torch_probe is free when py_exe is missing (no spawn) — the fresh path.
+    if marked_same_env || torch_probe(&py_exe).is_some() {
+        // Finished (or legacy/partial with working torch): verify instead of
+        // re-downloading — setup.py would refuse the existing dir anyway.
+        match smoke_verify(&py_exe, &repo) {
+            Ok(line) => {
+                emit(&format!("[*] Previous install verified ({line}) — skipping re-download…\n"));
+                let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                let _ = std::fs::write(&marker, format!("{env} {stamp}"));
+                mutating_done();
+                return Ok(serde_json::json!({"ok": true, "success": true, "reused": true}));
+            }
+            Err(e) if e.contains("cuda=False") => {
+                // Torch present but GPU invisible: reinstalling won't fix a driver gap.
+                mutating_done();
+                return Err(format!("Previous install found but {e}"));
+            }
+            Err(_) => {
+                emit("[!] Previous env is damaged (torch won't import) — rebuilding clean…\n");
+                let _ = std::fs::remove_file(&marker);
+                let _ = std::fs::remove_dir_all(&env_path);
+            }
+        }
+    } else if env_path.exists() {
+        emit("[*] Removing incomplete env from a failed/interrupted install (setup.py can't resume into it)…\n");
         let _ = std::fs::remove_dir_all(&env_path);
     }
     // fix: hardlink warning when cache (C:) and target (D:) differ → move cache to repo/.uv-cache on same drive so hardlink works (fast)
@@ -619,96 +682,114 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
             if py_bin=="uv" { ("uv".into(), vec!["run".into(), "--with".into(), "setuptools".into(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) }
             else { (py_bin, vec!["setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) }
         };
-        let (mut rx, _child) = app.shell().command(&py).args(args).current_dir(&repo).spawn().map_err(|e| e.to_string())?;
-        // track which phases we've started / finished — done events fire once:
-        // the sliding window re-matches old tokens every chunk, and the
-        // frontend completes the RUNNING phase on any foreign done event.
-        let mut phases = std::collections::HashSet::new();
-        let mut phases_done = std::collections::HashSet::new();
-        let mut do_phase = |id: &str, label: &str| { if phases.insert(id.to_string()) { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": false})); } };
-        let mut done_phase = |id: &str, label: &str| { if phases_done.insert(id.to_string()) { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": true})); } };
+        // setup.py gets up to 2 attempts: a transient network death (the common
+        // flake — CDN timeout after minutes of downloading) retries once
+        // automatically instead of sending the user back to the button.
+        // Anything else fails immediately; no silent third tries.
         let mut tail = String::new();
-        let mut exit_code: Option<i32> = None;
-        // Sliding window: shell chunks split anywhere, so markers spanning a
-        // boundary ("[2/3]", "+ torch==…") are matched against the tail.
-        let mut window = String::new();
-        while let Some(ev) = rx.recv().await {
-            match ev {
-                CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => {
-                    let txt = String::from_utf8_lossy(&b).to_string();
-                    emit(&txt);
-                    install_progress_classify(&app, &txt);
-                    tail.push_str(&txt);
-                    if tail.len() > 8000 { tail.drain(..tail.len() - 8000); }
-                    window.push_str(&txt.to_lowercase());
-                    if window.len() > 600 { window.drain(..window.len() - 600); }
-                    let low = window.as_str();
-                    // Phase starts: setup.py's own "[*] Install <Component>" headers
-                    // (e.g. "[*] Install Flash Attention spas-sage-attn") plus the
-                    // [1/3]-style tags and uv's download lines as backstops.
-                    if low.contains("[1/3]") || low.contains("preparing environment") { do_phase("venv", "Create Python virtual environment"); }
-                    if low.contains("[2/3]") || low.contains("installing torch") || low.contains("download.pytorch.org") { done_phase("venv", "Create Python virtual environment"); do_phase("torch", "Install PyTorch + CUDA"); }
-                    if low.contains("[3/3]") || low.contains("installing requirements") || low.contains("-r requirements") { done_phase("torch", "Install PyTorch + CUDA"); do_phase("reqs", "Install Python dependencies"); }
-                    if let Some(h) = low.split("[*] install").nth(1) {
-                        // Component header — check flash/sparge before sage
-                        // ("spas-sage-attn" contains "sage").
-                        if h.starts_with("flash") || h.contains("spas-sage") || h.contains("sparge") { do_phase("flash", "Install Flash Attention"); }
-                        else if h.contains("sage") { do_phase("sage", "Install Sage Attention kernel"); }
-                        else if h.contains("triton") { do_phase("triton", "Install Triton compiler"); }
-                        else if h.contains("torch") || h.contains("cuda") { done_phase("venv", "Create Python virtual environment"); do_phase("torch", "Install PyTorch + CUDA"); }
-                        else if h.contains("nunchaku") || h.contains("gguf") || h.contains("kernel") || h.contains("lightx2v") { do_phase("kernels", "Install GPU kernels (nunchaku/GGUF)"); }
-                        else if h.contains("requirement") { done_phase("torch", "Install PyTorch + CUDA"); do_phase("reqs", "Install Python dependencies"); }
-                    }
-                    if low.contains("downloading triton") || low.contains("+ triton") { do_phase("triton", "Install Triton compiler"); }
-                    if low.contains("downloading sageattention") || low.contains("+ sageattention") { do_phase("sage", "Install Sage Attention kernel"); }
-                    if low.contains("downloading flash") || low.contains("+ flash") { do_phase("flash", "Install Flash Attention"); }
-                    if low.contains("downloading nunchaku") || low.contains("+ nunchaku") { do_phase("kernels", "Install GPU kernels (nunchaku/GGUF)"); }
-                    // Completions: uv's "+ <pkg>==" resolved lines (each arrives
-                    // separately from "Installed 1 package", so single tokens).
-                    if low.contains("+ torch==") { done_phase("torch", "Install PyTorch + CUDA"); }
-                    if low.contains("+ triton") { done_phase("reqs", "Install Python dependencies"); done_phase("triton", "Install Triton compiler"); }
-                    if low.contains("+ sageattention") { done_phase("sage", "Install Sage Attention kernel"); }
-                    if low.contains("+ spas-sage") || low.contains("+ sparge") { /* sparge done — flash-attn still ahead */ }
-                    if low.contains("+ flash") { done_phase("flash", "Install Flash Attention"); }
-                    if low.contains("+ llamacpp") || low.contains("+ lightx2v") { done_phase("kernels", "Install GPU kernels (nunchaku/GGUF)"); }
-                    // setup.py's own finale. (NOT "is now active" — it prints that
-                    // at env activation too, which would complete everything
-                    // while kernels still download. The end-of-stream block below
-                    // is the backstop.)
-                    if low.contains("automatic install complete") {
-                        done_phase("venv", "Create Python virtual environment");
-                        done_phase("torch", "Install PyTorch + CUDA");
-                        done_phase("reqs", "Install Python dependencies");
-                        done_phase("triton", "Install Triton compiler");
-                        done_phase("sage", "Install Sage Attention kernel");
-                        done_phase("flash", "Install Flash Attention");
-                        done_phase("kernels", "Install GPU kernels (nunchaku/GGUF)");
-                    }
+        for attempt in 1..=2 {
+            tail.clear();
+            // Fresh phase tracking per attempt so a retry replays the phases
+            // instead of showing attempt-1's done states.
+            let mut phases = std::collections::HashSet::new();
+            let mut phases_done = std::collections::HashSet::new();
+            let mut do_phase = |id: &str, label: &str| { if phases.insert(id.to_string()) { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": false})); } };
+            let mut done_phase = |id: &str, label: &str| { if phases_done.insert(id.to_string()) { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": true})); } };
+            if attempt == 2 { emit("[*] Retrying setup.py (attempt 2 of 2)…\n"); }
+            let (mut rx, _child) = match app.shell().command(&py).args(args.clone()).current_dir(&repo).spawn() {
+                Ok(t) => t,
+                Err(e) => {
+                    #[cfg(windows)]
+                    if let Some(old) = saved_path.clone() { std::env::set_var("PATH", old); }
+                    mutating_done();
+                    return Err(format!("setup.py failed to start ({e})"));
                 }
-                CommandEvent::Terminated(p) => { exit_code = p.code; }
-                CommandEvent::Error(e) => { tail.push_str(&e); emit(&format!("[!] {e}\n")); }
-                _ => {}
+            };
+            // Sliding window: shell chunks split anywhere, so markers spanning a
+            // boundary ("[2/3]", "+ torch==…") are matched against the tail.
+            let mut window = String::new();
+            let mut exit_code: Option<i32> = None;
+            while let Some(ev) = rx.recv().await {
+                match ev {
+                    CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => {
+                        let txt = String::from_utf8_lossy(&b).to_string();
+                        emit(&txt);
+                        install_progress_classify(&app, &txt);
+                        tail.push_str(&txt);
+                        if tail.len() > 8000 { tail.drain(..tail.len() - 8000); }
+                        window.push_str(&txt.to_lowercase());
+                        if window.len() > 600 { window.drain(..window.len() - 600); }
+                        let low = window.as_str();
+                        // Phase starts: setup.py's own "[*] Install <Component>" headers
+                        // (e.g. "[*] Install Flash Attention spas-sage-attn") plus the
+                        // [1/3]-style tags and uv's download lines as backstops.
+                        if low.contains("[1/3]") || low.contains("preparing environment") { do_phase("venv", "Create Python virtual environment"); }
+                        if low.contains("[2/3]") || low.contains("installing torch") || low.contains("download.pytorch.org") { done_phase("venv", "Create Python virtual environment"); do_phase("torch", "Install PyTorch + CUDA"); }
+                        if low.contains("[3/3]") || low.contains("installing requirements") || low.contains("-r requirements") { done_phase("torch", "Install PyTorch + CUDA"); do_phase("reqs", "Install Python dependencies"); }
+                        if let Some(h) = low.split("[*] install").nth(1) {
+                            // Component header — check flash/sparge before sage
+                            // ("spas-sage-attn" contains "sage").
+                            if h.starts_with("flash") || h.contains("spas-sage") || h.contains("sparge") { do_phase("flash", "Install Flash Attention"); }
+                            else if h.contains("sage") { do_phase("sage", "Install Sage Attention kernel"); }
+                            else if h.contains("triton") { do_phase("triton", "Install Triton compiler"); }
+                            else if h.contains("torch") || h.contains("cuda") { done_phase("venv", "Create Python virtual environment"); do_phase("torch", "Install PyTorch + CUDA"); }
+                            else if h.contains("nunchaku") || h.contains("gguf") || h.contains("kernel") || h.contains("lightx2v") { do_phase("kernels", "Install GPU kernels (nunchaku/GGUF)"); }
+                            else if h.contains("requirement") { done_phase("torch", "Install PyTorch + CUDA"); do_phase("reqs", "Install Python dependencies"); }
+                        }
+                        if low.contains("downloading triton") || low.contains("+ triton") { do_phase("triton", "Install Triton compiler"); }
+                        if low.contains("downloading sageattention") || low.contains("+ sageattention") { do_phase("sage", "Install Sage Attention kernel"); }
+                        if low.contains("downloading flash") || low.contains("+ flash") { do_phase("flash", "Install Flash Attention"); }
+                        if low.contains("downloading nunchaku") || low.contains("+ nunchaku") { do_phase("kernels", "Install GPU kernels (nunchaku/GGUF)"); }
+                        // Completions: uv's "+ <pkg>==" resolved lines (each arrives
+                        // separately from "Installed 1 package", so single tokens).
+                        if low.contains("+ torch==") { done_phase("torch", "Install PyTorch + CUDA"); }
+                        if low.contains("+ triton") { done_phase("reqs", "Install Python dependencies"); done_phase("triton", "Install Triton compiler"); }
+                        if low.contains("+ sageattention") { done_phase("sage", "Install Sage Attention kernel"); }
+                        if low.contains("+ spas-sage") || low.contains("+ sparge") { /* sparge done — flash-attn still ahead */ }
+                        if low.contains("+ flash") { done_phase("flash", "Install Flash Attention"); }
+                        if low.contains("+ llamacpp") || low.contains("+ lightx2v") { done_phase("kernels", "Install GPU kernels (nunchaku/GGUF)"); }
+                        // setup.py's own finale. (NOT "is now active" — it prints that
+                        // at env activation too, which would complete everything
+                        // while kernels still download. The end-of-stream block below
+                        // is the backstop.)
+                        if low.contains("automatic install complete") {
+                            done_phase("venv", "Create Python virtual environment");
+                            done_phase("torch", "Install PyTorch + CUDA");
+                            done_phase("reqs", "Install Python dependencies");
+                            done_phase("triton", "Install Triton compiler");
+                            done_phase("sage", "Install Sage Attention kernel");
+                            done_phase("flash", "Install Flash Attention");
+                            done_phase("kernels", "Install GPU kernels (nunchaku/GGUF)");
+                        }
+                    }
+                    CommandEvent::Terminated(p) => { exit_code = p.code; }
+                    CommandEvent::Error(e) => { tail.push_str(&e); emit(&format!("[!] {e}\n")); }
+                    _ => {}
+                }
             }
-        }
-        let code = exit_code.unwrap_or(-1);
-        // Restore PATH before any return below (shim prepend is install-scoped).
-        #[cfg(windows)]
-        if let Some(old) = saved_path { std::env::set_var("PATH", old); }
-        if code != 0 {
+            let code = exit_code.unwrap_or(-1);
+            if code == 0 { break; }
             // setup.py failed — report honestly, no false "Installation complete!".
-            // (ATFGriff: exit 2 from `uv venv --python 3.11.14` was swallowed here.)
             let hint = install_failure_hint(&tail);
-            emit(&format!("[!] setup.py exited with code {code}.\n[!] {hint}\n"));
+            emit(&format!("[!] setup.py exited with code {code} (attempt {attempt} of 2).\n[!] {hint}\n"));
+            if attempt == 1 && is_network_failure(&tail) {
+                emit("[*] Transient network failure — retrying setup.py once automatically (uv cache makes the re-fetch fast)…\n");
+                // setup.py can't resume into the half-built env — clear it first.
+                let _ = std::fs::remove_dir_all(&env_path);
+                continue;
+            }
+            // Restore PATH before returning (shim prepend is install-scoped).
+            #[cfg(windows)]
+            if let Some(old) = saved_path.clone() { std::env::set_var("PATH", old); }
             mutating_done();
             return Err(format!("Install failed (setup.py exited code {code}). {hint}"));
+        } // end for attempt — success broke out; all failures returned above
+        for (id, label) in [("venv", "Create Python virtual environment"), ("torch", "Install PyTorch + CUDA"), ("reqs", "Install Python dependencies"), ("triton", "Install Triton compiler"), ("sage", "Install Sage Attention kernel"), ("flash", "Install Flash Attention"), ("kernels", "Install GPU kernels (nunchaku/GGUF)")] {
+            let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": true}));
         }
-        done_phase("venv", "Create Python virtual environment");
-        done_phase("torch", "Install PyTorch + CUDA");
-        done_phase("reqs", "Install Python dependencies");
-        done_phase("triton", "Install Triton compiler");
-        done_phase("sage", "Install Sage Attention kernel");
-        done_phase("flash", "Install Flash Attention");
-        done_phase("kernels", "Install GPU kernels (nunchaku/GGUF)");
+        // Restore PATH now that setup is done (shim prepend is install-scoped).
+        #[cfg(windows)]
+        if let Some(old) = saved_path.clone() { std::env::set_var("PATH", old); }
         emit_phase("done", "Finalize installation", true);
     }
     // Post-install smoke test: exit 0 from setup.py is not proof the env works
@@ -719,22 +800,22 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
         #[cfg(windows)] let smoke_py = env_path.join("Scripts\\python.exe");
         #[cfg(not(windows))] let smoke_py = if env == "uv" { env_path.join("bin/python") } else { env_path.join("bin/python3") };
         emit("[*] Verifying install: importing torch in the new environment…\n");
-        let smoke = silent_command(&smoke_py).args(["-c", "import torch; print('torch ' + torch.__version__ + ' cuda=' + str(torch.cuda.is_available()))"]).current_dir(&repo).output();
-        match smoke {
-            Ok(o) if o.status.success() => {
-                let line = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                emit(&format!("[✓] Smoke test passed: {line}\n"));
-                let vendor = get_gpu_info_sync().get("vendor").and_then(|v| v.as_str()).unwrap_or("").to_uppercase();
-                if vendor == "NVIDIA" && !line.contains("cuda=True") {
-                    mutating_done();
-                    return Err("Install finished but torch can't see the NVIDIA GPU (cuda=False) — likely a driver/CUDA mismatch. Update to NVIDIA R580+, reboot, then repair the environment.".into());
-                }
+        match smoke_verify(&smoke_py, &repo) {
+            Ok(line) => emit(&format!("[✓] Smoke test passed: {line}\n")),
+            Err(e) if e.contains("cuda=False") => {
+                mutating_done();
+                return Err(format!("Install finished but {e}"));
             }
-            _ => {
+            Err(_) => {
                 mutating_done();
                 return Err(format!("Install finished but `import torch` fails in {} — the environment is broken. Retry the install (the broken env is removed automatically) or report it with Copy diagnostics.", smoke_py.display()));
             }
         }
+    }
+    // Completion marker — future Install calls verify instead of re-downloading.
+    {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let _ = std::fs::write(&marker, format!("{env} {stamp}"));
     }
     emit("[*] Install finished.\n");
     // Remember where the working install lives (next to the data-dir override
