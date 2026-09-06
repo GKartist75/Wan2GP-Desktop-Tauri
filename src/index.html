@@ -557,6 +557,19 @@
             <p class="path-hint">↻ After changing a folder above, <strong>stop and restart Wan2GP</strong> (and the launcher) — the new path is written to <code>wgp_config.json</code> immediately, but Wan2GP only reads it at startup, so the change won't take effect until the next launch.</p>
           </div>
         </div>
+        <!-- GPU Kernel Wheels FIRST: sync state visible without scrolling (RTX 20-50 show nunchaku/gguf, RTX 50 adds lightx2v; GTX10/AMD/Apple show the friendly note). IDs unchanged so app.js renderKernelWheels works as-is. -->
+        <div class="card" id="kernelWheelsCard">
+          <div class="card-header">
+            <span class="card-title">GPU Kernel Wheels</span>
+            <span class="env-type-tag" id="kernelProfileTag"></span>
+            <button class="btn btn-ghost small" id="syncKernelsBtn" title="Reinstall all kernel wheels for this GPU" style="margin-left:auto">↻ Sync</button>
+          </div>
+          <div class="env-subsection" id="kernelWheelsSubsection" style="margin-top:0;border-top:none;padding-top:0">
+            <div class="env-specs" id="kernelWheels">
+              <div class="spec-row kernel-empty"><span class="spec-value">No kernel wheels for this GPU profile.</span></div>
+            </div>
+          </div>
+        </div>
         <div class="card">
           <div class="card-header">
             <span class="card-title">Active Environment</span>
@@ -592,18 +605,6 @@
               <div class="spec-row"><span class="spec-label">bitsandbytes</span><span class="spec-dot" id="dotBits"></span><span class="spec-value" id="specBits">—</span></div>
               <div class="spec-row"><span class="spec-label">NumPy</span><span class="spec-dot" id="dotNumpy"></span><span class="spec-value" id="specNumpy">—</span></div>
               <div class="spec-row"><span class="spec-label">Tokenizers</span><span class="spec-dot" id="dotTokenizers"></span><span class="spec-value" id="specTokenizers">—</span></div>
-            </div>
-          </div>
-        <!-- GPU Kernel Wheels: profile-driven (RTX 20-50 show nunchaku/gguf,
-               RTX 50 adds lightx2v; GTX10/AMD/Apple show no section). -->
-          <div class="env-subsection" id="kernelWheelsSubsection" style="margin-top:10px">
-            <div class="subsection-header">
-              <span class="subsection-title">GPU Kernel Wheels</span>
-              <span class="env-type-tag" id="kernelProfileTag"></span>
-              <button class="btn btn-ghost small" id="syncKernelsBtn" title="Reinstall all kernel wheels for this GPU" style="margin-left:auto">↻ Sync</button>
-            </div>
-            <div class="env-specs" id="kernelWheels">
-              <div class="spec-row kernel-empty"><span class="spec-value">No kernel wheels for this GPU profile.</span></div>
             </div>
           </div>
         </div>
