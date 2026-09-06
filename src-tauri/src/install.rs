@@ -785,7 +785,7 @@ pub async fn reinstall(app: tauri::AppHandle, options: Option<serde_json::Value>
     let backup = get_data_dir().join(".reinstall-backup");
     let _ = std::fs::remove_dir_all(&backup);
     let _ = std::fs::create_dir_all(&backup);
-    for sub in ["plugins","finetunes"] { let s = repo.join(sub); if s.exists() { let d = backup.join(sub); let _ = silent_command("xcopy").args(["/E","/I", s.to_string_lossy().as_ref(), d.to_string_lossy().as_ref()]).output(); } }
+    for sub in ["plugins","finetunes","deepy_sessions"] { let s = repo.join(sub); if s.exists() { let d = backup.join(sub); let _ = silent_command("xcopy").args(["/E","/I", s.to_string_lossy().as_ref(), d.to_string_lossy().as_ref()]).output(); } }
     if repo.join("wgp_config.json").exists() { let _ = std::fs::copy(repo.join("wgp_config.json"), backup.join("wgp_config.json")); }
     }
     if repo.exists() {
@@ -848,7 +848,7 @@ pub async fn restore_backup(app: tauri::AppHandle) -> Result<serde_json::Value,S
     let emit = |msg: &str| { crate::base::push_log(msg, "setup"); let _ = app.emit("setup-output", msg.to_string()); };
     if !backup.exists() { return Ok(serde_json::json!({"ok": true, "success": true, "restored": []})); }
     let mut restored: Vec<String> = Vec::new();
-    for sub in ["plugins", "finetunes"] {
+    for sub in ["plugins", "finetunes", "deepy_sessions"] {
         let s = backup.join(sub);
         if !s.exists() { continue; }
         let d = repo.join(sub);

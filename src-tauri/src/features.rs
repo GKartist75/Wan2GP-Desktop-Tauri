@@ -401,6 +401,12 @@ pub(crate) fn stop_opencode_server() -> bool {
             ("deepy_read_everywhere", serde_json::json!(false)),
             ("deepy_auto_cancel_queue_tasks", serde_json::json!(true)),
             ("deepy_separate_requests_with_empty_line", serde_json::json!(true)),
+            // v12.72 sessions feature (shared/deepy/config.py defaults) — write
+            // them so pre-existing configs can't skew-missing when wgp.py
+            // expects the keys.
+            ("deepy_session_reset_mode", serde_json::json!("new_session")),
+            ("deepy_session_gallery_media_mode", serde_json::json!("link")),
+            ("deepy_multi_session", serde_json::json!(false)),
         ] { v[k] = val; }
     } else {
         let eid = enh_id.unwrap_or(1);
@@ -425,6 +431,10 @@ pub(crate) fn stop_opencode_server() -> bool {
                 ("deepy_zero_custom_system_prompt", serde_json::json!("")),
                 ("deepy_auto_cancel_queue_tasks", serde_json::json!(true)),
                 ("deepy_separate_requests_with_empty_line", serde_json::json!(true)),
+                // v12.72 sessions feature — same defaults as the Prime preset.
+                ("deepy_session_reset_mode", serde_json::json!("new_session")),
+                ("deepy_session_gallery_media_mode", serde_json::json!("link")),
+                ("deepy_multi_session", serde_json::json!(false)),
             ] { v[k] = val; }
         }
     }
@@ -636,6 +646,10 @@ mod deepy_roundtrip_tests {
         assert_eq!(c["deepy_vram_mode"], "unload");
         assert_eq!(c["deepy_context_tokens"], 16386);
         assert_eq!(c["deepy_tool_gen_image"], "Krea 2 Turbo (8 Steps)");
+        // v12.72 session keys written with upstream defaults
+        assert_eq!(c["deepy_session_reset_mode"], "new_session");
+        assert_eq!(c["deepy_session_gallery_media_mode"], "link");
+        assert_eq!(c["deepy_multi_session"], false);
         // zero + Llama id must fall back to 3 (tokenizer-crash combo)
         let r = deepy_set("zero".into(), None, Some(serde_json::json!(1)));
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
@@ -650,6 +664,9 @@ mod deepy_roundtrip_tests {
         assert_eq!(c["llm_engines"]["deepy"], "codex");
         assert_eq!(c["llm_engines"]["profiles"]["codex"]["executable"], "codex");
         assert!(c.get("deepy_prime_mcp_servers").is_some());
+        // v12.72 session keys written in prime mode too
+        assert_eq!(c["deepy_session_reset_mode"], "new_session");
+        assert_eq!(c["deepy_multi_session"], false);
         // disabled + Florence
         let r = deepy_set("disabled".into(), None, Some(serde_json::json!(2)));
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
