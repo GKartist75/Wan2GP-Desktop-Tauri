@@ -89,7 +89,7 @@ Through the launcher you get the **full WanGP** — same models, same UI, same p
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- **v0.4.5** — installs that finish (clean retries, auto-retry on network blips) + fullscreen embed with working zoom/downloads + honest Stop + v12.72 parity.
+- **v0.4.5** — installs that finish (clean retries, auto-retry on network blips) + fullscreen embed with working zoom/downloads (clickable save-as picker) + honest Stop incl. Stop All button + v12.72 parity + GGUF 1.0.21 + AMD profile env.
 - **v0.4.4** — installs that finish: retry resumes cleanly (marker + auto-retry on network blips), v12.72 parity (Deepy sessions), GGUF-1.0.21-ready version parsing, and a Gradio embed that always fills the window.
 - **v0.4.3** — hardened backend (pip guard, honest exit codes, https-only plugins) + fixed prerequisites (pin checks, SHA-pinned installers, working Python/uv fallbacks) + KeyError crash recovery, DLSS consent checkbox popup, and install-drive space gate.
 - **v0.4.2** — self-repairing toolchain (corrupt uv reinstalled automatically with retry) + winget-independent prerequisites (official-installer fallbacks, smarter probes).
