@@ -261,55 +261,102 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
     // running OUR repo's wgp.py (uv-shim/child split, detached terminal mode).
     // ponytail: the old `taskkill /F /IM python.exe` blanket-killed every Python
     // on the machine (user scripts, other apps) — never again.
+    // Matching uses THREE independent repo signals because no single one covers
+    // every spawn shape: (1) repo path in the command line (cwd-relative argv
+    // still shows the env interpreter path under the repo), (2) interpreter
+    // ExecutablePath under the repo, (3) our `wan2gp-bootstrap-<pid>-<ms>.py`
+    // filename — the ONLY signal for uv-managed interpreters outside the repo
+    // (proven orphan: uv python in AppData + relative `wgp.py`, unkillable by
+    // the old repo-path-only filter).
     let repo = get_repo_dir();
     let repo_s = repo.to_string_lossy().replace('/', "\\").to_lowercase();
+    let repo_pre = format!("{repo_s}\\");
     let mut killed: Vec<u32> = Vec::new();
-    let mut kill_pid = |pid: u32| {
-        if pid == 0 || killed.contains(&pid) { return; }
+    // Plain closure (no captures): killed is passed in so later reads don't
+    // fight the borrow checker.
+    let kill_pid = |pid: u32, killed: &mut Vec<u32>| {
+        if pid == 0 || pid == std::process::id() || killed.contains(&pid) { return; }
         #[cfg(windows)] { let _ = silent_command("taskkill").args(["/pid", &pid.to_string(), "/f", "/t"]).output(); }
         #[cfg(not(windows))] { let _ = silent_command("kill").arg("-9").arg(pid.to_string()).output(); }
         killed.push(pid);
     };
-    if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
-        kill_pid(pid);
-    }
-    // our wgp.py by command line (covers shim→child + terminal children, any port)
-    #[cfg(windows)]
-    {
-        let ps = "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object { $_.CommandLine -like '*wgp.py*' } | ForEach-Object { $_.ProcessId + '|' + $_.CommandLine }";
-        if let Ok(out) = silent_command("powershell").args(["-NoProfile", "-Command", ps]).output() {
-            if out.status.success() {
-                for line in String::from_utf8_lossy(&out.stdout).lines() {
-                    let mut parts = line.splitn(2, '|');
-                    if let (Some(pid_s), Some(cmd)) = (parts.next(), parts.next()) {
-                        if let Ok(pid) = pid_s.trim().parse::<u32>() {
-                            if cmd.to_lowercase().replace('/', "\\").contains(&repo_s) { kill_pid(pid); }
+    // One scan pass: all python.exe with wgp.py in the command line.
+    // Returns (pid, exe_path, cmdline); filtering happens in Rust (exact,
+    // case-insensitive — no PowerShell quoting pitfalls).
+    let scan = || -> Vec<(u32, String, String)> {
+        let mut out = Vec::new();
+        #[cfg(windows)]
+        {
+            let ps = "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object { $_.CommandLine -like '*wgp.py*' } | ForEach-Object { $_.ProcessId + '|' + $_.ExecutablePath + '|' + $_.CommandLine }";
+            if let Ok(o) = silent_command("powershell").args(["-NoProfile", "-Command", ps]).output() {
+                if o.status.success() {
+                    for line in String::from_utf8_lossy(&o.stdout).lines() {
+                        let mut parts = line.splitn(3, '|');
+                        if let (Some(pid_s), Some(exe), Some(cmd)) = (parts.next(), parts.next(), parts.next()) {
+                            if let Ok(pid) = pid_s.trim().parse::<u32>() {
+                                out.push((pid, exe.to_string(), cmd.to_string()));
+                            }
                         }
                     }
                 }
             }
         }
-        // our external-terminal window (unique timestamped title)
-        if let Some(t) = crate::launch::terminal_title() {
-            let _ = silent_command("taskkill").args(["/F", "/FI", &format!("WINDOWTITLE eq {t}*")]).output();
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let pat = repo.join("wgp.py").to_string_lossy().to_string();
-        if let Ok(out) = silent_command("pgrep").args(["-f", &pat]).output() {
-            if out.status.success() {
-                for line in String::from_utf8_lossy(&out.stdout).lines() {
-                    if let Ok(pid) = line.trim().parse::<u32>() { kill_pid(pid); }
+        #[cfg(not(windows))]
+        {
+            let pat = repo.join("wgp.py").to_string_lossy().to_string();
+            if let Ok(o) = silent_command("pgrep").args(["-af", &pat]).output() {
+                if o.status.success() {
+                    for line in String::from_utf8_lossy(&o.stdout).lines() {
+                        let mut parts = line.splitn(2, ' ');
+                        if let (Some(pid_s), Some(cmd)) = (parts.next(), parts.next()) {
+                            if let Ok(pid) = pid_s.trim().parse::<u32>() {
+                                out.push((pid, String::new(), cmd.to_string()));
+                            }
+                        }
+                    }
                 }
             }
         }
+        out
+    };
+    let is_ours = |exe: &str, cmd: &str| -> bool {
+        if !cmd.to_lowercase().contains("wgp.py") { return false; }
+        let cl = cmd.to_lowercase();
+        cl.contains(&repo_pre)                      // interpreter or script path under repo
+            || exe.to_lowercase().replace('/', "\\").starts_with(&repo_pre) // env python, relative argv
+            || cl.contains("wan2gp-bootstrap-")   // our launcher bootstrap (any interpreter)
+    };
+    if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
+        kill_pid(pid, &mut killed);
+    }
+    let mut found = 0usize;
+    for (pid, exe, cmd) in scan() {
+        found += 1;
+        if is_ours(&exe, &cmd) { kill_pid(pid, &mut killed); }
+    }
+    // our external-terminal window (unique timestamped title)
+    #[cfg(windows)]
+    if let Some(t) = crate::launch::terminal_title() {
+        let _ = silent_command("taskkill").args(["/F", "/FI", &format!("WINDOWTITLE eq {t}*")]).output();
     }
     if let Some(m) = WANGP_PID.get() { *m.lock().unwrap() = None; }
+    // Verify: re-scan after the dust settles, kill stragglers once, report
+    // who's still alive instead of claiming success with orphans around.
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+    for (pid, exe, cmd) in scan() {
+        if is_ours(&exe, &cmd) && !killed.contains(&pid) { kill_pid(pid, &mut killed); }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let alive: Vec<u32> = scan().into_iter()
+        .filter(|(_, exe, cmd)| is_ours(exe, cmd))
+        .map(|(pid, _, _)| pid)
+        .collect();
     let _ = app.emit("wangp-exit", serde_json::json!({"stopped": true, "killed": killed}));
-    // wait a bit for port to free (FIN_WAIT -> TIME_WAIT -> CLOSED)
-    std::thread::sleep(std::time::Duration::from_millis(800));
-    serde_json::json!({"ok": true, "killed": killed})
+    if !alive.is_empty() {
+        crate::base::push_log(&format!("[!] stop_wangp: {} process(es) survived Kill ({} checked): {:?} — kill them manually or restart.
+", alive.len(), found, alive), "launch");
+    }
+    serde_json::json!({"ok": true, "killed": killed, "alive": alive})
 }
 
 // ── misc stubs to unblock frontend (return safe defaults) ──

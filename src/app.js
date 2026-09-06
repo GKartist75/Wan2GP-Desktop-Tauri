@@ -2928,7 +2928,22 @@ function resetBrowserLaunchUI() {
 $('stopWangpBtn').addEventListener('click', async () => {
   $('stopWangpBtn').style.display = 'none'
   appendLog('[*] Stopping Wan2GP server...')
-  await window.w2gp.stopWangp()
+  try {
+    const r = await window.w2gp.stopWangp()
+    const alive = (r && r.alive) || []
+    if (alive.length) {
+      // Backend killed what it could but processes survived — stay loud instead
+      // of showing a dead-stopped UI over a live server.
+      appendLog(`[!] ${alive.length} Wan2GP process(es) survived Stop (PID ${alive.join(', ')}). Kill them in Task Manager or restart the PC, then press Stop again.`)
+      showToast(`✗ Server still running (PID ${alive.join(', ')}) — see console`)
+      $('stopWangpBtn').style.display = ''
+      $('stopWangpBtn').textContent = 'Force stop'
+      return
+    }
+    const killed = (r && r.killed) || []
+    if (killed.length) appendLog(`[*] Stopped (${killed.length} process(es)).`)
+    else appendLog('[*] Stop requested — no Wan2GP processes were running.')
+  } catch (e) { appendLog('[!] Stop failed: ' + errText(e)) }
   updateLed('stopped')
   updateFtStatus('stopped')
 })
