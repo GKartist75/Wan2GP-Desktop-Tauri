@@ -2792,7 +2792,6 @@ function setAppLaunchLabel() {
 function showWebviewUI() {
   $('wvControls').style.display = 'flex'
   $('runningLed').style.display = 'inline-flex'
-  $('stopWangpBtn').style.display = ''
 }
 
 function hideWebviewUI() {
@@ -2955,11 +2954,9 @@ function updateLed(state) {
 // ── Browser-mode running UI (server runs in user's browser; dashboard stays visible) ──
 function showBrowserRunningUI() {
   updateLed('running')
-  $('stopWangpBtn').style.display = ''
 }
 function hideBrowserRunningUI() {
   $('runningLed').style.display = 'none'
-  $('stopWangpBtn').style.display = 'none'
 }
 // Restore the dashboard launch buttons to their default (pre-launch) state.
 function resetBrowserLaunchUI() {
@@ -3001,24 +2998,8 @@ function noteStopResult(r) {
   else appendLog('[*] Stop requested — no Wan2GP processes were running.')
   return true
 }
-$('stopWangpBtn').addEventListener('click', async () => {
-  $('stopWangpBtn').style.display = 'none'
-  appendLog('[*] Stopping Wan2GP server...')
-  _expectServerExit = true
-  if (_expectServerExitTimer) clearTimeout(_expectServerExitTimer)
-  _expectServerExitTimer = setTimeout(() => { _expectServerExit = false; _expectServerExitTimer = null }, 10000)
-  try {
-    const r = await window.w2gp.stopWangp()
-    if (!noteStopResult(r)) {
-      $('stopWangpBtn').style.display = ''
-      $('stopWangpBtn').textContent = 'Force stop'
-      return
-    }
-  } catch (e) { appendLog('[!] Stop failed: ' + errText(e)) }
-  updateLed('stopped')
-  updateFtStatus('stopped')
-})
-
+// (Retired: the single always-visible #stopAllBtn below replaces the old
+// contextual per-view stop button — one button, no show/hide churn.)
 // ── Stop ALL servers (always-visible dashboard button) ──
 // Wan2GP (+children, verified) and the OpenCode server in one click.
 // Never hidden — stopping an already-quiet machine is a harmless no-op.
@@ -3060,7 +3041,6 @@ window.w2gp.onWangpExit(c => {
   }
   appRunning = false
   setAppLaunchLabel()
-  $('stopWangpBtn').style.display = 'none'
   updateLed('stopped')
   updateFtStatus('stopped')
   // Config-skew recovery: wgp.py died with KeyError on a settings key
