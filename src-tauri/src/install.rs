@@ -163,7 +163,7 @@ async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + S
     if !dl_ok {
         emit("[*] uv itself may be broken — reinstalling uv from the official installer…\n");
         #[cfg(windows)]
-        let reinstalled = run_capture(app, &emit, "powershell", &["-NoProfile", "-Command", "& { iwr -useb https://astral.sh/uv/install.ps1 | iex }"]).await.0;
+        let reinstalled = run_capture(app, &emit, "powershell", &["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "& { iwr -useb https://astral.sh/uv/install.ps1 | iex }"]).await.0;
         #[cfg(not(windows))]
         let reinstalled = run_capture(app, &emit, "sh", &["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"]).await.0;
         if reinstalled {
@@ -1205,7 +1205,7 @@ async fn official_fallback(app: &tauri::AppHandle, tool: &str) -> bool {
     match tool {
         "uv" => {
             emit("[*] Installing uv via the official script…\n".into());
-            run_live(app, "powershell", vec!["-NoProfile".into(), "-Command".into(), "& { iwr -useb https://astral.sh/uv/install.ps1 | iex }".into()]).await
+            run_live(app, "powershell", vec!["-NoProfile".into(), "-ExecutionPolicy".into(), "Bypass".into(), "-Command".into(), "& { iwr -useb https://astral.sh/uv/install.ps1 | iex }".into()]).await
         }
         "git" => {
             // Live-resolve the newest release; pinned fallback keeps offline installs working.
