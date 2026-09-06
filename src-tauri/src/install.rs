@@ -80,8 +80,8 @@ pub(crate) fn pinned_python_wanted() -> String {
 }
 
 /// Run a uv subcommand, stream its output to the console, return (exit_ok, output).
-async fn uv_capture(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + Sync, args: &[&str]) -> (bool, String) {
-    let (mut rx, _child) = match app.shell().command("uv").args(args).spawn() {
+async fn run_capture(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + Sync, prog: &str, args: &[&str]) -> (bool, String) {
+    let (mut rx, _child) = match app.shell().command(prog).args(args).spawn() {
         Ok(t) => t,
         Err(e) => return (false, e.to_string()),
     };
@@ -102,9 +102,11 @@ async fn uv_capture(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + Sync, a
 }
 
 /// Port of Electron installPython(): make sure `uv` can hand setup.py the exact
-/// pinned interpreter *before* the 20-minute install starts. Verifies the
-/// interpreter actually executes (a corrupted managed install still shows up
-/// in `uv python list`), force-reinstalls when broken.
+/// pinned interpreter *before* the 20-minute install starts. Order matters:
+/// find FIRST (a manually installed exact Python counts — setup.py's
+/// `uv venv --python X` reuses discovered interpreters), provision second.
+/// Aborting on a failed download while a usable copy sits on disk was
+/// exactly the "installed 3.11 manually but still not found" complaint.
 async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + Sync, wanted: &str) -> Result<String, String> {
     // Never let a user/system config with `python-downloads = "never"` silently
     // break provisioning — spawned processes inherit our env.
@@ -113,34 +115,153 @@ async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + S
     // Best-effort self-update first: an old uv doesn't know new patches exist
     // (3.11.14) and fails with the same "No interpreter found" error.
     // Harmless when offline or already current — failures are ignored.
-    let _ = uv_capture(app, &emit, &["self", "update"]).await;
-    let (ok, _) = uv_capture(app, &emit, &["python", "install", wanted]).await;
-    if !ok {
-        return Err(format!("uv could not provision Python {wanted}. Fix: run `uv self update`, then `uv python install {wanted}` in a terminal and retry. If offline, install Python {wanted} from https://www.python.org/downloads/ and retry."));
-    }
-    // Resolve + verify it runs.
-    let verify = |p: &str| -> bool {
-        silent_command(p).arg("-c").arg("import sys").output().is_ok_and(|o| o.status.success())
+    let _ = run_capture(app, &emit, "uv", &["self", "update"]).await;
+    // Resolve + verify the EXACT pin actually executes (a neighbouring patch
+    // or a corrupted copy won't satisfy setup.py — report it, don't use it).
+    let verify_exact = |p: &str| -> Option<String> {
+        silent_command(p).arg("-c").arg("import sys; print(sys.version)").output().ok()
+            .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().split_whitespace().next().unwrap_or("").to_string()) } else { None })
+            .filter(|v| v.starts_with(wanted))
     };
     let find = || silent_command("uv").args(["python", "find", wanted]).output().ok()
         .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None })
         .filter(|s| !s.is_empty());
+    // 1) Fast path: already provisioned or uv-discoverable (managed OR a
+    // manually installed exact copy on PATH/registry/launcher).
     if let Some(p) = find() {
-        if verify(&p) { emit(&format!("[*] Python {wanted} ready: {p}\n")); return Ok(p); }
-        emit(&format!("[!] Managed Python {wanted} is broken (found at {p} but won't run). Forcing a clean reinstall…\n"));
-        let (re_ok, _) = uv_capture(app, &emit, &["python", "install", "--reinstall", wanted]).await;
+        if let Some(v) = verify_exact(&p) {
+            emit(&format!("[*] Python {wanted} ready: {p} ({v})\n"));
+            return Ok(p);
+        }
+        emit(&format!("[!] Found Python at {p} but it won't run — forcing a clean reinstall…\n"));
+    }
+    // 2) Provision via uv.
+    let (dl_ok, _) = run_capture(app, &emit, "uv", &["python", "install", wanted]).await;
+    if dl_ok {
+        if let Some(p) = find() {
+            if let Some(v) = verify_exact(&p) {
+                emit(&format!("[*] Python {wanted} ready: {p} ({v})\n"));
+                return Ok(p);
+            }
+        }
+    }
+    // 3) Download failed but a usable copy may still exist (uv venv reuses
+    // discovered interpreters, so setup.py can proceed without any download).
+    if !dl_ok {
+        emit(&format!("[!] uv could not download Python {wanted} — checking for a manually installed copy…\n"));
+        if let Some(p) = find() {
+            if let Some(v) = verify_exact(&p) {
+                emit(&format!("[*] Using existing Python {wanted}: {p} ({v}) — setup.py will reuse it.\n"));
+                return Ok(p);
+            }
+        }
+    }
+    // 3b) Provisioning failed and nothing usable exists — uv itself may be
+    // corrupt (not just outdated: self-update can't fix a broken install).
+    // This is the exact case users fixed by reinstalling uv manually, so do
+    // it for them: official installer, refresh PATH, retry the download once.
+    if !dl_ok {
+        emit("[*] uv itself may be broken — reinstalling uv from the official installer…\n");
+        #[cfg(windows)]
+        let reinstalled = run_capture(app, &emit, "powershell", &["-NoProfile", "-Command", "& { iwr -useb https://astral.sh/uv/install.ps1 | iex }"]).await.0;
+        #[cfg(not(windows))]
+        let reinstalled = run_capture(app, &emit, "sh", &["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"]).await.0;
+        if reinstalled {
+            #[cfg(windows)]
+            refresh_path_from_registry();
+            #[cfg(not(windows))]
+            if let Ok(h) = std::env::var("HOME") {
+                let mut cur = std::env::var("PATH").unwrap_or_default();
+                for d in [format!("{h}/.local/bin"), format!("{h}/.cargo/bin")] {
+                    if !cur.split(':').any(|pp| pp == d) { cur = format!("{d}:{cur}"); }
+                }
+                std::env::set_var("PATH", cur);
+            }
+            emit(&format!("[*] uv reinstalled — retrying Python {wanted}…\n"));
+            let (retry_ok, _) = run_capture(app, &emit, "uv", &["python", "install", wanted]).await;
+            if retry_ok {
+                if let Some(p) = find() {
+                    if let Some(v) = verify_exact(&p) {
+                        emit(&format!("[*] Python {wanted} ready after uv reinstall: {p} ({v})\n"));
+                        return Ok(p);
+                    }
+                }
+            }
+            emit("[!] Still failing after uv reinstall — see diagnostics below.\n");
+        } else {
+            emit("[!] Automatic uv reinstall failed — see manual command in the diagnostics below.\n");
+        }
+    }
+    // 4) Force reinstall of a corrupted managed Python copy, then give up with
+    // diagnostics (list what IS installed so the fix is obvious).
+    if dl_ok {
+        emit(&format!("[!] Managed Python {wanted} is broken (found but won't run). Forcing a clean reinstall…\n"));
+        let (re_ok, _) = run_capture(app, &emit, "uv", &["python", "install", "--reinstall", wanted]).await;
         if !re_ok {
             // Older uv without --reinstall: uninstall + install.
-            let _ = uv_capture(app, &emit, &["python", "uninstall", wanted]).await;
-            let (ok2, _) = uv_capture(app, &emit, &["python", "install", wanted]).await;
-            if !ok2 { return Err(format!("Python {wanted} is corrupted and reinstall failed. Fix: `uv python uninstall {wanted}` then `uv python install {wanted}`, or install Python {wanted} from https://www.python.org/downloads/.")); }
+            let _ = run_capture(app, &emit, "uv", &["python", "uninstall", wanted]).await;
+            let (ok2, _) = run_capture(app, &emit, "uv", &["python", "install", wanted]).await;
+            if !ok2 { return Err(diagnose_python_fail(wanted)); }
         }
-        if let Some(p2) = find() {
-            if verify(&p2) { emit(&format!("[*] Python {wanted} reinstalled: {p2}\n")); return Ok(p2); }
+        if let Some(p) = find() {
+            if let Some(v) = verify_exact(&p) {
+                emit(&format!("[*] Python {wanted} reinstalled: {p} ({v})\n"));
+                return Ok(p);
+            }
         }
-        return Err(format!("Python {wanted} still won't run after reinstall. Fix: install Python {wanted} from https://www.python.org/downloads/ and retry."));
     }
-    Err(format!("uv installed Python {wanted} but `uv python find {wanted}` can't locate it. Fix: `uv self update` and retry."))
+    Err(diagnose_python_fail(wanted))
+}
+
+/// Final failure message with discovery diagnostics: enumerate system Pythons
+/// so "I installed 3.11 manually" turns into "found 3.11.9 at P — need
+/// exactly 3.11.14" instead of a bare "not found".
+fn diagnose_python_fail(wanted: &str) -> String {
+    fn ver_of(prog: &str, args: &[&str]) -> Option<String> {
+        silent_command(prog).args(args).arg("-c").arg("import sys; print(sys.version)").output().ok()
+            .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().split_whitespace().next().unwrap_or("").to_string()) } else { None })
+            .filter(|v| !v.is_empty())
+    }
+    let mut cands: Vec<String> = Vec::new();
+    // PATH (skip the Microsoft Store shim — it opens the Store, not Python).
+    if let Ok(o) = silent_command("where").arg("python").output() {
+        if o.status.success() {
+            for line in String::from_utf8_lossy(&o.stdout).lines() {
+                let p = line.trim();
+                if !p.is_empty() && !p.to_lowercase().contains("windowsapps") { cands.push(p.to_string()); }
+            }
+        }
+    }
+    #[cfg(windows)]
+    for fixed in [
+        std::env::var("LOCALAPPDATA").ok().map(|a| format!("{a}\\Programs\\Python\\Python311\\python.exe")),
+        Some("C:\\Python311\\python.exe".into()),
+        Some("C:\\Program Files\\Python311\\python.exe".into()),
+    ].into_iter().flatten() {
+        if !cands.iter().any(|c| c.eq_ignore_ascii_case(&fixed)) { cands.push(fixed); }
+    }
+    #[cfg(not(windows))]
+    for fixed in ["/usr/bin/python3.11", "/usr/local/bin/python3.11"] {
+        if !cands.contains(&fixed.to_string()) { cands.push(fixed.into()); }
+    }
+    let mut lines: Vec<String> = Vec::new();
+    for c in &cands {
+        match ver_of(c, &[]) {
+            Some(v) => lines.push(format!("  found Python {v} at {c}")),
+            None => lines.push(format!("  {c} (not runnable)")),
+        }
+    }
+    if let Some(v) = ver_of("py", &["-3.11"]) {
+        lines.push(format!("  found Python {v} via py launcher (-3.11)"));
+    }
+    let found_txt = if lines.is_empty() { "  (no Python 3.11 found on PATH, in registry spots, or via py launcher)".into() } else { lines.join("\n") };
+    format!("uv could not provision Python {wanted}, and no usable copy was found.\n\
+        What we found:\n{found_txt}\n\
+        setup.py needs EXACTLY {wanted} (a neighbouring patch like 3.11.9 does not count).\n\
+        Fix options:\n\
+        1. Repair uv itself — a corrupt uv can't be updated, only reinstalled (the installer already tried automatically; do it manually):\n           powershell -ExecutionPolicy ByPass -c 'irm https://astral.sh/uv/install.ps1 | iex'\n           (macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh)\n           then 'uv self update' + 'uv python install {wanted}' — needs network to python-build-standalone (check proxy/VPN/antivirus; uv downloads live under %APPDATA%\\uv).\n\
+        2. Install exactly Python {wanted} from https://www.python.org/downloads/ — tick \u{201c}Add python.exe to PATH\u{201d} during setup, then retry.\n\
+        3. Already installed 3.11 manually? It must be exactly {wanted} (see versions above), reachable via PATH or 'py -3.11', and NOT the Microsoft Store stub (Settings → Apps → Advanced app settings → App execution aliases → turn Python off), then retry.")
 }
 
 /// Check-only preflight for the installer checklist UI (no downloads).
@@ -156,7 +277,10 @@ pub fn python_preflight() -> serde_json::Value {
     let path = silent_command("uv").args(["python", "find", &wanted]).output().ok()
         .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None })
         .filter(|s| !s.is_empty());
-    let runs = path.as_ref().is_some_and(|p| silent_command(p).arg("-c").arg("import sys").output().is_ok_and(|o| o.status.success()));
+    // Version-exact: a neighbouring patch (or a dead exe) must read as NOT ok.
+    let runs = path.as_ref().is_some_and(|p| silent_command(p).arg("-c").arg("import sys; print(sys.version)").output().ok()
+        .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().split_whitespace().next().unwrap_or("").to_string()) } else { None })
+        .is_some_and(|v| v.starts_with(&wanted)));
     let downloads_blocked = std::env::var("UV_PYTHON_DOWNLOADS").is_ok_and(|v| v.eq_ignore_ascii_case("never"));
     // Where would `uv python install` put the interpreter? Explicit override,
     // else uv's default data dir (Windows: %APPDATA%\uv).
@@ -432,6 +556,40 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
             return Err(e);
         }
     }
+    // venv mode on Windows needs `py -3.11` (Electron parity: isolated shim
+    // instead of a global Python install). Without a launcher, setup.py dies
+    // looking for it even when a perfect uv-managed copy exists.
+    #[cfg(windows)]
+    let mut saved_path: Option<String> = None;
+    #[cfg(windows)]
+    if env == "venv" {
+        let shim_ok = silent_command("py").args(["-3.11", "-c", "import sys"]).output().is_ok_and(|o| o.status.success());
+        if !shim_ok {
+            let wanted = pinned_python_wanted();
+            match ensure_uv_python(&app, &emit, &wanted).await {
+                Ok(uvpy) => {
+                    let shim_dir = get_data_dir().join(".py-shim");
+                    let _ = std::fs::create_dir_all(&shim_dir);
+                    // Batch shim: strips the -3.11 selector, delegates the rest.
+                    let shim = format!("@echo off\r\nsetlocal enabledelayedexpansion\r\nset \"args=%*\"\r\nset \"args=!args:-3.11 =!\"\r\nif \"!args!\"==\"%*\" set \"args=!args:-3.11=!\"\r\n\"{uvpy}\" !args!\r\nexit /b %errorlevel%\r\n");
+                    let _ = std::fs::write(shim_dir.join("py.cmd"), &shim);
+                    let _ = std::fs::write(shim_dir.join("py.bat"), &shim);
+                    let old = std::env::var("PATH").unwrap_or_default();
+                    let add = shim_dir.to_string_lossy().to_string();
+                    if !old.split(';').any(|p| p.eq_ignore_ascii_case(&add)) {
+                        std::env::set_var("PATH", format!("{add};{old}"));
+                    }
+                    saved_path = Some(old);
+                    if silent_command("py").args(["-3.11", "-c", "import sys"]).output().is_ok_and(|o| o.status.success()) {
+                        emit("[*] py launcher shim ready (isolated Python, no global install)\n");
+                    } else {
+                        emit("[!] py shim created but `py -3.11` still not found — venv setup may fail; install Python 3.11 (Download button) or use the uv env type.\n");
+                    }
+                }
+                Err(e) => { mutating_done(); return Err(e); }
+            }
+        }
+    }
     // run setup.py with the env's python (hardware-aware: setup.py reads setup_config.json + GPU)
     {
         let (py, args): (String, Vec<String>) = if env.as_str() == "conda" { ("conda".into(), vec!["run".into(), "-p".into(), env_path.to_string_lossy().to_string(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) } else {
@@ -512,6 +670,9 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
             }
         }
         let code = exit_code.unwrap_or(-1);
+        // Restore PATH before any return below (shim prepend is install-scoped).
+        #[cfg(windows)]
+        if let Some(old) = saved_path { std::env::set_var("PATH", old); }
         if code != 0 {
             // setup.py failed — report honestly, no false "Installation complete!".
             // (ATFGriff: exit 2 from `uv venv --python 3.11.14` was swallowed here.)
@@ -854,14 +1015,185 @@ pub(crate) fn fs_extra_fallback_copy_dir(src: &Path, dst: &Path) -> Result<(), S
     }
     Ok(())
 }
+/// Re-read the registry PATH (HKCU + HKLM) into this process after a
+/// winget install, so newly installed tools resolve WITHOUT a launcher
+/// restart. Merges registry entries into the live PATH (deduplicated) —
+/// never removes anything. Windows-only; no-op elsewhere.
+#[cfg(windows)]
+fn refresh_path_from_registry() {
+    let mut additions: Vec<String> = Vec::new();
+    for (hk, sub) in [
+        ("HKCU", "Environment"),
+        ("HKLM", "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment"),
+    ] {
+        let target = format!("{hk}\\{sub}");
+        let Ok(o) = silent_command("reg").args(["query", &target, "/v", "Path"]).output() else { continue };
+        if !o.status.success() { continue; }
+        for line in String::from_utf8_lossy(&o.stdout).lines() {
+            let low = line.to_lowercase();
+            let Some(pos) = low.find("reg_expand_sz").or_else(|| low.find("reg_sz")) else { continue };
+            let after_type = line[pos..].split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+            if after_type.is_empty() { continue; }
+            // Expand %VAR% against the live environment.
+            let mut expanded = after_type;
+            let mut i = 0;
+            while i < expanded.len() {
+                let rest = &expanded[i..];
+                let Some(a) = rest.find('%') else { break };
+                let a = a + i;
+                let Some(b) = expanded[a + 1..].find('%') else { break };
+                let b = b + a + 1;
+                let name = expanded[a + 1..b].to_string();
+                match std::env::var(&name) {
+                    Ok(v) => { expanded.replace_range(a..=b, &v); i = a + v.len(); }
+                    Err(_) => { i = b + 1; }
+                }
+            }
+            for part in expanded.split(';').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                additions.push(part.to_string());
+            }
+        }
+    }
+    if additions.is_empty() { return; }
+    let cur = std::env::var("PATH").unwrap_or_default();
+    let mut merged = cur.clone();
+    for a in &additions {
+        if !cur.split(';').any(|p| p.eq_ignore_ascii_case(a)) {
+            merged.push(';');
+            merged.push_str(a);
+        }
+    }
+    std::env::set_var("PATH", merged);
+}
+
 #[tauri::command]
 pub async fn install_prerequisite(app: tauri::AppHandle, tool: String) -> Result<serde_json::Value,String> {
+    if !["git", "uv", "python", "conda"].contains(&tool.as_str()) {
+        return Err(format!("unknown tool {tool}"));
+    }
+    #[cfg(not(windows))]
+    return Err(format!("{tool} must be installed with your system package manager (one-click install is Windows-only). git: `sudo apt install git` / `brew install git`; python: `brew install python@3.11`; uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`; conda: Miniconda installer from repo.anaconda.com."));
+    #[cfg(windows)]
+    return install_prerequisite_windows(app, tool).await;
+}
+
+/// Stream a child process to the installer console, return exit-ok.
+#[cfg(windows)]
+async fn run_live(app: &tauri::AppHandle, prog: &str, args: Vec<String>) -> bool {
     use tauri_plugin_shell::ShellExt;
     use tauri_plugin_shell::process::CommandEvent;
-    let cmd = match tool.as_str() { "git" => vec!["winget","install","--id","Git.Git","-e"], "uv" => vec!["winget","install","--id","astral-sh.uv","-e"], _ => return Err(format!("unknown tool {tool}")) };
-    let (mut rx, _) = app.shell().command(cmd[0]).args(&cmd[1..]).spawn().map_err(|e| e.to_string())?;
-    while let Some(ev) = rx.recv().await { match ev { CommandEvent::Stdout(b)|CommandEvent::Stderr(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s, "setup"); let _ = app.emit("launch-log", s); }, _=>{} } }
-    Ok(serde_json::json!({"ok": true, "success": true}))
+    let emit = |msg: String| { crate::base::push_log(&msg, "setup"); let _ = app.emit("setup-output", msg); };
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (mut rx, _) = match app.shell().command(prog).args(&arg_refs[..]).spawn() {
+        Ok(t) => t,
+        Err(e) => { emit(format!("[!] spawn failed ({prog}): {e}\n")); return false; }
+    };
+    let mut code: Option<i32> = None;
+    while let Some(ev) = rx.recv().await {
+        match ev {
+            CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => emit(String::from_utf8_lossy(&b).to_string()),
+            CommandEvent::Terminated(p) => { code = p.code; }
+            CommandEvent::Error(e) => emit(format!("[!] {e}\n")),
+            _ => {}
+        }
+    }
+    code == Some(0)
+}
+
+/// Is the tool usable right now? PATH probes plus well-known locations
+/// (conda and python.org installs don't always land on PATH immediately).
+#[cfg(windows)]
+fn probe_tool(tool: &str) -> bool {
+    let on_path = |exe: &str| silent_command("where").arg(exe).output().is_ok_and(|o| o.status.success());
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let exists = |p: String| PathBuf::from(&p).exists();
+    match tool {
+        "git" => on_path("git"),
+        "uv" => on_path("uv") || exists(format!("{home}\\.local\\bin\\uv.exe")) || exists(format!("{home}\\.cargo\\bin\\uv.exe")),
+        "python" => on_path("python") || on_path("py"),
+        "conda" => on_path("conda")
+            || exists(format!("{home}\\Miniconda3\\condabin\\conda.bat"))
+            || exists(format!("{home}\\Miniconda3\\Scripts\\conda.exe"))
+            || exists(format!("{home}\\Anaconda3\\condabin\\conda.bat")),
+        _ => false,
+    }
+}
+
+/// Official installers, used when winget is missing or fails (LTSC, removed
+/// App Installer, corporate blocks). Mirrors Electron's install-prerequisite.
+#[cfg(windows)]
+async fn official_fallback(app: &tauri::AppHandle, tool: &str) -> bool {
+    let emit = |msg: String| { crate::base::push_log(&msg, "setup"); let _ = app.emit("setup-output", msg); };
+    let tmp = std::env::var("TEMP").or_else(|_| std::env::var("TMP")).unwrap_or("C:\\Windows\\Temp".into());
+    // PowerShell download without the progress bar (which stalls/hangs piped runs).
+    let download = |url: &str, dest: &str| -> Vec<String> {
+        vec!["-NoProfile".into(), "-Command".into(),
+            format!("$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '{url}' -OutFile '{dest}'")]
+    };
+    match tool {
+        "uv" => {
+            emit("[*] Installing uv via the official script…\n".into());
+            run_live(app, "powershell", vec!["-NoProfile".into(), "-Command".into(), "& { iwr -useb https://astral.sh/uv/install.ps1 | iex }".into()]).await
+        }
+        "git" => {
+            // NOTE: update periodically — https://git-scm.com/download/win
+            let url = "https://github.com/git-for-windows/git/releases/download/v2.49.0.windows.1/Git-2.49.0-64-bit.exe";
+            let dest = format!("{tmp}\\Git-2.49.0-64-bit.exe");
+            emit("[*] Downloading Git for Windows (~120 MB)…\n".into());
+            if !run_live(app, "powershell", download(url, &dest)).await { return false; }
+            emit("[*] Installing silently — a couple of minutes…\n".into());
+            run_live(app, &dest, vec!["/VERYSILENT".into(), "/NORESTART".into(), "/SUPPRESSMSGBOXES".into(), "/CLOSEAPPLICATIONS".into()]).await
+        }
+        "python" => {
+            // NOTE: keep in step with setup.py's pin (currently 3.11.14).
+            let url = "https://www.python.org/ftp/python/3.11.14/python-3.11.14-amd64.exe";
+            let dest = format!("{tmp}\\python-3.11.14-amd64.exe");
+            emit("[*] Downloading Python 3.11 (~25 MB)…\n".into());
+            if !run_live(app, "powershell", download(url, &dest)).await { return false; }
+            emit("[*] Installing silently — a couple of minutes…\n".into());
+            run_live(app, &dest, vec!["/quiet".into(), "InstallAllUsers=0".into(), "PrependPath=1".into(), "Include_test=0".into()]).await
+        }
+        "conda" => {
+            let url = "https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe";
+            let dest = format!("{tmp}\\Miniconda3-latest-Windows-x86_64.exe");
+            let home = std::env::var("USERPROFILE").unwrap_or("C:\\Users\\Default".into());
+            emit("[*] Downloading Miniconda (~90 MB)…\n".into());
+            if !run_live(app, "powershell", download(url, &dest)).await { return false; }
+            emit("[*] Installing silently — a few minutes…\n".into());
+            run_live(app, &dest, vec!["/InstallationType=JustMe".into(), "/RegisterPython=0".into(), "/S".into(), format!("/D={home}\\Miniconda3")]).await
+        }
+        _ => false,
+    }
+}
+
+#[cfg(windows)]
+async fn install_prerequisite_windows(app: tauri::AppHandle, tool: String) -> Result<serde_json::Value,String> {
+    let emit = |msg: &str| { crate::base::push_log(msg, "setup"); let _ = app.emit("setup-output", msg.to_string()); };
+    // Already there (installed manually meanwhile)? Skip the download.
+    if probe_tool(&tool) {
+        emit(&format!("[*] {tool} is already installed.\n"));
+        return Ok(serde_json::json!({"ok": true, "success": true, "ready": true}));
+    }
+    emit(&format!("[*] Installing {tool} via winget (silent, a few minutes)…\n"));
+    let winget_id = match tool.as_str() {
+        "git" => "Git.Git", "uv" => "astral-sh.uv",
+        "python" => "Python.Python.3.11", "conda" => "Anaconda.Miniconda3",
+        _ => return Err(format!("unknown tool {tool}")),
+    };
+    let mut ok = run_live(&app, "winget", vec!["install".into(), "--id".into(), winget_id.into(), "-e".into(), "--accept-package-agreements".into(), "--accept-source-agreements".into(), "--silent".into()]).await;
+    if !ok {
+        emit(&format!("[!] winget failed or is missing — falling back to the official {tool} installer…\n"));
+        ok = official_fallback(&app, &tool).await;
+    }
+    if !ok { return Err(format!("{tool} install failed — see output above (needs network; some packages need admin approval; check antivirus)")); }
+    // Pick up the new PATH without a restart when possible.
+    refresh_path_from_registry();
+    if probe_tool(&tool) {
+        emit(&format!("[✓] {tool} installed and on PATH — continuing…\n"));
+        return Ok(serde_json::json!({"ok": true, "success": true, "ready": true}));
+    }
+    emit(&format!("[✓] {tool} installed — restart the launcher so PATH picks it up.\n"));
+    Ok(serde_json::json!({"ok": true, "success": true, "ready": false}))
 }
 
 // Pinned manifest mirrors upstream scripts/install_dlss5.ps1: one row per installed

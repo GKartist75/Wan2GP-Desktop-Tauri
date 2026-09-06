@@ -2,6 +2,19 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [Unreleased]
+
+## [0.4.2] — 2026-09-06
+
+- Self-repairing toolchain: a corrupt uv (not just outdated) is reinstalled automatically with one retry; failure diagnostics include the manual reinstall command
+- Prerequisites survive the real world: official-installer fallbacks when winget is missing or fails (git/Python/uv/Miniconda), smarter probes (conda paths, `py` launcher)
+
+## [0.4.1] — 2026-09-06
+
+- Prerequisites that finish the job: one-click installs for git/uv/Python 3.11/Miniconda (Python/Conda buttons led nowhere before), PATH re-read from the registry so installs usually continue without a restart, and a `py -3.11` shim for venv mode when no launcher exists (Electron has all four installers; its Python is now 3.11.14)
+- Python fallback that counts: preflight finds before downloading (a manually installed exact Python is accepted — setup.py's `uv venv` reuses the same discovery, so the env gets built from it), exact-version verify everywhere, and failure messages that list what was actually found plus the three fixes
+- Resolved install stack renders again (was fed the wrong backend shape, so it never appeared) — now with GPU/CUDA/Python/uv/profile, free disk, and target verdict
+
 ## [0.4.0] — 2026-09-05
 
 No more silent failures: every step of install, reuse, migrate and launch is checked, reported honestly, and recoverable.
