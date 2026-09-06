@@ -71,7 +71,7 @@
         const c = document.createElement('div');
         c.id = 'tauri-browser-view';
         c.style.cssText = 'flex:1;display:flex;flex-direction:column;background:#111;min-height:0;width:100%;height:100%;overflow:hidden;';
-        c.innerHTML = `<iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write"></iframe>`;
+        c.innerHTML = `<iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write; allow-downloads; allow-downloads-without-user-activation"></iframe>`;
         host.appendChild(c);
         // Pixel-exact fit (banner-aware): percentage heights can collapse to the
         // 150px iframe default on some Chromium/GPU stacks (same class as the
