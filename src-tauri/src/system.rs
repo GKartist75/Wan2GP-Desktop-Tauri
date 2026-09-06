@@ -287,6 +287,34 @@ pub(crate) async fn move_path_inner(app: &tauri::AppHandle, s: &Path, d: &Path) 
 #[tauri::command] pub async fn move_folder(app: tauri::AppHandle, src: String, dst: String) -> Result<serde_json::Value,String> {
     move_path_inner(&app, &PathBuf::from(&src), &PathBuf::from(&dst)).await
 }
+/// Move a just-downloaded gallery file out of ~/Downloads via a native
+/// Save-As dialog (filename prefilled, location/folder chosen by the user).
+/// The download click itself is untouchable (cross-origin Gradio iframe +
+/// zero-UI WebView2 completion), so this runs from the arrival toast's click.
+/// `name` must be a bare filename — any path components are stripped.
+#[tauri::command] pub fn save_downloaded_file(app: tauri::AppHandle, name: String) -> Result<serde_json::Value, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let safe: PathBuf = Path::new(&name).file_name()
+        .map(PathBuf::from)
+        .filter(|f| !f.as_os_str().is_empty())
+        .ok_or_else(|| "bad filename".to_string())?;
+    let src = home_dir().join("Downloads").join(&safe);
+    if !src.is_file() { return Err("file is no longer in Downloads (moved or deleted?)".into()); }
+    let dst = match app.dialog().file().set_file_name(safe.to_string_lossy().as_ref()).blocking_save_file() {
+        Some(p) => p.into_path().map_err(|e| e.to_string())?,
+        None => return Ok(serde_json::json!({"ok": true, "cancelled": true})),
+    };
+    if dst == src { return Ok(serde_json::json!({"ok": true, "path": dst.to_string_lossy().to_string(), "unchanged": true})); }
+    if let Some(par) = dst.parent() { std::fs::create_dir_all(par).map_err(|e| e.to_string())?; }
+    // Same volume = atomic rename; across drives fall back to copy + verify + remove.
+    if std::fs::rename(&src, &dst).is_err() {
+        std::fs::copy(&src, &dst).map_err(|e| e.to_string())?;
+        let (a, b) = (std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0), std::fs::metadata(&dst).map(|m| m.len()).unwrap_or(1));
+        if a != b { let _ = std::fs::remove_file(&dst); return Err("copy verification failed (size mismatch) — original kept in Downloads".into()); }
+        std::fs::remove_file(&src).map_err(|e| e.to_string())?;
+    }
+    Ok(serde_json::json!({"ok": true, "path": dst.to_string_lossy().to_string()}))
+}
 /// Media files in ~/Downloads newer than `since_ms` (epoch millis).
 /// WebView2 completes iframe downloads with zero UI, so gallery saves look
 /// broken while files pile up silently. The frontend polls this while the

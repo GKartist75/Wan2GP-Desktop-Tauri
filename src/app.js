@@ -2922,7 +2922,15 @@ function startDownloadsWatch() {
         if (!f.name || _dlWatchSeen.has(key)) continue
         _dlWatchSeen.add(key)
         if (!DL_MEDIA_RE.test(f.name)) continue
-        showToast('⬇ Saved to Downloads: ' + f.name)
+        const fname = f.name
+        showToast('⬇ Saved to Downloads: ' + fname + ' — click to move it', async () => {
+          try {
+            const r = await window.w2gp.saveDownloadedFile(fname)
+            if (r && r.cancelled) { showToast('Kept in Downloads: ' + fname); return }
+            if (r && (r.ok || r.success) && r.path) showToast('✓ Moved to: ' + r.path)
+            else showToast('✗ Move failed: ' + ((r && r.error) || 'unknown'))
+          } catch (e) { showToast('✗ ' + errText(e)) }
+        })
       }
     } catch {}
   }, 4000)
@@ -3732,14 +3740,23 @@ document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && (e.key === 'w' || e.key === 'W') && $('dashBody').style.display === 'none') { e.preventDefault(); closeWebview() }
 })
 
-function showToast(msg) {
+function showToast(msg, onClick) {
   const t = document.createElement('div')
   t.textContent = msg
   t.setAttribute('role', 'status')
   t.setAttribute('aria-live', 'polite')
   t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#333;color:#e8e6e1;padding:8px 16px;border-radius:6px;font-size:13px;z-index:9999;font-family:Geist Mono,monospace;transition:opacity 0.3s;max-width:90vw;text-align:center'
   document.body.appendChild(t)
-  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 400) }, 2500)
+  let gone = false
+  const dismiss = () => { if (gone) return; gone = true; t.style.opacity = '0'; setTimeout(() => t.remove(), 400) }
+  if (typeof onClick === 'function') {
+    t.style.cursor = 'pointer'
+    t.title = 'Click to choose where to save it'
+    t.addEventListener('click', () => { const f = onClick; dismiss(); try { f() } catch {} })
+    setTimeout(dismiss, 12000)
+  } else {
+    setTimeout(dismiss, 2500)
+  }
 }
 
 $('updateCheckBtn').addEventListener('click', (e) => {

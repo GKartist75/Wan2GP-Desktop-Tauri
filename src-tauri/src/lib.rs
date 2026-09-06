@@ -63,7 +63,7 @@ pub fn run() {
             features::auto_tune_detect, features::auto_tune_recommend,
             install::install, install::reinstall, install::uninstall, install::sync_kernels, install::update, install::dlss5_status, install::install_dlss5, install::classify_target, install::python_preflight, install::restore_backup, config::manage_set_active, config::uninstall_env,
             launch::open_external, launch::detect_browsers, launch::launch_browser, launch::launch_browser_no_gpu, launch::chrome_available,
-            system::set_data_dir, system::reset_data_dir, system::migrate_to_preferred, system::move_folder, system::folder_size, system::downloads_since, system::write_wgp_config, install::install_prerequisite,
+            system::set_data_dir, system::reset_data_dir, system::migrate_to_preferred, system::move_folder, system::folder_size, system::downloads_since, system::save_downloaded_file, system::write_wgp_config, install::install_prerequisite,
             updates::get_wangp_upstream_info, updates::get_wangp_version, system::report_issue, system::create_desktop_shortcut, electron::detect_electron, electron::uninstall_electron,
             features::upgrade_package, features::install_package, features::uninstall_package, features::restore_requirements,
             features::llm_engines_list, features::llm_engine_install, features::llm_engine_uninstall, features::llm_engine_serve, features::llm_engine_auth,
