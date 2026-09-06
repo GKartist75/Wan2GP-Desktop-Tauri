@@ -1032,52 +1032,132 @@ fn refresh_path_from_registry() {
 
 #[tauri::command]
 pub async fn install_prerequisite(app: tauri::AppHandle, tool: String) -> Result<serde_json::Value,String> {
+    if !["git", "uv", "python", "conda"].contains(&tool.as_str()) {
+        return Err(format!("unknown tool {tool}"));
+    }
+    #[cfg(not(windows))]
+    return Err(format!("{tool} must be installed with your system package manager (one-click install is Windows-only). git: `sudo apt install git` / `brew install git`; python: `brew install python@3.11`; uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`; conda: Miniconda installer from repo.anaconda.com."));
+    #[cfg(windows)]
+    return install_prerequisite_windows(app, tool).await;
+}
+
+/// Stream a child process to the installer console, return exit-ok.
+#[cfg(windows)]
+async fn run_live(app: &tauri::AppHandle, prog: &str, args: Vec<String>) -> bool {
     use tauri_plugin_shell::ShellExt;
     use tauri_plugin_shell::process::CommandEvent;
-    // Silent winget installs (Electron parity: git + uv + python + conda).
-    // Previously python/conda fell into `unknown tool` and the help card's
-    // Download button died with a toast — and output went to the wrong channel.
-    let cmd: Vec<&str> = match tool.as_str() {
-        "git" => vec!["winget","install","--id","Git.Git","-e","--accept-package-agreements","--accept-source-agreements","--silent"],
-        "uv" => vec!["winget","install","--id","astral-sh.uv","-e","--accept-package-agreements","--accept-source-agreements","--silent"],
-        "python" => vec!["winget","install","--id","Python.Python.3.11","-e","--accept-package-agreements","--accept-source-agreements","--silent"],
-        "conda" => vec!["winget","install","--id","Anaconda.Miniconda3","-e","--accept-package-agreements","--accept-source-agreements","--silent"],
-        _ => return Err(format!("unknown tool {tool}")),
+    let emit = |msg: String| { crate::base::push_log(&msg, "setup"); let _ = app.emit("setup-output", msg); };
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (mut rx, _) = match app.shell().command(prog).args(&arg_refs[..]).spawn() {
+        Ok(t) => t,
+        Err(e) => { emit(format!("[!] spawn failed ({prog}): {e}\n")); return false; }
     };
-    let emit = |msg: &str| { crate::base::push_log(msg, "setup"); let _ = app.emit("setup-output", msg.to_string()); };
-    emit(&format!("[*] Installing {tool} via winget (silent, a few minutes)…\n"));
-    let (mut rx, _) = app.shell().command(cmd[0]).args(&cmd[1..]).spawn().map_err(|e| e.to_string())?;
-    let mut failed = false;
+    let mut code: Option<i32> = None;
     while let Some(ev) = rx.recv().await {
         match ev {
-            CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => {
-                let s = String::from_utf8_lossy(&b).to_string();
-                crate::base::push_log(&s, "setup");
-                let _ = app.emit("setup-output", s);
-            }
-            CommandEvent::Terminated(p) => { if p.code != Some(0) { failed = true; } }
-            CommandEvent::Error(e) => { failed = true; emit(&format!("[!] {e}\n")); }
+            CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => emit(String::from_utf8_lossy(&b).to_string()),
+            CommandEvent::Terminated(p) => { code = p.code; }
+            CommandEvent::Error(e) => emit(format!("[!] {e}\n")),
             _ => {}
         }
     }
-    if failed { return Err(format!("{tool} install failed — see output above (winget needs network; some packages need admin approval)")); }
-    // Pick up the new PATH without a restart when possible (winget-only on
-    // Windows; elsewhere the package manager owns it).
-    #[cfg(windows)]
-    refresh_path_from_registry();
-    #[cfg(not(windows))]
-    return Err(format!("{tool} is installed via winget (Windows-only path) — install it with your system package manager instead, then retry."));
-    #[cfg(windows)]
-    {
-        let probe = match tool.as_str() { "git" => "git", "uv" => "uv", "python" => "python", "conda" => "conda", _ => "" };
-        let ready = !probe.is_empty() && silent_command("where").arg(probe).output().is_ok_and(|o| o.status.success());
-        if ready {
-            emit(&format!("[✓] {tool} installed and on PATH — continuing…\n"));
-            return Ok(serde_json::json!({"ok": true, "success": true, "ready": true}));
-        }
-        emit(&format!("[✓] {tool} installed — restart the launcher so PATH picks it up.\n"));
-        return Ok(serde_json::json!({"ok": true, "success": true, "ready": false}));
+    code == Some(0)
+}
+
+/// Is the tool usable right now? PATH probes plus well-known locations
+/// (conda and python.org installs don't always land on PATH immediately).
+#[cfg(windows)]
+fn probe_tool(tool: &str) -> bool {
+    let on_path = |exe: &str| silent_command("where").arg(exe).output().is_ok_and(|o| o.status.success());
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let exists = |p: String| PathBuf::from(&p).exists();
+    match tool {
+        "git" => on_path("git"),
+        "uv" => on_path("uv") || exists(format!("{home}\\.local\\bin\\uv.exe")) || exists(format!("{home}\\.cargo\\bin\\uv.exe")),
+        "python" => on_path("python") || on_path("py"),
+        "conda" => on_path("conda")
+            || exists(format!("{home}\\Miniconda3\\condabin\\conda.bat"))
+            || exists(format!("{home}\\Miniconda3\\Scripts\\conda.exe"))
+            || exists(format!("{home}\\Anaconda3\\condabin\\conda.bat")),
+        _ => false,
     }
+}
+
+/// Official installers, used when winget is missing or fails (LTSC, removed
+/// App Installer, corporate blocks). Mirrors Electron's install-prerequisite.
+#[cfg(windows)]
+async fn official_fallback(app: &tauri::AppHandle, tool: &str) -> bool {
+    let emit = |msg: String| { crate::base::push_log(&msg, "setup"); let _ = app.emit("setup-output", msg); };
+    let tmp = std::env::var("TEMP").or_else(|_| std::env::var("TMP")).unwrap_or("C:\\Windows\\Temp".into());
+    // PowerShell download without the progress bar (which stalls/hangs piped runs).
+    let download = |url: &str, dest: &str| -> Vec<String> {
+        vec!["-NoProfile".into(), "-Command".into(),
+            format!("$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '{url}' -OutFile '{dest}'")]
+    };
+    match tool {
+        "uv" => {
+            emit("[*] Installing uv via the official script…\n".into());
+            run_live(app, "powershell", vec!["-NoProfile".into(), "-Command".into(), "& { iwr -useb https://astral.sh/uv/install.ps1 | iex }".into()]).await
+        }
+        "git" => {
+            // NOTE: update periodically — https://git-scm.com/download/win
+            let url = "https://github.com/git-for-windows/git/releases/download/v2.49.0.windows.1/Git-2.49.0-64-bit.exe";
+            let dest = format!("{tmp}\\Git-2.49.0-64-bit.exe");
+            emit("[*] Downloading Git for Windows (~120 MB)…\n".into());
+            if !run_live(app, "powershell", download(url, &dest)).await { return false; }
+            emit("[*] Installing silently — a couple of minutes…\n".into());
+            run_live(app, &dest, vec!["/VERYSILENT".into(), "/NORESTART".into(), "/SUPPRESSMSGBOXES".into(), "/CLOSEAPPLICATIONS".into()]).await
+        }
+        "python" => {
+            // NOTE: keep in step with setup.py's pin (currently 3.11.14).
+            let url = "https://www.python.org/ftp/python/3.11.14/python-3.11.14-amd64.exe";
+            let dest = format!("{tmp}\\python-3.11.14-amd64.exe");
+            emit("[*] Downloading Python 3.11 (~25 MB)…\n".into());
+            if !run_live(app, "powershell", download(url, &dest)).await { return false; }
+            emit("[*] Installing silently — a couple of minutes…\n".into());
+            run_live(app, &dest, vec!["/quiet".into(), "InstallAllUsers=0".into(), "PrependPath=1".into(), "Include_test=0".into()]).await
+        }
+        "conda" => {
+            let url = "https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe";
+            let dest = format!("{tmp}\\Miniconda3-latest-Windows-x86_64.exe");
+            let home = std::env::var("USERPROFILE").unwrap_or("C:\\Users\\Default".into());
+            emit("[*] Downloading Miniconda (~90 MB)…\n".into());
+            if !run_live(app, "powershell", download(url, &dest)).await { return false; }
+            emit("[*] Installing silently — a few minutes…\n".into());
+            run_live(app, &dest, vec!["/InstallationType=JustMe".into(), "/RegisterPython=0".into(), "/S".into(), format!("/D={home}\\Miniconda3")]).await
+        }
+        _ => false,
+    }
+}
+
+#[cfg(windows)]
+async fn install_prerequisite_windows(app: tauri::AppHandle, tool: String) -> Result<serde_json::Value,String> {
+    let emit = |msg: &str| { crate::base::push_log(msg, "setup"); let _ = app.emit("setup-output", msg.to_string()); };
+    // Already there (installed manually meanwhile)? Skip the download.
+    if probe_tool(&tool) {
+        emit(&format!("[*] {tool} is already installed.\n"));
+        return Ok(serde_json::json!({"ok": true, "success": true, "ready": true}));
+    }
+    emit(&format!("[*] Installing {tool} via winget (silent, a few minutes)…\n"));
+    let winget_id = match tool.as_str() {
+        "git" => "Git.Git", "uv" => "astral-sh.uv",
+        "python" => "Python.Python.3.11", "conda" => "Anaconda.Miniconda3",
+        _ => return Err(format!("unknown tool {tool}")),
+    };
+    let mut ok = run_live(&app, "winget", vec!["install".into(), "--id".into(), winget_id.into(), "-e".into(), "--accept-package-agreements".into(), "--accept-source-agreements".into(), "--silent".into()]).await;
+    if !ok {
+        emit(&format!("[!] winget failed or is missing — falling back to the official {tool} installer…\n"));
+        ok = official_fallback(&app, &tool).await;
+    }
+    if !ok { return Err(format!("{tool} install failed — see output above (needs network; some packages need admin approval; check antivirus)")); }
+    // Pick up the new PATH without a restart when possible.
+    refresh_path_from_registry();
+    if probe_tool(&tool) {
+        emit(&format!("[✓] {tool} installed and on PATH — continuing…\n"));
+        return Ok(serde_json::json!({"ok": true, "success": true, "ready": true}));
+    }
+    emit(&format!("[✓] {tool} installed — restart the launcher so PATH picks it up.\n"));
+    Ok(serde_json::json!({"ok": true, "success": true, "ready": false}))
 }
 
 // Pinned manifest mirrors upstream scripts/install_dlss5.ps1: one row per installed
