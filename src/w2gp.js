@@ -28,6 +28,7 @@
     folderSize: (path) => call('folder_size', { path }),
     isDataDirRoaming: () => call('is_data_dir_roaming'),
     writeWgpConfig: (cfg) => call('write_wgp_config', { cfg }), selectFolder: () => call('select_folder'),
+    resetWgpConfig: () => call('reset_wgp_config'),
     confirmDialog: async (opts) => {
         try { const r = await call('confirm_dialog', { opts }); if (typeof r==='string') return r; if (r && typeof r.choice==='string') return r.choice; if (r && typeof r.response==='number') return r.response===0 ? 'ok' : 'cancel'; if (r && r.ok) return 'ok'; return r; } catch { return 'cancel'; }
     }, detectModelFolders: () => call('detect_model_folders'),

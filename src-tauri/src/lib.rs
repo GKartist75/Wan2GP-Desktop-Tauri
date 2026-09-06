@@ -58,7 +58,7 @@ pub fn run() {
             config::config_load, config::config_save, config::get_install_paths, config::get_disk_space, config::get_model_paths, config::detect_model_folders,
             config::install_plan, config::validate_install, config::uv_cache_info, config::uv_cache_size, config::manage_list,
             updates::get_desktop_version, updates::get_wangp_local_version, updates::get_desktop_git_info,
-            launch::launch, launch::stop_wangp, system::open_folder, system::select_folder, system::confirm_dialog, system::repair_settings,
+            launch::launch, launch::stop_wangp, system::open_folder, system::select_folder, system::confirm_dialog, system::repair_settings, system::reset_wgp_config,
             features::check_package, features::check_package_updates, features::deepy_status, features::memory_profile_read,
             features::auto_tune_detect, features::auto_tune_recommend,
             install::install, install::reinstall, install::uninstall, install::sync_kernels, install::update, install::dlss5_status, install::install_dlss5, install::classify_target, install::python_preflight, install::restore_backup, config::manage_set_active, config::uninstall_env,

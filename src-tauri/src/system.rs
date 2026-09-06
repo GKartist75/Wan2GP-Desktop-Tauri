@@ -36,6 +36,22 @@ pub async fn confirm_dialog(app: tauri::AppHandle, opts: Option<serde_json::Valu
     let confirmed = app.dialog().message(&full).title(title).kind(MessageDialogKind::Info).blocking_show();
     serde_json::json!({"response": i32::from(!confirmed)})
 }
+/// Reset a broken/outdated wgp_config.json: back it up, delete the original
+/// so Wan2GP regenerates full defaults on next launch. Used when wgp.py dies
+/// with `KeyError: '<key>'` — the file exists but misses keys the installed
+/// wgp.py requires (partial write after a failed install, or an ancient
+/// config after an update). Never edits values, so no silent misconfiguration.
+#[tauri::command]
+pub fn reset_wgp_config() -> Result<serde_json::Value, String> {
+    let repo = get_repo_dir();
+    let cfg = repo.join("wgp_config.json");
+    if !cfg.exists() { return Err("wgp_config.json not found — nothing to reset".into()); }
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let bak = repo.join(format!("wgp_config.bak-{stamp}.json"));
+    std::fs::copy(&cfg, &bak).map_err(|e| e.to_string())?;
+    std::fs::remove_file(&cfg).map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({"ok": true, "success": true, "backup": bak.to_string_lossy().to_string()}))
+}
 // Settings repair — port of services/settings-repair.js (Electron).
 // Part 1: clamp dropdown values in models/_settings.json + every *_settings.json
 // (stale values make Gradio reject the whole form on save). Part 2: fix model
