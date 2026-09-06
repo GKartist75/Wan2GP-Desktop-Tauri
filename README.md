@@ -81,7 +81,7 @@ Through the launcher you get the **full WanGP** — same models, same UI, same p
 - 🧹 **Electron → Tauri switch** — Manage → About finds the legacy Electron launcher and uninstalls it silently. Wan2GP, models, LoRAs, outputs and settings are kept.
 - 🧩 **Pinokio coexistence** — Pinokio-managed installs are detected and left untouched (reusing one directly isn't supported); one click reuses their model library in a fresh install, no re-downloads.
 
-> **⚡ CUDA 13 stack on modern RTX cards.** RTX 20/30/40/50 get **PyTorch 2.10 + CUDA 13** — SageAttention 2.2 (RTX 30/40) / 1.0.6 (RTX 20), FlashAttention 2.8.3, SpargeAttention (30/40/50), LightX2V (RTX 50), Nunchaku INT4/FP4 + **GGUF 1.0.14** + **bitsandbytes 0.49.2** (NF4). GTX 10/16 stay on **CUDA 12.8** (no R580 needed); every other NVIDIA card needs **R580+** and is checked before install.
+> **⚡ CUDA 13 stack on modern RTX cards.** RTX 20/30/40/50 get **PyTorch 2.10 + CUDA 13** — SageAttention 2.2 (RTX 30/40) / 1.0.6 (RTX 20), FlashAttention 2.8.3, SpargeAttention (30/40/50), LightX2V (RTX 50), Nunchaku INT4/FP4 + **GGUF 1.0.21** + **bitsandbytes 0.49.2** (NF4). GTX 10/16 stay on **CUDA 12.8** (no R580 needed); every other NVIDIA card needs **R580+** and is checked before install.
 
 ---
 
@@ -190,7 +190,7 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 | **SpargeAttn** | `0.1.0` | sparsity-aware speed-up alongside Sage |
 | **FlashAttention** | `2.8.3` | memory-efficient exact attention for long/high-res |
 | **Nunchaku** | `1.2.1` | SVD-quantized (NF4/SVDQ) runtime — 4/8-bit models |
-| **GGUF llama.cpp CUDA** | `1.0.14` | CUDA GGUF kernels (Stream-K, quantized KV-cache, speculative-workload fix) |
+| **GGUF llama.cpp CUDA** | `1.0.21` (docs-led; `setup_config.json` still ships 1.0.14, followed automatically once flipped) | CUDA GGUF kernels (Stream-K, quantized KV-cache, speculative-workload fix) |
 | **LightX2V** | `0.0.2` | FP4 kernels — **RTX 50xx / sm120+ only** |
 | **bitsandbytes** | `0.49.2` | 8-bit/NF4 dequant for NF4 checkpoints |
 
