@@ -47,7 +47,11 @@ pub fn get_status() -> serde_json::Value {
                                 if let Some(cmd) = cfg.get("components").and_then(|c| c.get("kernels")).and_then(|m| m.get(key)).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()) {
                                     // wheelDistVersion: parse "<dist>-<version>-cp..." 
                                     if let Some(base) = cmd.split('/').next_back() {
-                                        let base = base.trim_end_matches(".whl");
+                                        // NOTE: newer upstream URLs percent-encode the build tag
+                                        // (`%2B` for `+`, e.g. gguf-v1.0.21 links) while importlib
+                                        // reports a literal `+` — decode before comparing or every
+                                        // wheel shows a phantom version mismatch.
+                                        let base = base.trim_end_matches(".whl").replace("%2B", "+").replace("%2b", "+");
                                         if let Some(dash) = base.find('-') {
                                             let rest = &base[dash+1..];
                                             if let Some(v_end) = rest.find("-cp") .or_else(|| rest.find("-py")) {

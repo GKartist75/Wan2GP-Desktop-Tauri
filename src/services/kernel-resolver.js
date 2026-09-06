@@ -58,7 +58,9 @@ function kernelProfileKey(gpu) {
  */
 function wheelDistVersion(url) {
   try {
-    const base = String(url).split('/').pop().replace(/\.whl$/i, '')
+    // NOTE: upstream's newer URLs percent-encode the build tag (%2B for +)
+    // while importlib reports a literal + — decode first (mirrors status.rs).
+    const base = String(url).split('/').pop().replace(/\.whl$/i, '').replace(/%2B/gi, '+')
     const m = /^(.+?)-(\d[^-]*?)-(?:cp|py)\d/.exec(base)
     if (!m) return null
     return { dist: m[1], version: m[2] } // raw dist (underscores kept on purpose)
