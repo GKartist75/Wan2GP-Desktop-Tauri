@@ -478,6 +478,16 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
         mutating_done();
         return Err(format!("This folder is Pinokio-managed ({}). Installing here would corrupt Pinokio's Wan2GP. Pick an empty folder and reuse Pinokio's ckpts/loras/outputs as your model folders — no re-downloads, Pinokio keeps working.", where_.display()));
     }
+    // Fail fast on a full target drive: a complete install needs tens of GB
+    // (env alone is ~10 GB before models). Dying of ENOSPC 15 minutes into
+    // setup.py helps nobody — abort here with a copy-paste fix instead.
+    if let Some((free, _)) = crate::config::disk_for_path(&repo.to_string_lossy()) {
+        let free_gb = free as f64 / 1073741824.0;
+        if free_gb < 10.0 {
+            mutating_done();
+            return Err(format!("Only {free_gb:.1} GB free on the install drive ({}). A full install needs 50+ GB (env alone is ~10 GB before models). Free space or pick another folder, then retry — nothing was downloaded.", repo.display()));
+        }
+    }
     if repo.join("wgp.py").exists() {
         emit_phase("clone", "Clone Wan2GP repository", true);
     } else {
