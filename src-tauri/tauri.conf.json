@@ -21,7 +21,7 @@
                                 }
                             ],
                 "security":  {
-                                 "csp":  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; font-src 'self' data:; frame-src http://localhost:* http://127.0.0.1:*; connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'"
+                                 "csp":  "default-src \u0027self\u0027; script-src \u0027self\u0027; style-src \u0027self\u0027 \u0027unsafe-inline\u0027; img-src \u0027self\u0027 data: asset: http://asset.localhost; font-src \u0027self\u0027 data:; frame-src http://localhost:* http://127.0.0.1:*; connect-src \u0027self\u0027 http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; object-src \u0027none\u0027; base-uri \u0027self\u0027"
                              }
             },
     "bundle":  {
