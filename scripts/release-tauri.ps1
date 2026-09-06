@@ -35,6 +35,10 @@ if (git status --porcelain) { git commit -m "release: v$Version" | Out-Null }
 npx tauri build
 if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
 
+# 2b) Versioned portable copy next to the unversioned one (local testing).
+$portable = "src-tauri\target\release\wan2gp-desktop-launcher-tauri.exe"
+if (Test-Path $portable) { Copy-Item $portable "src-tauri\target\release\wan2gp-desktop-launcher-tauri-$Version.exe" -Force }
+
 # 3) Collect updater artifacts (v2 signs the installers directly: setup.exe + .sig)
 $setup = Get-ChildItem "src-tauri\target\release\bundle\nsis\*-setup.exe" | Where-Object { $_.Name -like "*$Version*" } | Select-Object -First 1
 if (-not $setup) { $setup = Get-ChildItem "src-tauri\target\release\bundle\nsis\*-setup.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1 }
