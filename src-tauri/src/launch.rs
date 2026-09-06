@@ -282,14 +282,15 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
     };
     // One scan pass: all python.exe with wgp.py in the command line.
     // Returns (pid, exe_path, cmdline); filtering happens in Rust (exact,
-    // case-insensitive — no PowerShell quoting pitfalls).
+    // case-insensitive — no PowerShell quoting pitfalls). Failures are LOUD:
+    // a silently-empty scan is exactly how orphans used to survive Stop.
     let scan = || -> Vec<(u32, String, String)> {
         let mut out = Vec::new();
         #[cfg(windows)]
         {
             let ps = "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object { $_.CommandLine -like '*wgp.py*' } | ForEach-Object { $_.ProcessId + '|' + $_.ExecutablePath + '|' + $_.CommandLine }";
-            if let Ok(o) = silent_command("powershell").args(["-NoProfile", "-Command", ps]).output() {
-                if o.status.success() {
+            match silent_command("powershell").args(["-NoProfile", "-Command", ps]).output() {
+                Ok(o) if o.status.success() => {
                     for line in String::from_utf8_lossy(&o.stdout).lines() {
                         let mut parts = line.splitn(3, '|');
                         if let (Some(pid_s), Some(exe), Some(cmd)) = (parts.next(), parts.next(), parts.next()) {
@@ -299,6 +300,8 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
                         }
                     }
                 }
+                Ok(o) => crate::base::push_log(&format!("[stop] WMI scan failed (exit {}): {}\n", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).chars().take(300).collect::<String>()), "launch"),
+                Err(e) => crate::base::push_log(&format!("[stop] WMI scan spawn failed: {e}\n"), "launch"),
             }
         }
         #[cfg(not(windows))]
@@ -338,6 +341,40 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
     #[cfg(windows)]
     if let Some(t) = crate::launch::terminal_title() {
         let _ = silent_command("taskkill").args(["/F", "/FI", &format!("WINDOWTITLE eq {t}*")]).output();
+    }
+    // Ground truth: whatever LISTENS on the server port dies too. Catches every
+    // spawn shape (workers, renamed interpreters, stale launchers) — launch
+    // itself treats port-in-use as "ours" (reuses instead of spawning), so
+    // stop must treat it the same way. Restricted to python* owners: Gradio
+    // always runs on Python, and we never kill foreign processes.
+    let sport = load_config_value().get("serverPort").and_then(serde_json::Value::as_u64).unwrap_or(7860);
+    #[cfg(windows)]
+    {
+        let ps = format!("Get-NetTCPConnection -LocalPort {sport} -State Listen | ForEach-Object {{ $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p) {{ $p.Id.ToString() + '|' + $p.ProcessName }} }}");
+        match silent_command("powershell").args(["-NoProfile", "-Command", &ps]).output() {
+            Ok(o) if o.status.success() => {
+                for line in String::from_utf8_lossy(&o.stdout).lines() {
+                    let mut parts = line.splitn(2, '|');
+                    if let (Some(pid_s), Some(name)) = (parts.next(), parts.next()) {
+                        if name.trim().to_lowercase().contains("python") {
+                            if let Ok(pid) = pid_s.trim().parse::<u32>() { kill_pid(pid, &mut killed); }
+                        }
+                    }
+                }
+            }
+            Ok(o) => crate::base::push_log(&format!("[stop] port scan failed (exit {}): {}\n", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).chars().take(200).collect::<String>()), "launch"),
+            Err(e) => crate::base::push_log(&format!("[stop] port scan spawn failed: {e}\n"), "launch"),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if let Ok(o) = silent_command("lsof").args(["-ti", &format!("tcp:{sport}")]).output() {
+            if o.status.success() {
+                for line in String::from_utf8_lossy(&o.stdout).lines() {
+                    if let Ok(pid) = line.trim().parse::<u32>() { kill_pid(pid, &mut killed); }
+                }
+            }
+        }
     }
     if let Some(m) = WANGP_PID.get() { *m.lock().unwrap() = None; }
     // Verify: re-scan after the dust settles, kill stragglers once, report
