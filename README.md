@@ -89,6 +89,7 @@ Through the launcher you get the **full WanGP** — same models, same UI, same p
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
+- **v0.4.6** — GPU Kernel Wheels moved above Active Environment (sync state visible without scrolling) + honest kernel detection: LightX2V no longer reports "not installed" right after sync (scanned the wrong dist name), OpenCV row populates again, full RTX 20/30/40/50 audit vs upstream.
 - **v0.4.5** — installs that finish (clean retries, auto-retry on network blips) + fullscreen embed with working zoom/downloads (clickable save-as picker) + honest Stop incl. Stop All button + v12.72 parity + GGUF 1.0.21 + AMD profile env.
 - **v0.4.4** — installs that finish: retry resumes cleanly (marker + auto-retry on network blips), v12.72 parity (Deepy sessions), GGUF-1.0.21-ready version parsing, and a Gradio embed that always fills the window.
 - **v0.4.3** — hardened backend (pip guard, honest exit codes, https-only plugins) + fixed prerequisites (pin checks, SHA-pinned installers, working Python/uv fallbacks) + KeyError crash recovery, DLSS consent checkbox popup, and install-drive space gate.
