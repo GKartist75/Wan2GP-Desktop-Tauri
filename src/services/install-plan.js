@@ -74,10 +74,10 @@ function buildPlan(hw = {}) {
       }
       notes.push('RTX 20/30/40/50 → CUDA 13 stack (needs R580+ driver).')
     }
-    // Attention kernels Wan2GP installs for NVIDIA
+    // Attention kernels Wan2GP installs for NVIDIA (Sparge needs SM ≥ 7.0 —
+    // true for every card reaching this branch, so it stays in the base list).
     attention = ['SageAttention', 'FlashAttention', 'SpargeAttention']
     if (cap >= 9.0) attention.push('Nunchaku + GGUF', 'LightX2V')
-    if (cap >= 7.0) attention.push('SpargeAttention')
   } else if (vendor === 'AMD') {
     cuda = 'ROCm (TheRock)'
     torch = 'PyTorch 2.7.0'

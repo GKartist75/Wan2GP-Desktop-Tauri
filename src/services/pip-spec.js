@@ -70,4 +70,7 @@ function assertSafePipSpec(spec) {
   return { ok: true, name }
 }
 
-module.exports = { assertSafePipSpec, NAME_RE, URL_RE }
+// Dual-target: node --test suite via require(), renderer via a plain <script>
+// tag (see index.html — same pattern as services/escape.js).
+if (typeof module === 'object' && module.exports) module.exports = { assertSafePipSpec, NAME_RE, URL_RE }
+if (typeof window !== 'undefined') window.PipSpec = { assertSafePipSpec, NAME_RE, URL_RE }

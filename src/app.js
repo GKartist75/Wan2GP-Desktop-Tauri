@@ -3080,8 +3080,11 @@ $('taskMgrBtn').addEventListener('click',()=>{ window.w2gp.openTaskManager() })
 // Node-side mirror lives in services/normalize-pip-spec.js for unit tests.)
 function normalizePipSpec(raw) {
   let s = (raw || '').trim()
-  const m = s.match(/^(?:py(?:thon)?\s+-m\s+)?pip\s+install\s+/i)
+  const m = s.match(/^(?:py(?:thon)?\s+-m\s+)?pip3?\s+install\s+/i)
   if (m) s = s.slice(m[0].length).trim()
+  // Strip pip flags (`pip install foo --upgrade` → `foo`). UX only — the
+  // backend re-validates. Must match services/normalize-pip-spec.js.
+  s = s.split(/\s+/).filter((t) => !t.startsWith('-')).join(' ')
   return s
 }
 $('pipInstallBtn').addEventListener('click', async () => {
@@ -3109,12 +3112,14 @@ function updatePipCmdPreview() {
   if (!input || !preview || !text) return
   const spec = normalizePipSpec(input.value)
   if (!spec) { preview.style.display = 'none'; return }
-  // Reuse the same validation the launcher applies (kept in sync with main.js).
-  const name = spec.split(/[<>=!~]/)[0].replace(/\s/g, '')
-  const okName = /^[A-Za-z0-9._-]+$/.test(name) && /^[A-Za-z]/.test(name)
-  const hasInjection = /[;&|<>$`(){}'"]/.test(spec) || /\s-{1,2}[a-zA-Z]/.test(spec)
-  if (!okName) { preview.style.display = 'flex'; preview.classList.add('pip-cmd-bad'); text.textContent = '✗ Invalid package name' }
-  else if (hasInjection) { preview.style.display = 'flex'; preview.classList.add('pip-cmd-bad'); text.textContent = '✗ Flags/shell characters are blocked for safety' }
+  // Single source of truth: the same validator the backend enforces
+  // (services/pip-spec.js, exposed as window.PipSpec by the script tag in
+  // index.html). No inline copy — the old one wrongly blocked `<>` (valid
+  // PEP 440 operators), so `foo>=1.0` previewed as blocked but installed fine.
+  const check = window.PipSpec
+    ? window.PipSpec.assertSafePipSpec(spec)
+    : { ok: false, reason: 'validator missing' }
+  if (!check.ok) { preview.style.display = 'flex'; preview.classList.add('pip-cmd-bad'); text.textContent = '✗ Blocked: ' + (check.reason || 'invalid spec') }
   else { preview.style.display = 'flex'; preview.classList.remove('pip-cmd-bad'); text.textContent = 'pip install ' + spec + '   (runs in the active env)' }
 }
 $('pipInput').addEventListener('input', updatePipCmdPreview)

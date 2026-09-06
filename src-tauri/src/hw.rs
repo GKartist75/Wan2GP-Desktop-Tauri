@@ -38,7 +38,11 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
         if g.contains("9060")||g.contains("9070")||g.contains("8000")||g.contains("1201") { return "AMD_GFX1201".into(); }
         return "AMD_GFX110X".into();
     }
-    "RTX_40".into()
+    // Intel → XPU backend (install-plan.js); unknown → CPU. Never alias an
+    // NVIDIA profile: the overview would promise CUDA wheels the installer
+    // never installs (must match kernel-resolver.js kernelProfileKey).
+    if v == "INTEL" { return "INTEL_XPU".into(); }
+    "CPU".into()
 }
 pub(crate) fn build_install_plan(hw: &serde_json::Value) -> serde_json::Value {
     let vendor = hw.get("vendor").and_then(|v| v.as_str()).unwrap_or("UNKNOWN").to_uppercase();

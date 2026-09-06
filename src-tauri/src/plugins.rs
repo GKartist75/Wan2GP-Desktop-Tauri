@@ -174,8 +174,9 @@ fn scrub_config_lists(repo: &PathBuf, id: &str) -> Result<(), String> {
 // guard-free core: clone (+requirements) + record + enable. plugin_install wraps
 // it with the mutating guard; ensure_favorites calls it in a loop (best-effort).
 async fn install_plugin_inner(app: &tauri::AppHandle, url: &str) -> Result<String, String> {
-    use tauri_plugin_shell::ShellExt;
-    use tauri_plugin_shell::process::CommandEvent;
+    // Plaintext git clone is a MITM code-execution path (plugins load into
+    // Wan2GP). scp-style github.com: URLs ride over SSH and stay allowed.
+    if url.starts_with("http://") { return Err("refusing plaintext http:// plugin URL — use https://".into()); }
     let id = plugin_id_from_url(url);
     if id.is_empty() { return Err("Could not derive a plugin id from that URL".into()); }
     let repo = get_repo_dir();
@@ -184,14 +185,12 @@ async fn install_plugin_inner(app: &tauri::AppHandle, url: &str) -> Result<Strin
     if !target.exists() {
         log(&format!("[*] Cloning plugin {id}…\n"));
         std::fs::create_dir_all(repo.join("plugins")).map_err(|e| e.to_string())?;
-        let (mut rx, _) = app.shell().command("git").args(["clone", "--depth", "1", url, &target.to_string_lossy()]).spawn().map_err(|e| e.to_string())?;
-        while let Some(ev) = rx.recv().await {
-            match ev {
-                CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => log(&String::from_utf8_lossy(&b)),
-                _ => {}
-            }
+        let target_s = target.to_string_lossy().to_string();
+        if !run_logged(app, "git", &["clone", "--depth", "1", url, target_s.as_str()], None, &log).await
+            || !target.exists()
+        {
+            return Err("git clone failed — check console output".into());
         }
-        if !target.exists() { return Err("git clone failed — check console output".into()); }
         install_requirements(app, &repo, &id, &target, &log).await;
     } else {
         log(&format!("[*] Plugin {id} already installed — enabling…\n"));
@@ -299,8 +298,6 @@ pub async fn plugin_check_updates(app: tauri::AppHandle) -> Result<serde_json::V
 
 #[tauri::command]
 pub async fn plugin_update(app: tauri::AppHandle, id: Option<String>) -> Result<serde_json::Value, String> {
-    use tauri_plugin_shell::ShellExt;
-    use tauri_plugin_shell::process::CommandEvent;
     let id = id.unwrap_or_default().trim().to_string();
     if !valid_plugin_id(&id) { return Err("Bad plugin id".into()); }
     let repo = get_repo_dir();
@@ -309,12 +306,10 @@ pub async fn plugin_update(app: tauri::AppHandle, id: Option<String>) -> Result<
     mutating_try("plugin-update")?;
     let log = |m: &str| { crate::base::push_log(m, "launch"); let _ = app.emit("launch-log", m.to_string()); };
     log(&format!("[*] Updating plugin {id}…\n"));
-    let (mut rx, _) = app.shell().command("git").args(["-C", &target.to_string_lossy(), "pull", "--ff-only"]).spawn().map_err(|e| { mutating_done(); e.to_string() })?;
-    while let Some(ev) = rx.recv().await {
-        match ev {
-            CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => log(&String::from_utf8_lossy(&b)),
-            _ => {}
-        }
+    let target_s = target.to_string_lossy().to_string();
+    if !run_logged(&app, "git", &["-C", target_s.as_str(), "pull", "--ff-only"], None, &log).await {
+        mutating_done();
+        return Err(format!("Plugin {id} update failed (git pull) — see console output"));
     }
     install_requirements(&app, &repo, &id, &target, &log).await;
     mutating_done();
@@ -359,7 +354,8 @@ pub fn plugin_uninstall(id: Option<String>) -> Result<serde_json::Value, String>
 #[tauri::command]
 pub async fn plugin_install(app: tauri::AppHandle, url: Option<String>) -> Result<serde_json::Value, String> {
     let url = url.unwrap_or_default().trim().to_string();
-    if !(url.starts_with("https://") || url.starts_with("http://") || url.contains("github.com:")) {
+    // http:// is a MITM code-execution path (cloned code loads into Wan2GP).
+    if !(url.starts_with("https://") || url.contains("github.com:")) {
         return Err("Give a plugin git URL (https://github.com/…/…)".into());
     }
     if !get_repo_dir().join("wgp.py").exists() { return Err("Wan2GP not installed — run Install first".into()); }
