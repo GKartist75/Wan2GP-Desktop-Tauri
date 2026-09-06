@@ -71,7 +71,14 @@
         const c = document.createElement('div');
         c.id = 'tauri-browser-view';
         c.style.cssText = 'flex:1;display:flex;flex-direction:column;background:#111;min-height:0;width:100%;height:100%;overflow:hidden;';
-        c.innerHTML = `<iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write; allow-downloads; allow-downloads-without-user-activation"></iframe>`;
+        // Permissions-Policy: the embed must behave like the same page in a real
+        // browser tab. Anything missing here is silently denied vs. Explorer:
+        // fullscreen (expand), autoplay (gallery video/audio previews),
+        // camera/microphone (Gradio audio/image capture inputs), clipboard
+        // (copy results), downloads (gallery save — blocked without the token),
+        // picture-in-picture, display-capture, web-share. No `sandbox`
+        // attribute on purpose (it would cripple scripts/uploads).
+        c.innerHTML = `<iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; autoplay; camera; microphone; clipboard-read; clipboard-write; allow-downloads; allow-downloads-without-user-activation; picture-in-picture; display-capture; web-share"></iframe>`;
         host.appendChild(c);
         // Pixel-exact fit (banner-aware): percentage heights can collapse to the
         // 150px iframe default on some Chromium/GPU stacks (same class as the
