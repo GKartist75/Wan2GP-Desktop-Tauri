@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::base::*;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
-use crate::{hw::{build_install_plan, get_gpu_info_sync, kernel_profile_key}, status::get_active_env};
+use crate::{hw::{apply_gguf_override, build_install_plan, get_gpu_info_sync, kernel_profile_key}, status::get_active_env};
 
 /// Pull the first X.Y[.Z] out of a version string ("3.11.14", "3.11", ">=3.11").
 fn scan_version(s: &str) -> String {
@@ -1092,6 +1092,8 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,Str
                     url = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl".into();
                 }
             }
+            // GGUF 1.0.21 override (docs prescription over setup_config lag).
+            let url = apply_gguf_override(&url);
             let m = format!("[*] sync kernel {name}\n"); crate::base::push_log(&m, "setup"); let _ = app.emit("launch-log", m);
             let emit_k = |s: &str| { crate::base::push_log(s, "setup"); let _ = app.emit("launch-log", s.to_string()); };
             let py_s = py.to_string_lossy().to_string();

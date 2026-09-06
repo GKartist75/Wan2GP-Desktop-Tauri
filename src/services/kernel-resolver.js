@@ -70,14 +70,20 @@ function wheelDistVersion(url) {
 }
 
 /**
- * GGUF wheel — 100% original, no override. Upstream setup_config.json is verbatim.
- * Kept for call-site compat; returns cmd unchanged so pip installs exactly what
- * deepbeepmeep publishes (no cu13→cu130 fix, no version pin).
- * @type {string|null}
+ * GGUF wheel override toward docs/INSTALLATION.md#gguf-llamacpp-cuda-kernels.
+ * setup_config.json still ships 1.0.14 while the docs prescribe 1.0.21, so
+ * swap 1.0.14 → 1.0.21 — but pass anything else through untouched, so the day
+ * upstream flips setup_config we follow it verbatim (mirrors the Rust
+ * apply_gguf_override in hw.rs, which owns the live sync/overview paths).
  */
-const GGUF_TARGET_VERSION = null
+const GGUF_1021_WIN_PY311 = 'https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.21/llamacpp_gguf_cuda-1.0.21%2Btorch210cu130py311-cp311-cp311-win_amd64.whl'
+const GGUF_1021_WIN_PY310 = 'https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.21/llamacpp_gguf_cuda-1.0.21%2Btorch271cu128py310-cp310-cp310-win_amd64.whl'
+const GGUF_TARGET_VERSION = '1.0.21'
 
-function applyGgufOverride(key, cmd, torchCode) { return cmd }
+function applyGgufOverride(key, cmd, torchCode) {
+  if (typeof cmd !== 'string' || !cmd.includes('llamacpp_gguf_cuda-1.0.14')) return cmd
+  return cmd.includes('py310') ? GGUF_1021_WIN_PY310 : GGUF_1021_WIN_PY311
+}
 
 /**
  * Resolve the kernel wheels expected for a GPU from setup_config.json.
@@ -131,7 +137,7 @@ function buildOverviewWheels(cfg, gpu, osKey) {
   return kernels.map((name) => {
     const def = KERNEL_DISPLAY[name] || { label: name, pipName: name }
     const cmd = components[name] && components[name].cmd && components[name].cmd[osKey]
-    const url = applyGgufOverride(name, cmd, torchCode) // GGUF → upstream leading, only cu13→cu130 fix
+    const url = applyGgufOverride(name, cmd, torchCode) // GGUF → docs 1.0.21 while setup_config lags (identity once upstream flips)
     let configured = null
     if (url) {
       const wi = wheelDistVersion(url)

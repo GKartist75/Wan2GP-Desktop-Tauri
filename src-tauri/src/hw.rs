@@ -44,6 +44,42 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
     if v == "INTEL" { return "INTEL_XPU".into(); }
     "CPU".into()
 }
+
+/// GGUF wheel URLs shipped by upstream (docs/INSTALLATION.md#gguf-llamacpp-cuda-kernels).
+const GGUF_1021_WIN_PY311: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.21/llamacpp_gguf_cuda-1.0.21%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+const GGUF_1021_WIN_PY310: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.21/llamacpp_gguf_cuda-1.0.21%2Btorch271cu128py310-cp310-cp310-win_amd64.whl";
+/// GGUF wheel override toward the documented 1.0.21 build (RTX50 SM120
+/// kernels, 50-100% Deepy decode speedup). setup_config.json still ships
+/// 1.0.14, so swap 1.0.14 → 1.0.21 — but pass anything else through untouched,
+/// so the day upstream flips setup_config we follow it verbatim with no code
+/// change (same shape as the Sage post4/post6 swap in sync_kernels).
+/// Applies to every kernel URL (no-op unless it's a 1.0.14 GGUF link), so both
+/// the sync installer and the overview's want/have comparison share it.
+pub(crate) fn apply_gguf_override(url: &str) -> String {
+    if !url.contains("llamacpp_gguf_cuda-1.0.14") { return url.to_string(); }
+    if url.contains("py310") { GGUF_1021_WIN_PY310.into() } else { GGUF_1021_WIN_PY311.into() }
+}
+
+#[cfg(test)]
+mod gguf_override_tests {
+    use super::apply_gguf_override;
+    #[test]
+    fn swaps_1014_for_1021() {
+        let old_win = "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.14+torch210cu130py311-cp311-cp311-win_amd64.whl";
+        let new = apply_gguf_override(old_win);
+        assert!(new.contains("gguf-v1.0.21") && new.contains("1.0.21"), "got {new}");
+        assert!(!new.contains("1.0.14"));
+        let old_310 = old_win.replace("py311", "py310").replace("torch210cu130py311", "torch271cu128py310");
+        assert!(apply_gguf_override(&old_310).contains("torch271cu128py310"));
+    }
+    #[test]
+    fn passes_other_urls_through() {
+        for u in [
+            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.21/llamacpp_gguf_cuda-1.0.21+torch210cu130py311-cp311-cp311-win_amd64.whl",
+            "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl",
+        ] { assert_eq!(apply_gguf_override(u), u); }
+    }
+}
 pub(crate) fn build_install_plan(hw: &serde_json::Value) -> serde_json::Value {
     let vendor = hw.get("vendor").and_then(|v| v.as_str()).unwrap_or("UNKNOWN").to_uppercase();
     let name = hw.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();

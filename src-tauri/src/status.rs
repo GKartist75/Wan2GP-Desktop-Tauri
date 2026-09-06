@@ -45,8 +45,9 @@ pub fn get_status() -> serde_json::Value {
                                 // configured version from setup_config.json components.kernels[key].cmd[win]
                                 let mut configured: Option<String> = None;
                                 if let Some(cmd) = cfg.get("components").and_then(|c| c.get("kernels")).and_then(|m| m.get(key)).and_then(|e| e.get("cmd")).and_then(|c| c.get("win")).and_then(|u| u.as_str()) {
+                                    let cmd = crate::hw::apply_gguf_override(cmd);
                                     // wheelDistVersion: parse "<dist>-<version>-cp..." 
-                                    if let Some(base) = cmd.split('/').next_back() {
+                                    if let Some(base) = cmd.as_str().split('/').next_back() {
                                         // NOTE: newer upstream URLs percent-encode the build tag
                                         // (`%2B` for `+`, e.g. gguf-v1.0.21 links) while importlib
                                         // reports a literal `+` — decode before comparing or every
