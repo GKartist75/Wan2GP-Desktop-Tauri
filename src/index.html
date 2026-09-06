@@ -673,9 +673,12 @@
           <p class="path-hint" style="margin-top:4px"><em>Stop Wan2GP first — files under <code>dlss5/</code> can't be replaced while in use.</em></p>
         </div>
 
-        <!-- Strict-consent modal: type I ACCEPT to run the third-party installer. -->
-        <div id="dlss5Modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99;align-items:center;justify-content:center">
-          <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:18px;max-width:520px;margin:10vh auto">
+        <!-- Strict-consent modal: type I ACCEPT to run the third-party installer.
+             Class-based overlay (see .modal-overlay in style.css) — never inline
+             display/position styles, so a dropped style="" can't silently turn
+             the popup into an in-flow block. -->
+        <div id="dlss5Modal" class="modal-overlay">
+          <div class="modal-box">
             <h3 style="margin:0 0 8px">Install DLSS 5 runtime?</h3>
             <p class="path-hint">This downloads native third-party binaries (NVIDIA DLSS, ReShade, RenoDX, DLSSNR 310.8.SF-v2 — community-hosted, unsigned, proprietary) with GPU and filesystem access. Wan2GP does not grant redistribution rights or guarantee these files. Continue only if you accept the copyright, licensing, and security risks. Details: <a id="dlss5DocsLink2" href="#" style="color:var(--accent)">docs/DLSS5.md</a></p>
             <p class="path-hint">Type <code>I ACCEPT</code> to continue:</p>

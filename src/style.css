@@ -492,6 +492,13 @@ body {
 .deepy-enhancer-note { font-size: 0.5rem; color: var(--text-tertiary); font-style: italic; }
 .deepy-enhancer-label { font-weight: 600; color: var(--text-primary); }
 .deepy-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+/* ── Modal overlay (class-based, never inline styles: the overlay MUST survive
+   any environment that drops style="" attributes — an in-flow consent block
+   looks identical to a working modal's content but blocks nothing). ── */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 99; align-items: center; justify-content: center; }
+.modal-overlay.open { display: flex; }
+.modal-box { background: var(--surface); border: 1px solid var(--border-hover); border-radius: 10px; padding: 18px; max-width: 520px; width: calc(100% - 40px); margin: 10vh auto; box-shadow: 0 18px 60px rgba(0,0,0,.55); }
 .dot-ok { color: #4ADE80; }
 .dot-bad { color: #F87171; }
 
