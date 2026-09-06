@@ -396,6 +396,16 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
     serde_json::json!({"ok": true, "killed": killed, "alive": alive})
 }
 
+/// Stop every server this launcher owns: Wan2GP (+children, verified) and
+/// the OpenCode server (if we spawned it). One dashboard button, no
+/// leftovers. Reuses stop_wangp so behavior can never diverge from it.
+#[tauri::command]
+pub fn stop_all_servers(app: tauri::AppHandle) -> serde_json::Value {
+    let wangp = stop_wangp(app);
+    let opencode = crate::features::stop_opencode_server();
+    serde_json::json!({"ok": true, "wangp": wangp, "opencode_stopped": opencode})
+}
+
 // ── misc stubs to unblock frontend (return safe defaults) ──
 #[tauri::command] pub fn open_external(url: Option<String>) { let _=url; }
 /// Expand Windows %VAR% placeholders case-insensitively. The old code only

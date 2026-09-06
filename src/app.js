@@ -2983,6 +2983,24 @@ function resetBrowserLaunchUI() {
 // not as a crash (and must never trigger KeyError-crash recovery).
 let _expectServerExit = false
 let _expectServerExitTimer = null
+// Shared stop-result handling (single + stop-all buttons): loud on survivors,
+// honest counts otherwise. `r` is either stop_wangp's or stop_all_servers'
+// {wangp} payload. Returns true when fully stopped.
+function noteStopResult(r) {
+  const w = (r && r.wangp) || r || {}
+  const alive = w.alive || []
+  if (alive.length) {
+    // Backend killed what it could but processes survived — stay loud instead
+    // of showing a dead-stopped UI over a live server.
+    appendLog(`[!] ${alive.length} Wan2GP process(es) survived Stop (PID ${alive.join(', ')}). Kill them in Task Manager or restart the PC, then press Stop again.`)
+    showToast(`✗ Server still running (PID ${alive.join(', ')}) — see console`)
+    return false
+  }
+  const killed = w.killed || []
+  if (killed.length) appendLog(`[*] Stopped (${killed.length} process(es)).`)
+  else appendLog('[*] Stop requested — no Wan2GP processes were running.')
+  return true
+}
 $('stopWangpBtn').addEventListener('click', async () => {
   $('stopWangpBtn').style.display = 'none'
   appendLog('[*] Stopping Wan2GP server...')
@@ -2991,20 +3009,30 @@ $('stopWangpBtn').addEventListener('click', async () => {
   _expectServerExitTimer = setTimeout(() => { _expectServerExit = false; _expectServerExitTimer = null }, 10000)
   try {
     const r = await window.w2gp.stopWangp()
-    const alive = (r && r.alive) || []
-    if (alive.length) {
-      // Backend killed what it could but processes survived — stay loud instead
-      // of showing a dead-stopped UI over a live server.
-      appendLog(`[!] ${alive.length} Wan2GP process(es) survived Stop (PID ${alive.join(', ')}). Kill them in Task Manager or restart the PC, then press Stop again.`)
-      showToast(`✗ Server still running (PID ${alive.join(', ')}) — see console`)
+    if (!noteStopResult(r)) {
       $('stopWangpBtn').style.display = ''
       $('stopWangpBtn').textContent = 'Force stop'
       return
     }
-    const killed = (r && r.killed) || []
-    if (killed.length) appendLog(`[*] Stopped (${killed.length} process(es)).`)
-    else appendLog('[*] Stop requested — no Wan2GP processes were running.')
   } catch (e) { appendLog('[!] Stop failed: ' + errText(e)) }
+  updateLed('stopped')
+  updateFtStatus('stopped')
+})
+
+// ── Stop ALL servers (always-visible dashboard button) ──
+// Wan2GP (+children, verified) and the OpenCode server in one click.
+// Never hidden — stopping an already-quiet machine is a harmless no-op.
+$('stopAllBtn').addEventListener('click', async () => {
+  appendLog('[*] Stopping all servers (Wan2GP + OpenCode)...')
+  _expectServerExit = true
+  if (_expectServerExitTimer) clearTimeout(_expectServerExitTimer)
+  _expectServerExitTimer = setTimeout(() => { _expectServerExit = false; _expectServerExitTimer = null }, 10000)
+  try {
+    const r = await window.w2gp.stopAllServers()
+    if (r && r.opencode_stopped) appendLog('[*] OpenCode server stopped.')
+    const clean = noteStopResult(r)
+    showToast(clean ? '✓ All servers stopped' : '✗ Wan2GP still running — see console')
+  } catch (e) { appendLog('[!] Stop-all failed: ' + errText(e)); showToast('✗ ' + errText(e)) }
   updateLed('stopped')
   updateFtStatus('stopped')
 })

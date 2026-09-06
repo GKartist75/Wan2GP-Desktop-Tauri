@@ -55,7 +55,7 @@
     }, detectModelFolders: () => call('detect_model_folders'),
     getModelPaths: () => call('get_model_paths'), repairSettings: () => call('repair_settings'),
     getStatus: () => call('get_status'), launch: (mode) => call('launch', { mode }), launchWebview: () => call('launch_webview'),
-    stopWangp: () => call('stop_wangp'), popoutWebview: async (url) => { const u = url || 'http://localhost:7861'; try { await call('open_external', { url: u }); } catch {} window.open(u, '_blank'); return {ok:true}; },
+    stopWangp: () => call('stop_wangp'), stopAllServers: () => call('stop_all_servers'), popoutWebview: async (url) => { const u = url || 'http://localhost:7861'; try { await call('open_external', { url: u }); } catch {} window.open(u, '_blank'); return {ok:true}; },
     // ponytail: BrowserView → embedded iframe in webviewContainer (Tauri) — simple, no separate window.
     // Boot progress lives on the dashboard console (console-first launch), so the
     // view opens straight onto the live server: direct src, no overlay, no HEAD
