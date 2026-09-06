@@ -1857,6 +1857,10 @@ async function refreshDashboard(){
     let available = await probe()
     if (available === false) available = await probe()
     if (available === null) return
+    // Log every negative so a startup flash leaves evidence in the console.
+    if (available === false) appendLog('[!] Chrome probe: not found (Launch in Chrome disabled)')
+    else if (window._chromeWasMissing) appendLog('[*] Chrome probe: found on re-probe (first probe flaked)')
+    window._chromeWasMissing = (available === false)
     const btn = $('browserNoGpuBtn')
     const hint = $('noGpuHint')
     if (btn) btn.disabled = !available
