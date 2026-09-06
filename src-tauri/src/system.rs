@@ -204,7 +204,6 @@ pub fn repair_settings() -> serde_json::Value {
 /// Shared cross-device move used by move_folder and reinstall (model
 /// relocation before wipe). Emits migration-progress 0-100 on the slow path.
 pub(crate) async fn move_path_inner(app: &tauri::AppHandle, s: &Path, d: &Path) -> Result<serde_json::Value, String> {
-    use tauri::Emitter;
     if !s.exists() { return Err("Source folder not found".into()); }
     // Fast path: same-volume rename (instant, no progress needed).
     if std::fs::rename(s, d).is_ok() && !s.exists() {
