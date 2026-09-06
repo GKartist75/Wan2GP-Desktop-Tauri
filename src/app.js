@@ -749,6 +749,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       appendLog(`[*] Environment ready: ${env} · torch ${torch}`)
     }).catch(() => {})
     startMetricsPolling()
+    startDownloadsWatch()
     // Periodic Wan2GP update re-check while the app is open (30 min) + Desktop (5h).
     // Launch-time check alone misses updates released mid-session; the
     // renderer-side timers re-poll and re-flag the green dot + changelog.
@@ -2890,6 +2891,38 @@ $('zoomSlider').addEventListener('input', () => {
     if (f) f.style.zoom = (pct / 100)
   }, 120)
 })
+
+// ── Silent-download feedback ──
+// WebView2 completes iframe downloads with zero UI (no shelf, toast or
+// dialog), so gallery saves look broken while files pile up in Downloads.
+// While the Desktop view is open, poll Downloads for fresh media and toast
+// each arrival with its filename. Baseline resets whenever the view is
+// hidden so old files never announce themselves.
+let _dlWatchTimer = null
+const _dlWatchSeen = new Set()
+let _dlWatchBaseline = 0
+const DL_MEDIA_RE = /\.(png|jpe?g|webp|gif|bmp|mp4|wav|mp3|ogg|flac)$/i
+function dlWatchViewOpen() {
+  const host = $('webviewContainer')
+  return !!(host && !host.classList.contains('hidden') && document.getElementById('tauri-browser-view'))
+}
+function startDownloadsWatch() {
+  if (_dlWatchTimer) return
+  _dlWatchSeen.clear(); _dlWatchBaseline = Date.now()
+  _dlWatchTimer = setInterval(async () => {
+    try {
+      if (!dlWatchViewOpen()) { _dlWatchSeen.clear(); _dlWatchBaseline = Date.now(); return }
+      const files = await window.w2gp.downloadsSince(_dlWatchBaseline)
+      for (const f of files || []) {
+        const key = (f.name || '') + '|' + (f.ms || 0)
+        if (!f.name || _dlWatchSeen.has(key)) continue
+        _dlWatchSeen.add(key)
+        if (!DL_MEDIA_RE.test(f.name)) continue
+        showToast('⬇ Saved to Downloads: ' + f.name)
+      }
+    } catch {}
+  }, 4000)
+}
 
 // ── Running LED ──
 function updateLed(state) {

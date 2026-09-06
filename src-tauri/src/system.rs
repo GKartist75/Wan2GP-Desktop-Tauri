@@ -287,6 +287,33 @@ pub(crate) async fn move_path_inner(app: &tauri::AppHandle, s: &Path, d: &Path) 
 #[tauri::command] pub async fn move_folder(app: tauri::AppHandle, src: String, dst: String) -> Result<serde_json::Value,String> {
     move_path_inner(&app, &PathBuf::from(&src), &PathBuf::from(&dst)).await
 }
+/// Media files in ~/Downloads newer than `since_ms` (epoch millis).
+/// WebView2 completes iframe downloads with zero UI, so gallery saves look
+/// broken while files pile up silently. The frontend polls this while the
+/// Desktop view is open and toasts fresh arrivals. Best-effort: a relocated
+/// Downloads folder outside the profile won't be seen.
+#[tauri::command] pub fn downloads_since(since_ms: i64) -> serde_json::Value {
+    const MEDIA: &[&str] = &["png", "jpg", "jpeg", "webp", "gif", "bmp", "mp4", "wav", "mp3", "ogg", "flac"];
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(home_dir().join("Downloads")) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if !p.is_file() { continue; }
+            let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("").to_lowercase();
+            if !MEDIA.contains(&ext.as_str()) { continue; }
+            let ms = e.metadata().ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            if ms > since_ms {
+                out.push(serde_json::json!({"name": e.file_name().to_string_lossy().to_string(), "ms": ms}));
+            }
+        }
+    }
+    out.sort_by_key(|v| v.get("ms").and_then(|x| x.as_i64()).unwrap_or(0));
+    serde_json::json!({"ok": true, "files": out})
+}
 /// Folder size with top-level breakdown — backs the reinstall backup dialog
 /// ("Wan2GP can be big when models live inside the repo").
 #[tauri::command] pub async fn folder_size(path: String) -> Result<serde_json::Value,String> {
