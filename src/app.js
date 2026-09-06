@@ -1795,7 +1795,7 @@ async function refreshDashboard(){
     setSpec('specGradio','dotGradio', status.versions?.gradio)
     setSpec('specAccelerate','dotAccelerate', status.versions?.accelerate)
     setSpec('specOnnx','dotOnnx', status.versions?.onnxruntime)
-    setSpec('specOpencv','dotOpencv', status.versions?.opencv)
+    setSpec('specOpencv','dotOpencv', status.versions?.['opencv-python'])
     setSpec('specPeft','dotPeft', status.versions?.peft)
     setSpec('specHfhub','dotHfhub', status.versions?.huggingface_hub)
     setSpec('specBits','dotBits', status.versions?.bitsandbytes, 'bitsandbytes')
@@ -2094,7 +2094,7 @@ function refreshEnvUnlink(hasRepo) {
     }
   }
 
-const _labelToKey = {'Python':'python','Torch':'torch','CUDA':'cuda','Triton':'triton','Sage Attn':'sageattention','Flash Attn':'flash_attn','Diffusers':'diffusers','Transformers':'transformers','Gradio':'gradio','Accelerate':'accelerate','onnxruntime':'onnxruntime','OpenCV':'opencv','PEFT':'peft','hf_hub':'huggingface_hub','bitsandbytes':'bitsandbytes','NumPy':'numpy','Tokenizers':'tokenizers'}
+const _labelToKey = {'Python':'python','Torch':'torch','CUDA':'cuda','Triton':'triton','Sage Attn':'sageattention','Flash Attn':'flash_attn','Diffusers':'diffusers','Transformers':'transformers','Gradio':'gradio','Accelerate':'accelerate','onnxruntime':'onnxruntime','OpenCV':'opencv-python','PEFT':'peft','hf_hub':'huggingface_hub','bitsandbytes':'bitsandbytes','NumPy':'numpy','Tokenizers':'tokenizers'}
 
 $('checkPkgUpdatesBtn').addEventListener('click', async function() {
   this.textContent = 'Checking...'

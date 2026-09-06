@@ -111,6 +111,7 @@ const KERNEL_DISPLAY = {
   gguf:                { label: 'GGUF (llamacpp)', pipName: 'llamacpp_gguf_cuda' },
   llamacpp_gguf_cuda:  { label: 'GGUF (llamacpp)', pipName: 'llamacpp_gguf_cuda' },
   light2xv:            { label: 'LightX2V',        pipName: 'lightx2v_kernel' },
+  lightx2v:             { label: 'LightX2V',        pipName: 'lightx2v_kernel' },
   lightx2v_kernel:     { label: 'LightX2V',        pipName: 'lightx2v_kernel' },
   sageattention:       { label: 'SageAttention',   pipName: 'sageattention' },
   spas_sage_attn:      { label: 'Sparge (Sage)',   pipName: 'spas_sage_attn' },

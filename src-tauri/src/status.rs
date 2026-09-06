@@ -83,7 +83,7 @@ pub fn get_status() -> serde_json::Value {
             let helper = get_data_dir().join(".get_versions.py");
             let code = r"import sys, importlib.metadata
 try:
-    aliases={'triton':'triton-windows','opencv-python':'opencv','spas_sage_attn':'spas-sage-attn','huggingface_hub':'huggingface-hub'}
+    aliases={'triton':'triton-windows','spas_sage_attn':'spas-sage-attn','huggingface_hub':'huggingface-hub'}
     pkgs=['python','torch','triton','sageattention','spas_sage_attn','flash_attn','nunchaku','llamacpp_gguf_cuda','lightx2v_kernel','diffusers','transformers','gradio','accelerate','onnxruntime','xformers','mmgp','moviepy','opencv-python','insightface','peft','timm','vector_quantize_pytorch','torchcodec','torchaudio','huggingface_hub','bitsandbytes','numpy','sentencepiece','open_clip_torch','imageio','einops','librosa','soundfile','tokenizers','av','claude-agent-sdk']
     r=[]
     for p in pkgs:

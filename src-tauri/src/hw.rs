@@ -187,13 +187,13 @@ pub fn get_hardware_profile() -> serde_json::Value {
     let key = kernel_profile_key(vendor, name);
     let (profile_str, prof) = match key.as_str() {
         "GTX_10" => ("GTX_10", Prof { python: "3.10.9", torch: "2.7.1 CU12.8", triton: None, sage: None, sparge: None, flash: None, kernels: &[] }),
-        "RTX_20" => ("RTX_20", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("1.0.6"), sparge: None, flash: Some("2.8.3"), kernels: &["nunchaku", "gguf"] }),
-        "RTX_30" => ("RTX_30", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku", "gguf"] }),
-        "RTX_40" => ("RTX_40", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku", "gguf"] }),
-        "RTX_50" => ("RTX_50", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku", "lightx2v", "gguf"] }),
+        "RTX_20" => ("RTX_20", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("1.0.6"), sparge: None, flash: Some("2.8.3"), kernels: &["nunchaku_cu13", "gguf"] }),
+        "RTX_30" => ("RTX_30", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku_cu13", "gguf"] }),
+        "RTX_40" => ("RTX_40", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku_cu13", "gguf"] }),
+        "RTX_50" => ("RTX_50", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku_cu13", "light2xv", "gguf"] }),
         "MPS" => ("MPS", Prof { python: "3.11.14", torch: "MPS", triton: None, sage: None, sparge: None, flash: None, kernels: &[] }),
         k if k.starts_with("AMD") => ("AMD", Prof { python: "3.11.14", torch: "ROCm 6.5", triton: None, sage: None, sparge: None, flash: None, kernels: &[] }),
-        _ => (key.as_str(), Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku", "gguf"] }),
+        _ => (key.as_str(), Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku_cu13", "gguf"] }),
     };
     // Package chips with versions (Electron order + emoji).
     let mut packages: Vec<String> = Vec::new();
