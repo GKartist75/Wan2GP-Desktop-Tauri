@@ -89,6 +89,7 @@ Through the launcher you get the **full WanGP** — same models, same UI, same p
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
+- **v0.4.1** — prerequisites that finish the job (one-click git/uv/Python/Miniconda, registry PATH refresh with auto-continue, `py -3.11` shim for venv) + Python fallback that counts (usable manual installs accepted, exact-verify, diagnostics).
 - **v0.4.0 — hardened installer.** No more silent failures: target-folder triage (fresh / repair / reuse / migrate), exact-Python preflight, honest exit codes with Retry + diagnostics, post-install torch+CUDA smoke test, reinstall backup dialog with model relocation, Pinokio detection with one-click model reuse, launch guards, and truthful phase tracking.
 - **v0.3.1** — DLSS5 panel shows all 8 files with versions + per-file SHAs (installed / not installed).
 - **v0.3.0** — DLSS5 status counts all 8 runtime files (+ `host/nvngx.dll`), README tracks workers v1.1.3; update check runs once shortly after boot.
