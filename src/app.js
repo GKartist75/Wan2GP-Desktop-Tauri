@@ -2978,9 +2978,17 @@ function resetBrowserLaunchUI() {
 }
 
 // ── Stop Wan2GP button ──
+// _expectServerExit marks the exit event our own Stop is about to cause: a
+// taskkill victim exits with code 1, which must read as "stopped by user",
+// not as a crash (and must never trigger KeyError-crash recovery).
+let _expectServerExit = false
+let _expectServerExitTimer = null
 $('stopWangpBtn').addEventListener('click', async () => {
   $('stopWangpBtn').style.display = 'none'
   appendLog('[*] Stopping Wan2GP server...')
+  _expectServerExit = true
+  if (_expectServerExitTimer) clearTimeout(_expectServerExitTimer)
+  _expectServerExitTimer = setTimeout(() => { _expectServerExit = false; _expectServerExitTimer = null }, 10000)
   try {
     const r = await window.w2gp.stopWangp()
     const alive = (r && r.alive) || []
@@ -3006,7 +3014,11 @@ window.w2gp.onWangpExit(c => {
   // Payload shapes: {code: n|null} on process end, {stopped:true} on manual stop.
   // (Was interpolating the whole object → "exited (code [object Object])".)
   const code = (c && typeof c === 'object') ? (c.code ?? (c.stopped ? 0 : '?')) : c
-  appendLog(`${code === 0 ? '[*]' : '[!]'} Wan2GP process exited (code ${code})`)
+  const manualStop = _expectServerExit
+  _expectServerExit = false
+  if (_expectServerExitTimer) { clearTimeout(_expectServerExitTimer); _expectServerExitTimer = null }
+  if (manualStop && code !== 0) appendLog('[*] Wan2GP server stopped.')
+  else appendLog(`${code === 0 ? '[*]' : '[!]'} Wan2GP process exited (code ${code})`)
   const exitMode = serverMode // capture before teardown below nulls it
   _pendingOpen = null   // boot failed/went away — don't open anything later
   // Server is really gone: drop the (now stale) embed entirely so the next
@@ -3023,11 +3035,11 @@ window.w2gp.onWangpExit(c => {
   $('stopWangpBtn').style.display = 'none'
   updateLed('stopped')
   updateFtStatus('stopped')
-  // Config-skew recovery: wgp.py died with KeyError on a settings key —
-  // wgp_config.json exists but misses keys the installed wgp.py requires
+  // Config-skew recovery: wgp.py died with KeyError on a settings key
   // (partial write after a failed install, or an ancient config after an
-  // update). Offer backup + reset + relaunch instead of a dead dashboard.
-  if (code !== 0 && code !== '?' && !window._configCrashOffered) {
+  // update). Crashes only — never for a manual Stop, which also exits
+  // non-zero when taskkill does the killing.
+  if (!manualStop && code !== 0 && code !== '?' && !window._configCrashOffered) {
     try {
       const tail = (typeof window._getLogTail === 'function') ? window._getLogTail() : ''
       const m = tail.match(/KeyError:\s*'([^']+)'/)
