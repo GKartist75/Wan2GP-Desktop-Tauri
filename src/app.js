@@ -1845,9 +1845,17 @@ async function refreshDashboard(){
   refreshDeepy().catch(() => {})
   // Refresh the DLSS5 optional-runtime status.
   refreshDlss5().catch(() => {})
-  // Enable/disable no-GPU button based on Chrome availability
+  // Enable/disable no-GPU button based on Chrome availability. A single
+  // negative is never trusted for failure UI: a cold first spawn (AV hooks,
+  // process-creation stalls) can fail once and would flash "not installed"
+  // for a second. Re-probe immediately — probes are synchronous file checks
+  // plus `where`, so this costs milliseconds. Only a repeated negative
+  // disables the button and shows the hint. IPC errors leave UI untouched.
   ;(async () => {
-    const available = await window.w2gp.chromeAvailable()
+    const probe = async () => { try { return await window.w2gp.chromeAvailable() } catch { return null } }
+    let available = await probe()
+    if (available === false) available = await probe()
+    if (available === null) return
     const btn = $('browserNoGpuBtn')
     const hint = $('noGpuHint')
     if (btn) btn.disabled = !available
