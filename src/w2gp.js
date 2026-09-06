@@ -9,6 +9,25 @@
   function listen(event, cb){
     try { return window.__TAURI__.event.listen(event, e => cb(e.payload)); } catch(e){ return Promise.resolve(()=>{}); }
   }
+  // Pin exact pixel heights down the embed chain (container → wrapper →
+  // iframe), measured from the container's live viewport position so update
+  // banners and topbar height are accounted for. Re-queries the DOM on every
+  // call (never closes over removed nodes) and no-ops while hidden.
+  window.__fitBrowserView = function() {
+    try {
+      const host = document.getElementById('webviewContainer');
+      const c = document.getElementById('tauri-browser-view');
+      if (!host || !c || host.classList.contains('hidden')) return;
+      const r = host.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const h = Math.max(300, Math.floor(window.innerHeight - r.top - 8));
+      host.style.height = h + 'px';
+      c.style.height = h + 'px';
+      const f = c.querySelector('iframe');
+      if (f) f.style.height = h + 'px';
+    } catch {}
+  };
+  if (!window.__bvFitWired) { window.addEventListener('resize', () => { try { window.__fitBrowserView(); } catch {} }); window.__bvFitWired = true; }
   const w2gp = {
     platform: navigator.platform.includes('Win') ? 'win32' : navigator.platform.includes('Mac') ? 'darwin' : 'linux',
     checkInstalled: () => call('check_installed'), detectGpu: () => call('detect_gpu'), detectGpus: () => call('detect_gpus'),
@@ -54,6 +73,12 @@
         c.style.cssText = 'flex:1;display:flex;flex-direction:column;background:#111;min-height:0;width:100%;height:100%;overflow:hidden;';
         c.innerHTML = `<iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; clipboard-read; clipboard-write"></iframe>`;
         host.appendChild(c);
+        // Pixel-exact fit (banner-aware): percentage heights can collapse to the
+        // 150px iframe default on some Chromium/GPU stacks (same class as the
+        // #39/#45 blank-screen issue) — measure the live position and pin real
+        // pixel heights down the whole chain so "half screen" is impossible.
+        try { window.__fitBrowserView(); } catch {}
+        setTimeout(() => { try { window.__fitBrowserView(); } catch {} }, 800);
         // hide dashBody, show webviewContainer — app.js also does this, but enforce
         try { const db=document.getElementById('dashBody'); if(db) db.style.display='none'; } catch {}
         // ensure dashBody stays hidden while iframe shows (app.js does this, but enforce)

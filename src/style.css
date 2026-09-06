@@ -98,6 +98,19 @@ body {
 .screen { display: none; position: absolute; inset: 0; flex-direction: column; overflow: auto; }
 .screen.active { display: flex; }
 
+/* ── Embedded Gradio view ──
+   Same collapse class as .screen above: the iframe chain (host → wrapper →
+   iframe) must never depend on percentage heights alone — an unresolvable
+   100% drops the iframe to its 150px default and the rest of the window
+   stays black ("half screen"). These base rules keep every level flex-filled;
+   fitBrowserView() in w2gp.js then pins exact pixel heights measured from the
+   container's live position (banner-aware). NOTE: the ID selector outranks
+   .hidden, so the hidden state is re-declared explicitly below. */
+#webviewContainer { display: flex; flex: 1 1 auto; min-height: 0; min-width: 0; position: relative; }
+#webviewContainer.hidden { display: none; }
+#tauri-browser-view { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; min-width: 0; width: 100%; height: 100%; overflow: hidden; background: #111; }
+#tauri-browser-view iframe { flex: 1 1 auto; width: 100%; height: 100%; min-height: 0; border: 0; background: #111; display: block; }
+
 /* ── Splash ── */
 #splash { align-items: center; justify-content: center; background: var(--surface); gap: 6px; }
 #splash .brand-mark {
