@@ -80,8 +80,8 @@ pub(crate) fn pinned_python_wanted() -> String {
 }
 
 /// Run a uv subcommand, stream its output to the console, return (exit_ok, output).
-async fn uv_capture(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + Sync, args: &[&str]) -> (bool, String) {
-    let (mut rx, _child) = match app.shell().command("uv").args(args).spawn() {
+async fn run_capture(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + Sync, prog: &str, args: &[&str]) -> (bool, String) {
+    let (mut rx, _child) = match app.shell().command(prog).args(args).spawn() {
         Ok(t) => t,
         Err(e) => return (false, e.to_string()),
     };
@@ -115,7 +115,7 @@ async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + S
     // Best-effort self-update first: an old uv doesn't know new patches exist
     // (3.11.14) and fails with the same "No interpreter found" error.
     // Harmless when offline or already current — failures are ignored.
-    let _ = uv_capture(app, &emit, &["self", "update"]).await;
+    let _ = run_capture(app, &emit, "uv", &["self", "update"]).await;
     // Resolve + verify the EXACT pin actually executes (a neighbouring patch
     // or a corrupted copy won't satisfy setup.py — report it, don't use it).
     let verify_exact = |p: &str| -> Option<String> {
@@ -136,7 +136,7 @@ async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + S
         emit(&format!("[!] Found Python at {p} but it won't run — forcing a clean reinstall…\n"));
     }
     // 2) Provision via uv.
-    let (dl_ok, _) = uv_capture(app, &emit, &["python", "install", wanted]).await;
+    let (dl_ok, _) = run_capture(app, &emit, "uv", &["python", "install", wanted]).await;
     if dl_ok {
         if let Some(p) = find() {
             if let Some(v) = verify_exact(&p) {
@@ -156,15 +156,51 @@ async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + S
             }
         }
     }
-    // 4) Force reinstall of a corrupted managed copy, then give up with
+    // 3b) Provisioning failed and nothing usable exists — uv itself may be
+    // corrupt (not just outdated: self-update can't fix a broken install).
+    // This is the exact case users fixed by reinstalling uv manually, so do
+    // it for them: official installer, refresh PATH, retry the download once.
+    if !dl_ok {
+        emit("[*] uv itself may be broken — reinstalling uv from the official installer…\n");
+        #[cfg(windows)]
+        let reinstalled = run_capture(app, &emit, "powershell", &["-NoProfile", "-Command", "& { iwr -useb https://astral.sh/uv/install.ps1 | iex }"]).await.0;
+        #[cfg(not(windows))]
+        let reinstalled = run_capture(app, &emit, "sh", &["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"]).await.0;
+        if reinstalled {
+            #[cfg(windows)]
+            refresh_path_from_registry();
+            #[cfg(not(windows))]
+            if let Ok(h) = std::env::var("HOME") {
+                let mut cur = std::env::var("PATH").unwrap_or_default();
+                for d in [format!("{h}/.local/bin"), format!("{h}/.cargo/bin")] {
+                    if !cur.split(':').any(|pp| pp == d) { cur = format!("{d}:{cur}"); }
+                }
+                std::env::set_var("PATH", cur);
+            }
+            emit(&format!("[*] uv reinstalled — retrying Python {wanted}…\n"));
+            let (retry_ok, _) = run_capture(app, &emit, "uv", &["python", "install", wanted]).await;
+            if retry_ok {
+                if let Some(p) = find() {
+                    if let Some(v) = verify_exact(&p) {
+                        emit(&format!("[*] Python {wanted} ready after uv reinstall: {p} ({v})\n"));
+                        return Ok(p);
+                    }
+                }
+            }
+            emit("[!] Still failing after uv reinstall — see diagnostics below.\n");
+        } else {
+            emit("[!] Automatic uv reinstall failed — see manual command in the diagnostics below.\n");
+        }
+    }
+    // 4) Force reinstall of a corrupted managed Python copy, then give up with
     // diagnostics (list what IS installed so the fix is obvious).
     if dl_ok {
         emit(&format!("[!] Managed Python {wanted} is broken (found but won't run). Forcing a clean reinstall…\n"));
-        let (re_ok, _) = uv_capture(app, &emit, &["python", "install", "--reinstall", wanted]).await;
+        let (re_ok, _) = run_capture(app, &emit, "uv", &["python", "install", "--reinstall", wanted]).await;
         if !re_ok {
             // Older uv without --reinstall: uninstall + install.
-            let _ = uv_capture(app, &emit, &["python", "uninstall", wanted]).await;
-            let (ok2, _) = uv_capture(app, &emit, &["python", "install", wanted]).await;
+            let _ = run_capture(app, &emit, "uv", &["python", "uninstall", wanted]).await;
+            let (ok2, _) = run_capture(app, &emit, "uv", &["python", "install", wanted]).await;
             if !ok2 { return Err(diagnose_python_fail(wanted)); }
         }
         if let Some(p) = find() {
@@ -223,9 +259,9 @@ fn diagnose_python_fail(wanted: &str) -> String {
         What we found:\n{found_txt}\n\
         setup.py needs EXACTLY {wanted} (a neighbouring patch like 3.11.9 does not count).\n\
         Fix options:\n\
-        1. Let uv fetch it: `uv self update`, then `uv python install {wanted}` — needs network to python-build-standalone (check proxy/VPN/antivirus; uv downloads live under %APPDATA%\\uv).\n\
+        1. Repair uv itself — a corrupt uv can't be updated, only reinstalled (the installer already tried automatically; do it manually):\n           powershell -ExecutionPolicy ByPass -c 'irm https://astral.sh/uv/install.ps1 | iex'\n           (macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh)\n           then 'uv self update' + 'uv python install {wanted}' — needs network to python-build-standalone (check proxy/VPN/antivirus; uv downloads live under %APPDATA%\\uv).\n\
         2. Install exactly Python {wanted} from https://www.python.org/downloads/ — tick \u{201c}Add python.exe to PATH\u{201d} during setup, then retry.\n\
-        3. Already installed 3.11 manually? It must be exactly {wanted} (see versions above), reachable via PATH or `py -3.11`, and NOT the Microsoft Store stub (Settings → Apps → Advanced app settings → App execution aliases → turn Python off), then retry.")
+        3. Already installed 3.11 manually? It must be exactly {wanted} (see versions above), reachable via PATH or 'py -3.11', and NOT the Microsoft Store stub (Settings → Apps → Advanced app settings → App execution aliases → turn Python off), then retry.")
 }
 
 /// Check-only preflight for the installer checklist UI (no downloads).
