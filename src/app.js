@@ -3435,10 +3435,10 @@ async function refreshDlss5() {
 }
 $('dlss5InstallBtn')?.addEventListener('click', () => {
   $('dlss5AcceptInput').value = ''; $('dlss5ConfirmBtn').disabled = true
-  $('dlss5Modal').classList.add('open'); $('dlss5AcceptInput').focus()
+  $('dlss5Modal').classList.remove('hidden'); $('dlss5AcceptInput').focus()
 })
 $('dlss5AcceptInput')?.addEventListener('input', e => { $('dlss5ConfirmBtn').disabled = (e.target.value !== 'I ACCEPT') })
-$('dlss5CancelBtn')?.addEventListener('click', () => { $('dlss5Modal').classList.remove('open') })
+$('dlss5CancelBtn')?.addEventListener('click', () => { $('dlss5Modal').classList.add('hidden') })
 // ── DLSS5 file overview: one always-visible row per installed file (path +
 // version + expected SHA from the backend manifest) with installed /
 // not-installed state. Live install events only override the phase mid-install;
@@ -3525,7 +3525,7 @@ function dlss5OnEvent(d) {
 }
 $('dlss5ConfirmBtn')?.addEventListener('click', async () => {
   _dlss5LastPkg = null; _dlss5State = {}; _dlss5Done = false; renderDlss5Progress()
-  $('dlss5Modal').classList.remove('open')
+  $('dlss5Modal').classList.add('hidden')
   const force = !!$('dlss5ForceChk')?.checked
   const btn = $('dlss5InstallBtn'); btn.disabled = true
   const orig = btn.textContent; btn.textContent = 'Installing…'

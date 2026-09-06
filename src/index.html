@@ -674,10 +674,9 @@
         </div>
 
         <!-- Strict-consent modal: type I ACCEPT to run the third-party installer.
-             Class-based overlay (see .modal-overlay in style.css) — never inline
-             display/position styles, so a dropped style="" can't silently turn
-             the popup into an in-flow block. -->
-        <div id="dlss5Modal" class="modal-overlay">
+             Same convention as migrationModal/backupModal below: hidden via the
+             `hidden` class, shown by removing it. -->
+        <div id="dlss5Modal" class="modal-overlay hidden">
           <div class="modal-box">
             <h3 style="margin:0 0 8px">Install DLSS 5 runtime?</h3>
             <p class="path-hint">This downloads native third-party binaries (NVIDIA DLSS, ReShade, RenoDX, DLSSNR 310.8.SF-v2 — community-hosted, unsigned, proprietary) with GPU and filesystem access. Wan2GP does not grant redistribution rights or guarantee these files. Continue only if you accept the copyright, licensing, and security risks. Details: <a id="dlss5DocsLink2" href="#" style="color:var(--accent)">docs/DLSS5.md</a></p>
