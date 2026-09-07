@@ -20,7 +20,12 @@ pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
         // Prefer 64-bit registry VRAM (AdapterRAM caps ~4GB / often 0).
         match wmi_dedicated_vram_mb(&name) {
             Some(mb) => return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":"","raw":format!("WMI+REG: {name}")}),
-            None => return serde_json::json!({"vendor":vendor,"name":name,"vramMB":"0 MiB","driverVersion":"","raw":format!("WMI: {name} (VRAM unknown)")}),
+            // Known-card table before giving up (R9700 PRO driver layout
+            // reports no parseable registry size).
+            None => match known_vram_mb(&name) {
+                Some(mb) => return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":"","raw":format!("WMI+TABLE: {name}")}),
+                None => return serde_json::json!({"vendor":vendor,"name":name,"vramMB":"0 MiB","driverVersion":"","raw":format!("WMI: {name} (VRAM unknown)")}),
+            },
         }
     }
     serde_json::json!({"vendor":"unknown","name":"","vramMB":"0","driverVersion":"","raw":"nvidia-smi not found"})
@@ -89,6 +94,43 @@ fn distinctive_tokens(name: &str) -> Vec<String> {
         .filter(|t| t.len() >= 4 && t.bytes().any(|b| b.is_ascii_digit()))
         .map(str::to_string)
         .collect()
+}
+
+/// Dedicated-VRAM fallback (MB) for known cards by name token.
+/// The registry probe (wmi_dedicated_vram_mb) misses some driver layouts
+/// (the R9700 reporter's PRO driver returned nothing) — for known cards
+/// the size is fixed, so a name match beats "VRAM unknown" (which tiers a
+/// 32GB card as 8GB downstream in setup.py's pid selection). Consulted
+/// ONLY when WMI AdapterRAM and the registry both yield nothing, and only
+/// on the non-NVIDIA path. Laptop S-suffixed SKUs may differ by a few GB —
+/// tier-safe (thresholds are 11/22GB). Pure + unit-tested.
+pub(crate) fn known_vram_mb(name: &str) -> Option<u64> {
+    let g = name.to_uppercase();
+    const GB: u64 = 1024;
+    // Radeon PRO first: W7900/W7800/W6800 contain consumer tokens
+    // ("7900"/"7800"/"6800") with DIFFERENT sizes.
+    if g.contains("W7900") { return Some(48 * GB); }
+    if g.contains("W7800") || g.contains("W6800") { return Some(32 * GB); }
+    if g.contains("W7700") { return Some(16 * GB); }
+    if g.contains("W6600") || g.contains("W6400") { return Some(8 * GB); }
+    if g.contains("R9700") { return Some(32 * GB); }
+    // RDNA 4 consumer (9070 GRE is the 12GB exception).
+    if g.contains("9070") { return Some(if g.contains("GRE") { 12 * GB } else { 16 * GB }); }
+    // RDNA 3 dGPU.
+    if g.contains("7900") {
+        if g.contains("XTX") { return Some(24 * GB); }
+        if g.contains("GRE") { return Some(16 * GB); }
+        return Some(20 * GB); // 7900 XT
+    }
+    if g.contains("7800") { return Some(16 * GB); }
+    if g.contains("7700") { return Some(12 * GB); }
+    if g.contains("7600") { return Some(if g.contains("XT") { 16 * GB } else { 8 * GB }); }
+    // RDNA 2 dGPU.
+    if g.contains("6950") || g.contains("6900") || g.contains("6800") { return Some(16 * GB); }
+    if g.contains("6750") || g.contains("6700") { return Some(12 * GB); }
+    if g.contains("6650") || g.contains("6600") { return Some(8 * GB); }
+    if g.contains("6500") || g.contains("6400") { return Some(4 * GB); }
+    None
 }
 
 /// 64-bit dedicated VRAM (MB) from the display-driver registry key.
@@ -214,6 +256,34 @@ mod amd_profile_tests {
     }
 }
 #[cfg(test)]
+mod known_vram_tests {
+    use super::known_vram_mb;
+    #[test]
+    fn known_cards_resolve() {
+        // The 0.5.1 reporter card: registry probe missed, table must hit.
+        assert_eq!(known_vram_mb("AMD Radeon AI PRO R9700"), Some(32768));
+        assert_eq!(known_vram_mb("AMD Radeon RX 9070 XT"), Some(16384));
+        assert_eq!(known_vram_mb("AMD Radeon RX 9070 GRE"), Some(12288));
+        assert_eq!(known_vram_mb("AMD Radeon RX 7900 XTX"), Some(24576));
+        assert_eq!(known_vram_mb("AMD Radeon RX 7900 XT"), Some(20480));
+        assert_eq!(known_vram_mb("AMD Radeon RX 7800 XT"), Some(16384));
+        assert_eq!(known_vram_mb("AMD Radeon RX 7700 XT"), Some(12288));
+        assert_eq!(known_vram_mb("AMD Radeon RX 7600"), Some(8192));
+        assert_eq!(known_vram_mb("AMD Radeon RX 7600 XT"), Some(16384));
+        assert_eq!(known_vram_mb("AMD Radeon RX 6800 XT"), Some(16384));
+        assert_eq!(known_vram_mb("AMD Radeon RX 6700 XT"), Some(12288));
+        assert_eq!(known_vram_mb("AMD Radeon RX 6600"), Some(8192));
+        assert_eq!(known_vram_mb("AMD Radeon PRO W7900"), Some(49152));
+        assert_eq!(known_vram_mb("AMD Radeon PRO W7800"), Some(32768));
+    }
+    #[test]
+    fn unknown_names_stay_unknown() {
+        assert_eq!(known_vram_mb("AMD Radeon Graphics"), None); // generic iGPU
+        assert_eq!(known_vram_mb("Intel Arc A770"), None);
+        assert_eq!(known_vram_mb(""), None);
+    }
+}
+#[cfg(test)]
 mod gguf_override_tests {
     use super::apply_gguf_override;
     #[test]
@@ -268,9 +338,13 @@ pub fn detect_gpus() -> serde_json::Value {
             return serde_json::json!([{"index": 0, "name": name, "vramMB": mb as f64, "vendor": vendor}]);
         }
         // AdapterRAM caps at ~4GB (0/0xFFFFFFFF on big cards) — never truth.
+        // Known-card table before giving up (same fallback as detect path).
         match adapter_ram_known_mb(raw) {
             Some(mb) => return serde_json::json!([{"index": 0, "name": name, "vramMB": mb, "vendor": vendor}]),
-            None => return serde_json::json!([{"index": 0, "name": format!("{name} (VRAM unknown)"), "vramMB": 0.0, "vendor": vendor}]),
+            None => match known_vram_mb(&name) {
+                Some(mb) => return serde_json::json!([{"index": 0, "name": name, "vramMB": mb as f64, "vendor": vendor}]),
+                None => return serde_json::json!([{"index": 0, "name": format!("{name} (VRAM unknown)"), "vramMB": 0.0, "vendor": vendor}]),
+            },
         }
     }
     // fallback single unknown
@@ -602,12 +676,15 @@ mod amd_sim_tests {
         assert!(!primary.contains('['), "bracket-free for setup.py splice: {primary}");
         assert!(staging.contains("/v2-staging/gfx120X-all/"), "got {staging}");
 
-        // registry-absent hardware: honest unknown labels, still AMD.
+        // registry-absent hardware (the 0.5.1 reporter box: PRO driver
+        // exposes no parseable QWORD): the known-card table still resolves
+        // 32768 — honest unknown only for truly unknown names.
         std::env::set_var("WGP_SIM_NO_REG", "1");
         let gpus2 = detect_gpus();
         let g2 = &gpus2.as_array().unwrap()[0];
         assert_eq!(g2.get("vendor").and_then(|v| v.as_str()), Some("AMD"));
-        assert!(g2.get("name").and_then(|v| v.as_str()).unwrap().contains("(VRAM unknown)"));
+        assert_eq!(g2.get("name").and_then(|v| v.as_str()), Some("AMD Radeon AI PRO R9700"));
+        assert_eq!(g2.get("vramMB").and_then(|v| v.as_f64()), Some(32768.0));
 
         std::env::remove_var("WGP_SIM_NO_REG");
         std::env::remove_var("WGP_PROBE_NVIDIA_SMI");

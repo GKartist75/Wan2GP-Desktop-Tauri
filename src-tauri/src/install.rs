@@ -561,6 +561,89 @@ fn patch_therock_torch_cmd(repo: &std::path::Path, torch_cmd: &str) -> Result<()
     Ok(())
 }
 
+/// setup.py profiles the launcher may force via WAN2GP_TAURI_GPU_PROFILE.
+/// Allowlist = keys that exist in upstream setup_config.json gpu_profiles
+/// (verified 2026-09-08): anything else (AMD_GFX103X, INTEL_XPU, CPU) leaves
+/// setup.py's own detection alone — forcing an unknown key would KeyError.
+/// Our keys already match upstream's for these families (and ours are more
+/// correct: upstream matches bare "50" anywhere, so a GTX 1050 reads as
+/// RTX_50 there). Pure + unit-tested.
+pub(crate) fn setup_py_forced_profile(plan_profile: &str) -> Option<&'static str> {
+    match plan_profile {
+        "RTX_50" | "RTX_40" | "RTX_30" | "RTX_20" | "GTX_10"
+        | "AMD_GFX110X" | "AMD_GFX1151" | "AMD_GFX1201" | "MPS" => Some(match plan_profile {
+            "RTX_50" => "RTX_50", "RTX_40" => "RTX_40", "RTX_30" => "RTX_30",
+            "RTX_20" => "RTX_20", "GTX_10" => "GTX_10",
+            "AMD_GFX110X" => "AMD_GFX110X", "AMD_GFX1151" => "AMD_GFX1151",
+            "AMD_GFX1201" => "AMD_GFX1201", _ => "MPS",
+        }),
+        _ => None,
+    }
+}
+
+/// Clear the WAN2GP_TAURI_* setup.py overrides (process-scoped like the
+/// py-shim PATH prepend — set before the setup.py child spawns, cleared
+/// after setup so later launches never inherit a stale verdict).
+fn clear_setup_py_override_env() {
+    std::env::remove_var("WAN2GP_TAURI_GPU_PROFILE");
+    std::env::remove_var("WAN2GP_TAURI_VRAM_GB");
+}
+
+const SETUP_PY_OVERRIDE_MARKER: &str = "# Launcher override (Tauri installer)";
+
+/// Patch the CLONED setup.py so its `--auto` run uses the launcher's
+/// hardware verdict instead of its own:
+/// (a) profile override — setup.py detects via wmic.exe, which is REMOVED
+/// on current Windows 11 (→ Unknown → RTX_40 → full CUDA stack on AMD
+/// boxes; the 0.5.1 R9700 report), and its AMD name table misses RDNA 4
+/// PRO cards (R9700/9070 match no token → AMD_GFX110X default). The patch
+/// honors WAN2GP_TAURI_GPU_PROFILE when it names a real setup_config.json
+/// profile key, and says so in the log.
+/// (b) VRAM override — setup.py reads VRAM via nvidia-smi ONLY (→ 8GB
+/// default → wrong quality profile id on 32GB AMD cards). The patch honors
+/// WAN2GP_TAURI_VRAM_GB (GB, from our WMI/registry/known-card detection).
+/// Idempotent (marker check — re-applied every install since a repo update
+/// restores upstream's file). Returns Err naming the missed anchor when
+/// upstream's source drifts — caller logs and runs setup.py unpatched.
+fn patch_setup_py_overrides(repo: &std::path::Path) -> Result<(), String> {
+    let path = repo.join("setup.py");
+    let raw = std::fs::read_to_string(&path).map_err(|e| format!("setup.py unreadable: {e}"))?;
+    if raw.contains(SETUP_PY_OVERRIDE_MARKER) { return Ok(()); }
+    // git on Windows often checks out CRLF — match on normalized LF, then
+    // restore the original endings so the diff stays minimal.
+    let had_crlf = raw.contains("\r\n");
+    let hay: String = if had_crlf { raw.replace("\r\n", "\n") } else { raw.clone() };
+    const PROFILE_ANCHOR: &str = "    gpu_name, vendor = get_gpu_info()\n    profile_key = get_profile_key(gpu_name, vendor)\n    profile = cfg['gpu_profiles'][profile_key]";
+    const PROFILE_PATCH: &str = "    gpu_name, vendor = get_gpu_info()\n    profile_key = get_profile_key(gpu_name, vendor)\n    # Launcher override (Tauri installer): setup.py's own detection uses\n    # wmic.exe (removed on current Windows 11) and its AMD name table\n    # misses RDNA 4 PRO cards — the launcher passes its setup_config.json\n    # profile key via WAN2GP_TAURI_GPU_PROFILE.\n    _forced = os.environ.get(\"WAN2GP_TAURI_GPU_PROFILE\", \"\").strip()\n    if _forced:\n        if _forced in cfg.get('gpu_profiles', {}):\n            print(f\"[*] Launcher-forced GPU profile: {_forced} (setup.py auto-detect said {profile_key})\")\n            profile_key = _forced\n        else:\n            print(f\"[!] Ignoring unknown launcher profile {_forced!r} (setup.py auto-detect said {profile_key})\")\n    profile = cfg['gpu_profiles'][profile_key]";
+    const VRAM_ANCHOR: &str = "    except:\n        print(\"[!] Warning: Could not detect VRAM via nvidia-smi. Defaulting to 8GB.\")\n        vram_gb = 8";
+    const VRAM_PATCH: &str = "    except:\n        # Launcher override (Tauri installer): AMD/Intel boxes have no\n        # nvidia-smi — the launcher passes its WMI/registry VRAM figure (GB).\n        _lvram = os.environ.get(\"WAN2GP_TAURI_VRAM_GB\", \"\").strip()\n        try:\n            vram_gb = float(_lvram)\n            print(f\"[*] Launcher-provided VRAM: {vram_gb:g}GB (no nvidia-smi on this box)\")\n        except:\n            print(\"[!] Warning: Could not detect VRAM via nvidia-smi. Defaulting to 8GB.\")\n            vram_gb = 8";
+    let mut patched = hay;
+    let mut missed: Vec<&str> = Vec::new();
+    if patched.contains(PROFILE_ANCHOR) { patched = patched.replacen(PROFILE_ANCHOR, PROFILE_PATCH, 1); }
+    else { missed.push("profile (__main__ gpu_name/profile_key block)"); }
+    if patched.contains(VRAM_ANCHOR) { patched = patched.replacen(VRAM_ANCHOR, VRAM_PATCH, 1); }
+    else { missed.push("vram (get_system_specs nvidia-smi fallback)"); }
+    if !missed.is_empty() { return Err(format!("anchors missed: {}", missed.join(", ")) ); }
+    // Sanity: patched file must still parse (never ship a SyntaxError
+    // into a 20-minute install). python may be absent — skip then.
+    // Check the normalized text through a temp file so CRLF originals
+    // don't matter here either.
+    let check_src = patched.clone();
+    let check_ok = (|| -> bool {
+        let tmp = std::env::temp_dir().join(format!("wgp-setup-py-check-{}.py", std::process::id()));
+        if std::fs::write(&tmp, check_src).is_err() { return true; }
+        let arg = tmp.to_string_lossy().to_string();
+        let ok = silent_command("python").args(["-c", "import ast,sys; ast.parse(open(sys.argv[1]).read())", &arg]).output()
+            .map(|o| o.status.success()).unwrap_or(true);
+        let _ = std::fs::remove_file(&tmp);
+        ok
+    })();
+    if !check_ok { return Err("patched setup.py failed ast.parse — upstream drift, refusing to write".into()); }
+    let out = if had_crlf { patched.replace('\n', "\r\n") } else { patched };
+    std::fs::write(&path, out).map_err(|e| format!("setup.py unwritable: {e}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serde_json::Value,String> {
     
@@ -753,6 +836,52 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
             Err(e) => emit(&format!("[!] AMD torch patch skipped ({e}) — setup.py will use upstream's entry.\n")),
         }
     }
+    // setup.py override patch (0.5.2): setup.py --auto re-detects the GPU
+    // itself via wmic.exe (removed on current Windows 11 → Unknown →
+    // RTX_40 → CUDA stack on AMD boxes) and reads VRAM via nvidia-smi
+    // only (→ 8GB default). Patch the CLONED setup.py to honor our
+    // verdict through WAN2GP_TAURI_* env vars (validated inside setup.py).
+    // Attempted on every install (a repo update restores upstream's file);
+    // a missed anchor only logs — setup.py runs as before.
+    match patch_setup_py_overrides(&repo) {
+        Ok(()) => emit("[*] setup.py launcher-override patch ready (profile + VRAM via WAN2GP_TAURI_*).\n"),
+        Err(e) => emit(&format!("[!] setup.py override patch skipped ({e}) — setup.py will use its own detection.\n")),
+    }
+    // Stale wgp_config.json from the 0.5.1 failure mode (CUDA-era attention
+    // sage/sage2 written for an AMD box): setup.py's create_wgp_config
+    // early-returns when the file exists, so a stale file would pin the
+    // wrong attention forever. AMD-correct is "" — remove only sage*,
+    // keep anything else (user-tuned or already-AMD). restore_backup()
+    // only restores when the repo file is ABSENT, so this can't clobber.
+    if plan["profile"].as_str().unwrap_or("").starts_with("AMD") {
+        let cfg_path = repo.join("wgp_config.json");
+        if let Ok(raw) = std::fs::read_to_string(&cfg_path) {
+            let stale = serde_json::from_str::<serde_json::Value>(&raw).ok()
+                .and_then(|v| v.get("attention_mode").and_then(|a| a.as_str()).map(str::to_string))
+                .map_or(false, |a| a.starts_with("sage"));
+            if stale {
+                let _ = std::fs::remove_file(&cfg_path);
+                emit("[*] Removed stale wgp_config.json (CUDA-era attention on an AMD box) — setup.py will regenerate it.\n");
+            }
+        }
+    }
+    // Env for the setup.py child below: our profile key (allowlisted —
+    // unknown keys unset so setup.py falls back to its own detection)
+    // plus our VRAM figure in GB (setup.py only knows nvidia-smi).
+    // Process-scoped like the py-shim PATH prepend; cleared after setup.
+    if let Some(key) = setup_py_forced_profile(plan["profile"].as_str().unwrap_or("")) {
+        std::env::set_var("WAN2GP_TAURI_GPU_PROFILE", key);
+        emit(&format!("[*] setup.py will run with forced GPU profile: {key}\n"));
+    } else {
+        std::env::remove_var("WAN2GP_TAURI_GPU_PROFILE");
+    }
+    match plan.get("vramGb").and_then(|v| v.as_f64()) {
+        Some(mb) if mb >= 2048.0 => {
+            std::env::set_var("WAN2GP_TAURI_VRAM_GB", format!("{}", (mb / 1024.0).round() as u64));
+            emit(&format!("[*] setup.py will run with launcher VRAM: {}GB\n", (mb / 1024.0).round() as u64));
+        }
+        _ => std::env::remove_var("WAN2GP_TAURI_VRAM_GB"),
+    }
     // run setup.py with the env's python (hardware-aware: setup.py reads setup_config.json + GPU)
     {
         let (py, args): (String, Vec<String>) = if env.as_str() == "conda" { ("conda".into(), vec!["run".into(), "-p".into(), env_path.to_string_lossy().to_string(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) } else {
@@ -794,6 +923,7 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
                 Err(e) => {
                     #[cfg(windows)]
                     if let Some(old) = saved_path.clone() { std::env::set_var("PATH", old); }
+                    clear_setup_py_override_env();
                     mutating_done();
                     return Err(format!("setup.py failed to start ({e})"));
                 }
@@ -874,9 +1004,11 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
             // Restore PATH before returning (shim prepend is install-scoped).
             #[cfg(windows)]
             if let Some(old) = saved_path.clone() { std::env::set_var("PATH", old); }
+            clear_setup_py_override_env();
             mutating_done();
             return Err(format!("Install failed (setup.py exited code {code}). {hint}"));
         } // end for attempt — success broke out; all failures returned above
+        clear_setup_py_override_env();
         for (id, label) in [("venv", "Create Python virtual environment"), ("torch", "Install PyTorch + CUDA"), ("reqs", "Install Python dependencies"), ("triton", "Install Triton compiler"), ("sage", "Install Sage Attention kernel"), ("flash", "Install Flash Attention"), ("kernels", "Install GPU kernels (nunchaku/GGUF)")] {
             let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": true}));
         }
@@ -1664,5 +1796,75 @@ mod amd_therock_tests {
         check_primary(&p, &["gfx1030", "gfx1031", "gfx1032", "gfx1033", "gfx1034", "gfx1035", "gfx1036"]);
         assert!(f.contains("/v2-staging/gfx103X-dgpu/"), "got {f}");
         assert!(amd_therock_torch_cmds("RTX_50", "NVIDIA GeForce RTX 5090").is_none());
+    }
+}
+
+#[cfg(test)]
+mod setup_py_override_tests {
+    use super::{patch_setup_py_overrides, setup_py_forced_profile};
+    /// Minimal fixture carrying the two upstream anchors (same shape as
+    /// deepbeepmeep/Wan2GP setup.py: __main__ profile block + VRAM
+    /// fallback). Must stay valid Python — the patch refuses to write a
+    /// file that fails ast.parse.
+    const FIXTURE: &str = "import os\nimport subprocess\ndef get_system_specs():\n    try:\n        out = subprocess.check_output([\"nvidia-smi\"])\n        vram_gb = float(out.split('\\n')[0]) / 1024\n    except:\n        print(\"[!] Warning: Could not detect VRAM via nvidia-smi. Defaulting to 8GB.\")\n        vram_gb = 8\n    return vram_gb\nif __name__ == \"__main__\":\n    gpu_name, vendor = get_gpu_info()\n    profile_key = get_profile_key(gpu_name, vendor)\n    profile = cfg['gpu_profiles'][profile_key]\n";
+    fn fixture_dir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("wgp-setup-py-override-{tag}-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        std::fs::write(d.join("setup.py"), FIXTURE).unwrap();
+        d
+    }
+    #[test]
+    fn forced_profile_allowlist() {
+        // Every key setup_config.json actually defines passes through.
+        for k in ["RTX_50", "RTX_40", "RTX_30", "RTX_20", "GTX_10",
+                  "AMD_GFX110X", "AMD_GFX1151", "AMD_GFX1201", "MPS"] {
+            assert_eq!(setup_py_forced_profile(k), Some(k), "{k}");
+        }
+        // No upstream profile → setup.py keeps its own detection (a forced
+        // unknown key would KeyError inside setup.py).
+        for k in ["AMD_GFX103X", "INTEL_XPU", "CPU", "", "RTX_99"] {
+            assert_eq!(setup_py_forced_profile(k), None, "{k}");
+        }
+    }
+    #[test]
+    fn patch_applies_both_overrides_and_is_idempotent() {
+        let d = fixture_dir("ok");
+        patch_setup_py_overrides(&d).unwrap();
+        let out = std::fs::read_to_string(d.join("setup.py")).unwrap();
+        assert!(out.contains("WAN2GP_TAURI_GPU_PROFILE"), "profile override missing");
+        assert!(out.contains("WAN2GP_TAURI_VRAM_GB"), "vram override missing");
+        assert!(out.contains("Launcher-forced GPU profile"), "log line missing");
+        assert!(out.contains("Launcher-provided VRAM"), "log line missing");
+        // Second run is a no-op (repo updates re-patch from scratch).
+        patch_setup_py_overrides(&d).unwrap();
+        let out2 = std::fs::read_to_string(d.join("setup.py")).unwrap();
+        assert_eq!(out, out2, "patch not idempotent");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+    #[test]
+    fn patch_handles_crlf_checkout() {
+        // git on Windows often checks out CRLF — anchors still match and
+        // endings are preserved.
+        let d = std::env::temp_dir().join(format!("wgp-setup-py-crlf-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        std::fs::write(d.join("setup.py"), FIXTURE.replace('\n', "\r\n")).unwrap();
+        patch_setup_py_overrides(&d).unwrap();
+        let out = std::fs::read_to_string(d.join("setup.py")).unwrap();
+        assert!(out.contains("WAN2GP_TAURI_GPU_PROFILE"), "profile override missing");
+        assert!(out.contains("\r\n"), "CRLF endings not preserved");
+        // Second run is a no-op (marker survives the round-trip).
+        patch_setup_py_overrides(&d).unwrap();
+        let _ = std::fs::remove_dir_all(&d);
+    }
+    #[test]
+    fn patch_reports_upstream_drift() {
+        let d = std::env::temp_dir().join(format!("wgp-setup-py-drift-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        std::fs::write(d.join("setup.py"), "print('entirely different file')\n").unwrap();
+        let err = patch_setup_py_overrides(&d).unwrap_err();
+        assert!(err.contains("profile") && err.contains("vram"), "got {err}");
+        // Drifted file left untouched.
+        assert_eq!(std::fs::read_to_string(d.join("setup.py")).unwrap(), "print('entirely different file')\n");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
