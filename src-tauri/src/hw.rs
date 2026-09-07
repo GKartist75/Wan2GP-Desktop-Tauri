@@ -180,10 +180,23 @@ pub fn get_hardware_profile() -> serde_json::Value {
     struct Prof { python: &'static str, torch: &'static str, triton: Option<&'static str>, sage: Option<&'static str>, sparge: Option<&'static str>, flash: Option<&'static str>, kernels: &'static [&'static str] }
     let gpus = detect_gpus();
     let vram_mb = gpus.as_array().and_then(|a| a.first()).and_then(|g| g.get("vramMB")).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
-    let vram_gb = vram_mb / 1024.0;
     let gpu = get_gpu_info_sync();
-    let vendor = gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
-    let name = gpu.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    return hardware_profile_detail(
+        gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or("UNKNOWN"),
+        gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+        vram_mb,
+    );
+}
+
+/// Pure profile matrix behind get_hardware_profile (no hardware probes —
+/// unit-testable). INTEL_XPU maps to a CPU-only, kernel-free INTEL_CPU row:
+/// neither upstream nor this launcher ships an XPU backend, so the overview
+/// must not promise CUDA wheels (the old `_` fallthrough did). Install,
+/// launch and smoke paths are untouched — Intel boxes keep working exactly
+/// as before (CPU torch), only the labels are honest now.
+pub(crate) fn hardware_profile_detail(vendor: &str, name: &str, vram_mb: f64) -> serde_json::Value {
+    struct Prof { python: &'static str, torch: &'static str, triton: Option<&'static str>, sage: Option<&'static str>, sparge: Option<&'static str>, flash: Option<&'static str>, kernels: &'static [&'static str] }
+    let vram_gb = vram_mb / 1024.0;
     let key = kernel_profile_key(vendor, name);
     let (profile_str, prof) = match key.as_str() {
         "GTX_10" => ("GTX_10", Prof { python: "3.10.9", torch: "2.7.1 CU12.8", triton: None, sage: None, sparge: None, flash: None, kernels: &[] }),
@@ -193,6 +206,9 @@ pub fn get_hardware_profile() -> serde_json::Value {
         "RTX_50" => ("RTX_50", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku_cu13", "light2xv", "gguf"] }),
         "MPS" => ("MPS", Prof { python: "3.11.14", torch: "MPS", triton: None, sage: None, sparge: None, flash: None, kernels: &[] }),
         k if k.starts_with("AMD") => ("AMD", Prof { python: "3.11.14", torch: "ROCm 6.5", triton: None, sage: None, sparge: None, flash: None, kernels: &[] }),
+        // Intel → CPU torch, no kernels: XPU acceleration is not possible
+        // (no upstream XPU backend exists). Display key is INTEL_CPU.
+        "INTEL_XPU" => ("INTEL_CPU", Prof { python: "3.11.14", torch: "CPU", triton: None, sage: None, sparge: None, flash: None, kernels: &[] }),
         _ => (key.as_str(), Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku_cu13", "gguf"] }),
     };
     // Package chips with versions (Electron order + emoji).
@@ -350,3 +366,27 @@ pub fn get_system_metrics() -> serde_json::Value {
     result
 }
 
+
+#[cfg(test)]
+mod intel_cpu_tests {
+    use super::{build_install_plan, hardware_profile_detail, kernel_profile_key};
+    #[test]
+    fn intel_stays_cpu_honest() {
+        // Keys stable (setup.py never sees them; install/launch behavior unchanged).
+        assert_eq!(kernel_profile_key("INTEL", "Intel UHD Graphics 770"), "INTEL_XPU");
+        assert_eq!(kernel_profile_key("INTEL", "Intel Arc A770 Graphics"), "INTEL_XPU");
+        for n in ["Intel UHD Graphics 770", "Intel Arc A770 Graphics"] {
+            // Install plan: CPU payload, no XPU promise anywhere.
+            let plan = build_install_plan(&serde_json::json!({"vendor":"INTEL","name":n,"vramMB":"128 MiB","driverVersion":""}));
+            assert_eq!(plan["cuda"], serde_json::json!("CPU"));
+            assert_eq!(plan["torch"], serde_json::json!("PyTorch (CPU)"));
+            assert_eq!(plan["profile"], serde_json::json!("INTEL_XPU"));
+            // Overview: INTEL_CPU row, kernel-free (old fallthrough promised CUDA wheels).
+            let d = hardware_profile_detail("INTEL", n, 0.0);
+            assert_eq!(d["profile"], serde_json::json!("INTEL_CPU"));
+            assert_eq!(d["kernelsRaw"].as_array().unwrap().len(), 0);
+            assert!(d["detail"]["torch"].as_str().unwrap().contains("CPU"));
+            assert!(!d["packages"].as_array().unwrap().iter().any(|p| p.as_str().unwrap().contains("CUDA")));
+        }
+    }
+}

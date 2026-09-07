@@ -14,7 +14,8 @@
  * Map a detected GPU to Wan2GP's setup_config.json GPU-profile key.
  * Mirrors the upstream setup.py profile names (RTX_50, RTX_40, RTX_30, RTX_20,
  * GTX_10, AMD_GFX110X, AMD_GFX1151, AMD_GFX1201, MPS) plus INTEL_XPU for Intel
- * (XPU backend — see install-plan.js) and CPU for unknown vendors. Unknown
+ * (CPU torch — no XPU backend exists upstream; key stable so install/launch
+ * behavior is unchanged, only labels are honest). and CPU for unknown vendors. Unknown
  * hardware must NEVER alias an NVIDIA profile: the overview would promise
  * CUDA wheels the installer never installs.
  *
@@ -42,7 +43,7 @@ function kernelProfileKey(gpu) {
     if (/9000|9060|9070|8000|1201/.test(g)) return 'AMD_GFX1201'
     return 'AMD_GFX110X'
   }
-  if (vendor === 'INTEL') return 'INTEL_XPU' // Arc/iGPU → XPU backend, no CUDA wheels
+  if (vendor === 'INTEL') return 'INTEL_XPU' // Intel iGPU/Arc → CPU torch (XPU acceleration not possible); no kernel wheels, sync-safe
   return 'CPU' // unknown vendor — claim nothing rather than NVIDIA wheels
 }
 

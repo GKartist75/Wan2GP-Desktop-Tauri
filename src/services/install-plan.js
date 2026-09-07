@@ -97,21 +97,21 @@ function buildPlan(hw = {}) {
     attention = ['(MPS path — kernels limited)']
     notes.push('Apple Silicon → MPS backend (no CUDA).')
   } else if (vendor === 'INTEL') {
+    // Honest Intel path: neither upstream nor this launcher ships an XPU
+    // backend (no IPEX/oneAPI install, setup.py wouldn't know the key) —
+    // CPU torch does the work, slow but functional, exactly as before.
     const isArc = /arc\s*(a\d{3}|b\d{3})/i.test(name) || /intel.*arc/i.test(name)
-    cuda = 'Intel XPU'
-    torch = 'PyTorch (XPU)'
+    cuda = 'CPU'
+    torch = 'PyTorch (CPU)'
     attention = []
-    // #6 explicit Intel Arc XPU path (upstream parity gap): Arc needs the Intel
-    // XPU (IPEX) runtime + oneAPI; flag when it's an Arc but no dedicated runtime
-    // is guaranteed. We surface it as a note (and a soft warning if very old driver).
     if (isArc) {
-      notes.push('Intel Arc detected → XPU backend (needs Intel oneAPI / IPEX runtime).')
+      notes.push('Intel Arc dGPU detected — XPU acceleration is not possible with this launcher (no upstream XPU backend exists yet). CPU torch will be installed so generation works, at CPU speed.')
       const idv = parseFloat(hw.driverVersion)
       if (idv && idv < 31.0) {
-        driverWarning = `Intel Arc driver ${hw.driverVersion} looks outdated. The XPU backend needs a recent Arc driver (>= 31.x). Update before installing.`
+        driverWarning = `Intel Arc driver ${hw.driverVersion} looks outdated (>= 31.x recommended for stability).`
       }
     } else {
-      notes.push('Intel GPU detected — XPU backend.')
+      notes.push('Intel integrated graphics detected — CPU generation (slow but working as before; no GPU backend exists for it).')
     }
   } else {
     cuda = 'CPU'
