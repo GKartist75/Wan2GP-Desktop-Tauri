@@ -16,11 +16,12 @@ pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
     }
     // No NVIDIA driver — WMI fallback for AMD/Intel (Electron queryGpuList parity).
     // Doc-leading: deepbeepmeep docs/AMD-INSTALLATION.md is the spec for AMD support.
-    if let Some((name, vendor, raw_bytes)) = wmi_gpu_fallback() {
-        let mb = raw_bytes / (1024 * 1024);
-        // AdapterRAM is a 32-bit field (caps ~4GB, often 0): report raw, never trust.
-        let vram = if mb > 0 { format!("{mb} MiB") } else { "0 MiB".to_string() };
-        return serde_json::json!({"vendor":vendor,"name":name,"vramMB":vram,"driverVersion":"","raw":format!("WMI: {name}")});
+    if let Some((name, vendor, _raw_bytes)) = wmi_gpu_fallback() {
+        // Prefer 64-bit registry VRAM (AdapterRAM caps ~4GB / often 0).
+        match wmi_dedicated_vram_mb(&name) {
+            Some(mb) => return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":"","raw":format!("WMI+REG: {name}")}),
+            None => return serde_json::json!({"vendor":vendor,"name":name,"vramMB":"0 MiB","driverVersion":"","raw":format!("WMI: {name} (VRAM unknown)")}),
+        }
     }
     serde_json::json!({"vendor":"unknown","name":"","vramMB":"0","driverVersion":"","raw":"nvidia-smi not found"})
 }
@@ -50,6 +51,40 @@ pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64)> {
 #[cfg(not(windows))]
 pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64)> { None }
 
+/// 64-bit dedicated VRAM (MB) from the display-driver registry key.
+/// WMI AdapterRAM is uint32 (caps ~4GB, often 0); the driver also reports
+/// HardwareInformation.MemorySize as a QWORD — exact for 32GB cards.
+/// Fast (<300ms, detection paths only, never the metrics tick), no new deps.
+/// Returns None when absent/implausible — callers keep "VRAM unknown".
+#[cfg(windows)]
+pub(crate) fn wmi_dedicated_vram_mb(display_name: &str) -> Option<u64> {
+    let out = silent_command("powershell").args(["-NoProfile","-Command",
+        "Get-ChildItem 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}' | ForEach-Object { $d = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue; if ($d.DriverDesc) { $d.DriverDesc.ToString() + '|' + $d.'HardwareInformation.MemorySize' } }"
+    ]).output().ok()?;
+    if !out.status.success() { return None; }
+    let s = String::from_utf8_lossy(&out.stdout);
+    let want = display_name.to_lowercase();
+    let mut cands: Vec<(String, u64)> = Vec::new();
+    for ln in s.lines() {
+        let Some((desc, mem)) = ln.split_once('|') else { continue; };
+        let Ok(bytes) = mem.trim().parse::<u64>() else { continue; };
+        let Some(mb) = bytes.checked_div(1024 * 1024) else { continue; };
+        if mb == 0 || mb > 262144 { continue; }
+        let d = desc.trim().to_lowercase();
+        if d.is_empty() || d.contains("nvidia") { continue; }
+        cands.push((d, mb));
+    }
+    // Name match (WMI vs DriverDesc can differ slightly); single-candidate
+    // fallback only — never attribute an iGPU's VRAM to a dGPU or vice versa.
+    for (d, mb) in &cands {
+        if d.contains(&want) || want.contains(d) { return Some(*mb); }
+    }
+    if cands.len() == 1 { return Some(cands[0].1); }
+    None
+}
+#[cfg(not(windows))]
+pub(crate) fn wmi_dedicated_vram_mb(_display_name: &str) -> Option<u64> { None }
+
 // ── existing spike commands (kept) ──
 #[tauri::command]
 pub fn detect_gpu() -> serde_json::Value {
@@ -66,6 +101,9 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
         if g.contains("20") || g.contains("QUADRO") { return "RTX_20".into(); } return "GTX_10".into();
     }
     if v == "AMD" {
+        // RDNA 2 (gfx103X-dgpu): no upstream setup_config profile — dedicated key so
+        // install/launch treat it per docs/AMD-INSTALLATION.md instead of GFX110X.
+        if g.contains("GFX103")||g.contains("RX 6")||["6300","6400","6450","6500","6600","6650","6700","6750","6800","6850","6900","6950","W6200","W6400","W6600","W6800"].iter().any(|x| g.contains(x)) { return "AMD_GFX103X".into(); }
         if g.contains("7600")||g.contains("7700")||g.contains("7800")||g.contains("7900")||g.contains("780M") { return "AMD_GFX110X".into(); }
         if g.contains("890M")||g.contains("STRIX")||g.contains("HALO")||g.contains("Z1")||g.contains("PHOENIX") { return "AMD_GFX1151".into(); }
         if g.contains("9060")||g.contains("9070")||g.contains("9700")||g.contains("9000")||g.contains("8000")||g.contains("1201") { return "AMD_GFX1201".into(); }
@@ -103,6 +141,9 @@ mod amd_profile_tests {
         assert_eq!(kernel_profile_key("AMD", "AMD Radeon AI PRO R9700"), "AMD_GFX1201");
         assert_eq!(kernel_profile_key("AMD", "AMD Radeon RX 9070 XT"), "AMD_GFX1201");
         assert_eq!(kernel_profile_key("AMD", "AMD Radeon RX 7900 XTX"), "AMD_GFX110X");
+        // RDNA 2 has its own key (no upstream setup_config profile to collide with).
+        assert_eq!(kernel_profile_key("AMD", "AMD Radeon RX 6800 XT"), "AMD_GFX103X");
+        assert_eq!(kernel_profile_key("AMD", "AMD Radeon RX 6700S"), "AMD_GFX103X");
     }
 }
 #[cfg(test)]
@@ -155,6 +196,10 @@ pub fn detect_gpus() -> serde_json::Value {
     if !gpus.is_empty() { return serde_json::Value::Array(gpus); }
     // WMI fallback for AMD/Intel (Electron queryGpuList parity, dropped in port).
     if let Some((name, vendor, raw)) = wmi_gpu_fallback() {
+        // 64-bit registry VRAM first — exact on 32GB cards (R9700 shows 32768).
+        if let Some(mb) = wmi_dedicated_vram_mb(&name) {
+            return serde_json::json!([{"index": 0, "name": name, "vramMB": mb as f64, "vendor": vendor}]);
+        }
         let mb = (raw / (1024 * 1024)) as f64;
         let unknown = raw == 0 || mb < 2048.0;
         let label = if unknown { format!("{name} (VRAM unknown)") } else { name };

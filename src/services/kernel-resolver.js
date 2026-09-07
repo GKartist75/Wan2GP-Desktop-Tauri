@@ -34,6 +34,9 @@ function kernelProfileKey(gpu) {
     return 'GTX_10'
   }
   if (vendor === 'AMD') {
+    // RDNA 2 (gfx103X-dgpu): dedicated key (no upstream setup_config profile) —
+    // mirrors hw.rs so overview/install stay in sync. Must precede the 110X arm.
+    if (/GFX103|RX 6|6300|6400|6450|6500|6600|6650|6700|6750|6800|6850|6900|6950|W6200|W6400|W6600|W6800/.test(g)) return 'AMD_GFX103X'
     // RDNA 3 desktop (gfx110X):
     if (/7600|7700|7800|7900|780M/.test(g)) return 'AMD_GFX110X'
     // RDNA 3.5 APUs (gfx1150/1151): Strix Halo, Strix Point 890M, Z1/Phoenix

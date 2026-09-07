@@ -510,12 +510,18 @@ fn amd_therock_urls(profile: &str, gpu_name: &str) -> Option<(String, String)> {
     let fam = match profile {
         "AMD_GFX1201" => "gfx120X-all",
         "AMD_GFX110X" => "gfx110X-all",
+        // gfx103X-dgpu is staging-only per the doc — both attempts use staging
+        // (attempt 2 still helps transient flakes after the env clear).
+        "AMD_GFX103X" => "staging-only:gfx103X-dgpu",
         "AMD_GFX1151" if g.contains("890M") || g.contains("PHOENIX") || g.contains("1150") => "gfx1150",
         "AMD_GFX1151" => "gfx1151",
         _ => return None,
     };
     if fam == "gfx1150" {
         Some((format!("{BASE}/v2-staging/{fam}/"), format!("{BASE}/v2/{fam}/")))
+    } else if let Some(stripped) = fam.strip_prefix("staging-only:") {
+        let url = format!("{BASE}/v2-staging/{stripped}/");
+        Some((url.clone(), url))
     } else {
         Some((format!("{BASE}/v2/{fam}/"), format!("{BASE}/v2-staging/{fam}/")))
     }
@@ -1604,6 +1610,10 @@ mod amd_therock_tests {
         // Strix Point 890M is staging-only per the doc.
         let (p, _) = amd_therock_urls("AMD_GFX1151", "AMD Radeon 890M").unwrap();
         assert!(p.contains("staging") && p.contains("gfx1150"), "got {p}");
+        // RDNA 2 is staging-only per the doc (both attempts, retry covers flakes).
+        let (p, f) = amd_therock_urls("AMD_GFX103X", "AMD Radeon RX 6800 XT").unwrap();
+        assert!(p.contains("/v2-staging/gfx103X-dgpu/"), "got {p}");
+        assert_eq!(p, f);
         assert!(amd_therock_urls("RTX_50", "NVIDIA GeForce RTX 5090").is_none());
     }
 }

@@ -3,7 +3,7 @@ use tauri::Emitter;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use crate::base::*;
-use crate::{hw::{get_gpu_info_sync, kernel_profile_key}, status::get_active_env};
+use crate::{hw::{get_gpu_info_sync, kernel_profile_key, wmi_gpu_fallback}, status::get_active_env};
 
 // Quote-aware split for Extra Launch Args (keeps "--teacache \"a b\"" together).
 fn split_launch_args(s: &str) -> Vec<String> {
@@ -107,7 +107,12 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
         let hw_name = hw.get("name").and_then(|v| v.as_str()).unwrap_or("?");
         let hw_vendor = hw.get("vendor").and_then(|v| v.as_str()).unwrap_or("?");
         let hw_vram = hw.get("vramMB").and_then(|v| v.as_str()).unwrap_or("0");
-        let gpu_count = silent_command("nvidia-smi").args(["--query-gpu=index","--format=csv,noheader"]).output().ok().map_or("?".into(), |o| if o.status.success() { String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count().to_string() + " NVIDIA" } else { "?".into() });
+        let gpu_count = silent_command("nvidia-smi").args(["--query-gpu=index","--format=csv,noheader"]).output().ok()
+            .and_then(|o| o.status.success().then(|| String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count()).filter(|&c| c > 0))
+            .map(|c| format!("{c} NVIDIA"))
+            // AMD/Intel-only box: nvidia-smi absent — WMI name instead of "?".
+            .or_else(|| wmi_gpu_fallback().map(|(_, v, _)| format!("1 {v}")))
+            .unwrap_or("?".into());
         let gen_label = if gpu_device=="auto" { format!("auto ({hw_name} )") } else { gpu_device.clone() };
         emit(&format!("[*] GPU assignment — Launcher UI: {launcher_gpu} | Generation: {gen_label} | HW: {hw_name} ({hw_vendor}, {hw_vram}) | Detected: {gpu_count}\n"));
     }

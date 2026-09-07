@@ -98,7 +98,10 @@ pub fn auto_tune_detect() -> serde_json::Value {
         #[cfg(not(windows))] { 32.0 }
     };
     let cpu_count = std::thread::available_parallelism().map_or(8, std::num::NonZero::get) as i64;
-    let vram_tier = if !cuda_available { "none" } else if vram_gb >= 24 { "high" } else if vram_gb >= 12 { "low" } else { "tight" };
+    // AMD with known (64-bit registry) VRAM tiers like NVIDIA; unknown stays none.
+    let vram_tier = if cuda_available || (vendor == "AMD" && vram_gb > 0) {
+        if vram_gb >= 24 { "high" } else if vram_gb >= 12 { "low" } else { "tight" }
+    } else { "none" };
     let ram_tier = if ram_gb >= 63.5 { "high" } else if ram_gb >= 31.5 { "low" } else { "very_low" };
     serde_json::json!({
         "cuda_available": cuda_available,
