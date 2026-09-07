@@ -5,7 +5,7 @@ use crate::base::*;
 // ── GPU helpers ──
 pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
     
-    if let Ok(out) = silent_command("nvidia-smi").args(["--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"]).output() {
+    if let Ok(out) = probe_command("NVIDIA_SMI", "nvidia-smi").args(["--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"]).output() {
         if out.status.success() {
             let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if !s.is_empty() {
@@ -26,13 +26,28 @@ pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
     serde_json::json!({"vendor":"unknown","name":"","vramMB":"0","driverVersion":"","raw":"nvidia-smi not found"})
 }
 
+/// Probe spawn with a hardware-simulation hook for integration tests.
+/// `WGP_PROBE_<KIND>` (WGP_PROBE_NVIDIA_SMI / WGP_PROBE_POWERSHELL) redirects
+/// the probe through `cmd /C <fake>`; unset in production, where this is
+/// exactly silent_command. Lets tests simulate an AMD box (no nvidia-smi,
+/// canned WMI/registry answers) on any machine without touching prod behavior.
+pub(crate) fn probe_command(kind: &str, bin: &str) -> std::process::Command {
+    if let Ok(fake) = std::env::var(format!("WGP_PROBE_{kind}")) {
+        let mut c = silent_command("cmd");
+        c.args(["/C", &fake, "--"]);
+        let _ = bin;
+        return c;
+    }
+    silent_command(bin)
+}
+
 /// WMI fallback for non-NVIDIA GPUs on Windows (AMD/Intel).
 /// Returns (display name, vendor, AdapterRAM bytes). AdapterRAM is a 32-bit
 /// field — capped at ~4GB and frequently 0 — so callers must treat small/zero
 /// values as "VRAM unknown", never as truth (mirrors queryGpuList).
 #[cfg(windows)]
 pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64)> {
-    let out = silent_command("powershell").args(["-NoProfile","-Command","Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name + '|' + $_.AdapterRAM }"]).output().ok()?;
+    let out = probe_command("POWERSHELL", "powershell").args(["-NoProfile","-Command","Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name + '|' + $_.AdapterRAM }"]).output().ok()?;
     if !out.status.success() { return None; }
     let s = String::from_utf8_lossy(&out.stdout);
     for ln in s.lines() {
@@ -58,7 +73,7 @@ pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64)> { None }
 /// Returns None when absent/implausible — callers keep "VRAM unknown".
 #[cfg(windows)]
 pub(crate) fn wmi_dedicated_vram_mb(display_name: &str) -> Option<u64> {
-    let out = silent_command("powershell").args(["-NoProfile","-Command",
+    let out = probe_command("POWERSHELL", "powershell").args(["-NoProfile","-Command",
         "Get-ChildItem 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}' | ForEach-Object { $d = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue; if ($d.DriverDesc) { $d.DriverDesc.ToString() + '|' + $d.'HardwareInformation.MemorySize' } }"
     ]).output().ok()?;
     if !out.status.success() { return None; }
@@ -180,7 +195,7 @@ pub(crate) fn build_install_plan(hw: &serde_json::Value) -> serde_json::Value {
 pub fn detect_gpus() -> serde_json::Value {
     
     let mut gpus = Vec::new();
-    if let Ok(out) = silent_command("nvidia-smi").args(["--query-gpu=index,name,memory.total", "--format=csv,noheader"]).output() {
+    if let Ok(out) = probe_command("NVIDIA_SMI", "nvidia-smi").args(["--query-gpu=index,name,memory.total", "--format=csv,noheader"]).output() {
         if out.status.success() {
             for line in String::from_utf8_lossy(&out.stdout).lines() {
                 let parts: Vec<&str> = line.split(',').map(str::trim).collect();
@@ -333,7 +348,7 @@ pub(crate) fn get_cached_igpu() -> Option<serde_json::Value> {
     // first call: run WMI, cache result (even None as explicit)
     let mut igpu: Option<serde_json::Value> = None;
     #[cfg(windows)] {
-        if let Ok(wmi_out) = silent_command("powershell").args(["-NoProfile","-Command","Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ForEach-Object { $_.Name + '|' + $_.AdapterRAM }"]).output() {
+        if let Ok(wmi_out) = probe_command("POWERSHELL", "powershell").args(["-NoProfile","-Command","Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ForEach-Object { $_.Name + '|' + $_.AdapterRAM }"]).output() {
             if wmi_out.status.success() {
                 let wmi_s = String::from_utf8_lossy(&wmi_out.stdout).trim().to_string();
                 for ln in wmi_s.lines() {
@@ -386,7 +401,7 @@ pub fn get_system_metrics() -> serde_json::Value {
     }
     // nvidia-smi for VRAM/GPU — per-GPU breakdown + WMI iGPU fallback (mirrors Electron main.js)
     {
-        let out = silent_command("nvidia-smi").args(["--query-gpu=memory.free,memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"]).output();
+        let out = probe_command("NVIDIA_SMI", "nvidia-smi").args(["--query-gpu=memory.free,memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"]).output();
         if let Ok(o) = out { if o.status.success() {
             let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
             if !s.is_empty() {
@@ -444,11 +459,14 @@ pub fn get_system_metrics() -> serde_json::Value {
         }}
     }
     // AMD/Intel-only box (no nvidia-smi output): primary tile from the cached WMI probe.
+    // Total prefers the 64-bit registry VRAM (exact on 32GB cards) over AdapterRAM.
     if result["gpus"].as_array().is_none_or(|a| a.is_empty()) {
         if let Some(igpu) = get_cached_igpu() {
             if !igpu.is_null() {
                 let name = igpu.get("name").and_then(|v| v.as_str()).unwrap_or("GPU").to_string();
-                let total = igpu.get("vram").and_then(|v| v.as_str()).unwrap_or("—").to_string();
+                let total = wmi_dedicated_vram_mb(&name)
+                    .map(|mb| if mb >= 1024 { format!("{} GB", (mb as f64 / 1024.0).round() as i64) } else { format!("{mb} MB") })
+                    .unwrap_or_else(|| igpu.get("vram").and_then(|v| v.as_str()).unwrap_or("—").to_string());
                 result["gpus"] = serde_json::json!([{"index": 0, "gpu": null, "vram": null, "vramFree": total.clone(), "vramUsed": "—", "vramTotal": total, "name": name}]);
             }
         }
@@ -458,3 +476,65 @@ pub fn get_system_metrics() -> serde_json::Value {
     result
 }
 
+
+/// Simulated AMD-box integration test (Windows): fakes nvidia-smi (absent)
+/// and powershell (canned R9700 WMI + registry answers) via the WGP_PROBE_*
+/// hook, then drives the REAL detection → plan → torch-URL chain.
+/// Pattern: `set "ARGS=%*"` is parse-safe for | $ { }; dispatch by substring.
+#[cfg(all(test, windows))]
+mod amd_sim_tests {
+    use super::*;
+    use std::sync::Mutex;
+    static SIM_LOCK: Mutex<()> = Mutex::new(());
+    fn write_fakes(dir: &std::path::Path) {
+        std::fs::write(dir.join("nvidia-smi.cmd"), "@echo off\r\nexit /b 1\r\n").unwrap();
+        let ps = "@echo off\r\nif \"%~1\"==\"--\" goto dispatch\r\nexit /b 1\r\n:dispatch\r\nif \"%~3\"==\"-Command\" goto powershell\r\nexit /b 1\r\n:powershell\r\nset \"Q=%~4\"\r\nif not \"%Q:Win32_VideoController=%\"==\"%Q%\" goto wmi\r\nif not \"%Q:HardwareInformation=%\"==\"%Q%\" goto reg\r\nexit /b 1\r\n:wmi\r\necho AMD Radeon AI PRO R9700^|0\r\nexit /b 0\r\n:reg\r\nif defined WGP_SIM_NO_REG exit /b 1\r\necho AMD Radeon AI PRO R9700^|34359738368\r\nexit /b 0\r\n";
+        std::fs::write(dir.join("powershell.cmd"), ps).unwrap();
+    }
+    #[test]
+    fn simulated_r9700_end_to_end() {
+        let _guard = SIM_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("wgp-sim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        write_fakes(&dir);
+        let old_path = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", format!("{};{old_path}", dir.display()));
+        std::env::set_var("WGP_PROBE_NVIDIA_SMI", dir.join("nvidia-smi.cmd").to_string_lossy().to_string());
+        std::env::set_var("WGP_PROBE_POWERSHELL", dir.join("powershell.cmd").to_string_lossy().to_string());
+        std::env::remove_var("WGP_SIM_NO_REG");
+
+        // detect → profile → install plan → torch URLs (AdapterRAM is 0: the
+        // 32768 MB MUST come from the simulated registry QWORD).
+        let gpus = detect_gpus();
+        let g = &gpus.as_array().unwrap()[0];
+        assert_eq!(g.get("vendor").and_then(|v| v.as_str()), Some("AMD"));
+        assert_eq!(g.get("name").and_then(|v| v.as_str()), Some("AMD Radeon AI PRO R9700"));
+        assert_eq!(g.get("vramMB").and_then(|v| v.as_f64()), Some(32768.0));
+
+        let info = get_gpu_info_sync();
+        assert_eq!(info.get("vendor").and_then(|v| v.as_str()), Some("AMD"));
+        assert_eq!(info.get("vramMB").and_then(|v| v.as_str()), Some("32768 MiB"));
+
+        let plan = build_install_plan(&info);
+        assert_eq!(plan.get("profile").and_then(|v| v.as_str()), Some("AMD_GFX1201"));
+        assert_eq!(plan.get("cuda").and_then(|v| v.as_str()), Some("ROCm (TheRock)"));
+
+        let (primary, staging) = crate::install::amd_therock_urls("AMD_GFX1201", "AMD Radeon AI PRO R9700").unwrap();
+        assert!(primary.contains("/v2/gfx120X-all/"), "got {primary}");
+        assert!(staging.contains("/v2-staging/gfx120X-all/"), "got {staging}");
+
+        // registry-absent hardware: honest unknown labels, still AMD.
+        std::env::set_var("WGP_SIM_NO_REG", "1");
+        let gpus2 = detect_gpus();
+        let g2 = &gpus2.as_array().unwrap()[0];
+        assert_eq!(g2.get("vendor").and_then(|v| v.as_str()), Some("AMD"));
+        assert!(g2.get("name").and_then(|v| v.as_str()).unwrap().contains("(VRAM unknown)"));
+
+        std::env::remove_var("WGP_SIM_NO_REG");
+        std::env::remove_var("WGP_PROBE_NVIDIA_SMI");
+        std::env::remove_var("WGP_PROBE_POWERSHELL");
+        std::env::set_var("PATH", old_path);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

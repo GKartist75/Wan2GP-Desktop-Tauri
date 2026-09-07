@@ -504,7 +504,7 @@ fn is_network_failure(tail: &str) -> bool {
 /// doc's `/v2/` release URL; fallback is the community-proven `/v2-staging/`
 /// twin (6Morpheus6/wan2gp-amd). gfx1150 (Strix Point 890M) is staging-only
 /// per the doc, so it leads with staging.
-fn amd_therock_urls(profile: &str, gpu_name: &str) -> Option<(String, String)> {
+pub(crate) fn amd_therock_urls(profile: &str, gpu_name: &str) -> Option<(String, String)> {
     const BASE: &str = "https://rocm.nightlies.amd.com";
     let g = gpu_name.to_uppercase();
     let fam = match profile {
