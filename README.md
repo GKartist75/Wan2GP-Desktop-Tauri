@@ -197,6 +197,10 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 
 **PyTorch matrix:** RTX 20/30/40/50 → Py 3.11.14 + PyTorch 2.10 + CUDA 13.0/13.1 · GTX 10xx → Py 3.10.9 + PyTorch 2.7.1 + CUDA 12.8. Avoids 2.8.0 (RAM leak) + 2.9.0 (VAE VRAM bug). GTX 10/16 stay on **CUDA 12.8** (no R580 needed); every other NVIDIA card needs **R580+** and is checked before install.
 
+**AMD (ROCm/TheRock, docs-led):** RDNA 2 (`gfx103X-dgpu`) · RDNA 3 (`gfx110X-all`: RX 7600–7900) · RDNA 3.5 (`gfx1150` Strix Point / `gfx1151` Strix Halo) · RDNA 4 (`gfx120X-all`: RX 9060/9070 + Radeon AI PRO R9700). Installed per [AMD-INSTALLATION.md](https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/AMD-INSTALLATION.md): Python 3.11 venv → per-family TheRock nightly (`/v2/`, staging retry) → `requirements.txt` → `numpy==1.26.4` pin. Launch sets `HSA_OVERRIDE_GFX_VERSION` + ROCm session env (`FLASH_ATTENTION_TRITON_AMD_ENABLE`, `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL`, `MIOPEN_FIND_MODE=FAST`) automatically. Needs a recent Adrenalin/Pro driver (≥ 24.5). No CUDA wheels are ever installed on AMD profiles.
+
+> ⚠️ **AMD note from the maintainer:** I don't have AMD hardware, so the AMD path is built from upstream docs + community recipes and covered by a simulated-hardware test — not a real Radeon run. If anything misbehaves on your card, please [open an issue](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/issues) with: the install-log `[hw]` line, `torch.cuda.is_available()` + device name from your env, and `Get-CimInstance Win32_VideoController | Select Name,DriverVersion` output.
+
 > Upstream: [INSTALLATION.md](https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/INSTALLATION.md)
 
 </details>
