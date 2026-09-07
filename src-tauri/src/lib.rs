@@ -8,6 +8,7 @@ mod launch;
 mod plugins;
 mod status;
 mod system;
+mod troubleshoot;
 mod updates;
 
 use tauri::Manager;
@@ -76,7 +77,11 @@ pub fn run() {
             system::open_task_manager, system::get_crash_recovery_info,
             launch::launch_webview, launch::popout_webview, system::hide_browser_view, system::detach_browser_view, system::reattach_browser_view,
             system::create_term_view, system::destroy_term_view, system::bv_navigate, system::bv_set_zoom, system::bv_set_dock,
-            system::is_data_dir_roaming, system::migrate_choose, system::notifier_ensure, system::ui_mode_set
+            system::is_data_dir_roaming, system::migrate_choose, system::notifier_ensure, system::ui_mode_set,
+            troubleshoot::troubleshoot_failsafe_apply, troubleshoot::troubleshoot_cuda_check,
+            troubleshoot::troubleshoot_port_status, troubleshoot::troubleshoot_port_fix,
+            troubleshoot::troubleshoot_debug_bundle, troubleshoot::troubleshoot_triton_test,
+            troubleshoot::troubleshoot_triton_clear
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
