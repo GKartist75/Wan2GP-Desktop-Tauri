@@ -243,6 +243,8 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
+- **v0.5.1** — AMD overhaul: exact-pinned ROCm 7.15 / PyTorch 2.12 torch stack for all RDNA profiles (staging float on retry), large-card VRAM misread fixed (32 GB cards no longer show 4095 MB), installer labels now factual.
+
 - **v0.5.0** — AMD TheRock installer pipeline (RDNA 2/3/3.5/4 incl. R9700), Intel CPU honesty (no XPU promises), 🛟 Troubleshooting + Updates folded into the System tab, Chrome-probe flash fix, autotune layout fixes.
 
 - **v0.4.6** — Kernel Wheels panel moved up; fixed LightX2V/OpenCV detection.
