@@ -38,9 +38,10 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
         if g.contains("9060")||g.contains("9070")||g.contains("8000")||g.contains("1201") { return "AMD_GFX1201".into(); }
         return "AMD_GFX110X".into();
     }
-    // Intel → XPU backend (install-plan.js); unknown → CPU. Never alias an
-    // NVIDIA profile: the overview would promise CUDA wheels the installer
-    // never installs (must match kernel-resolver.js kernelProfileKey).
+    // Intel → INTEL_XPU key, but CPU torch (no XPU backend exists upstream;
+    // overview shows INTEL_CPU via hardware_profile_detail). Unknown → CPU.
+    // Never alias an NVIDIA profile: the overview would promise CUDA wheels
+    // the installer never installs (must match kernel-resolver.js kernelProfileKey).
     if v == "INTEL" { return "INTEL_XPU".into(); }
     "CPU".into()
 }
