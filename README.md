@@ -142,8 +142,7 @@ Same launcher, same Wan2GP, same features — new shell. The Electron edition sh
 
 **Manage → Auto-Tune** (or ⚡ on the dashboard) scans GPU/VRAM/RAM/kernels and recommends the optimal `wgp_config.json` settings. All three profile dropdowns (video/image/audio) stay editable before you Apply.
 
-<details>
-<summary>VRAM × RAM profile matrix</summary>
+**VRAM × RAM profile matrix**
 
 | VRAM ↓ \ RAM → | ≥64 GB | ≥32 GB | <32 GB |
 |---|---|---|---|
@@ -151,14 +150,9 @@ Same launcher, same Wan2GP, same features — new shell. The Electron edition sh
 | **12–23 GB** | P2 | **P4 balanced** | P5 |
 | **<12 GB** | P4 | P4+ VRAM saver | **P5 failsafe** |
 
-</details>
-
-<details>
-<summary>Settings written to <code>wgp_config.json</code></summary>
+**Settings written to `wgp_config.json`**
 
 `video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `enable_int8_kernels` (default on — experimental, ~10% faster with INT8 checkpoints, needs Triton), `vae_config` (always Auto), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** checkbox forces P5 for hardware where the recommendation still crashes.
-
-</details>
 
 ---
 
@@ -177,8 +171,7 @@ Same launcher, same Wan2GP, same features — new shell. The Electron edition sh
 
 WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP's own `setup_config.json` and shows exactly what it will install — and re-syncs on every update.
 
-<details>
-<summary>Wheel table & per-GPU sets</summary>
+**Wheel table & per-GPU sets**
 
 | Wheel | Version | What it does |
 |-------|---------------|---------------|
@@ -203,8 +196,6 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 **Intel:** iGPU (UHD/Iris) and Arc → CPU torch (slow but working, unchanged). No XPU backend exists upstream, so Arc acceleration is not possible with this launcher yet — the UI says so instead of promising XPU.
 
 > Upstream: [INSTALLATION.md](https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/INSTALLATION.md)
-
-</details>
 
 ---
 
