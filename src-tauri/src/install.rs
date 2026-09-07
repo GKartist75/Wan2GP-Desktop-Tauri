@@ -563,7 +563,7 @@ fn patch_therock_torch_cmd(repo: &std::path::Path, torch_cmd: &str) -> Result<()
 
 /// setup.py profiles the launcher may force via WAN2GP_TAURI_GPU_PROFILE.
 /// Allowlist = keys that exist in upstream setup_config.json gpu_profiles
-/// (verified 2026-09-08): anything else (AMD_GFX103X, INTEL_XPU, CPU) leaves
+/// (verified 2026-09-07): anything else (AMD_GFX103X, INTEL_XPU, CPU) leaves
 /// setup.py's own detection alone — forcing an unknown key would KeyError.
 /// Our keys already match upstream's for these families (and ours are more
 /// correct: upstream matches bare "50" anywhere, so a GTX 1050 reads as
