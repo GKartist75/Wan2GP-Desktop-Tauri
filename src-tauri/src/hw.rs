@@ -14,8 +14,41 @@ pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
             }
         }
     }
+    // No NVIDIA driver — WMI fallback for AMD/Intel (Electron queryGpuList parity).
+    // Doc-leading: deepbeepmeep docs/AMD-INSTALLATION.md is the spec for AMD support.
+    if let Some((name, vendor, raw_bytes)) = wmi_gpu_fallback() {
+        let mb = raw_bytes / (1024 * 1024);
+        // AdapterRAM is a 32-bit field (caps ~4GB, often 0): report raw, never trust.
+        let vram = if mb > 0 { format!("{mb} MiB") } else { "0 MiB".to_string() };
+        return serde_json::json!({"vendor":vendor,"name":name,"vramMB":vram,"driverVersion":"","raw":format!("WMI: {name}")});
+    }
     serde_json::json!({"vendor":"unknown","name":"","vramMB":"0","driverVersion":"","raw":"nvidia-smi not found"})
 }
+
+/// WMI fallback for non-NVIDIA GPUs on Windows (AMD/Intel).
+/// Returns (display name, vendor, AdapterRAM bytes). AdapterRAM is a 32-bit
+/// field — capped at ~4GB and frequently 0 — so callers must treat small/zero
+/// values as "VRAM unknown", never as truth (mirrors queryGpuList).
+#[cfg(windows)]
+pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64)> {
+    let out = silent_command("powershell").args(["-NoProfile","-Command","Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name + '|' + $_.AdapterRAM }"]).output().ok()?;
+    if !out.status.success() { return None; }
+    let s = String::from_utf8_lossy(&out.stdout);
+    for ln in s.lines() {
+        let (n, r) = ln.split_once('|')?;
+        let name = n.trim().to_string();
+        if name.is_empty() || name.to_lowercase().contains("nvidia") { continue; }
+        let lower = name.to_lowercase();
+        let vendor = if lower.contains("amd") || lower.contains("radeon") { "AMD" }
+            else if lower.contains("intel") || lower.contains("arc") { "INTEL" }
+            else { continue; };
+        let raw = r.trim().parse::<u64>().unwrap_or(0);
+        return Some((name, vendor.to_string(), raw));
+    }
+    None
+}
+#[cfg(not(windows))]
+pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64)> { None }
 
 // ── existing spike commands (kept) ──
 #[tauri::command]
@@ -35,7 +68,7 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
     if v == "AMD" {
         if g.contains("7600")||g.contains("7700")||g.contains("7800")||g.contains("7900")||g.contains("780M") { return "AMD_GFX110X".into(); }
         if g.contains("890M")||g.contains("STRIX")||g.contains("HALO")||g.contains("Z1")||g.contains("PHOENIX") { return "AMD_GFX1151".into(); }
-        if g.contains("9060")||g.contains("9070")||g.contains("8000")||g.contains("1201") { return "AMD_GFX1201".into(); }
+        if g.contains("9060")||g.contains("9070")||g.contains("9700")||g.contains("9000")||g.contains("8000")||g.contains("1201") { return "AMD_GFX1201".into(); }
         return "AMD_GFX110X".into();
     }
     // Intel → XPU backend (install-plan.js); unknown → CPU. Never alias an
@@ -60,6 +93,18 @@ pub(crate) fn apply_gguf_override(url: &str) -> String {
     if url.contains("py310") { GGUF_1021_WIN_PY310.into() } else { GGUF_1021_WIN_PY311.into() }
 }
 
+#[cfg(test)]
+mod amd_profile_tests {
+    use super::kernel_profile_key;
+    #[test]
+    fn r9700_maps_to_gfx1201() {
+        // Radeon AI PRO R9700 = gfx1201 (Navi 48, RDNA 4) — doc-leading per
+        // docs/AMD-INSTALLATION.md; must not fall through to AMD_GFX110X.
+        assert_eq!(kernel_profile_key("AMD", "AMD Radeon AI PRO R9700"), "AMD_GFX1201");
+        assert_eq!(kernel_profile_key("AMD", "AMD Radeon RX 9070 XT"), "AMD_GFX1201");
+        assert_eq!(kernel_profile_key("AMD", "AMD Radeon RX 7900 XTX"), "AMD_GFX110X");
+    }
+}
 #[cfg(test)]
 mod gguf_override_tests {
     use super::apply_gguf_override;
@@ -108,6 +153,13 @@ pub fn detect_gpus() -> serde_json::Value {
         }
     }
     if !gpus.is_empty() { return serde_json::Value::Array(gpus); }
+    // WMI fallback for AMD/Intel (Electron queryGpuList parity, dropped in port).
+    if let Some((name, vendor, raw)) = wmi_gpu_fallback() {
+        let mb = (raw / (1024 * 1024)) as f64;
+        let unknown = raw == 0 || mb < 2048.0;
+        let label = if unknown { format!("{name} (VRAM unknown)") } else { name };
+        return serde_json::json!([{"index": 0, "name": label, "vramMB": if unknown { 0.0 } else { mb }, "vendor": vendor}]);
+    }
     // fallback single unknown
     serde_json::json!([{"index": 0, "name": "Unknown", "vramMB": 0, "vendor": "UNKNOWN"}])
 }
@@ -318,8 +370,9 @@ pub fn get_system_metrics() -> serde_json::Value {
                 let mut gpus_arr: Vec<serde_json::Value> = per_gpu.iter().enumerate().map(|(i,g)| {
                     serde_json::json!({"index": i, "gpu": g["gpu"], "vram": g["vram"], "vramFree": g["vramFree"], "vramUsed": g["vramUsed"], "vramTotal": g["vramTotal"]})
                 }).collect();
-                // iGPU fallback: cached once, not every 2s (was 400ms powershell in hot loop)
-                if gpus_arr.len() == 1 {
+                // iGPU fallback: cached once, not every 2s (was 400ms powershell in hot loop).
+                // Name-keyed tiles are WMI primaries (AMD/Intel-only box) — never append a dupe.
+                if gpus_arr.len() == 1 && gpus_arr[0].get("name").is_none() {
                     if let Some(igpu) = get_cached_igpu() {
                         if !igpu.is_null() {
                             let name = igpu.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -344,6 +397,16 @@ pub fn get_system_metrics() -> serde_json::Value {
             result["vramFree"] = last["vramFree"].clone(); result["vramUsed"] = last["vramUsed"].clone(); result["vramTotal"] = last["vramTotal"].clone(); result["vram"] = last["vram"].clone(); result["gpu"] = last["gpu"].clone();
             result["gpus"] = last["gpus"].clone(); result["gpu2"] = last["gpu2"].clone(); result["vram2"] = last["vram2"].clone(); result["vramFree2"] = last["vramFree2"].clone(); result["vramUsed2"] = last["vramUsed2"].clone(); result["vramTotal2"] = last["vramTotal2"].clone();
         }}
+    }
+    // AMD/Intel-only box (no nvidia-smi output): primary tile from the cached WMI probe.
+    if result["gpus"].as_array().is_none_or(|a| a.is_empty()) {
+        if let Some(igpu) = get_cached_igpu() {
+            if !igpu.is_null() {
+                let name = igpu.get("name").and_then(|v| v.as_str()).unwrap_or("GPU").to_string();
+                let total = igpu.get("vram").and_then(|v| v.as_str()).unwrap_or("—").to_string();
+                result["gpus"] = serde_json::json!([{"index": 0, "gpu": null, "vram": null, "vramFree": total.clone(), "vramUsed": "—", "vramTotal": total, "name": name}]);
+            }
+        }
     }
     // cache for throttle
     if let Ok(mut g) = METRICS_CACHE.get_or_init(|| Mutex::new(None)).lock() { *g = Some((std::time::Instant::now(), result.clone())); }

@@ -85,6 +85,10 @@ pub fn auto_tune_detect() -> serde_json::Value {
     let vram_mb: f64 = vram_str.split_whitespace().next().unwrap_or("0").parse().unwrap_or(0.0);
     let vram_gb = (vram_mb / 1024.0).round() as i64;
     let cuda_available = vendor == "NVIDIA" && vram_mb > 0.0 && !name.is_empty();
+    // AMD (TheRock/ROCm, doc-leading per docs/AMD-INSTALLATION.md): no CUDA, but a
+    // named Radeon is a usable GPU — surface it instead of "—" so the installer
+    // plans the ROCm path. (VRAM stays 0/unknown until a 64-bit source lands.)
+    let gpu_available = cuda_available || (vendor == "AMD" && !name.is_empty());
     // RAM via powershell fallback
     let ram_gb = {
         #[cfg(windows)] {
@@ -98,7 +102,8 @@ pub fn auto_tune_detect() -> serde_json::Value {
     let ram_tier = if ram_gb >= 63.5 { "high" } else if ram_gb >= 31.5 { "low" } else { "very_low" };
     serde_json::json!({
         "cuda_available": cuda_available,
-        "gpu_name": if cuda_available { name.clone() } else { "—".into() },
+        "gpu_available": gpu_available,
+        "gpu_name": if gpu_available { name.clone() } else { "—".into() },
         "gpu_vram_gb": vram_gb,
         "ram_gb": ram_gb,
         "cpu_count": cpu_count,

@@ -484,6 +484,9 @@ fn smoke_verify(py: &Path, repo: &Path) -> Result<String, String> {
     if vendor == "NVIDIA" && !line.contains("cuda=True") {
         return Err("torch can't see the NVIDIA GPU (cuda=False) — likely a driver/CUDA mismatch. Update to NVIDIA R580+, reboot, then repair the environment.".into());
     }
+    if vendor == "AMD" && !line.contains("cuda=True") {
+        return Err("torch can't see the AMD GPU (cuda=False) — update to a recent Adrenalin/Pro driver (>= 24.5), confirm the TheRock index URL matches your GPU family (docs/AMD-INSTALLATION.md), reboot, then repair the environment.".into());
+    }
     Ok(line)
 }
 
@@ -494,6 +497,47 @@ fn is_network_failure(tail: &str) -> bool {
     ["failed to fetch", "operation timed out", "connection reset", "temporary failure",
      "could not resolve", "name resolution", "network is unreachable", "connection timed out",
      "connect error", "request failed after"].iter().any(|m| low.contains(m))
+}
+
+/// AMD TheRock torch source, doc-leading (deepbeepmeep docs/AMD-INSTALLATION.md).
+/// Returns (primary, fallback) index URLs for the GPU family. Primary is the
+/// doc's `/v2/` release URL; fallback is the community-proven `/v2-staging/`
+/// twin (6Morpheus6/wan2gp-amd). gfx1150 (Strix Point 890M) is staging-only
+/// per the doc, so it leads with staging.
+fn amd_therock_urls(profile: &str, gpu_name: &str) -> Option<(String, String)> {
+    const BASE: &str = "https://rocm.nightlies.amd.com";
+    let g = gpu_name.to_uppercase();
+    let fam = match profile {
+        "AMD_GFX1201" => "gfx120X-all",
+        "AMD_GFX110X" => "gfx110X-all",
+        "AMD_GFX1151" if g.contains("890M") || g.contains("PHOENIX") || g.contains("1150") => "gfx1150",
+        "AMD_GFX1151" => "gfx1151",
+        _ => return None,
+    };
+    if fam == "gfx1150" {
+        Some((format!("{BASE}/v2-staging/{fam}/"), format!("{BASE}/v2/{fam}/")))
+    } else {
+        Some((format!("{BASE}/v2/{fam}/"), format!("{BASE}/v2-staging/{fam}/")))
+    }
+}
+
+/// Patch the CLONED setup_config.json's rocm65.win torch command to the doc's
+/// per-family TheRock nightly URL. Upstream's entry is stale gfx110x-only
+/// wheels; the doc prescribes `--pre ... --index-url <family>`. setup.py runs
+/// `{pip} {torch_cmd}` where pip already ends in `install`, so the replacement
+/// is flags + packages + index URL. Re-applied every install (a repo update
+/// restores upstream's file) and logged, so drift is visible.
+fn patch_therock_torch_cmd(repo: &std::path::Path, index_url: &str) -> Result<(), String> {
+    let path = repo.join("setup_config.json");
+    let raw = std::fs::read_to_string(&path).map_err(|e| format!("setup_config.json unreadable: {e}"))?;
+    let mut cfg: serde_json::Value = serde_json::from_str(&raw).map_err(|e| format!("setup_config.json invalid: {e}"))?;
+    let cmd = format!("--pre torch torchvision torchaudio rocm[devel] --index-url {index_url}");
+    match cfg.get_mut("components").and_then(|c| c.get_mut("torch")).and_then(|t| t.get_mut("rocm65")).and_then(|r| r.get_mut("cmd")).and_then(|c| c.get_mut("win")) {
+        Some(slot) => { *slot = serde_json::Value::String(cmd); }
+        None => return Err("setup_config.json has no components.torch.rocm65.cmd.win — upstream schema changed".into()),
+    }
+    std::fs::write(&path, serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?).map_err(|e| format!("setup_config.json unwritable: {e}"))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -674,6 +718,18 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
             }
         }
     }
+    // AMD TheRock torch (doc-leading): patch the cloned setup_config.json so
+    // setup.py's own [2/3] torch step installs per-family nightlies instead of
+    // the stale gfx110x-only wheels. NVIDIA path untouched.
+    let amd_urls = if plan["profile"].as_str().unwrap_or("").starts_with("AMD") {
+        amd_therock_urls(plan["profile"].as_str().unwrap_or(""), plan["gpuName"].as_str().unwrap_or(""))
+    } else { None };
+    if let Some((primary, _)) = &amd_urls {
+        match patch_therock_torch_cmd(&repo, primary) {
+            Ok(()) => emit(&format!("[*] AMD TheRock torch source (docs/AMD-INSTALLATION.md): {primary}\n")),
+            Err(e) => emit(&format!("[!] AMD torch patch skipped ({e}) — setup.py will use upstream's entry.\n")),
+        }
+    }
     // run setup.py with the env's python (hardware-aware: setup.py reads setup_config.json + GPU)
     {
         let (py, args): (String, Vec<String>) = if env.as_str() == "conda" { ("conda".into(), vec!["run".into(), "-p".into(), env_path.to_string_lossy().to_string(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) } else {
@@ -695,7 +751,18 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
             let mut phases_done = std::collections::HashSet::new();
             let mut do_phase = |id: &str, label: &str| { if phases.insert(id.to_string()) { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": false})); } };
             let mut done_phase = |id: &str, label: &str| { if phases_done.insert(id.to_string()) { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": true})); } };
-            if attempt == 2 { emit("[*] Retrying setup.py (attempt 2 of 2)…\n"); }
+            if attempt == 2 {
+                emit("[*] Retrying setup.py (attempt 2 of 2)…\n");
+                // AMD: retry pulls from the staging twin (community-proven fallback).
+                // setup_config.json lives in the repo root (not the cleared env dir),
+                // so re-patch here, before the retry spawn, and [2/3] uses staging.
+                if let Some((_, staging)) = &amd_urls {
+                    match patch_therock_torch_cmd(&repo, staging) {
+                        Ok(()) => emit(&format!("[*] AMD retry via staging URL: {staging}\n")),
+                        Err(e) => emit(&format!("[!] AMD staging patch skipped ({e}).\n")),
+                    }
+                }
+            }
             let (mut rx, _child) = match app.shell().command(&py).args(args.clone()).current_dir(&repo).spawn() {
                 Ok(t) => t,
                 Err(e) => {
@@ -809,6 +876,17 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
             Err(_) => {
                 mutating_done();
                 return Err(format!("Install finished but `import torch` fails in {} — the environment is broken. Retry the install (the broken env is removed automatically) or report it with Copy diagnostics.", smoke_py.display()));
+            }
+        }
+        // AMD TheRock compat (doc + community recipe): ROCm torch needs the
+        // numpy 1.26.4 pin — requirements.txt may have pulled numpy 2.x.
+        // Warn-only: never turn a passing smoke test into a failure.
+        if amd_urls.is_some() {
+            emit("[*] AMD env: pinning numpy==1.26.4 for ROCm torch compat…\n");
+            match silent_command(&smoke_py).args(["-m", "pip", "install", "numpy==1.26.4", "setuptools", "hf-xet"]).current_dir(&repo).output() {
+                Ok(o) if o.status.success() => emit("[✓] numpy pin applied.\n"),
+                Ok(o) => emit(&format!("[!] numpy pin exited {} — ROCm torch may want numpy==1.26.4 installed manually.\n", o.status.code().unwrap_or(-1))),
+                Err(e) => emit(&format!("[!] numpy pin spawn failed ({e}).\n")),
             }
         }
     }
@@ -1510,4 +1588,22 @@ pub async fn install_dlss5(app: tauri::AppHandle, force: bool) -> Result<serde_j
     if complete && !spawn_err { return Ok(serde_json::json!({"ok": true, "success": true, "complete": true})); }
     if installed { return Ok(serde_json::json!({"ok": true, "success": true, "complete": false, "hint": "Partial install — see console; rerun with Force if files conflict."})); }
     Err("DLSS5 install failed — see console output".into())
+}
+
+#[cfg(test)]
+mod amd_therock_tests {
+    use super::amd_therock_urls;
+    #[test]
+    fn family_urls_doc_leading() {
+        // Primary = doc /v2/ release, fallback = staging twin.
+        let (p, f) = amd_therock_urls("AMD_GFX1201", "AMD Radeon AI PRO R9700").unwrap();
+        assert!(p.contains("/v2/gfx120X-all/"), "got {p}");
+        assert!(f.contains("/v2-staging/gfx120X-all/"), "got {f}");
+        let (p, _) = amd_therock_urls("AMD_GFX110X", "AMD Radeon RX 7900 XTX").unwrap();
+        assert!(p.contains("/v2/gfx110X-all/"), "got {p}");
+        // Strix Point 890M is staging-only per the doc.
+        let (p, _) = amd_therock_urls("AMD_GFX1151", "AMD Radeon 890M").unwrap();
+        assert!(p.contains("staging") && p.contains("gfx1150"), "got {p}");
+        assert!(amd_therock_urls("RTX_50", "NVIDIA GeForce RTX 5090").is_none());
+    }
 }

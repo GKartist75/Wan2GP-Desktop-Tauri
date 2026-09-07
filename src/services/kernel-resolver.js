@@ -38,8 +38,9 @@ function kernelProfileKey(gpu) {
     if (/7600|7700|7800|7900|780M/.test(g)) return 'AMD_GFX110X'
     // RDNA 3.5 APUs (gfx1150/1151): Strix Halo, Strix Point 890M, Z1/Phoenix
     if (/890M|STRIX|HALO|Z1|PHOENIX|7000/.test(g)) return 'AMD_GFX1151'
-    // RDNA 4 (gfx120X): RX 9060/9070 — upstream's old mapping missed these
-    if (/9000|9060|9070|8000|1201/.test(g)) return 'AMD_GFX1201'
+    // RDNA 4 (gfx120X): RX 9060/9070 + Radeon AI PRO R9700 (gfx1201, Navi 48) —
+    // upstream's old mapping missed these; doc-leading per docs/AMD-INSTALLATION.md
+    if (/9000|9060|9070|9700|8000|1201/.test(g)) return 'AMD_GFX1201'
     return 'AMD_GFX110X'
   }
   if (vendor === 'INTEL') return 'INTEL_XPU' // Arc/iGPU → XPU backend, no CUDA wheels

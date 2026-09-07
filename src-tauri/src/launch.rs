@@ -249,6 +249,26 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             }
         }
     }
+    // AMD ROCm session env (doc-leading: docs/AMD-INSTALLATION.md "Running Wan2GP").
+    // Set-if-absent so explicit user overrides always win; logged like the HSA
+    // override above. Stale values on GPU switch are harmless (NVIDIA ignores
+    // them), so unlike HSA they are never removed here.
+    {
+        let gpu = get_gpu_info_sync();
+        let profile = kernel_profile_key(gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""), gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""));
+        if profile.starts_with("AMD") {
+            for (k, v) in [
+                ("FLASH_ATTENTION_TRITON_AMD_ENABLE", "TRUE"),
+                ("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1"),
+                ("MIOPEN_FIND_MODE", "FAST"),
+            ] {
+                if std::env::var(k).is_err() {
+                    std::env::set_var(k, v);
+                    emit(&format!("[i] GPU profile env: {k}={v}\n"));
+                }
+            }
+        }
+    }
     std::env::set_var("PYTHONUNBUFFERED", "1");
     std::env::set_var("PYTHONUTF8", "1");
     std::env::set_var("PYTHONIOENCODING", "utf-8");
