@@ -4126,6 +4126,8 @@ $('autotuneDetectBtn').addEventListener('click', async () => {
 
     status.className = ''
     status.style.background = 'var(--bg-tertiary)'
+    status.style.fontSize = '0.7rem'
+    status.style.color = 'var(--text-secondary)'
     status.innerHTML = '\u2139\ufe0f Detection complete. Review the recommendation below, then <strong>Apply</strong> to write settings (Wan2GP must be restarted for them to take effect).'
   } catch (e) {
     status.className = ''

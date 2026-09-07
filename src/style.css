@@ -716,10 +716,11 @@ body {
   display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
 .settings-tab {
-  flex: 1; padding: 10px; border: none; background: transparent;
+  flex: 1; padding: 10px 4px; border: none; background: transparent;
   color: var(--text-tertiary); font-family: 'Geist', sans-serif; font-size: 0.6875rem;
   font-weight: 500; cursor: pointer; transition: all 0.15s;
   border-bottom: 2px solid transparent;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .settings-tab:hover { color: var(--text-primary); background: var(--surface-hover); }
 .settings-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
