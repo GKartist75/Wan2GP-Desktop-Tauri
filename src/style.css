@@ -383,6 +383,7 @@ body {
 .launch-btn:active { transform: scale(0.98); }
 .launch-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .launch-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.launch-hint { display: none; font-size: 0.6875rem; color: var(--text-secondary); line-height: 1.4; padding: 2px 4px; text-align: center; }
 .launch-info {
   margin-top: 6px; border-radius: var(--radius-sm); overflow: hidden;
 }

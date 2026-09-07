@@ -1857,14 +1857,17 @@ async function refreshDashboard(){
     let available = await probe()
     if (available === false) available = await probe()
     if (available === null) return
-    // Log every negative so a startup flash leaves evidence in the console.
-    if (available === false) appendLog('[!] Chrome probe: not found (Launch in Chrome disabled)')
-    else if (window._chromeWasMissing) appendLog('[*] Chrome probe: found on re-probe (first probe flaked)')
+    // Flake guard: a single negative probe (common at cold start) must not
+    // flash "Chrome not installed" — show only after 2 consecutive misses.
+    window._chromeMissCount = (available === false) ? (window._chromeMissCount || 0) + 1 : 0
+    const noChrome = (available === false) && window._chromeMissCount >= 2
+    if (noChrome) appendLog('[!] Chrome probe: not found twice (Launch in Chrome disabled)')
+    else if (available === true && window._chromeWasMissing) appendLog('[*] Chrome probe: found on re-probe (first probe flaked)')
     window._chromeWasMissing = (available === false)
     const btn = $('browserNoGpuBtn')
     const hint = $('noGpuHint')
-    if (btn) btn.disabled = !available
-    if (hint) hint.style.display = available ? 'none' : 'block'
+    if (btn) btn.disabled = noChrome
+    if (hint) hint.style.display = noChrome ? 'block' : 'none'
   })()
   } finally {
     _dashRefreshing = false
