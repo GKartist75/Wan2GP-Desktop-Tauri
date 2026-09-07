@@ -33,7 +33,7 @@
     <div class="settings-tabs">
       <button class="settings-tab active" data-tab="general">General</button>
       <button class="settings-tab" data-tab="launch">Launch</button>
-      <button class="settings-tab" data-tab="about">About</button>
+      <button class="settings-tab" data-tab="system">System</button>
       <button class="settings-tab" data-tab="autotune">⚡ Auto-Tune</button>
       <button class="settings-tab" data-tab="plugins">🧩 Plugins</button>
     </div>
@@ -143,22 +143,6 @@
           <p class="token-hint">If saving settings in Wan2GP fails with <em>"Value: N is not in the list of choices: [0, 1]"</em>, a saved value is out of range for a dropdown (usually from an older version or imported settings). This scans <code>models/_settings.json</code> and all <code>*_settings.json</code> files and resets out-of-range values to valid ones. Originals are backed up as <code>*.bak-repair</code>.</p>
           <button class="btn btn-primary small" id="repairSettingsBtn" style="margin-top:8px">Scan & Repair Settings</button>
         </div>
-        <div class="settings-section">
-          <h3>uv Wheel Cache</h3>
-          <p class="token-hint">Wan2GP installs into a Python venv on the same drive as your install. <code>uv</code> keeps a wheel cache here (<code>.uv-cache</code>) so future updates are fast — it can grow to several GB. Free the space if you don't need to keep it.</p>
-          <p class="token-hint" id="uvCacheStatus" style="margin-top:8px">Checking cache…</p>
-          <div style="margin-top:10px;display:flex;gap:8px">
-            <button class="btn btn-ghost small" id="uvCacheSizeBtn">Calculate size</button>
-            <button class="btn btn-ghost small" id="uvCachePurgeBtn">Purge unused</button>
-            <button class="btn btn-ghost small" id="uvCacheRemoveBtn" style="color:var(--signal-red);border-color:var(--signal-red)">Remove cache</button>
-          </div>
-          <p class="token-hint" id="uvCacheResult" style="margin-top:8px"></p>
-        </div>
-        <div class="settings-section">
-          <h3 style="color:var(--signal-red)">Uninstall Wan2GP</h3>
-          <p class="token-hint">Removes the Wan2GP app, its Python environment, and all installed packages. Downloaded models can be kept. The Desktop launcher itself stays installed.</p>
-          <button class="btn btn-ghost small" id="uninstallBtn" style="margin-top:8px;color:var(--signal-red);border-color:var(--signal-red)">Uninstall Wan2GP…</button>
-        </div>
       </div>
       <div class="settings-tab-content" data-tab="launch">
         <div class="settings-section">
@@ -245,7 +229,7 @@
           </details>
         </div>
       </div>
-      <div class="settings-tab-content" data-tab="about">
+      <div class="settings-tab-content" data-tab="system">
         <div class="settings-section">
           <h3>Wan2GP Desktop Launcher</h3>
           <p class="token-hint">Version <span id="settingsVersionNum">—</span></p>
@@ -320,6 +304,22 @@
             <button class="btn btn-primary small" id="tsTritonSdpaBtn">Clear + fall back to SDPA</button>
             <span class="token-hint" id="tsTritonStatus" style="margin-left:8px"></span>
           </div>
+        </div>
+        <div class="settings-section">
+          <h3>uv Wheel Cache</h3>
+          <p class="token-hint">Wan2GP installs into a Python venv on the same drive as your install. <code>uv</code> keeps a wheel cache here (<code>.uv-cache</code>) so future updates are fast — it can grow to several GB. Free the space if you don't need to keep it.</p>
+          <p class="token-hint" id="uvCacheStatus" style="margin-top:8px">Checking cache…</p>
+          <div style="margin-top:10px;display:flex;gap:8px">
+            <button class="btn btn-ghost small" id="uvCacheSizeBtn">Calculate size</button>
+            <button class="btn btn-ghost small" id="uvCachePurgeBtn">Purge unused</button>
+            <button class="btn btn-ghost small" id="uvCacheRemoveBtn" style="color:var(--signal-red);border-color:var(--signal-red)">Remove cache</button>
+          </div>
+          <p class="token-hint" id="uvCacheResult" style="margin-top:8px"></p>
+        </div>
+        <div class="settings-section">
+          <h3 style="color:var(--signal-red)">Uninstall Wan2GP</h3>
+          <p class="token-hint">Removes the Wan2GP app, its Python environment, and all installed packages. Downloaded models can be kept. The Desktop launcher itself stays installed.</p>
+          <button class="btn btn-ghost small" id="uninstallBtn" style="margin-top:8px;color:var(--signal-red);border-color:var(--signal-red)">Uninstall Wan2GP…</button>
         </div>
       </div>
 
