@@ -252,6 +252,8 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
+- **v0.5.0** — AMD TheRock installer pipeline (RDNA 2/3/3.5/4 incl. R9700), Intel CPU honesty (no XPU promises), 🛟 Troubleshooting + Updates folded into the System tab, Chrome-probe flash fix, autotune layout fixes.
+
 - **v0.4.6** — Kernel Wheels panel moved up; fixed LightX2V/OpenCV detection.
 - **v0.4.5** — fullscreen embed with zoom/downloads, Stop All button, GGUF 1.0.21, AMD profiles.
 - **v0.4.4** — install retry/resume, Gradio embed fills the window.
