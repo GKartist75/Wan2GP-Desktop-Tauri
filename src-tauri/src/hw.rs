@@ -66,34 +66,85 @@ pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64)> {
 #[cfg(not(windows))]
 pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64)> { None }
 
+/// Win32_VideoController.AdapterRAM is a 32-bit field: cards with ≥4GB VRAM
+/// report 0 or the 0xFFFFFFFF cap (≈4095MB) — a 32GB R9700 otherwise shows
+/// up as a 4GB card (the exact user report). Either value is "VRAM unknown",
+/// never truth. (A genuine sub-2GB iGPU is likewise unknown for tiering.)
+/// Pure + cross-platform so unit tests cover it on any host.
+pub(crate) fn adapter_ram_known_mb(raw: u64) -> Option<f64> {
+    if raw == 0 || raw >= 0xFFF0_0000 {
+        return None;
+    }
+    let mb = raw as f64 / (1024.0 * 1024.0);
+    if mb < 2048.0 || mb >= 4095.0 { None } else { Some(mb) }
+}
+
+/// Distinctive GPU-name tokens: alphanumeric runs (len ≥ 4) containing a
+/// digit — R9700, 9070, 7900XTX. Lets the registry match survive the small
+/// WMI-vs-DriverDesc wording differences ("Radeon AI PRO R9700" vs
+/// "AMD Radeon AI PRO R9700") without ever matching a generic iGPU entry.
+fn distinctive_tokens(name: &str) -> Vec<String> {
+    name.to_uppercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| t.len() >= 4 && t.bytes().any(|b| b.is_ascii_digit()))
+        .map(str::to_string)
+        .collect()
+}
+
 /// 64-bit dedicated VRAM (MB) from the display-driver registry key.
 /// WMI AdapterRAM is uint32 (caps ~4GB, often 0); the driver also reports
-/// HardwareInformation.MemorySize as a QWORD — exact for 32GB cards.
+/// the size as a QWORD — exact for 32GB cards. Consumer drivers expose it
+/// as HardwareInformation.MemorySize, AMD PRO drivers (R9700 reporter box)
+/// as HardwareInformation.qwMemorySize — read both, first parseable wins.
 /// Fast (<300ms, detection paths only, never the metrics tick), no new deps.
 /// Returns None when absent/implausible — callers keep "VRAM unknown".
 #[cfg(windows)]
 pub(crate) fn wmi_dedicated_vram_mb(display_name: &str) -> Option<u64> {
     let out = probe_command("POWERSHELL", "powershell").args(["-NoProfile","-Command",
-        "Get-ChildItem 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}' | ForEach-Object { $d = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue; if ($d.DriverDesc) { $d.DriverDesc.ToString() + '|' + $d.'HardwareInformation.MemorySize' } }"
+        "Get-ChildItem 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}' | ForEach-Object { $d = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue; if ($d.DriverDesc) { $d.DriverDesc.ToString() + '|' + $d.'HardwareInformation.MemorySize' + '|' + $d.'HardwareInformation.qwMemorySize' } }"
     ]).output().ok()?;
     if !out.status.success() { return None; }
     let s = String::from_utf8_lossy(&out.stdout);
     let want = display_name.to_lowercase();
+    let want_toks = distinctive_tokens(display_name);
     let mut cands: Vec<(String, u64)> = Vec::new();
     for ln in s.lines() {
-        let Some((desc, mem)) = ln.split_once('|') else { continue; };
-        let Ok(bytes) = mem.trim().parse::<u64>() else { continue; };
-        let Some(mb) = bytes.checked_div(1024 * 1024) else { continue; };
-        if mb == 0 || mb > 262144 { continue; }
+        let mut parts = ln.split('|');
+        let Some(desc) = parts.next() else { continue; };
+        // First parseable QWORD wins (MemorySize on consumer, qwMemorySize
+        // on PRO drivers; single-pipe legacy output keeps working).
+        let mut mb: Option<u64> = None;
+        for mem in parts {
+            if let Ok(bytes) = mem.trim().parse::<u64>() {
+                if let Some(m) = bytes.checked_div(1024 * 1024) {
+                    if m != 0 && m <= 262144 { mb = Some(m); break; }
+                }
+            }
+        }
+        let Some(mb) = mb else { continue; };
         let d = desc.trim().to_lowercase();
         if d.is_empty() || d.contains("nvidia") { continue; }
         cands.push((d, mb));
     }
-    // Name match (WMI vs DriverDesc can differ slightly); single-candidate
-    // fallback only — never attribute an iGPU's VRAM to a dGPU or vice versa.
+    // 1) Name match (WMI vs DriverDesc can differ slightly).
     for (d, mb) in &cands {
         if d.contains(&want) || want.contains(d) { return Some(*mb); }
     }
+    // 2) Distinctive-token match (R9700/9070/…); max VRAM wins so a
+    // duplicated driver key can't under-report, and a generic iGPU entry
+    // (no digit tokens) can never match.
+    if !want_toks.is_empty() {
+        let mut best: Option<u64> = None;
+        for (d, mb) in &cands {
+            let dtoks = distinctive_tokens(d);
+            if want_toks.iter().any(|t| dtoks.contains(t)) {
+                best = Some(best.map_or(*mb, |b: u64| b.max(*mb)));
+            }
+        }
+        if let Some(mb) = best { return Some(mb); }
+    }
+    // 3) Single-candidate fallback only — never attribute an iGPU's VRAM
+    // to a dGPU or vice versa.
     if cands.len() == 1 { return Some(cands[0].1); }
     None
 }
@@ -188,7 +239,7 @@ pub(crate) fn build_install_plan(hw: &serde_json::Value) -> serde_json::Value {
     let vram = hw.get("vramMB").and_then(|v| v.as_str()).unwrap_or("0").split_whitespace().next().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
     let driver = hw.get("driverVersion").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let vram_gb = vram / 1024.0_f64; let is_gtx = name.to_uppercase().contains("GTX 10") || name.to_uppercase().contains("GTX 16") || (name.contains("10") && vendor=="NVIDIA" && (name.contains("1050")||name.contains("1060")||name.contains("1650")));
-    let (cuda, torch, warn) = if vendor=="NVIDIA" { if is_gtx { ("CUDA 12.8", "PyTorch 2.7.1", String::new()) } else { let mut w=String::new(); if let Ok(dv)=driver.parse::<f64>() { if dv < 580.0 { w=format!("NVIDIA driver {driver} < R580 — cu130 needs R580+"); }} ("CUDA 13 (cu130)", "PyTorch 2.10", w) } } else if vendor=="AMD" { ("ROCm (TheRock)", "PyTorch 2.7.0", String::new()) } else if vendor=="APPLE" { ("MPS (Metal)", "PyTorch (MPS)", String::new()) } else { ("CPU", "PyTorch (CPU)", String::new()) };
+    let (cuda, torch, warn) = if vendor=="NVIDIA" { if is_gtx { ("CUDA 12.8", "PyTorch 2.7.1", String::new()) } else { let mut w=String::new(); if let Ok(dv)=driver.parse::<f64>() { if dv < 580.0 { w=format!("NVIDIA driver {driver} < R580 — cu130 needs R580+"); }} ("CUDA 13 (cu130)", "PyTorch 2.10", w) } } else if vendor=="AMD" { ("ROCm 7.15 (TheRock)", "PyTorch 2.12 (ROCm 7.15)", String::new()) } else if vendor=="APPLE" { ("MPS (Metal)", "PyTorch (MPS)", String::new()) } else { ("CPU", "PyTorch (CPU)", String::new()) };
     let _ = vram_gb; let _ = warn.clone();
     serde_json::json!({"vendor": vendor, "gpuName": name, "vramGb": vram, "cuda": cuda, "torch": torch, "driverWarning": warn, "profile": kernel_profile_key(&vendor, &name)})
 }
@@ -216,10 +267,11 @@ pub fn detect_gpus() -> serde_json::Value {
         if let Some(mb) = wmi_dedicated_vram_mb(&name) {
             return serde_json::json!([{"index": 0, "name": name, "vramMB": mb as f64, "vendor": vendor}]);
         }
-        let mb = (raw / (1024 * 1024)) as f64;
-        let unknown = raw == 0 || mb < 2048.0;
-        let label = if unknown { format!("{name} (VRAM unknown)") } else { name };
-        return serde_json::json!([{"index": 0, "name": label, "vramMB": if unknown { 0.0 } else { mb }, "vendor": vendor}]);
+        // AdapterRAM caps at ~4GB (0/0xFFFFFFFF on big cards) — never truth.
+        match adapter_ram_known_mb(raw) {
+            Some(mb) => return serde_json::json!([{"index": 0, "name": name, "vramMB": mb, "vendor": vendor}]),
+            None => return serde_json::json!([{"index": 0, "name": format!("{name} (VRAM unknown)"), "vramMB": 0.0, "vendor": vendor}]),
+        }
     }
     // fallback single unknown
     serde_json::json!([{"index": 0, "name": "Unknown", "vramMB": 0, "vendor": "UNKNOWN"}])
@@ -256,7 +308,9 @@ fn comp_label(code: &str) -> String {
     match code {
         "cu128" => "PyTorch 2.7.1 + CUDA 12.8".into(),
         "cu130" => "PyTorch 2.10.0 + CUDA 13.0".into(),
-        "rocm65" => "PyTorch (ROCm 6.5)".into(),
+        // Key stays rocm65 (upstream setup_config.json schema) — the label is
+        // what the installer actually puts down (exact-pinned 7.15 stack).
+        "rocm65" => "PyTorch 2.12 + ROCm 7.15 (TheRock)".into(),
         "mps" => "PyTorch (MPS)".into(),
         "v33" => "Triton < 3.3".into(),
         "v34" => "Triton < 3.4".into(),
@@ -318,7 +372,7 @@ pub(crate) fn hardware_profile_detail(vendor: &str, name: &str, vram_mb: f64) ->
         "RTX_40" => ("RTX_40", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku_cu13", "gguf"] }),
         "RTX_50" => ("RTX_50", Prof { python: "3.11.14", torch: "2.10.0 CU13", triton: Some("latest"), sage: Some("2.2.0"), sparge: Some("0.1.0"), flash: Some("2.8.3"), kernels: &["nunchaku_cu13", "light2xv", "gguf"] }),
         "MPS" => ("MPS", Prof { python: "3.11.14", torch: "MPS", triton: None, sage: None, sparge: None, flash: None, kernels: &[] }),
-        k if k.starts_with("AMD") => ("AMD", Prof { python: "3.11.14", torch: "ROCm 6.5", triton: None, sage: None, sparge: None, flash: None, kernels: &[] }),
+        k if k.starts_with("AMD") => ("AMD", Prof { python: "3.11.14", torch: "ROCm 7.15", triton: None, sage: None, sparge: None, flash: None, kernels: &[] }),
         // Intel → CPU torch, no kernels: XPU acceleration is not possible
         // (no upstream XPU backend exists). Display key is INTEL_CPU.
         "INTEL_XPU" => ("INTEL_CPU", Prof { python: "3.11.14", torch: "CPU", triton: None, sage: None, sparge: None, flash: None, kernels: &[] }),
@@ -374,7 +428,10 @@ pub(crate) fn get_cached_igpu() -> Option<serde_json::Value> {
                         if name.is_empty() || name.to_lowercase().contains("nvidia") { continue; }
                         let lower = name.to_lowercase();
                         if lower.contains("intel") || lower.contains("amd") || lower.contains("radeon") || lower.contains("arc") {
-                            let vram_mb = r.trim().parse::<i64>().unwrap_or(0) / (1024*1024);
+                            let raw_mb = r.trim().parse::<u64>().unwrap_or(0);
+                            // Same 4GB-cap guard as detection (R9700 metrics tile
+                            // showed a bogus 4095 MB before this).
+                            let vram_mb = adapter_ram_known_mb(raw_mb).map(|mb| mb as i64).unwrap_or(0);
                             let fmt2 = if vram_mb>0 { format!("{vram_mb} MB") } else { "—".into() };
                             igpu = Some(serde_json::json!({"name": name, "vram": fmt2}));
                             break;
@@ -535,10 +592,14 @@ mod amd_sim_tests {
 
         let plan = build_install_plan(&info);
         assert_eq!(plan.get("profile").and_then(|v| v.as_str()), Some("AMD_GFX1201"));
-        assert_eq!(plan.get("cuda").and_then(|v| v.as_str()), Some("ROCm (TheRock)"));
+        assert_eq!(plan.get("cuda").and_then(|v| v.as_str()), Some("ROCm 7.15 (TheRock)"));
 
-        let (primary, staging) = crate::install::amd_therock_urls("AMD_GFX1201", "AMD Radeon AI PRO R9700").unwrap();
-        assert!(primary.contains("/v2/gfx120X-all/"), "got {primary}");
+        // Exact-pinned 7.15 primary (verified working), staging float fallback.
+        let (primary, staging) = crate::install::amd_therock_torch_cmds("AMD_GFX1201", "AMD Radeon AI PRO R9700").unwrap();
+        assert!(primary.contains("whl-multi-arch"), "got {primary}");
+        assert!(primary.contains("torch==2.12.0+rocm7.15.0a20260728"), "got {primary}");
+        assert!(primary.contains("amd-torch-device-gfx1201==2.12.0+rocm7.15.0a20260728"), "got {primary}");
+        assert!(!primary.contains('['), "bracket-free for setup.py splice: {primary}");
         assert!(staging.contains("/v2-staging/gfx120X-all/"), "got {staging}");
 
         // registry-absent hardware: honest unknown labels, still AMD.
@@ -556,6 +617,29 @@ mod amd_sim_tests {
     }
 }
 
+#[cfg(test)]
+mod adapter_ram_tests {
+    use super::{adapter_ram_known_mb, distinctive_tokens};
+    #[test]
+    fn cap_values_are_unknown() {
+        // The R9700 report: 32GB card, AdapterRAM capped → was shown as 4GB.
+        assert_eq!(adapter_ram_known_mb(0), None);
+        assert_eq!(adapter_ram_known_mb(0xFFFF_FFFF), None);
+        assert_eq!(adapter_ram_known_mb(4294967295), None);
+        // Genuine small readings stay unknown for tiering honesty.
+        assert_eq!(adapter_ram_known_mb(512 * 1024 * 1024), None);
+        // Real sub-4GB readings pass through (3GB card, 2GB floor).
+        assert_eq!(adapter_ram_known_mb(3221225472), Some(3072.0));
+        assert_eq!(adapter_ram_known_mb(2147483648), Some(2048.0));
+    }
+    #[test]
+    fn tokens_pick_model_numbers() {
+        assert!(distinctive_tokens("AMD Radeon AI PRO R9700").contains(&"R9700".to_string()));
+        assert!(distinctive_tokens("AMD Radeon RX 9070 XT").contains(&"9070".to_string()));
+        // Generic iGPU names yield nothing (can never false-match).
+        assert!(distinctive_tokens("AMD Radeon(TM) Graphics").is_empty());
+    }
+}
 #[cfg(test)]
 mod intel_cpu_tests {
     use super::{build_install_plan, hardware_profile_detail, kernel_profile_key};

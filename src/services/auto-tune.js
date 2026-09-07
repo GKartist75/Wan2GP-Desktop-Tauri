@@ -246,9 +246,10 @@ async function queryGpuList() {
         const raw = parseInt(ram) || 0
         const vramMB = Math.round(raw / (1024 * 1024))
         // Win32_VideoController.AdapterRAM is a 32-bit field: it caps at ~4GB
-        // and frequently reads 0, so a small value is a wrong number, not the
-        // truth. Report unknown rather than a misleading tiny VRAM figure.
-        const unknown = raw === 0 || vramMB < 2048
+        // (0 or 0xFFFFFFFF on big cards — a 32GB R9700 reads as 4095MB) and
+        // frequently reads 0, so a small OR near-cap value is a wrong number,
+        // not the truth. Report unknown rather than a misleading figure.
+        const unknown = raw === 0 || raw >= 0xFFF00000 || vramMB < 2048 || vramMB >= 4095
         gpus.push({
           index: i,
           name: unknown ? `${name} (VRAM unknown)` : name,

@@ -12,7 +12,8 @@
  *  - NVIDIA RTX 20/30/40/50 (compute ≥ 7.0, not GTX 10/16) → PyTorch 2.10 + CUDA 13
  *  - GTX 10/16 (compute 6.1) → legacy PyTorch 2.7.1 + CUDA 12.8
  *  - NVIDIA cu130 needs driver R580+ (skipped for GTX 10/16)
- *  - AMD (Windows) → ROCm "TheRock" torch 2.7.0 + numpy 1.26.4 pin
+ *  - AMD (Windows) → exact-pinned ROCm 7.15 / torch 2.12.0 TheRock stack
+ *    (whl-multi-arch, verified working) + numpy 1.26.4 pin on the fallback path
  *  - Apple/Intel → MPS/CPU (no CUDA)
  *  - Attention kernels: SageAttention, FlashAttention, SpargeAttention, LightX2V
  *    (RTX 50), Nunchaku+GGUF — installed by setup.py per its own matrix.
@@ -79,17 +80,19 @@ function buildPlan(hw = {}) {
     attention = ['SageAttention', 'FlashAttention', 'SpargeAttention']
     if (cap >= 9.0) attention.push('Nunchaku + GGUF', 'LightX2V')
   } else if (vendor === 'AMD') {
-    cuda = 'ROCm (TheRock)'
-    torch = 'PyTorch 2.7.0'
-    numpyPin = 'numpy==1.26.4 (ROCm torch compatibility on Windows)'
+    cuda = 'ROCm 7.15 (TheRock)'
+    torch = 'PyTorch 2.12 (ROCm 7.15)'
+    // numpy 1.26.4 pin applies only on the staging-float fallback path — the
+    // pinned 7.15 primary resolves with numpy 2.x (verified pip closure).
+    numpyPin = 'numpy==1.26.4 (fallback path only; skipped on the ROCm 7.15 stack)'
     attention = ['SageAttention (ROCm)', 'FlashAttention (ROCm)']
-    notes.push('AMD detected — ROCm torch build; Windows needs the numpy 1.26.4 pin.')
-    // #5 ROCm driver minimum pre-check (upstream parity gap): ROCm 6.x needs an
+    notes.push('AMD detected — exact-pinned ROCm 7.15 stack (torch 2.12.0+rocm7.15.0a20260728, verified working); staging float on retry.')
+    // #5 ROCm driver minimum pre-check (upstream parity gap): ROCm 7.x needs an
     // Adrenalin/Pro driver >= ~24.5 (or the matching TheRock runtime). If we can
     // read a numeric driver version, warn when it's below the floor.
     const adv = parseFloat(hw.driverVersion)
     if (adv && adv < 24.5) {
-      driverWarning = `AMD driver ${hw.driverVersion} may be too old for ROCm 6.x. Wan2GP installs TheRock torch which needs a recent ROCm-capable driver (Adrenalin/Pro >= 24.5). Update the driver before installing, or generation may fail to use the GPU.`
+      driverWarning = `AMD driver ${hw.driverVersion} may be too old for ROCm 7.x. Wan2GP installs TheRock torch which needs a recent ROCm-capable driver (Adrenalin/Pro >= 24.5). Update the driver before installing, or generation may fail to use the GPU.`
     }
   } else if (vendor === 'APPLE') {
     cuda = 'MPS (Metal)'

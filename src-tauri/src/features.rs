@@ -85,9 +85,10 @@ pub fn auto_tune_detect() -> serde_json::Value {
     let vram_mb: f64 = vram_str.split_whitespace().next().unwrap_or("0").parse().unwrap_or(0.0);
     let vram_gb = (vram_mb / 1024.0).round() as i64;
     let cuda_available = vendor == "NVIDIA" && vram_mb > 0.0 && !name.is_empty();
-    // AMD (TheRock/ROCm, doc-leading per docs/AMD-INSTALLATION.md): no CUDA, but a
-    // named Radeon is a usable GPU — surface it instead of "—" so the installer
-    // plans the ROCm path. (VRAM stays 0/unknown until a 64-bit source lands.)
+    // AMD (TheRock/ROCm): no CUDA, but a named Radeon is a usable GPU —
+    // surface it instead of "—" so the installer plans the ROCm path.
+    // (VRAM comes from the 64-bit registry probe in hw.rs; AdapterRAM cap
+    // values read as unknown, never as a fake 4GB figure.)
     let gpu_available = cuda_available || (vendor == "AMD" && !name.is_empty());
     // RAM via powershell fallback
     let ram_gb = {
