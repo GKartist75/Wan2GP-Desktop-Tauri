@@ -36,7 +36,6 @@
       <button class="settings-tab" data-tab="about">About</button>
       <button class="settings-tab" data-tab="updates">Updates</button>
       <button class="settings-tab" data-tab="autotune">⚡ Auto-Tune</button>
-      <button class="settings-tab" data-tab="troubleshoot">🛟 Troubleshooting</button>
       <button class="settings-tab" data-tab="plugins">🧩 Plugins</button>
     </div>
     <div class="settings-scroll">
@@ -434,49 +433,6 @@
         </div>
       </div>
       
-    </div>
-    <div class="settings-tab-content" data-tab="troubleshoot">
-      <div class="settings-section">
-        <h3>🛟 Troubleshooting</h3>
-        <p class="token-hint">One-click fixes from the upstream <code>TROUBLESHOOTING.md</code>. Read-only checks first — destructive actions always ask or back up.</p>
-      </div>
-      <div class="settings-section">
-        <h3>Emergency Failsafe</h3>
-        <p class="token-hint">Upstream absolute-minimum setup: <code>--attention sdpa --profile 4 --teacache 0 --fp16</code> + P5 profiles in <code>wgp_config.json</code> (backed up first). Use when nothing else boots.</p>
-        <div class="token-field" style="margin-top:8px">
-          <button class="btn btn-primary small" id="tsFailsafeBtn">Apply failsafe</button>
-          <button class="btn btn-ghost small" id="tsCudaBtn">Test torch + CUDA</button>
-          <span class="token-hint" id="tsFailsafeStatus" style="margin-left:8px"></span>
-        </div>
-      </div>
-      <div class="settings-section" style="margin-top:12px">
-        <h3>Server Port</h3>
-        <p class="token-hint">Fixes “Port 7860 is already in use”. Check who owns the port, kill only a Python owner, or move to the next free port.</p>
-        <div class="token-field" style="margin-top:8px">
-          <button class="btn btn-ghost small" id="tsPortCheckBtn">Check port</button>
-          <button class="btn btn-ghost small" id="tsPortKillBtn">Kill owner</button>
-          <button class="btn btn-primary small" id="tsPortBumpBtn">Use next free port</button>
-          <span class="token-hint" id="tsPortStatus" style="margin-left:8px"></span>
-        </div>
-      </div>
-      <div class="settings-section" style="margin-top:12px">
-        <h3>Debug Bundle</h3>
-        <p class="token-hint">Copies GPU, Python/Torch, launch args, profiles and the last errors as Markdown — paste it into Discord / GitHub.</p>
-        <div class="token-field" style="margin-top:8px">
-          <button class="btn btn-ghost small" id="tsDebugCopyBtn">Copy debug info</button>
-          <span class="token-hint" id="tsDebugStatus" style="margin-left:8px"></span>
-        </div>
-      </div>
-      <div class="settings-section" style="margin-top:12px">
-        <h3>Triton / SageAttention</h3>
-        <p class="token-hint">Upstream Sage diagnostic: test the Triton import, clear a stale <code>%USERPROFILE%\.triton</code> cache (renamed to backup, never deleted blind), optionally fall back to <code>--attention sdpa</code>.</p>
-        <div class="token-field" style="margin-top:8px">
-          <button class="btn btn-ghost small" id="tsTritonTestBtn">Test Triton import</button>
-          <button class="btn btn-ghost small" id="tsTritonClearBtn">Clear cache</button>
-          <button class="btn btn-primary small" id="tsTritonSdpaBtn">Clear + fall back to SDPA</button>
-          <span class="token-hint" id="tsTritonStatus" style="margin-left:8px"></span>
-        </div>
-      </div>
     </div>
     </div>
   </div>
