@@ -254,6 +254,7 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 10px 14px;
 }
+.mem-grid > * { min-width: 0; }
 .mem-field {
   display: flex;
   flex-direction: column;
