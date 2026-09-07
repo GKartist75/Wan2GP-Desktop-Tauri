@@ -2,7 +2,7 @@
 
 > The easiest way to run **Wan2GP (WanGP)** — the open-source generative video/image/audio toolkit — on Windows. One installer. One click to launch. Zero Python/CUDA setup. Now with a **Rust + Tauri** shell: a fraction of the download, a fraction of the RAM.
 
-[![Release](https://img.shields.io/github/v/release/GKartist75/Wan2GP-Desktop-Tauri?style=flat-square&label=release)](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases) &nbsp; [![Platform](https://img.shields.io/badge/platform-Windows-blue?style=flat-square)](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases) &nbsp; [![Tauri](https://img.shields.io/badge/shell-Tauri%202-orange?style=flat-square)](https://tauri.app/) &nbsp; [![Rust](https://img.shields.io/badge/backend-Rust-black?style=flat-square)](https://www.rust-lang.org/)
+[![Stars](https://img.shields.io/github/stars/GKartist75/Wan2GP-Desktop-Tauri?style=flat-square)](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/stargazers) &nbsp; [![Release](https://img.shields.io/github/v/release/GKartist75/Wan2GP-Desktop-Tauri?style=flat-square&label=release)](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases) &nbsp; [![Platform](https://img.shields.io/badge/platform-Windows-blue?style=flat-square)](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases) &nbsp; [![Tauri](https://img.shields.io/badge/shell-Tauri%202-orange?style=flat-square)](https://tauri.app/) &nbsp; [![Rust](https://img.shields.io/badge/backend-Rust-black?style=flat-square)](https://www.rust-lang.org/)
 
 <p align="center">
   <a href="https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/latest" style="display:inline-block;padding:14px 36px;background:#2ea043;color:#fff;border-radius:8px;font-size:1.1rem;font-weight:600;text-decoration:none">
@@ -12,97 +12,23 @@
   <small>⚠️ Unsigned installer — "unknown publisher" warning is normal for open-source without a code-signing cert.</small>
 </p>
 
----
+> **New here? What is Wan2GP?** [WanGP](https://github.com/deepbeepmeep/Wan2GP) by deepbeepmeep is the open-source app this launcher installs — video, image, audio and TTS generation in your browser, running on as little as **6 GB VRAM**. This repo is only the Windows launcher: one-click install, per-GPU kernels, Auto-Tune profiles, no Python/CUDA setup. Details: [What you get](#what-you-get).
 
-## Why Tauri? (vs the Electron edition)
+## Contents
 
-Same launcher, same Wan2GP, same features — new shell. The Electron edition ships its own Chromium + Node.js runtime inside every install. The Tauri edition uses the **WebView2 engine already built into Windows 10/11** and a compiled **Rust** backend. No bundled browser, no Node runtime.
-
-| | Electron edition | **Tauri edition** |
-|---|---|---|
-| Installer download | ≈ 93 MB | **≈ 3 MB (~30× smaller)** |
-| Installed app binary | ≈ 300+ MB (Chromium + Node) | **≈ 7 MB** |
-| Idle RAM (launcher shell) | ~200–400 MB (full Chromium per window) | **~30–80 MB (shared system WebView2)** |
-| Startup | Node + Chromium boot | **Near-instant native boot** |
-| Backend | JavaScript on Node | **Compiled Rust (memory-safe, no GC pauses)** |
-| Updates | Full 93 MB re-download | Small NSIS/MSI patch |
-
-**What that means for generation:** the launcher is not the part that renders video — but every MB of RAM and VRAM it doesn't waste stays available for models. The Tauri shell idles at a fraction of the footprint, and the **Launcher GPU** setting (Integrated / Disabled-SwiftShader) can push the UI off your NVIDIA card entirely, freeing **1–5 GB VRAM** for Wan2GP.
-
-**What didn't change:** the entire frontend (dashboard, installer, Auto-Tune, Deepy panels, consoles) is the same HTML/CSS/JS. Your `C:\Wan2GP` install, `C:\Wan2GP-Models` library, `wgp_config.json` and `desktop-config.json` carry over untouched — the Tauri build even follows the Electron data-dir pointer automatically.
-
----
-
-## Why Wan2GP? Why this launcher?
-
-**WanGP by [deepbeepmeep](https://github.com/deepbeepmeep/Wan2GP)** is a one-stop super-app for open-source generative models — video, image, audio and TTS — with a full browser UI, queue, galleries, LoRAs, finetunes and plugins. It runs on as little as **6 GB VRAM** and supports old and new GPUs alike.
-
-**This launcher handles it for you:**
-
-- **One-click install** — detects GPU, shows plan, installs everything
-- **Auto, per-GPU kernels** from WanGP's `setup_config.json`, re-synced on every update
-- **Isolated `uv` env**, pinned deps, no PATH editing
-- **One-click updates** in Dashboard / Manage → Updates
-- **Install Wan2GP and Models (checkpoints, LoRAs, outputs) on any drive/folder you choose**
-- **Auto-Tune** recommends VRAM/RAM profile and writes config for you
-- **Legacy Electron removal** — Manage → About detects the old Electron launcher and removes it silently, keeping all your data
-
----
-
-## Highlights — What you get with WanGP
-
-Through the launcher you get the **full WanGP** — same models, same UI, same plugins. Nothing stripped.
-
-| Modality | Supported models (via launcher) |
-|---|---|
-| **Video** | **Wan 2.1 / 2.2** + derivatives, **MiniMax H3** (FL2VA / Ref2VA), **LTX-2 / 2.3 / 2.5**, **HunyuanVideo 1 / 1.5**, **LongCat, Kandinsky, LTXV, MagiHuman, VACE** |
-| **Image** | **Krea 2, Qwen Image, Z-Image, Flux 1 / 2** (Klein, Chroma), **SenseNova, Ideogram 4, HiDream, Flux Kontext** |
-| **Audio / TTS** | **Qwen3 TTS, AceStep 1/2/XL, Omnivoice, IndexTTS 2/2.5, KugelAudio, HeartMula, Chatterbox, Minimax Music, Stable Audio 3** |
-
-**Run on more hardware**
-- **6 GB VRAM** is enough for select models — up to 24 GB+ for max quality/speed.
-- **NVIDIA:** GTX 10xx / 16xx, RTX 20xx / 30xx / 40xx / 50xx. **AMD:** RDNA 2 / 3 / 3.5 / 4. **Apple Silicon** (via upstream).
-- **Quantized checkpoints:** int8, fp8, GGUF, NV FP4, Nunchaku — architecture-aware downloads.
-- **Full web UI:** galleries, reusable settings/templates, mask editor, background remover, pose/depth/flow, diarization, upsampling (RIFE/FlashVSR/Lanczos/SeedVR2), MMAudio/SeedVC, **20+ community plugins**, LoRAs, finetunes, generation queue, headless/API mode.
-
-> Upstream docs: [WanGP README](https://github.com/deepbeepmeep/Wan2GP) · [Installation](https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/INSTALLATION.md) · [Models](https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/MODELS.md)
-
----
-
-## Key features — What the launcher adds
-
-- 🚀 **One-click install** — detects your GPU, shows exactly what it will install (Git, Python 3.11, PyTorch + CUDA, attention kernels), pre-flights it all (Python pin, disk space on every drive, drivers, folder triage), then does it with live progress and honest errors. Missing Git/Python/uv? One click installs silently — no PATH editing. Reads NVIDIA RTX 20/30/40/50, AMD, Apple Silicon and picks the matching PyTorch + CUDA/ROCm build before installing.
-- 🎯 **Always the right kernels** — per-GPU wheel set from WanGP's own `setup_config.json`. Re-syncs on install and every update. No stale wheels when upstream bumps them. Isolated Python 3.11 `uv` env with pinned deps.
-- 📂 **Clean data layout** — `C:\Wan2GP` (app) + `C:\Wan2GP-Models` (models) by default, out of roaming AppData. **Both are pre-filled defaults — pick any drive/folder at install.**
-- 🖥️ **Flexible launch** — Desktop (in-app embed), Browser, or External Terminal; pop-out, zoom, browser picker.
-- 🔄 **Safe updates** — manual-only, version-aware. Nothing downloads without your action. Dashboard + **Manage → Updates** (WanGP core + launcher).
-- 📂 **Paths migrate** — move installs between drives from Dashboard → Paths, no freeze, no leftovers, cross-drive safe.
-- 🛡️ **Crash-proof UI** — crash recovery restores your session instead of stranding you on a blank screen.
-- 🧹 **Electron → Tauri switch** — Manage → About finds the legacy Electron launcher and uninstalls it silently. Wan2GP, models, LoRAs, outputs and settings are kept.
-- 🧩 **Pinokio coexistence** — Pinokio-managed installs are detected and left untouched (reusing one directly isn't supported); one click reuses their model library in a fresh install, no re-downloads.
-
-> **⚡ CUDA 13 stack on modern RTX cards.** RTX 20/30/40/50 get **PyTorch 2.10 + CUDA 13** — SageAttention 2.2 (RTX 30/40) / 1.0.6 (RTX 20), FlashAttention 2.8.3, SpargeAttention (30/40/50), LightX2V (RTX 50), Nunchaku INT4/FP4 + **GGUF 1.0.21** + **bitsandbytes 0.49.2** (NF4). GTX 10/16 stay on **CUDA 12.8** (no R580 needed); every other NVIDIA card needs **R580+** and is checked before install.
-
----
-
-## 🔥 What's New
-
-> Full history: [CHANGELOG.md](CHANGELOG.md)
-
-- **v0.4.6** — GPU Kernel Wheels moved above Active Environment (sync state visible without scrolling) + honest kernel detection: LightX2V no longer reports "not installed" right after sync (scanned the wrong dist name), OpenCV row populates again, full RTX 20/30/40/50 audit vs upstream.
-- **v0.4.5** — installs that finish (clean retries, auto-retry on network blips) + fullscreen embed with working zoom/downloads (clickable save-as picker) + honest Stop incl. Stop All button + v12.72 parity + GGUF 1.0.21 + AMD profile env.
-- **v0.4.4** — installs that finish: retry resumes cleanly (marker + auto-retry on network blips), v12.72 parity (Deepy sessions), GGUF-1.0.21-ready version parsing, and a Gradio embed that always fills the window.
-- **v0.4.3** — hardened backend (pip guard, honest exit codes, https-only plugins) + fixed prerequisites (pin checks, SHA-pinned installers, working Python/uv fallbacks) + KeyError crash recovery, DLSS consent checkbox popup, and install-drive space gate.
-- **v0.4.2** — self-repairing toolchain (corrupt uv reinstalled automatically with retry) + winget-independent prerequisites (official-installer fallbacks, smarter probes).
-- **v0.4.1** — prerequisites that finish the job (one-click git/uv/Python/Miniconda, registry PATH refresh with auto-continue, `py -3.11` shim for venv) + Python fallback that counts (usable manual installs accepted, exact-verify, diagnostics).
-- **v0.4.0 — hardened installer.** No more silent failures: target-folder triage (fresh / repair / reuse / migrate), exact-Python preflight, honest exit codes with Retry + diagnostics, post-install torch+CUDA smoke test, reinstall backup dialog with model relocation, Pinokio detection with one-click model reuse, launch guards, and truthful phase tracking.
-- **v0.3.1** — DLSS5 panel shows all 8 files with versions + per-file SHAs (installed / not installed).
-- **v0.3.0** — DLSS5 status counts all 8 runtime files (+ `host/nvngx.dll`), README tracks workers v1.1.3; update check runs once shortly after boot.
-- **v0.2.1** — live console download bars (bootstrap fix).
-- **v0.2.0** — 🧩 Plugin Manager tab (Status Pro default plugin, favourites auto-install) · ✨ DLSS5 one-click installer with live SHA checklist · Deepy local Qwen3.8 Prime + Claude bridge 0.1.66 + npm/`cmd /C` fix · Auto-Tune Int8 Kernels default-on · maximized window · scoped Stop (only our processes).
-- **v0.1.3** — renamed to Wan2GP Desktop Launcher Tauri (product, binary, installer); topbar cleanup (Electron port): reload after Console, red stop button, no title overlap.
-- **v0.1.2** — env unlink/restore as live state-driven buttons (backend-resolved name, console progress instead of freezes); release script fixes.
-- **v0.1.1** — first Tauri feature-complete build: 10-module Rust backend, console-first Desktop launch with hide/show session switching, full 7-profile Auto-Tune, validated Deepy writer, one-click signed updater, Apprise notifier, real per-package upgrades, GGUF kernel knobs that actually apply, legacy Electron removal, full cleanup on close.
+- [Download & Install](#download--install)
+- [Screenshots](#screenshots)
+- [Why Tauri? (vs the Electron edition)](#why-tauri-vs-the-electron-edition)
+- [What you get](#what-you-get)
+- [⚡ Auto-Tune](#-auto-tune--one-click-right-profile)
+- [📊 Monitoring & control](#-monitoring--control)
+- [🔧 GPU kernels](#-gpu-kernels--what-gets-installed-per-gpu)
+- [Deepy — your offline agent](#deepy--your-offline-agent)
+- [🧩 Plugin Manager & ✨ DLSS5](#-plugin-manager--status-pro-included)
+- [🔥 What's New](#-whats-new)
+- [🛠 Build from source](#-build-from-source)
+- [⭐ Star History](#-star-history)
+- [Credits & License](#credits--license)
 
 ---
 
@@ -127,20 +53,88 @@ No Python, no CUDA toolkit, no `pip`, no Node needed beforehand — the installe
 
 ### Where is everything? (defaults)
 
+Three separate things, three places:
+
 ```
-C:\Wan2GP\                      ← repo + launcher data (self-contained)
+1) The launcher app itself (≈ 7 MB)   ← installed by the setup.exe
+   %LocalAppData%\Wan2GP Desktop Launcher Tauri\
+   Uses the WebView2 engine already in Windows — no bundled Chromium.
+   (Machine-wide install goes to Program Files instead.)
+
+2) Wan2GP + launcher data (self-contained, you pick the folder)
+C:\Wan2GP\                      ← repo + launcher data
    ├─ wgp.py                    ← Wan2GP core
    ├─ env_uv\                   ← Python 3.11 venv (uv)
    ├─ wgp_config.json           ← settings (ckpts → C:\Wan2GP-Models\ckpts)
-   ├─ desktop-config.json       ← launcher config
+   ├─ desktop-config.json       ← launcher config (lives HERE, not in AppData)
    └─ boot.log                  ← diagnostic
 
-C:\Wan2GP-Models\               ← your large files (any drive you chose)
+3) Your large files (any drive you chose)
+C:\Wan2GP-Models\               ← models library
    ├─ ckpts\                    ← checkpoints
    ├─ loras\                    ← LoRAs
    └─ outputs\                  ← generated videos/images/audio
 ```
-> `C:\Wan2GP` / `C:\Wan2GP-Models` are pre-filled defaults — Browse to any drive/folder at install or later via **Dashboard → Migrate to new location**.
+> `C:\Wan2GP` / `C:\Wan2GP-Models` are pre-filled defaults — Browse to any drive/folder at install or later via **Dashboard → Migrate to new location**. A custom data folder is remembered in `%USERPROFILE%\.wan2gp-tauri-data-dir` (the old Electron pointer is followed automatically, so your install carries over).
+
+---
+
+## Screenshots
+
+![Wan2GP Desktop Launcher — Desktop view with Wan2GP running and the floating console](screenshots/desktop-live-progress.png)
+*Desktop view: Wan2GP (LTX-2.5 Distilled) embedded, floating console streaming the live log, topbar CPU/GPU/RAM/VRAM sparklines.*
+
+![Auto-Tune — hardware detection, rec/saved tags, and Int8 Kernels default-on](screenshots/autotune-int8.png)
+![Active Environment — installed packages and GPU kernel wheels](screenshots/env-kernel-wheels.png)
+![Deepy Prime — local Qwen3.8 + remote LLM engines](screenshots/deepy-prime-engines.png)
+![Plugin Manager — community catalog with install, update, and favourites](screenshots/plugins-manager.png)
+![DLSS5 installer — live per-component checklist with SHA-256 verification](screenshots/dlss5-checklist.png)
+
+---
+
+## Why Tauri? (vs the Electron edition)
+
+Same launcher, same Wan2GP, same features — new shell. The Electron edition ships its own Chromium + Node.js runtime inside every install. The Tauri edition uses the **WebView2 engine already built into Windows 10/11** and a compiled **Rust** backend. No bundled browser, no Node runtime.
+
+| | Electron edition | **Tauri edition** |
+|---|---|---|
+| Installer download | ≈ 93 MB | **≈ 3 MB (~30× smaller)** |
+| Installed app binary | ≈ 300+ MB (Chromium + Node) | **≈ 7 MB** |
+| Idle RAM (launcher shell) | ~200–400 MB (full Chromium per window) | **~30–80 MB (shared system WebView2)** |
+| Startup | Node + Chromium boot | **Near-instant native boot** |
+| Backend | JavaScript on Node | **Compiled Rust (memory-safe, no GC pauses)** |
+| Updates | Full 93 MB re-download | Small NSIS/MSI patch |
+
+**What that means for generation:** the launcher is not the part that renders video — but every MB of RAM and VRAM it doesn't waste stays available for models. The Tauri shell idles at a fraction of the footprint, and the **Launcher GPU** setting (Integrated / Disabled-SwiftShader) can push the UI off your NVIDIA card entirely, freeing **1–5 GB VRAM** for Wan2GP.
+
+**What didn't change:** the entire frontend (dashboard, installer, Auto-Tune, Deepy panels, consoles) is the same HTML/CSS/JS. Your `C:\Wan2GP` install, `C:\Wan2GP-Models` library, `wgp_config.json` and `desktop-config.json` carry over untouched — the Tauri build even follows the Electron data-dir pointer automatically.
+
+---
+
+## What you get
+
+**WanGP by [deepbeepmeep](https://github.com/deepbeepmeep/Wan2GP)** is a one-stop super-app for open-source generative models — video, image, audio and TTS — with a full browser UI, queue, galleries, LoRAs, finetunes and plugins. It runs on as little as **6 GB VRAM** and supports old and new GPUs alike. Through this launcher you get the **full WanGP** — same models, same UI, same plugins. Nothing stripped.
+
+| Modality | Supported models (via launcher) |
+|---|---|
+| **Video** | **Wan 2.1 / 2.2** + derivatives, **MiniMax H3** (FL2VA / Ref2VA), **LTX-2 / 2.3 / 2.5**, **HunyuanVideo 1 / 1.5**, **LongCat, Kandinsky, LTXV, MagiHuman, VACE** |
+| **Image** | **Krea 2, Qwen Image, Z-Image, Flux 1 / 2** (Klein, Chroma), **SenseNova, Ideogram 4, HiDream, Flux Kontext** |
+| **Audio / TTS** | **Qwen3 TTS, AceStep 1/2/XL, Omnivoice, IndexTTS 2/2.5, KugelAudio, HeartMula, Chatterbox, Minimax Music, Stable Audio 3** |
+
+**Run on more hardware:** 6 GB VRAM is enough for select models (up to 24 GB+ for max quality). NVIDIA GTX 10xx/16xx, RTX 20xx/30xx/40xx/50xx · AMD RDNA 2/3/3.5/4 · Apple Silicon (via upstream). Quantized checkpoints (int8, fp8, GGUF, NV FP4, Nunchaku) with architecture-aware downloads. Full web UI: galleries, templates, mask editor, background remover, pose/depth/flow, diarization, upsampling (RIFE/FlashVSR/Lanczos/SeedVR2), MMAudio/SeedVC, **20+ community plugins**, LoRAs, finetunes, queue, headless/API mode.
+
+> Upstream docs: [WanGP README](https://github.com/deepbeepmeep/Wan2GP) · [Installation](https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/INSTALLATION.md) · [Models](https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/MODELS.md)
+
+**What the launcher adds:**
+
+- 🚀 **One-click install** — GPU detect → plan → preflight (Python pin, disk space, drivers, folder triage) → live progress. Missing Git/Python/uv installs silently, no PATH editing.
+- 🎯 **Always the right kernels** — per-GPU wheels from WanGP's `setup_config.json`, re-synced on install and every update.
+- 📂 **Clean data layout** — `C:\Wan2GP` (app) + `C:\Wan2GP-Models` (models), both editable to any drive/folder; migrate later via Dashboard → Paths.
+- 🖥️ **Flexible launch** — Desktop embed, Browser, or External Terminal; pop-out, zoom, browser picker.
+- 🔄 **Safe updates** — manual-only, version-aware, from Dashboard / Manage → Updates.
+- 🛡️ **Crash-proof UI** — crash recovery restores your session.
+- 🧹 **Electron → Tauri switch** — Manage → About removes the legacy launcher silently, keeps all data.
+- 🧩 **Pinokio coexistence** — Pinokio installs detected and left untouched; one click reuses their model library, no re-downloads.
 
 ---
 
@@ -148,7 +142,8 @@ C:\Wan2GP-Models\               ← your large files (any drive you chose)
 
 **Manage → Auto-Tune** (or ⚡ on the dashboard) scans GPU/VRAM/RAM/kernels and recommends the optimal `wgp_config.json` settings. All three profile dropdowns (video/image/audio) stay editable before you Apply.
 
-WanGP's memory manager (`mmgp`) uses 7 profiles trading VRAM for speed — Auto-Tune picks from your VRAM × RAM:
+<details>
+<summary>VRAM × RAM profile matrix</summary>
 
 | VRAM ↓ \ RAM → | ≥64 GB | ≥32 GB | <32 GB |
 |---|---|---|---|
@@ -156,31 +151,34 @@ WanGP's memory manager (`mmgp`) uses 7 profiles trading VRAM for speed — Auto-
 | **12–23 GB** | P2 | **P4 balanced** | P5 |
 | **<12 GB** | P4 | P4+ VRAM saver | **P5 failsafe** |
 
-**Settings written** to `wgp_config.json`: `video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `enable_int8_kernels` (default on — experimental, ~10% faster with INT8 checkpoints, needs Triton), `vae_config` (always Auto), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** checkbox forces P5 for hardware where the recommendation still crashes.
+</details>
 
-![Auto-Tune — hardware detection, rec/saved tags, and Int8 Kernels default-on](screenshots/autotune-int8.png)
+<details>
+<summary>Settings written to <code>wgp_config.json</code></summary>
+
+`video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `enable_int8_kernels` (default on — experimental, ~10% faster with INT8 checkpoints, needs Triton), `vae_config` (always Auto), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** checkbox forces P5 for hardware where the recommendation still crashes.
+
+</details>
 
 ---
 
 ## 📊 Monitoring & control
 
-- **Dockable console** — live server log in green-on-black, dock to bottom/left/top or float. Search, export, resize. Toggle via topbar button.
+- **Dockable console** — live server log in green-on-black, dock to bottom/left/top or float. Search, export, resize.
 - **Topbar sparklines** — CPU/GPU/RAM/VRAM mini real-time charts.
 - **Running LED & Stop** — status light + one-click server stop.
 - **Auto-start with Windows**, notifications on server ready/stop.
 - **Keyboard shortcuts** — <kbd>Esc</kbd>/<kbd>Ctrl+W</kbd> close webview.
 - **Maintenance** — update WanGP or the launcher from **Dashboard** or **Manage → Updates**, switch envs, or uninstall from the UI. **Dashboard → Paths** migrates installs between drives.
 
-### Screenshots
-
-![Wan2GP Desktop Launcher — Desktop view with Wan2GP running and the floating console](screenshots/desktop-live-progress.png)
-*The launcher as a whole: topbar with live CPU/GPU/RAM/VRAM sparklines and update LED, Wan2GP (LTX-2.5 Distilled) embedded in Desktop view, floating console streaming the live log with progress bars, finished video in the gallery.*
-
 ---
 
 ## 🔧 GPU kernels — what gets installed per GPU
 
 WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP's own `setup_config.json` and shows exactly what it will install — and re-syncs on every update.
+
+<details>
+<summary>Wheel table & per-GPU sets</summary>
 
 | Wheel | Version | What it does |
 |-------|---------------|---------------|
@@ -197,11 +195,11 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 
 **Per-GPU set:** RTX 20 → Sage 1.0.6 + Flash + Nunchaku + GGUF + bnb. RTX 30/40 → add Sparge + Sage 2.2.0. RTX 50 → add LightX2V. All get bitsandbytes. Versions track `setup_config.json` — next update installs new wheels automatically.
 
-**PyTorch matrix:** RTX 20/30/40/50 → Py 3.11.14 + PyTorch 2.10 + CUDA 13.0/13.1 · GTX 10xx → Py 3.10.9 + PyTorch 2.7.1 + CUDA 12.8. Avoids 2.8.0 (RAM leak) + 2.9.0 (VAE VRAM bug).
+**PyTorch matrix:** RTX 20/30/40/50 → Py 3.11.14 + PyTorch 2.10 + CUDA 13.0/13.1 · GTX 10xx → Py 3.10.9 + PyTorch 2.7.1 + CUDA 12.8. Avoids 2.8.0 (RAM leak) + 2.9.0 (VAE VRAM bug). GTX 10/16 stay on **CUDA 12.8** (no R580 needed); every other NVIDIA card needs **R580+** and is checked before install.
 
 > Upstream: [INSTALLATION.md](https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/INSTALLATION.md)
 
-![Active Environment — installed packages and GPU kernel wheels (RTX_30, GGUF 1.0.14)](screenshots/env-kernel-wheels.png)
+</details>
 
 ---
 
@@ -225,7 +223,7 @@ Switching live-re-renders the selector; **Apply** writes a consistent `wgp_confi
 
 ## 🧩 Plugin Manager — Status Pro included
 
-**Manage → Plugins** lists Wan2GP's catalog merged with your installed `plugins/` folder (system vs community grouping), with search, Name/Latest/Author sort, and per-plugin enable checkboxes. From a git URL you can install (clone + `requirements.txt` + enable), per-plugin ↻ check/update, 🗑 uninstall, library refresh, and check-all-updates — all with console progress.
+**Manage → Plugins** lists WanGP's catalog merged with your installed `plugins/` folder (system vs community grouping), with search, Name/Latest/Author sort, and per-plugin enable checkboxes. From a git URL you can install (clone + `requirements.txt` + enable), per-plugin ↻ check/update, 🗑 uninstall, library refresh, and check-all-updates — all with console progress.
 
 - **Status Pro** is a default plugin: installed automatically on fresh setup and kept enabled (locked checkbox), but still uninstallable — one click reinstalls it.
 - **★ Favourites** auto-install on fresh setup (stored in `desktop-config.json` → `favoritePlugins`).
@@ -243,6 +241,26 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 - **Force** backs up + replaces conflicting files. **Stop Wan2GP first.**
 - Needs Windows 11 + RTX 30+ (Neural Rendering, 30 experimental) / RTX 40+ (Frame Generation) + HAGS.
 
+---
+
+## 🔥 What's New
+
+> Full history: [CHANGELOG.md](CHANGELOG.md)
+
+- **v0.4.6** — Kernel Wheels panel moved up; fixed LightX2V/OpenCV detection.
+- **v0.4.5** — fullscreen embed with zoom/downloads, Stop All button, GGUF 1.0.21, AMD profiles.
+- **v0.4.4** — install retry/resume, Gradio embed fills the window.
+- **v0.4.3** — hardened backend, prerequisite fallbacks, crash recovery.
+- **v0.4.2** — self-repairing toolchain (corrupt uv auto-reinstalls).
+- **v0.4.1** — one-click prerequisites (git/uv/Python/Miniconda).
+- **v0.4.0** — hardened installer: folder triage, preflights, smoke test, Pinokio model reuse.
+- **v0.3.x** — DLSS5 panel with per-file versions + SHA checklist.
+- **v0.2.1** — live console download bars.
+- **v0.2.0** — 🧩 Plugin Manager + Status Pro · ✨ DLSS5 one-click installer · Deepy Qwen3.8/Claude · Int8 kernels default-on.
+- **v0.1.x** — first feature-complete Tauri build (Rust backend, Auto-Tune, Deepy, updater, Electron removal).
+
+---
+
 ## 🛠 Build from source
 
 Prerequisites: [Rust](https://rustup.rs/) (1.77.2+) + Node.js. WebView2 comes with Windows.
@@ -254,6 +272,14 @@ npx tauri build      # NSIS + MSI in src-tauri/target/release/bundle/
 ```
 
 Backend lives in `src-tauri/src/lib.rs` (`#[tauri::command]` handlers); frontend is vanilla HTML/CSS/JS in `src/` calling them via `invoke()` (`src/w2gp.js` bridge).
+
+---
+
+## ⭐ Star History
+
+If this launcher saved you a setup headache, leave a star — it helps others find it.
+
+[![Star History Chart](https://api.star-history.com/svg?repos=GKartist75/Wan2GP-Desktop-Tauri&type=Date)](https://www.star-history.com/#GKartist75/Wan2GP-Desktop-Tauri&Date)
 
 ---
 
