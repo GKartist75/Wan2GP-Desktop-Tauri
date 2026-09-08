@@ -159,6 +159,23 @@ pub fn check_git() -> serde_json::Value {
 }
 
 // ── Phase 1: paths / config / hardware / install checks ──
+/// Does the registered env still exist on disk (interpreter present)?
+/// Users sometimes delete the env folder by hand — envs.json then points
+/// at nothing and the dashboard shows a phantom healthy env with a working
+/// Launch button (0.5.2 report: env_uv deleted, launcher said all OK).
+/// Empty path = system/"none" env, no folder to check → always alive.
+/// Pure + unit-tested.
+pub(crate) fn env_entry_alive(repo: &std::path::Path, entry: &serde_json::Value) -> bool {
+    let path = entry.get("path").and_then(|p| p.as_str()).unwrap_or("");
+    if path.is_empty() { return true; }
+    let base = if std::path::Path::new(path).is_absolute() { PathBuf::from(path) } else { repo.join(path.trim_start_matches(".\\").trim_start_matches("./")) };
+    if !base.is_dir() { return false; }
+    // Windows: Scripts\python.exe (uv/venv) or root python.exe (conda).
+    // Elsewhere: bin/python (uv) or bin/python3 (venv) or root (conda).
+    #[cfg(windows)] { base.join("Scripts\\python.exe").exists() || base.join("python.exe").exists() }
+    #[cfg(not(windows))] { base.join("bin/python").exists() || base.join("bin/python3").exists() || base.join("python").exists() }
+}
+
 pub(crate) fn get_active_env() -> serde_json::Value {
     let f = get_envs_file();
     if !f.exists() { return serde_json::Value::Null; }
@@ -167,6 +184,9 @@ pub(crate) fn get_active_env() -> serde_json::Value {
     let active = v.get("active").and_then(|x| x.as_str()).unwrap_or("");
     if active.is_empty() { return serde_json::Value::Null; }
     if let Some(env) = v.get("envs").and_then(|e| e.get(active)) {
+        // A hand-deleted env folder must read as "no env" (installer
+        // prompt), never as a healthy active env with a live Launch button.
+        if !env_entry_alive(&get_repo_dir(), env) { return serde_json::Value::Null; }
         // env entries carry type/path only — inject the map key as `name`
         // (dashboard, unlink/restore and logs all key off status.env.name).
         let mut e = env.clone();
@@ -196,4 +216,43 @@ pub fn check_command(cmd: String) -> serde_json::Value {
     #[cfg(windows)] let found = tool_usable(&cmd);
     #[cfg(not(windows))] let found = silent_command("which").arg(&cmd).output().is_ok_and(|o| o.status.success());
     serde_json::json!({"cmd": cmd, "found": found})
+}
+
+#[cfg(test)]
+mod env_alive_tests {
+    use super::env_entry_alive;
+    fn tmp_repo(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("wgp-env-alive-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+    #[cfg(windows)]
+    fn plant_python(base: &std::path::Path) {
+        std::fs::create_dir_all(base.join("Scripts")).unwrap();
+        std::fs::write(base.join("Scripts\\python.exe"), b"fake").unwrap();
+    }
+    #[cfg(not(windows))]
+    fn plant_python(base: &std::path::Path) {
+        std::fs::create_dir_all(base.join("bin")).unwrap();
+        std::fs::write(base.join("bin/python"), b"fake").unwrap();
+    }
+    #[test]
+    fn deleted_env_reads_dead() {
+        let repo = tmp_repo("dead");
+        // 0.5.2 report: env_uv deleted by hand, registry still lists it.
+        let entry = serde_json::json!({"type": "uv", "path": "./env_uv"});
+        assert!(!env_entry_alive(&repo, &entry));
+        // Empty dir without interpreter is also dead.
+        std::fs::create_dir_all(repo.join("env_uv")).unwrap();
+        assert!(!env_entry_alive(&repo, &entry));
+        // Interpreter present → alive (relative + absolute forms).
+        plant_python(&repo.join("env_uv"));
+        assert!(env_entry_alive(&repo, &entry));
+        let abs = serde_json::json!({"type": "uv", "path": repo.join("env_uv").to_string_lossy()});
+        assert!(env_entry_alive(&repo, &abs));
+        // System env (no folder) stays alive.
+        assert!(env_entry_alive(&repo, &serde_json::json!({"type": "none", "path": ""})));
+        let _ = std::fs::remove_dir_all(&repo);
+    }
 }
