@@ -4,7 +4,7 @@
 //! Triton import test + cache clear (with optional SDPA fallback).
 use std::path::PathBuf;
 use crate::base::*;
-use crate::{hw::get_gpu_info_sync, status::get_active_env};
+use crate::{hw::{get_gpu_info_sync, kernel_profile_key}, status::get_active_env};
 
 /// Resolve the active env's interpreter (same shape as launch.rs).
 fn active_python() -> Option<PathBuf> {
@@ -173,6 +173,44 @@ pub fn troubleshoot_cuda_check() -> serde_json::Value {
     }
 }
 
+/// Deep GPU check: import-torch is not proof the stack runs (0.5.2 AMD
+/// imported fine, died at the first int8 GEMM). Runs the compute probe —
+/// both HSA modes on AMD (records the winner for launch, like install
+/// does), single pass elsewhere. Can take a minute on cold HIP init.
+#[tauri::command]
+pub fn troubleshoot_gpu_compute() -> serde_json::Value {
+    let Some(py) = active_python() else {
+        return serde_json::json!({"ok": false, "error": "No Python environment installed — run Install first"});
+    };
+    let gpu = get_gpu_info_sync();
+    let vendor = gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or("");
+    let name = gpu.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let profile = kernel_profile_key(vendor, name);
+    if !profile.starts_with("AMD") {
+        return match crate::amd::run_compute_probe(&py, None) {
+            Ok(p) => serde_json::json!({"ok": true, "torch": p.torch, "device": p.device, "mode": "native"}),
+            Err(e) => serde_json::json!({"ok": false, "error": e}),
+        };
+    }
+    let repo = get_repo_dir();
+    let mut modes: Vec<(&str, Option<String>)> = Vec::new();
+    if let Some(v) = crate::amd::profile_hsa_version(&repo, &profile) { modes.push(("override", Some(v))); }
+    modes.push(("native", None));
+    let mut detail = serde_json::Map::new();
+    for (label, hsa) in &modes {
+        match crate::amd::run_compute_probe(&py, hsa.as_deref()) {
+            Ok(p) => {
+                let choice = match hsa { Some(v) => crate::amd::HsaChoice::Override(v.clone()), None => crate::amd::HsaChoice::Native };
+                crate::amd::write_hsa_choice(&repo, &choice);
+                detail.insert(label.to_string(), serde_json::json!({"ok": true, "torch": p.torch, "device": p.device}));
+                return serde_json::json!({"ok": true, "torch": p.torch, "device": p.device, "mode": label, "recorded": true, "detail": detail});
+            }
+            Err(e) => { detail.insert(label.to_string(), serde_json::json!({"ok": false, "error": e})); }
+        }
+    }
+    serde_json::json!({"ok": false, "error": "compute probe failed in both HSA modes — attach Copy diagnostics", "detail": detail})
+}
+
 /// Is the configured server port already listening? If so, who owns it?
 #[tauri::command]
 pub fn troubleshoot_port_status() -> serde_json::Value {
@@ -308,8 +346,25 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
                 .collect()
         })
         .unwrap_or_default();
+    // AMD runtime evidence (cheap importlib query — no torch import —
+    // plus the probed HSA choice and live process env). Empty on NVIDIA.
+    let amd_line = if gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or("") == "AMD" {
+        let vers = active_python()
+            .and_then(|py| silent_command(&py).args(["-c", "import importlib.metadata as m\ndef v(p):\n try: return m.version(p)\n except Exception: return '?'\nprint(v('numpy') + '|' + v('optimum-quanto'))"]).output().ok())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or("?|?".into());
+        let (numpy, quanto) = vers.split_once('|').unwrap_or(("?", "?"));
+        let choice = match crate::amd::read_hsa_choice(&repo) {
+            Some(crate::amd::HsaChoice::Native) => "native".to_string(),
+            Some(crate::amd::HsaChoice::Override(v)) => format!("override {v}"),
+            None => "unprobed".to_string(),
+        };
+        format!("\n**AMD** hsa_choice={choice} HSA_OVERRIDE={hsa} MIOPEN_FIND_MODE={mio} numpy={numpy} quanto={quanto}",
+            hsa = std::env::var("HSA_OVERRIDE_GFX_VERSION").unwrap_or("(unset)".into()),
+            mio = std::env::var("MIOPEN_FIND_MODE").unwrap_or("(unset)".into()))
+    } else { String::new() };
     let md = format!(
-        "**Launcher** v{ver} ({os}/{arch})\n**GPU** {gpu} ({vendor}, {vram} MB VRAM)\n**Python** {py}\n**Torch** {torch} + CUDA {cuda_v} (cuda_available={cuda_ok})\n**Launch** port={port} server={server} share={share} gpu={gpudev} args=`{args}`\n**Profiles** video={vp} image={ip} audio={ap} quant={q}\n**Log tail**\n```\n{tail}\n```",
+        "**Launcher** v{ver} ({os}/{arch})\n**GPU** {gpu} ({vendor}, {vram} MB VRAM)\n**Python** {py}\n**Torch** {torch} + CUDA {cuda_v} (cuda_available={cuda_ok}){amd}\n**Launch** port={port} server={server} share={share} gpu={gpudev} args=`{args}`\n**Profiles** video={vp} image={ip} audio={ap} quant={q}\n**Log tail**\n```\n{tail}\n```",
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
         gpu = gpu.get("name").and_then(|v| v.as_str()).unwrap_or("?"),
@@ -325,6 +380,7 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
         ip = pick("image_profile"),
         ap = pick("audio_profile"),
         q = pick("transformer_quantization"),
+        amd = amd_line,
         tail = if tail.is_empty() { "(no errors in session log)".to_string() } else { tail.join("\n") },
     );
     serde_json::json!({"ok": true, "markdown": md})

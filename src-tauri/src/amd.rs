@@ -1,0 +1,216 @@
+//! AMD/ROCm install hardening: GPU compute probe + HSA-override selection.
+//!
+//! `import torch` is not proof the stack runs — 0.5.2 imported fine and
+//! died at the first int8 GEMM (`hipErrorInvalidValue` in quanto's
+//! `qbytes_mm`). This probe runs a real workload instead: a bf16 GEMM
+//! (rocBLAS path) plus the exact pattern that crashed (int8 weights ×
+//! fp32 scales broadcast). Device-agnostic (`cuda` == HIP on ROCm).
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+/// Real-GPU workload probe. Prints one JSON line on stdout; ~10-60s cold
+/// (HIP init dominates). 256-wide keeps it fast on weak GPUs while still
+/// exercising the kernels that failed on gfx1201.
+pub(crate) const COMPUTE_PROBE: &str = r#"import json, torch
+out = {"torch": torch.__version__, "cuda_available": torch.cuda.is_available(), "device": None, "gemm": None, "int8_broadcast": None}
+if torch.cuda.is_available():
+    out["device"] = torch.cuda.get_device_name(0)
+    x = torch.randn(256, 256, device="cuda", dtype=torch.bfloat16)
+    y = torch.randn(256, 256, device="cuda", dtype=torch.bfloat16)
+    out["gemm"] = float((x @ y).sum().item())
+    w = torch.randint(-128, 127, (256, 256), device="cuda", dtype=torch.int8)
+    s = torch.rand(256, 1, device="cuda", dtype=torch.float32)
+    out["int8_broadcast"] = float(((s * w).to(torch.bfloat16)).sum().item())
+print(json.dumps(out))"#;
+
+pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Empirically chosen HSA handling, persisted per install (see
+/// HSA_CHOICE_FILE). The working R9700 config sets no override at all;
+/// blindly forcing 12.0.1 may mistarget kernels — so probe both and keep
+/// the winner instead of guessing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HsaChoice {
+    Native,
+    Override(String),
+}
+
+pub(crate) const HSA_CHOICE_FILE: &str = ".amd-hsa-choice";
+
+pub(crate) fn hsa_choice_path(repo: &Path) -> PathBuf {
+    repo.join(HSA_CHOICE_FILE)
+}
+
+pub(crate) fn read_hsa_choice(repo: &Path) -> Option<HsaChoice> {
+    let raw = std::fs::read_to_string(hsa_choice_path(repo)).ok()?;
+    let s = raw.trim();
+    if s.eq_ignore_ascii_case("native") {
+        return Some(HsaChoice::Native);
+    }
+    if let Some(ver) = s.strip_prefix("override ").map(str::trim) {
+        if !ver.is_empty() {
+            return Some(HsaChoice::Override(ver.to_string()));
+        }
+    }
+    None
+}
+
+pub(crate) fn write_hsa_choice(repo: &Path, choice: &HsaChoice) {
+    let s = match choice {
+        HsaChoice::Native => "native".to_string(),
+        HsaChoice::Override(v) => format!("override {v}"),
+    };
+    let _ = std::fs::write(hsa_choice_path(repo), s);
+}
+
+/// The HSA override `setup_config.json` declares for a profile (mirrors
+/// launch.rs; e.g. 12.0.1 for AMD_GFX1201). None when undeclared.
+pub(crate) fn profile_hsa_version(repo: &Path, profile: &str) -> Option<String> {
+    std::fs::read_to_string(repo.join("setup_config.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|c| {
+            c.get("gpu_profiles")?.get(profile)?.get("env")?.get("HSA_OVERRIDE_GFX_VERSION")?.as_str().map(str::to_string)
+        })
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ComputeProbe {
+    pub torch: String,
+    pub device: String,
+}
+
+/// Run the compute probe with the given HSA handling (Some = forced
+/// override, None = native). Saves/restores any pre-existing process value
+/// so probes never leak into the launcher session.
+pub(crate) fn run_compute_probe(py: &Path, hsa: Option<&str>) -> Result<ComputeProbe, String> {
+    // Save + apply HSA for the child only; restored below on every path.
+    let saved = std::env::var("HSA_OVERRIDE_GFX_VERSION").ok();
+    match hsa {
+        Some(v) => std::env::set_var("HSA_OVERRIDE_GFX_VERSION", v),
+        None => std::env::remove_var("HSA_OVERRIDE_GFX_VERSION"),
+    }
+    let res = run_compute_probe_inner(py);
+    match saved {
+        Some(v) => std::env::set_var("HSA_OVERRIDE_GFX_VERSION", v),
+        None => std::env::remove_var("HSA_OVERRIDE_GFX_VERSION"),
+    }
+    res
+}
+
+fn run_compute_probe_inner(py: &Path) -> Result<ComputeProbe, String> {
+    use std::process::Stdio;
+    let mut child = std::process::Command::new(py)
+        .args(["-c", COMPUTE_PROBE])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("probe spawn failed ({e})"))?;
+    // Bounded wait: a display-driver hang (TDR — upstream warns AMD
+    // MIOpen can take the driver down) must time out, never wedge install.
+    let start = Instant::now();
+    loop {
+        match child.try_wait().map_err(|e| format!("probe wait failed ({e})"))? {
+            Some(_) => break,
+            None => {
+                if start.elapsed() > PROBE_TIMEOUT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("compute probe timed out after 300s — possible display-driver hang (TDR). Reboot, update the AMD driver, then Verify again.".into());
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    }
+    let out = child.wait_with_output().map_err(|e| format!("probe output failed ({e})"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr_tail: String = String::from_utf8_lossy(&out.stderr).chars().rev().take(800).collect::<String>().chars().rev().collect();
+    if out.status.success() {
+        if let Some(probe) = parse_probe_json(&stdout) {
+            return Ok(probe);
+        }
+        return Err(format!("probe exited 0 but printed no result JSON — stdout tail: {}", stdout.chars().rev().take(300).collect::<String>().chars().rev().collect::<String>()));
+    }
+    Err(classify_probe_failure(&stderr_tail))
+}
+
+/// Last `{...}` line of probe stdout → structured result. Pure (tested).
+pub(crate) fn parse_probe_json(stdout: &str) -> Option<ComputeProbe> {
+    let line = stdout.lines().rev().find(|l| l.trim_start().starts_with('{'))?;
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("cuda_available").and_then(|b| b.as_bool()) != Some(true) {
+        return None;
+    }
+    Some(ComputeProbe {
+        torch: v.get("torch").and_then(|t| t.as_str()).unwrap_or("?").to_string(),
+        device: v.get("device").and_then(|d| d.as_str()).unwrap_or("?").to_string(),
+    })
+}
+
+/// Map probe stderr to a human-actionable error. Pure (tested).
+pub(crate) fn classify_probe_failure(stderr_tail: &str) -> String {
+    let low = stderr_tail.to_lowercase();
+    if low.contains("modulenotfounderror") && low.contains("torch") || low.contains("no module named torch") {
+        return "torch won't import in the new env (install incomplete?) — rebuild the environment.".into();
+    }
+    for sig in ["hiperror", "acceleratorerror", "cuda error", "miopen", "hipblas", "rocblas"] {
+        if low.contains(sig) {
+            return format!("GPU kernel failure on this torch build ({sig}): {stderr_tail}");
+        }
+    }
+    if low.contains("out of memory") || low.contains("hip out of memory") {
+        return "probe ran out of GPU memory (close GPU apps / browsers and retry).".into();
+    }
+    format!("compute probe failed: {stderr_tail}")
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::{classify_probe_failure, parse_probe_json, read_hsa_choice, write_hsa_choice, HsaChoice, COMPUTE_PROBE};
+    #[test]
+    fn probe_script_is_valid_python() {
+        // No torch on CI hosts — syntax-check only (same pattern as the
+        // setup.py override patch test).
+        let tmp = std::env::temp_dir().join(format!("wgp-probe-syntax-{}.py", std::process::id()));
+        std::fs::write(&tmp, COMPUTE_PROBE).unwrap();
+        let arg = tmp.to_string_lossy().to_string();
+        let ok = std::process::Command::new("python")
+            .args(["-c", "import ast,sys; ast.parse(open(sys.argv[1]).read())", &arg])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(true);
+        let _ = std::fs::remove_file(&tmp);
+        assert!(ok, "COMPUTE_PROBE is not valid Python");
+    }
+    #[test]
+    fn parses_probe_json() {
+        let good = "torch warning: blah\n{\"torch\": \"2.12.0+rocm7.15\", \"cuda_available\": true, \"device\": \"AMD Radeon AI PRO R9700\", \"gemm\": 1.5, \"int8_broadcast\": 2.5}\n";
+        let p = parse_probe_json(good).expect("should parse");
+        assert_eq!(p.torch, "2.12.0+rocm7.15");
+        assert_eq!(p.device, "AMD Radeon AI PRO R9700");
+        // cuda unavailable → None (honest fail, not a pass).
+        assert!(parse_probe_json("{\"torch\": \"x\", \"cuda_available\": false}").is_none());
+        assert!(parse_probe_json("no json here").is_none());
+    }
+    #[test]
+    fn classifies_failures() {
+        let hip = "torch.AcceleratorError: CUDA error: invalid argument (hipErrorInvalidValue)";
+        assert!(classify_probe_failure(hip).contains("GPU kernel failure"));
+        assert!(classify_probe_failure("ModuleNotFoundError: No module named 'torch'").contains("won't import"));
+        assert!(classify_probe_failure("torch.cuda.OutOfMemoryError: out of memory").contains("out of GPU memory"));
+        assert!(classify_probe_failure("weird new error").contains("compute probe failed"));
+    }
+    #[test]
+    fn hsa_choice_round_trip() {
+        let repo = std::env::temp_dir().join(format!("wgp-hsa-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&repo);
+        assert_eq!(read_hsa_choice(&repo), None);
+        write_hsa_choice(&repo, &HsaChoice::Native);
+        assert_eq!(read_hsa_choice(&repo), Some(HsaChoice::Native));
+        write_hsa_choice(&repo, &HsaChoice::Override("12.0.1".into()));
+        assert_eq!(read_hsa_choice(&repo), Some(HsaChoice::Override("12.0.1".into())));
+        std::fs::write(repo.join(super::HSA_CHOICE_FILE), "garbage!!").unwrap();
+        assert_eq!(read_hsa_choice(&repo), None);
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+}

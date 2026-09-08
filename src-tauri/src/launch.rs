@@ -239,14 +239,37 @@ runpy.run_path(sys.argv[0], run_name='__main__')
         // Keys this launcher owns: anything upstream ever puts under a
         // profile's `env` today is just the HSA override — remove it when
         // the active profile doesn't declare it (e.g. after switching GPUs).
+        // Empirically probed choice wins over the static file: the working
+        // R9700 config sets no override at all, and blindly forcing 12.0.1
+        // is suspect #1 in the 0.5.2 quanto crash. Written by install/verify.
         const MANAGED_AMD_ENV: &[&str] = &["HSA_OVERRIDE_GFX_VERSION"];
-        if let Some(obj) = env_map.as_object() {
-            for (k, val) in obj {
-                if let Some(s) = val.as_str() {
-                    std::env::set_var(k, s);
-                    emit(&format!("[i] GPU profile env: {k}={s}\n"));
+        // The probed choice is per-GPU evidence — only honor it while an
+        // AMD card is actually present; a stale file after a GPU switch
+        // must never set HSA vars on another vendor.
+        if profile.starts_with("AMD") {
+        match crate::amd::read_hsa_choice(&repo) {
+            Some(crate::amd::HsaChoice::Native) => {
+                for key in MANAGED_AMD_ENV { std::env::remove_var(key); }
+                emit("[i] HSA override off (compute probe passed native on this GPU)\n");
+            }
+            Some(crate::amd::HsaChoice::Override(v)) => {
+                std::env::set_var("HSA_OVERRIDE_GFX_VERSION", &v);
+                emit(&format!("[i] HSA override {v} (compute probe winner on this GPU)\n"));
+            }
+            // No probed choice (legacy install): static setup_config behavior.
+            None => {
+                if let Some(obj) = env_map.as_object() {
+                    for (k, val) in obj {
+                        if let Some(s) = val.as_str() {
+                            std::env::set_var(k, s);
+                            emit(&format!("[i] GPU profile env: {k}={s}\n"));
+                        }
+                    }
                 }
             }
+            }
+        } else {
+            let _ = std::fs::remove_file(crate::amd::hsa_choice_path(&repo));
         }
         for key in MANAGED_AMD_ENV {
             if env_map.get(*key).and_then(|v| v.as_str()).is_none() {

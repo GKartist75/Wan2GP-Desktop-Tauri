@@ -630,7 +630,10 @@ fn patch_setup_py_overrides(repo: &std::path::Path) -> Result<(), String> {
     // don't matter here either.
     let check_src = patched.clone();
     let check_ok = (|| -> bool {
-        let tmp = std::env::temp_dir().join(format!("wgp-setup-py-check-{}.py", std::process::id()));
+        // Unique per call — tests patch in parallel in one process.
+        static CHECK_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = CHECK_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = std::env::temp_dir().join(format!("wgp-setup-py-check-{}-{n}.py", std::process::id()));
         if std::fs::write(&tmp, check_src).is_err() { return true; }
         let arg = tmp.to_string_lossy().to_string();
         let ok = silent_command("python").args(["-c", "import ast,sys; ast.parse(open(sys.argv[1]).read())", &arg]).output()
@@ -1034,6 +1037,77 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
             Err(_) => {
                 mutating_done();
                 return Err(format!("Install finished but `import torch` fails in {} — the environment is broken. Retry the install (the broken env is removed automatically) or report it with Copy diagnostics.", smoke_py.display()));
+            }
+        }
+        // AMD GPU compute probe: import-torch is not proof the stack runs
+        // (0.5.2 imported fine, first int8 GEMM died with hipErrorInvalidValue
+        // on gfx1201). Probe the installed torch in both HSA modes (override
+        // from setup_config, then native); on double failure re-seat torch to
+        // the staging float (the only known-good lineage on gfx1201) and
+        // probe again. Records the winning HSA mode for launch. Any
+        // remaining failure is honest (no marker, no false success).
+        if amd_cmds.is_some() {
+            let profile = plan["profile"].as_str().unwrap_or("");
+            let hsa_ver = crate::amd::profile_hsa_version(&repo, profile);
+            // Override first: matches current launch behavior, so a pass
+            // changes nothing for already-working rigs.
+            let mut modes: Vec<(&str, Option<String>)> = Vec::new();
+            if let Some(v) = hsa_ver { modes.push(("override", Some(v))); }
+            modes.push(("native", None));
+            let mut winner: Option<crate::amd::HsaChoice> = None;
+            let mut last_err = String::new();
+            let mut probe_modes = |winner: &mut Option<crate::amd::HsaChoice>, last_err: &mut String, emit: &dyn Fn(&str)| {
+                for (label, hsa) in &modes {
+                    emit(&format!("[*] GPU compute probe (HSA {label}{})…\n", hsa.as_ref().map(|v| format!("={v}")).unwrap_or_default()));
+                    match crate::amd::run_compute_probe(&smoke_py, hsa.as_deref()) {
+                        Ok(p) => {
+                            emit(&format!("[✓] GPU compute passed (HSA {label}): torch {} on {}.\n", p.torch, p.device));
+                            *winner = Some(match hsa { Some(v) => crate::amd::HsaChoice::Override(v.clone()), None => crate::amd::HsaChoice::Native });
+                            break;
+                        }
+                        Err(e) => { emit(&format!("[!] GPU compute probe (HSA {label}) failed: {e}\n")); *last_err = e; }
+                    }
+                }
+            };
+            probe_modes(&mut winner, &mut last_err, &emit);
+            if winner.is_none() && (env == "uv" || env == "venv") {
+                if let Some((_, staging)) = &amd_cmds {
+                    emit("[*] Installed ROCm torch fails compute in both HSA modes — re-seating torch to the staging float…\n");
+                    let (prog, mut args): (String, Vec<String>) = if env == "uv" {
+                        ("uv".into(), vec!["pip".into(), "install".into(), "--index-strategy".into(), "unsafe-best-match".into(), "--python".into(), env_path.to_string_lossy().to_string()])
+                    } else {
+                        #[cfg(windows)] let py = env_path.join("Scripts\\python.exe");
+                        #[cfg(not(windows))] let py = env_path.join("bin/python3");
+                        (py.to_string_lossy().to_string(), vec!["-m".into(), "pip".into(), "install".into()])
+                    };
+                    args.extend(staging.split_whitespace().map(str::to_string));
+                    match silent_command(&prog).args(&args).current_dir(&repo).output() {
+                        Ok(o) if o.status.success() => {
+                            emit("[✓] Staging torch seated — probing again…\n");
+                            probe_modes(&mut winner, &mut last_err, &emit);
+                        }
+                        Ok(o) => {
+                            let tail: String = String::from_utf8_lossy(&o.stderr).chars().rev().take(400).collect::<String>().chars().rev().collect();
+                            last_err = format!("staging re-seat failed: {tail}");
+                            emit(&format!("[!] {last_err}\n"));
+                        }
+                        Err(e) => {
+                            last_err = format!("staging re-seat spawn failed ({e})");
+                            emit(&format!("[!] {last_err}\n"));
+                        }
+                    }
+                }
+            }
+            match winner {
+                Some(c) => {
+                    crate::amd::write_hsa_choice(&repo, &c);
+                    emit(&format!("[i] HSA mode recorded for launch: {c:?}\n"));
+                }
+                None => {
+                    clear_setup_py_override_env();
+                    mutating_done();
+                    return Err(format!("Install finished but GPU compute fails on every torch build + HSA mode. Last error: {last_err} Copy diagnostics (System → Troubleshooting) and report it — do not try generating until Verify passes."));
+                }
             }
         }
         // AMD TheRock compat: the staging-float fallback path (community

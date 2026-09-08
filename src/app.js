@@ -4622,6 +4622,23 @@ $('tsCudaBtn')?.addEventListener('click', async function() {
   } catch (e) { tsStatus('tsFailsafeStatus', '✗ ' + escHtml(errText(e))) }
   this.disabled = false
 })
+$('tsComputeBtn')?.addEventListener('click', async function() {
+  this.disabled = true; tsStatus('tsFailsafeStatus', 'Running GPU compute (import + kernels, ~1 min on cold HIP)…')
+  try {
+    const r = await window.w2gp.tsGpuCompute()
+    if (r && r.ok) {
+      const msg = 'GPU compute OK: torch ' + (r.torch || '?') + ' on ' + (r.device || '?') + ' (mode ' + (r.mode || '?') + (r.recorded ? ', recorded for launch' : '') + ')'
+      appendLog('[✓] ' + msg)
+      tsStatus('tsFailsafeStatus', '✓ ' + escHtml(msg))
+      showToast('✓ GPU compute passed')
+    } else {
+      const det = r && r.detail ? ' ' + JSON.stringify(r.detail) : ''
+      tsStatus('tsFailsafeStatus', '✗ ' + escHtml((r && r.error) || 'probe failed'))
+      appendLog('[!] GPU compute failed: ' + ((r && r.error) || 'unknown') + det)
+    }
+  } catch (e) { tsStatus('tsFailsafeStatus', '✗ ' + escHtml(errText(e))) }
+  this.disabled = false
+})
 $('tsPortCheckBtn')?.addEventListener('click', async () => {
   tsStatus('tsPortStatus', 'Checking…')
   try {

@@ -134,6 +134,7 @@
     tsFailsafeApply: () => call('troubleshoot_failsafe_apply'), tsCudaCheck: () => call('troubleshoot_cuda_check'),
     tsPortStatus: () => call('troubleshoot_port_status'), tsPortFix: (a) => call('troubleshoot_port_fix', { action: a }),
     tsDebugBundle: () => call('troubleshoot_debug_bundle'), tsTritonTest: () => call('troubleshoot_triton_test'),
+    tsGpuCompute: () => call('troubleshoot_gpu_compute'),
     tsTritonClear: (fb) => call('troubleshoot_triton_clear', { fallbackSdpa: !!fb }),
     notifierConfig: () => call('notifier_config'), notifierSet: (c) => call('notifier_set', { cfg: c }),
     notifierTest: (c) => call('notifier_test', { cfg: c }), notifierEnsure: () => call('notifier_ensure'),
