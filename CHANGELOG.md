@@ -2,7 +2,7 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
-## [Unreleased]
+## [0.5.3] — 2026-09-08
 
 - Pre-install detection gate: fail fast on missing git / Microsoft Basic Display Adapter before any download, warn on pre-2024 AMD drivers, multiple AMD GPUs (dGPU+iGPU order check), unreadable VRAM, and missing Defender exclusions; stale markers and CUDA-era configs are reported instead of tripping the install
 - Rebuilds now name antivirus quarantine explicitly when the damage has the missing-DLL shape

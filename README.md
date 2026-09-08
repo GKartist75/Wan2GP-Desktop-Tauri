@@ -244,6 +244,8 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
+- **v0.5.3** — AMD hardening: install runs a real GPU compute probe (both HSA modes, winner recorded for launch), auto-reseats torch to the staging float on failure, pre-install detection gate (git/driver/VRAM/Defender), Verify GPU compute button, deleted envs read as missing.
+
 - **v0.5.2** — AMD install fix: `setup.py` re-detected hardware via removed `wmic.exe` → installed the CUDA stack on AMD boxes; the launcher now forces its profile + VRAM verdict into the cloned `setup.py`, with a known-card VRAM table (R9700 → 32 GB) and stale-config cleanup.
 
 - **v0.5.1** — AMD overhaul: exact-pinned ROCm 7.15 / PyTorch 2.12 torch stack for all RDNA profiles (staging float on retry), large-card VRAM misread fixed (32 GB cards no longer show 4095 MB), installer labels now factual.
