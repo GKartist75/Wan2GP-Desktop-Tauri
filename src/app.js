@@ -1054,7 +1054,10 @@ document.querySelectorAll('.env-type-btn').forEach(btn => {
 })
 
 $('installStartBtn').addEventListener('click', startInstall)
-$('reinstallFreshBtn').addEventListener('click', async () => {
+// Fresh wipe shared by the healthy-state trio and the no-env Adopt row:
+// backup dialog first, then doInstall('reinstall') which wipes the repo
+// (trash, not delete), reinstalls, and merges the backup back.
+async function doFreshReinstall() {
   // Backup dialog first: show folder size + offer model relocation.
   // Cancel (null) aborts; {skip:true} wipes without backup.
   const choice = await showReinstallBackupModal().catch(() => null)
@@ -1065,7 +1068,9 @@ $('reinstallFreshBtn').addEventListener('click', async () => {
     return
   }
   doInstall(null, 'reinstall', choice)
-})
+}
+$('reinstallFreshBtn').addEventListener('click', doFreshReinstall)
+$('targetFreshBtn')?.addEventListener('click', doFreshReinstall)
 $('reinstallUpdateBtn').addEventListener('click', () => doInstall(null, 'update'))
 $('reinstallSkipBtn').addEventListener('click', () => doInstall(null, 'skip'))
 
@@ -1563,7 +1568,7 @@ async function copyDiagnostics() {
 // repo_no_env | pinokio | foreign.
 async function refreshTargetVerdict() {
   const box = $('targetVerdict'), body = $('targetVerdictBody')
-  const adopt = $('targetAdoptBtn'), browse = $('targetBrowseBtn'), useModels = $('targetUseModelsBtn')
+  const adopt = $('targetAdoptBtn'), browse = $('targetBrowseBtn'), useModels = $('targetUseModelsBtn'), fresh = $('targetFreshBtn')
   if (!box || !body) return
   let t = null
   try { t = await window.w2gp.classifyTarget() } catch { box.style.display = 'none'; return null }
@@ -1572,6 +1577,7 @@ async function refreshTargetVerdict() {
   if (adopt) adopt.style.display = 'none'
   if (browse) browse.style.display = 'none'
   if (useModels) useModels.style.display = 'none'
+  if (fresh) fresh.style.display = 'none'
   const startBtn = $('installStartBtn')
   if (v === 'empty') {
     box.style.display = 'none'
@@ -1602,6 +1608,13 @@ async function refreshTargetVerdict() {
       adopt.style.display = ''
       adopt.textContent = 'Install / repair environment (keeps models & settings)'
       adopt.onclick = function() { resetTasks(); doInstall(null, 'update') }
+    }
+    // Fresh wipe alongside Adopt: corrupted repo code (diverged git,
+    // half-updated tree) can't be repaired by an env install — same
+    // backup-modal flow as the healthy-state trio's Reinstall (fresh).
+    if (fresh) {
+      fresh.style.display = ''
+      fresh.onclick = function() { doFreshReinstall() }
     }
     $('installSubtitle').textContent = 'Wan2GP repo found — environment missing or broken.'
   } else { // pinokio | foreign
