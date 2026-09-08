@@ -1,6 +1,6 @@
 [package]
 name = "wan2gp-desktop-launcher-tauri"
-version = "0.5.2"
+version = "0.5.3"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
