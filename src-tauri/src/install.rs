@@ -581,12 +581,14 @@ pub(crate) fn setup_py_forced_profile(plan_profile: &str) -> Option<&'static str
     }
 }
 
-/// Clear the WAN2GP_TAURI_* setup.py overrides (process-scoped like the
-/// py-shim PATH prepend — set before the setup.py child spawns, cleared
-/// after setup so later launches never inherit a stale verdict).
-fn clear_setup_py_override_env() {
+/// Clear setup.py child env (process-scoped like the py-shim PATH prepend —
+/// set before the setup.py child spawns, cleared after setup so later
+/// launches never inherit a stale verdict). Covers the WAN2GP_TAURI_*
+/// overrides plus PYTHONUNBUFFERED (log ordering, below).
+fn clear_setup_child_env() {
     std::env::remove_var("WAN2GP_TAURI_GPU_PROFILE");
     std::env::remove_var("WAN2GP_TAURI_VRAM_GB");
+    std::env::remove_var("PYTHONUNBUFFERED");
 }
 
 const SETUP_PY_OVERRIDE_MARKER: &str = "# Launcher override (Tauri installer)";
@@ -715,9 +717,10 @@ pub(crate) fn run_preflight_checks(repo: &std::path::Path, hw: &serde_json::Valu
             checks.push(PreflightCheck { id: "hsa", level: "info", msg: format!("launch will use recorded HSA mode: {c:?}") });
         }
     }
-    // 8. Defender exclusion — ROCm nightly DLLs get quarantined
-    // heuristically. Read-only query; skip silently when unavailable.
+    // 8. Defender exclusion — warned per-vendor (see av_exclusion_msg):
+    // read-only query, skip silently when unavailable.
     #[cfg(windows)] {
+        if av_exclusion_msg(vendor).is_some() {
         if let Ok(o) = silent_command("powershell").args(["-NoProfile", "-Command", "(Get-MpPreference).ExclusionPath -join \"`n\""]).output() {
             if o.status.success() {
                 let rl = repo.to_string_lossy().to_lowercase();
@@ -728,12 +731,25 @@ pub(crate) fn run_preflight_checks(repo: &std::path::Path, hw: &serde_json::Valu
                 checks.push(if covered {
                     PreflightCheck { id: "av", level: "ok", msg: "Defender exclusion covers the install folder.".into() }
                 } else {
-                    PreflightCheck { id: "av", level: "warn", msg: "no Defender exclusion for the install folder — nightly DLLs are quarantined heuristically; consider adding one.".into() }
+                    PreflightCheck { id: "av", level: "warn", msg: av_exclusion_msg(vendor).unwrap_or("no Defender exclusion for the install folder.").into() }
                 });
             }
         }
+        }
     }
     (fatal, checks)
+}
+
+/// Defender-exclusion warning by vendor. Only stacks that install
+/// binaries from outside PyPI get checked: TheRock nightlies on AMD,
+/// GitHub-release kernel wheels on NVIDIA (sage/sparge/flash/nunchaku).
+/// PyPI-stable CPU installs skip the noise. Pure + tested.
+pub(crate) fn av_exclusion_msg(vendor: &str) -> Option<&'static str> {
+    match vendor {
+        "AMD" => Some("no Defender exclusion for the install folder — nightly DLLs are quarantined heuristically; consider adding one."),
+        "NVIDIA" => Some("no Defender exclusion for the install folder — kernel wheels ship as unsigned binaries and get quarantined heuristically; consider adding one."),
+        _ => None,
+    }
 }
 
 #[tauri::command]
@@ -1011,6 +1027,12 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
         }
         _ => std::env::remove_var("WAN2GP_TAURI_VRAM_GB"),
     }
+    // Unbuffered setup.py stdout: its prints share the pipe with uv's
+    // stderr (uv writes human output to stderr, live). Buffered, setup.py's
+    // own lines ([1/3], `>>> Running:`) arrive in one late dump AFTER uv's
+    // output — the Intel 0.5.3 log read as if setup.py ran twice. Cleared
+    // with the overrides above when setup ends.
+    std::env::set_var("PYTHONUNBUFFERED", "1");
     // run setup.py with the env's python (hardware-aware: setup.py reads setup_config.json + GPU)
     {
         let (py, args): (String, Vec<String>) = if env.as_str() == "conda" { ("conda".into(), vec!["run".into(), "-p".into(), env_path.to_string_lossy().to_string(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) } else {
@@ -1052,7 +1074,7 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
                 Err(e) => {
                     #[cfg(windows)]
                     if let Some(old) = saved_path.clone() { std::env::set_var("PATH", old); }
-                    clear_setup_py_override_env();
+                    clear_setup_child_env();
                     mutating_done();
                     return Err(format!("setup.py failed to start ({e})"));
                 }
@@ -1133,11 +1155,11 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
             // Restore PATH before returning (shim prepend is install-scoped).
             #[cfg(windows)]
             if let Some(old) = saved_path.clone() { std::env::set_var("PATH", old); }
-            clear_setup_py_override_env();
+            clear_setup_child_env();
             mutating_done();
             return Err(format!("Install failed (setup.py exited code {code}). {hint}"));
         } // end for attempt — success broke out; all failures returned above
-        clear_setup_py_override_env();
+        clear_setup_child_env();
         for (id, label) in [("venv", "Create Python virtual environment"), ("torch", "Install PyTorch + CUDA"), ("reqs", "Install Python dependencies"), ("triton", "Install Triton compiler"), ("sage", "Install Sage Attention kernel"), ("flash", "Install Flash Attention"), ("kernels", "Install GPU kernels (nunchaku/GGUF)")] {
             let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": true}));
         }
@@ -1230,7 +1252,7 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
                     emit(&format!("[i] HSA mode recorded for launch: {c:?}\n"));
                 }
                 None => {
-                    clear_setup_py_override_env();
+                    clear_setup_child_env();
                     mutating_done();
                     return Err(format!("Install finished but GPU compute fails on every torch build + HSA mode. Last error: {last_err} Copy diagnostics (System → Troubleshooting) and report it — do not try generating until Verify passes."));
                 }
@@ -2128,5 +2150,21 @@ mod preflight_tests {
         assert_eq!(level(&checks, "stale-config"), Some("info"));
         assert_eq!(level(&checks, "vram"), Some("warn")); // unknown VRAM mistiers
         let _ = std::fs::remove_dir_all(&repo);
+    }
+}
+
+#[cfg(test)]
+mod av_msg_tests {
+    use super::av_exclusion_msg;
+    #[test]
+    fn vendor_tailored() {
+        // Intel 0.5.3 log showed the AMD-flavored nightly wording on an
+        // NVIDIA box — messages now match the actual binary source.
+        assert!(av_exclusion_msg("AMD").unwrap().contains("nightly"));
+        assert!(av_exclusion_msg("NVIDIA").unwrap().contains("kernel wheels"));
+        assert_eq!(av_exclusion_msg("INTEL"), None);
+        assert_eq!(av_exclusion_msg("CPU"), None);
+        assert_eq!(av_exclusion_msg("APPLE"), None);
+        assert_eq!(av_exclusion_msg("unknown"), None);
     }
 }
