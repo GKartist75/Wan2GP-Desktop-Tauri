@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::base::*;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
-use crate::{hw::{apply_gguf_override, build_install_plan, get_gpu_info_sync, kernel_profile_key}, status::get_active_env};
+use crate::{hw::{apply_gguf_override, build_install_plan, classify_amd_driver, get_gpu_info_sync, kernel_profile_key, wmi_all_gpus}, status::get_active_env};
 
 /// Pull the first X.Y[.Z] out of a version string ("3.11.14", "3.11", ">=3.11").
 fn scan_version(s: &str) -> String {
@@ -647,6 +647,109 @@ fn patch_setup_py_overrides(repo: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Pre-install detection gate: fail fast on missing tooling / missing
+/// vendor driver, and report healable state BEFORE any download (the 0.5.x
+/// AMD saga was all discovered after 20-minute installs). Returns (fatal,
+/// checks); levels ok/info/warn/fail. WMI/registry reads stay in hw —
+/// this only assembles verdicts, so the pure parts are unit-testable.
+pub(crate) struct PreflightCheck { pub id: &'static str, pub level: &'static str, pub msg: String }
+
+pub(crate) fn run_preflight_checks(repo: &std::path::Path, hw: &serde_json::Value, plan: &serde_json::Value) -> (bool, Vec<PreflightCheck>) {
+    let mut checks: Vec<PreflightCheck> = Vec::new();
+    let mut fatal = false;
+    let vendor = hw.get("vendor").and_then(|v| v.as_str()).unwrap_or("");
+    let name = hw.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let profile = plan.get("profile").and_then(|v| v.as_str()).unwrap_or("");
+    // 1. git — the clone needs it; without it setup.py dies pages later.
+    match silent_command("git").args(["--version"]).output() {
+        Ok(o) if o.status.success() => checks.push(PreflightCheck { id: "git", level: "ok", msg: format!("git present ({})", String::from_utf8_lossy(&o.stdout).trim()) }),
+        _ => { fatal = true; checks.push(PreflightCheck { id: "git", level: "fail", msg: "git not found on PATH — install it (`winget install Git.Git`), restart the launcher, then retry.".into() }); }
+    }
+    // 2. display driver — Basic Adapter means no vendor driver at all.
+    if name.to_lowercase().contains("basic display") {
+        fatal = true;
+        checks.push(PreflightCheck { id: "driver", level: "fail", msg: "Microsoft Basic Display Adapter is active — no vendor GPU driver. Install the AMD/NVIDIA driver first, reboot, then retry.".into() });
+    } else if vendor == "AMD" {
+        let ver = hw.get("driverVersion").and_then(|v| v.as_str()).unwrap_or("");
+        match classify_amd_driver(ver) {
+            "ok" => checks.push(PreflightCheck { id: "driver", level: "ok", msg: format!("AMD driver {ver} (24.x era)") }),
+            "old" => checks.push(PreflightCheck { id: "driver", level: "warn", msg: format!("AMD driver {ver} predates 2024 — TheRock wants Adrenalin/Pro >= 24.5; update to avoid kernel surprises.") }),
+            _ => checks.push(PreflightCheck { id: "driver", level: "warn", msg: "could not read the AMD driver version — if the install misbehaves, update Adrenalin/Pro first.".into() }),
+        }
+    }
+    // 3. several AMD controllers (dGPU + iGPU laptops): first-wins order
+    // is firmware-dependent — make the pick visible.
+    #[cfg(windows)] {
+        let amds: Vec<String> = wmi_all_gpus().into_iter().filter(|(_, v, _, _)| v == "AMD").map(|(n, _, _, _)| n).collect();
+        if amds.len() > 1 {
+            checks.push(PreflightCheck { id: "multi-gpu", level: "warn", msg: format!("{} AMD GPUs visible ({}); using {} — order is firmware-dependent, confirm it picked your dGPU.", amds.len(), amds.join(" + "), name) });
+        }
+    }
+    // 4. unreadable VRAM mistiers the quality profile.
+    if vendor == "AMD" && plan.get("vramGb").and_then(|v| v.as_f64()).unwrap_or(0.0) < 2048.0 {
+        checks.push(PreflightCheck { id: "vram", level: "warn", msg: "VRAM unreadable on this AMD card — quality profile may mistier; check the generated wgp_config profiles after install.".into() });
+    }
+    // 5. stale completion marker (removed/failed env) — install rebuilds.
+    if let Ok(s) = std::fs::read_to_string(repo.join(".wan2gp-install-ok")) {
+        let env_dir = match s.split_whitespace().next().unwrap_or("") {
+            "uv" => repo.join("env_uv"), "venv" => repo.join("env_venv"), "conda" => repo.join("env_conda"), _ => repo.join(".none"),
+        };
+        #[cfg(windows)] let py_gone = !env_dir.join("Scripts\\python.exe").exists();
+        #[cfg(not(windows))] let py_gone = !env_dir.join("bin/python").exists() && !env_dir.join("bin/python3").exists();
+        if py_gone {
+            checks.push(PreflightCheck { id: "stale-marker", level: "info", msg: "stale install marker points at a removed env — installing fresh (models/settings kept).".into() });
+        }
+    }
+    // 6. CUDA-era config on an AMD box — setup.py regenerates it.
+    if profile.starts_with("AMD") {
+        if let Ok(raw) = std::fs::read_to_string(repo.join("wgp_config.json")) {
+            let stale = serde_json::from_str::<serde_json::Value>(&raw).ok()
+                .and_then(|v| v.get("attention_mode").and_then(|a| a.as_str()).map(str::to_string))
+                .map_or(false, |a| a.starts_with("sage"));
+            if stale {
+                checks.push(PreflightCheck { id: "stale-config", level: "info", msg: "stale CUDA-era wgp_config.json on an AMD box — it will be regenerated.".into() });
+            }
+        }
+        // 7. recorded HSA mode from a previous probe.
+        if let Some(c) = crate::amd::read_hsa_choice(repo) {
+            checks.push(PreflightCheck { id: "hsa", level: "info", msg: format!("launch will use recorded HSA mode: {c:?}") });
+        }
+    }
+    // 8. Defender exclusion — ROCm nightly DLLs get quarantined
+    // heuristically. Read-only query; skip silently when unavailable.
+    #[cfg(windows)] {
+        if let Ok(o) = silent_command("powershell").args(["-NoProfile", "-Command", "(Get-MpPreference).ExclusionPath -join \"`n\""]).output() {
+            if o.status.success() {
+                let rl = repo.to_string_lossy().to_lowercase();
+                let covered = String::from_utf8_lossy(&o.stdout).lines().any(|l| {
+                    let el = l.trim().trim_end_matches('\\').to_lowercase();
+                    !el.is_empty() && (rl == el || rl.starts_with(&format!("{el}\\")))
+                });
+                checks.push(if covered {
+                    PreflightCheck { id: "av", level: "ok", msg: "Defender exclusion covers the install folder.".into() }
+                } else {
+                    PreflightCheck { id: "av", level: "warn", msg: "no Defender exclusion for the install folder — nightly DLLs are quarantined heuristically; consider adding one.".into() }
+                });
+            }
+        }
+    }
+    (fatal, checks)
+}
+
+#[tauri::command]
+pub async fn preflight_check() -> Result<serde_json::Value, String> {
+    // Read-only (no mutating guard): future UI can run this any time.
+    let repo = get_repo_dir();
+    let gpu = get_gpu_info_sync();
+    let plan = build_install_plan(&gpu);
+    let (fatal, checks) = run_preflight_checks(&repo, &gpu, &plan);
+    Ok(serde_json::json!({
+        "ok": !fatal,
+        "profile": plan.get("profile"),
+        "checks": checks.iter().map(|c| serde_json::json!({"id": c.id, "level": c.level, "msg": c.msg})).collect::<Vec<_>>(),
+    }))
+}
+
 #[tauri::command]
 pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<serde_json::Value,String> {
     
@@ -660,6 +763,21 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
     emit(&format!("[hw] GPU: {} ({}) — {} / {} — profile {}\n", plan["gpuName"].as_str().unwrap_or("?"), plan["vendor"].as_str().unwrap_or("?"), plan["cuda"].as_str().unwrap_or("?"), plan["torch"].as_str().unwrap_or("?"), plan["profile"].as_str().unwrap_or("?")));
     if let Some(w)=plan["driverWarning"].as_str() { if !w.is_empty() { emit(&format!("[warn] {w}\n")); } }
     emit(&format!("[env] requested: {env}\n"));
+    // Pre-install detection gate: fail fast (no git, no vendor driver)
+    // and report healable state BEFORE any download. A fatal finding
+    // aborts here — nothing was downloaded, nothing was touched.
+    {
+        let (fatal, checks) = run_preflight_checks(&repo, &gpu, &plan);
+        for c in &checks {
+            let tag = match c.level { "ok" => "[✓]", "info" => "[i]", "fail" => "[!]", _ => "[!]" };
+            emit(&format!("{tag} preflight {}: {}\n", c.id, c.msg));
+        }
+        if fatal {
+            let reasons: Vec<&str> = checks.iter().filter(|c| c.level == "fail").map(|c| c.msg.as_str()).collect();
+            mutating_done();
+            return Err(format!("Pre-install check failed: {}", reasons.join(" ")));
+        }
+    }
     let emit_phase = |id: &str, label: &str, done: bool| { let _ = app.emit("setup-phase", serde_json::json!({"id": id, "label": label, "done": done})); };
     // Never install/repair inside a Pinokio-managed tree (own lifecycle + env).
     // Fresh-install elsewhere and point the model folders at its library.
@@ -751,8 +869,16 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
                 mutating_done();
                 return Err(format!("Previous install found but {e}"));
             }
-            Err(_) => {
-                emit("[!] Previous env is damaged (torch won't import) — rebuilding clean…\n");
+            Err(e) => {
+                // Missing-DLL shape (WinError 126 / 0xc0000135) almost always
+                // means antivirus quarantine — say so explicitly instead of
+                // a generic "damaged".
+                let mut msg = String::from("[!] Previous env is damaged (torch won't import) — rebuilding clean…\n");
+                let low = e.to_lowercase();
+                if low.contains("dll") || low.contains("winerror 126") || low.contains("0xc0000135") || low.contains("error_mod_not_found") {
+                    msg.push_str("[!] Missing-DLL shape: check antivirus quarantine and add an exclusion for the install folder, or it will eat the rebuild too.\n");
+                }
+                emit(&msg);
                 let _ = std::fs::remove_file(&marker);
                 let _ = std::fs::remove_dir_all(&env_path);
             }
@@ -1940,5 +2066,67 @@ mod setup_py_override_tests {
         // Drifted file left untouched.
         assert_eq!(std::fs::read_to_string(d.join("setup.py")).unwrap(), "print('entirely different file')\n");
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod preflight_tests {
+    use super::run_preflight_checks;
+    fn tmp_repo(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("wgp-preflight-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+    fn amd_hw(vram: &str, driver: &str) -> serde_json::Value {
+        serde_json::json!({"vendor": "AMD", "name": "AMD Radeon AI PRO R9700", "vramMB": vram, "driverVersion": driver, "raw": "test"})
+    }
+    fn level(checks: &[super::PreflightCheck], id: &str) -> Option<&'static str> {
+        checks.iter().find(|c| c.id == id).map(|c| c.level)
+    }
+    #[test]
+    fn healthy_amd_box_passes_driver_and_vram() {
+        let repo = tmp_repo("ok");
+        let hw = amd_hw("32768 MiB", "32.0.11029.1008");
+        let plan = crate::hw::build_install_plan(&hw);
+        let (fatal, checks) = run_preflight_checks(&repo, &hw, &plan);
+        assert_eq!(level(&checks, "driver"), Some("ok"));
+        assert_eq!(level(&checks, "vram"), None); // known 32GB: no warning
+        assert!(!fatal || level(&checks, "git") == Some("ok"), "only git may fail, nothing fabricated");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+    #[test]
+    fn basic_adapter_is_fatal() {
+        let repo = tmp_repo("basic");
+        let hw = serde_json::json!({"vendor": "unknown", "name": "Microsoft Basic Display Adapter", "vramMB": "0 MiB", "driverVersion": "", "raw": "test"});
+        let plan = crate::hw::build_install_plan(&hw);
+        let (fatal, checks) = run_preflight_checks(&repo, &hw, &plan);
+        assert!(fatal);
+        assert_eq!(level(&checks, "driver"), Some("fail"));
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+    #[test]
+    fn old_driver_warns_not_fails() {
+        let repo = tmp_repo("old");
+        let hw = amd_hw("16384 MiB", "31.0.21029.1006");
+        let plan = crate::hw::build_install_plan(&hw);
+        let (fatal, checks) = run_preflight_checks(&repo, &hw, &plan);
+        assert_eq!(level(&checks, "driver"), Some("warn"));
+        assert!(!fatal);
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+    #[test]
+    fn stale_state_is_reported() {
+        let repo = tmp_repo("stale");
+        // Marker for a removed env + CUDA-era config on an AMD box.
+        std::fs::write(repo.join(".wan2gp-install-ok"), "uv 12345").unwrap();
+        std::fs::write(repo.join("wgp_config.json"), r#"{"attention_mode": "sage2"}"#).unwrap();
+        let hw = amd_hw("0 MiB", "32.0.11029.1008");
+        let plan = crate::hw::build_install_plan(&hw);
+        let (_, checks) = run_preflight_checks(&repo, &hw, &plan);
+        assert_eq!(level(&checks, "stale-marker"), Some("info"));
+        assert_eq!(level(&checks, "stale-config"), Some("info"));
+        assert_eq!(level(&checks, "vram"), Some("warn")); // unknown VRAM mistiers
+        let _ = std::fs::remove_dir_all(&repo);
     }
 }

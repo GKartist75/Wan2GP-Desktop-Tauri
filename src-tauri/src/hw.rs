@@ -16,15 +16,15 @@ pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
     }
     // No NVIDIA driver — WMI fallback for AMD/Intel (Electron queryGpuList parity).
     // Doc-leading: deepbeepmeep docs/AMD-INSTALLATION.md is the spec for AMD support.
-    if let Some((name, vendor, _raw_bytes)) = wmi_gpu_fallback() {
+    if let Some((name, vendor, _raw_bytes, driver)) = wmi_gpu_fallback() {
         // Prefer 64-bit registry VRAM (AdapterRAM caps ~4GB / often 0).
         match wmi_dedicated_vram_mb(&name) {
-            Some(mb) => return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":"","raw":format!("WMI+REG: {name}")}),
+            Some(mb) => return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":format!("WMI+REG: {name}")}),
             // Known-card table before giving up (R9700 PRO driver layout
             // reports no parseable registry size).
             None => match known_vram_mb(&name) {
-                Some(mb) => return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":"","raw":format!("WMI+TABLE: {name}")}),
-                None => return serde_json::json!({"vendor":vendor,"name":name,"vramMB":"0 MiB","driverVersion":"","raw":format!("WMI: {name} (VRAM unknown)")}),
+                Some(mb) => return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":format!("WMI+TABLE: {name}")}),
+                None => return serde_json::json!({"vendor":vendor,"name":name,"vramMB":"0 MiB","driverVersion":driver,"raw":format!("WMI: {name} (VRAM unknown)")}),
             },
         }
     }
@@ -50,13 +50,21 @@ pub(crate) fn probe_command(kind: &str, bin: &str) -> std::process::Command {
 /// Returns (display name, vendor, AdapterRAM bytes). AdapterRAM is a 32-bit
 /// field — capped at ~4GB and frequently 0 — so callers must treat small/zero
 /// values as "VRAM unknown", never as truth (mirrors queryGpuList).
+/// All non-NVIDIA video controllers: (display name, vendor, AdapterRAM
+/// bytes, driver version). One WMI call serves fallback selection,
+/// multi-GPU warnings and the driver preflight check. Missing DriverVersion
+/// (older query shapes, canned test fakes) parses as "".
 #[cfg(windows)]
-pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64)> {
-    let out = probe_command("POWERSHELL", "powershell").args(["-NoProfile","-Command","Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name + '|' + $_.AdapterRAM }"]).output().ok()?;
-    if !out.status.success() { return None; }
+pub(crate) fn wmi_all_gpus() -> Vec<(String, String, u64, String)> {
+    let out = match probe_command("POWERSHELL", "powershell").args(["-NoProfile","-Command","Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name + '|' + $_.AdapterRAM + '|' + $_.DriverVersion }"]).output() {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
     let s = String::from_utf8_lossy(&out.stdout);
+    let mut all = Vec::new();
     for ln in s.lines() {
-        let (n, r) = ln.split_once('|')?;
+        let mut parts = ln.split('|');
+        let (Some(n), Some(r)) = (parts.next(), parts.next()) else { continue; };
         let name = n.trim().to_string();
         if name.is_empty() || name.to_lowercase().contains("nvidia") { continue; }
         let lower = name.to_lowercase();
@@ -64,12 +72,22 @@ pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64)> {
             else if lower.contains("intel") || lower.contains("arc") { "INTEL" }
             else { continue; };
         let raw = r.trim().parse::<u64>().unwrap_or(0);
-        return Some((name, vendor.to_string(), raw));
+        let driver = parts.next().unwrap_or("").trim().to_string();
+        all.push((name, vendor.to_string(), raw, driver));
     }
-    None
+    all
 }
 #[cfg(not(windows))]
-pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64)> { None }
+pub(crate) fn wmi_all_gpus() -> Vec<(String, String, u64, String)> { Vec::new() }
+
+#[cfg(windows)]
+pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64, String)> {
+    // First non-NVIDIA controller wins (historical behavior); preflight
+    // warns when several AMD entries make that order significant.
+    wmi_all_gpus().into_iter().next()
+}
+#[cfg(not(windows))]
+pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64, String)> { None }
 
 /// Win32_VideoController.AdapterRAM is a 32-bit field: cards with ≥4GB VRAM
 /// report 0 or the 0xFFFFFFFF cap (≈4095MB) — a 32GB R9700 otherwise shows
@@ -82,6 +100,21 @@ pub(crate) fn adapter_ram_known_mb(raw: u64) -> Option<f64> {
     }
     let mb = raw as f64 / (1024.0 * 1024.0);
     if mb < 2048.0 || mb >= 4095.0 { None } else { Some(mb) }
+}
+
+/// AMD display-driver verdict from a Win32_VideoController DriverVersion
+/// (`32.0.11029.1008` style). AMD moved to 32.x with the 2024 / Adrenalin
+/// 24.x releases, so major < 32 ≈ pre-24.x → update recommended (TheRock
+/// wants ≥ 24.5). Unparseable/empty → "unknown" (warn, don't block).
+/// "Basic Display Adapter" is detected on the NAME by callers, not here.
+/// Pure + unit-tested.
+pub(crate) fn classify_amd_driver(version: &str) -> &'static str {
+    let major: Option<u64> = version.trim().split(['.', ' ']).next().and_then(|m| m.parse().ok());
+    match major {
+        None => "unknown",
+        Some(m) if m < 32 => "old",
+        Some(_) => "ok",
+    }
 }
 
 /// Distinctive GPU-name tokens: alphanumeric runs (len ≥ 4) containing a
@@ -256,6 +289,22 @@ mod amd_profile_tests {
     }
 }
 #[cfg(test)]
+mod amd_driver_tests {
+    use super::classify_amd_driver;
+    #[test]
+    fn driver_verdicts() {
+        // Adrenalin/Pro 24.x era (32.x) — current.
+        assert_eq!(classify_amd_driver("32.0.11029.1008"), "ok");
+        assert_eq!(classify_amd_driver("32.0.12019.1028"), "ok");
+        // 23.x era (31.x) — predates the 24.5 TheRock floor: warn.
+        assert_eq!(classify_amd_driver("31.0.21029.1006"), "old");
+        assert_eq!(classify_amd_driver("30.0.13025.1000"), "old");
+        // Unreadable — warn, never block.
+        assert_eq!(classify_amd_driver(""), "unknown");
+        assert_eq!(classify_amd_driver("not-a-version"), "unknown");
+    }
+}
+#[cfg(test)]
 mod known_vram_tests {
     use super::known_vram_mb;
     #[test]
@@ -332,7 +381,7 @@ pub fn detect_gpus() -> serde_json::Value {
     }
     if !gpus.is_empty() { return serde_json::Value::Array(gpus); }
     // WMI fallback for AMD/Intel (Electron queryGpuList parity, dropped in port).
-    if let Some((name, vendor, raw)) = wmi_gpu_fallback() {
+    if let Some((name, vendor, raw, _driver)) = wmi_gpu_fallback() {
         // 64-bit registry VRAM first — exact on 32GB cards (R9700 shows 32768).
         if let Some(mb) = wmi_dedicated_vram_mb(&name) {
             return serde_json::json!([{"index": 0, "name": name, "vramMB": mb as f64, "vendor": vendor}]);
@@ -636,7 +685,7 @@ mod amd_sim_tests {
     static SIM_LOCK: Mutex<()> = Mutex::new(());
     fn write_fakes(dir: &std::path::Path) {
         std::fs::write(dir.join("nvidia-smi.cmd"), "@echo off\r\nexit /b 1\r\n").unwrap();
-        let ps = "@echo off\r\nif \"%~1\"==\"--\" goto dispatch\r\nexit /b 1\r\n:dispatch\r\nif \"%~3\"==\"-Command\" goto powershell\r\nexit /b 1\r\n:powershell\r\nset \"Q=%~4\"\r\nif not \"%Q:Win32_VideoController=%\"==\"%Q%\" goto wmi\r\nif not \"%Q:HardwareInformation=%\"==\"%Q%\" goto reg\r\nexit /b 1\r\n:wmi\r\necho AMD Radeon AI PRO R9700^|0\r\nexit /b 0\r\n:reg\r\nif defined WGP_SIM_NO_REG exit /b 1\r\necho AMD Radeon AI PRO R9700^|34359738368\r\nexit /b 0\r\n";
+        let ps = "@echo off\r\nif \"%~1\"==\"--\" goto dispatch\r\nexit /b 1\r\n:dispatch\r\nif \"%~3\"==\"-Command\" goto powershell\r\nexit /b 1\r\n:powershell\r\nset \"Q=%~4\"\r\nif not \"%Q:Win32_VideoController=%\"==\"%Q%\" goto wmi\r\nif not \"%Q:HardwareInformation=%\"==\"%Q%\" goto reg\r\nexit /b 1\r\n:wmi\r\necho AMD Radeon AI PRO R9700^|0^|32.0.11029.1008\r\necho AMD Radeon Graphics^|0^|32.0.11029.1008\r\nexit /b 0\r\n:reg\r\nif defined WGP_SIM_NO_REG exit /b 1\r\necho AMD Radeon AI PRO R9700^|34359738368\r\nexit /b 0\r\n";
         std::fs::write(dir.join("powershell.cmd"), ps).unwrap();
     }
     #[test]
@@ -663,6 +712,12 @@ mod amd_sim_tests {
         let info = get_gpu_info_sync();
         assert_eq!(info.get("vendor").and_then(|v| v.as_str()), Some("AMD"));
         assert_eq!(info.get("vramMB").and_then(|v| v.as_str()), Some("32768 MiB"));
+        // Driver version now flows through detection (preflight gate).
+        assert_eq!(info.get("driverVersion").and_then(|v| v.as_str()), Some("32.0.11029.1008"));
+        // dGPU + iGPU: both listed, dGPU first (selection unchanged).
+        let all = wmi_all_gpus();
+        assert_eq!(all.len(), 2);
+        assert!(all[0].0.contains("R9700") && all[1].0.contains("Graphics"));
 
         let plan = build_install_plan(&info);
         assert_eq!(plan.get("profile").and_then(|v| v.as_str()), Some("AMD_GFX1201"));

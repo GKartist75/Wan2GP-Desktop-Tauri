@@ -111,7 +111,7 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
             .and_then(|o| o.status.success().then(|| String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count()).filter(|&c| c > 0))
             .map(|c| format!("{c} NVIDIA"))
             // AMD/Intel-only box: nvidia-smi absent — WMI name instead of "?".
-            .or_else(|| wmi_gpu_fallback().map(|(_, v, _)| format!("1 {v}")))
+            .or_else(|| wmi_gpu_fallback().map(|(_, v, _, _)| format!("1 {v}")))
             .unwrap_or("?".into());
         let gen_label = if gpu_device=="auto" { format!("auto ({hw_name} )") } else { gpu_device.clone() };
         emit(&format!("[*] GPU assignment — Launcher UI: {launcher_gpu} | Generation: {gen_label} | HW: {hw_name} ({hw_vendor}, {hw_vram}) | Detected: {gpu_count}\n"));

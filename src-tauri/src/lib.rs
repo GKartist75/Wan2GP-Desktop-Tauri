@@ -82,7 +82,8 @@ pub fn run() {
             troubleshoot::troubleshoot_failsafe_apply, troubleshoot::troubleshoot_cuda_check,
             troubleshoot::troubleshoot_port_status, troubleshoot::troubleshoot_port_fix,
             troubleshoot::troubleshoot_debug_bundle, troubleshoot::troubleshoot_triton_test,
-            troubleshoot::troubleshoot_triton_clear, troubleshoot::troubleshoot_gpu_compute
+            troubleshoot::troubleshoot_triton_clear, troubleshoot::troubleshoot_gpu_compute,
+            install::preflight_check
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
