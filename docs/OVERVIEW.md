@@ -93,8 +93,7 @@ into a half-built env; cancelling anywhere returns to the ticked choice.
 ```mermaid
 flowchart LR
     T["Verify GPU compute"] --> I["import torch +\nCUDA visible?"]
-    I --> K["import each wheel\n(top-level modules +
-sage2 symbol + quanto op)"]
+    I --> K["import each wheel\n(top-level modules)"]
     K --> R["names the broken dist\nor all-green"]
 ```
 
