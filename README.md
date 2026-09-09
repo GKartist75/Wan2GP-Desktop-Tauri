@@ -16,6 +16,7 @@
 
 ## Contents
 
+- [User Guide — all screens, tabs & buttons](docs/USER-GUIDE.md)
 - [Download & Install](#download--install)
 - [Screenshots](#screenshots)
 - [Why Tauri? (vs the Electron edition)](#why-tauri-vs-the-electron-edition)
