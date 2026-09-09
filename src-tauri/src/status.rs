@@ -226,10 +226,12 @@ pub fn check_installed() -> serde_json::Value {
 
 #[tauri::command]
 pub fn check_command(cmd: String) -> serde_json::Value {
+    // Absolute known locations first (fresh prerequisite installs usable
+    // with no PATH refresh, no restart); PATH/shim check as fallback.
     // Windows: tool_usable filters the Store shim (a bare `where` hit is not
     // proof of a runnable binary — see base::tool_usable).
-    #[cfg(windows)] let found = tool_usable(&cmd);
-    #[cfg(not(windows))] let found = silent_command("which").arg(&cmd).output().is_ok_and(|o| o.status.success());
+    #[cfg(windows)] let found = crate::install::tool_found(&cmd);
+    #[cfg(not(windows))] let found = crate::install::tool_found(&cmd) || silent_command("which").arg(&cmd).output().is_ok_and(|o| o.status.success());
     serde_json::json!({"cmd": cmd, "found": found})
 }
 
