@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::base::*;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
-use crate::{hw::{apply_gguf_override, build_install_plan, classify_amd_driver, get_gpu_info_sync, kernel_profile_key, wmi_all_gpus}, status::get_active_env};
+use crate::{hw::{apply_gguf_override, build_install_plan, classify_amd_driver, get_gpu_info_sync, kernel_profile_key, wmi_all_gpus}, status::{get_active_env, resolve_env_python}};
 
 /// Pull the first X.Y[.Z] out of a version string ("3.11.14", "3.11", ">=3.11").
 fn scan_version(s: &str) -> String {
@@ -865,8 +865,11 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
     // missed the common case (healthy python, torch never installed) and
     // retried straight into the venv-exists crash. Marker separates the two.
     let marker = repo.join(".wan2gp-install-ok");
-    #[cfg(windows)] let py_exe = env_path.join("Scripts\\python.exe");
-    #[cfg(not(windows))] let py_exe = env_path.join("bin/python");
+    // Resume/reuse probe: all layouts (uv/venv Scripts|bin, conda root).
+    // Legacy default when nothing resolves yet (fresh path — probe is free).
+    #[cfg(windows)] let legacy_py = env_path.join("Scripts\\python.exe");
+    #[cfg(not(windows))] let legacy_py = env_path.join("bin/python");
+    let py_exe = resolve_env_python(&repo, &env_path.to_string_lossy()).unwrap_or(legacy_py);
     let marked_same_env = std::fs::read_to_string(&marker).ok()
         .is_some_and(|s| s.split_whitespace().next() == Some(env.as_str()));
     // torch_probe is free when py_exe is missing (no spawn) — the fresh path.
@@ -1172,10 +1175,13 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
     // Post-install smoke test: exit 0 from setup.py is not proof the env works
     // (ATFGriff got exit 2 AND a success message; subtler breakage can exit 0).
     // Gate favourite-plugins + "Installation complete!" on torch importing
-    // and the GPU being visible from inside the new env.
-    if env == "uv" || env == "venv" {
-        #[cfg(windows)] let smoke_py = env_path.join("Scripts\\python.exe");
-        #[cfg(not(windows))] let smoke_py = if env == "uv" { env_path.join("bin/python") } else { env_path.join("bin/python3") };
+    // and the GPU being visible from inside the new env. All env types:
+    // conda's interpreter lives at the env root (no Scripts dir).
+    if env == "uv" || env == "venv" || env == "conda" {
+        let Some(smoke_py) = resolve_env_python(&repo, &env_path.to_string_lossy()) else {
+            mutating_done();
+            return Err(format!("Install finished but no Python interpreter found in {} — the environment is broken. Retry the install (the broken env is removed automatically) or report it with Copy diagnostics.", env_path.display()));
+        };
         emit("[*] Verifying install: importing torch in the new environment…\n");
         match smoke_verify(&smoke_py, &repo) {
             Ok(line) => emit(&format!("[✓] Smoke test passed: {line}\n")),

@@ -3,7 +3,7 @@ use tauri::Emitter;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use crate::base::*;
-use crate::{hw::{get_gpu_info_sync, kernel_profile_key, probe_command, wmi_gpu_fallback}, status::get_active_env};
+use crate::{hw::{get_gpu_info_sync, kernel_profile_key, probe_command, wmi_gpu_fallback}, status::{get_active_env, resolve_env_python}};
 
 // Quote-aware split for Extra Launch Args (keeps "--teacache \"a b\"" together).
 fn split_launch_args(s: &str) -> Vec<String> {
@@ -159,16 +159,14 @@ if d not in sys.path: sys.path.insert(0, d)
 runpy.run_path(sys.argv[0], run_name='__main__')
 "#);
     args.insert(0, boot.to_string_lossy().to_string()); // py <boot> wgp.py … (target = argv[1])
-    // resolve python for active env
+    // resolve python for active env (uv/venv: Scripts\ or bin/; conda:
+    // python at the env root — resolve_env_python knows both layouts).
     let env = get_active_env();
     let py = if let Some(raw) = env.get("path").and_then(|p| p.as_str()) {
         let rel = raw.trim_start_matches(".\\").trim_start_matches("./").trim_start_matches(".\\").trim_start_matches("./");
         let base = if Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(rel) };
-        let cand = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python3") };
-        if cand.exists() { cand.to_string_lossy().to_string() } else if base.exists() { // uv env may be at base itself
-            let alt = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
-            if alt.exists() { alt.to_string_lossy().to_string() } else { raw.to_string() }
-        } else { cand.to_string_lossy().to_string() }
+        let legacy = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python3") };
+        resolve_env_python(&get_repo_dir(), raw).unwrap_or(legacy).to_string_lossy().to_string()
     } else { "python".to_string() };
     // Pre-flight: the interpreter must exist, run, AND import torch.
     // (Screenshot: after the failed install there was no env, launch fell back

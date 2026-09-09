@@ -2,17 +2,12 @@
 use tauri::Emitter;
 use std::path::PathBuf;
 use crate::base::*;
-use crate::{hw::get_gpu_info_sync, status::get_active_env};
+use crate::{hw::get_gpu_info_sync, status::{get_active_env, resolve_env_python}};
 
 #[tauri::command]
 pub async fn check_package_updates(app: tauri::AppHandle, versions: Option<serde_json::Value>) -> Result<serde_json::Value,String> {
     let _ = versions;
-    let env = get_active_env();
-    let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
-    let r = raw.trim_start_matches(['.', '\\', '/']);
-    let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(r) };
-    let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
-    if !py.exists() { return Ok(serde_json::json!([])); }
+    let Some(py) = env_python_bin() else { return Ok(serde_json::json!([])) };
     use tauri_plugin_shell::ShellExt; use tauri_plugin_shell::process::CommandEvent;
     let (mut rx, _) = app.shell().command(&py).args(["-m","pip","list","--outdated","--format=json"]).spawn().map_err(|e| e.to_string())?;
     let mut out = String::new();
@@ -38,11 +33,7 @@ pub fn check_package(pkg: String) -> serde_json::Value {
         "opencv" | "opencv-python" => "opencv-python",
         other => other,
     };
-    let env = get_active_env();
-    let py = env.get("path").and_then(|p| p.as_str()).map(|raw| {
-        let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
-        if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") }
-    });
+    let py = env_python_bin();
     if let Some(p) = py {
         if p.exists() {
             let code = format!("import importlib.metadata as m; print(m.version({dist:?}))");
@@ -168,9 +159,7 @@ pub fn auto_tune_recommend(hw: Option<serde_json::Value>, opts: Option<serde_jso
 #[tauri::command]
 pub async fn upgrade_package(app: tauri::AppHandle, pkg: String) -> Result<serde_json::Value,String> {
     pip_spec_ok(&pkg).map_err(|e| format!("blocked: {e}"))?;
-    let env = get_active_env(); let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
-    let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
-    if !py.exists() { return Err("python not found".into()); }
+    let Some(py) = env_python_bin() else { return Err("python not found".into()) };
     let py_s = py.to_string_lossy().to_string();
     let emit = |m: &str| { let _ = app.emit("launch-log", m.to_string()); };
     if !run_logged(&app, &py_s, &["-m","pip","install","--upgrade", &pkg], None, emit).await {
@@ -181,9 +170,7 @@ pub async fn upgrade_package(app: tauri::AppHandle, pkg: String) -> Result<serde
 #[tauri::command]
 pub async fn install_package(app: tauri::AppHandle, pkg: String) -> Result<serde_json::Value,String> {
     pip_spec_ok(&pkg).map_err(|e| format!("blocked: {e}"))?;
-    let env = get_active_env(); let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
-    let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
-    if !py.exists() { return Err("python not found".into()); }
+    let Some(py) = env_python_bin() else { return Err("python not found".into()) };
     let py_s = py.to_string_lossy().to_string();
     let emit = |m: &str| { let _ = app.emit("launch-log", m.to_string()); };
     if !run_logged(&app, &py_s, &["-m","pip","install", &pkg], None, emit).await {
@@ -194,9 +181,7 @@ pub async fn install_package(app: tauri::AppHandle, pkg: String) -> Result<serde
 #[tauri::command]
 pub async fn uninstall_package(app: tauri::AppHandle, pkg: String) -> Result<serde_json::Value,String> {
     pip_spec_ok(&pkg).map_err(|e| format!("blocked: {e}"))?;
-    let env = get_active_env(); let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
-    let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
-    if !py.exists() { return Err("python not found".into()); }
+    let Some(py) = env_python_bin() else { return Err("python not found".into()) };
     let py_s = py.to_string_lossy().to_string();
     let emit = |m: &str| { let _ = app.emit("launch-log", m.to_string()); };
     if !run_logged(&app, &py_s, &["-m","pip","uninstall","-y", &pkg], None, emit).await {
@@ -206,9 +191,8 @@ pub async fn uninstall_package(app: tauri::AppHandle, pkg: String) -> Result<ser
 }
 #[tauri::command]
 pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
-    let repo = get_repo_dir(); let env = get_active_env(); let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or(""); let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { repo.join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
-    let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
-    if !py.exists() { return Err("python not found".into()); }
+    let repo = get_repo_dir();
+    let Some(py) = env_python_bin() else { return Err("python not found".into()) };
     let py_s = py.to_string_lossy().to_string();
     let emit = |m: &str| { let _ = app.emit("launch-log", m.to_string()); };
     if !run_logged(&app, &py_s, &["-m","pip","install","-r", "requirements.txt"], Some(&repo), emit).await {
@@ -219,10 +203,7 @@ pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::V
 #[tauri::command] pub fn llm_engines_list() -> serde_json::Value {
     // ponytail: probe cliOnPath + pipInstalled like Electron services/llm-engines.js
     let env = get_active_env();
-    let py = env.get("path").and_then(|p| p.as_str()).map(|raw| {
-        let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
-        if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") }
-    });
+    let py = env_python_bin();
     let check_cli = |cli: &str| -> bool {
         #[cfg(windows)] { silent_command("where").arg(cli).output().is_ok_and(|o| o.status.success()) }
         #[cfg(not(windows))] { silent_command("which").arg(cli).output().map(|o| o.status.success()).unwrap_or(false) }
@@ -509,11 +490,11 @@ fn notifier_saved() -> serde_json::Value {
     notifier_normalize(load_config_value().get("notifier").unwrap_or(&serde_json::Value::Null))
 }
 fn env_python_bin() -> Option<PathBuf> {
+    // Single resolution point for package ops: uv/venv (Scripts\ or bin/)
+    // and conda (python at the env root) alike.
     let env = get_active_env();
     let raw = env.get("path")?.as_str()?;
-    let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
-    let py = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python") };
-    py.exists().then_some(py)
+    resolve_env_python(&get_repo_dir(), raw)
 }
 fn apprise_send(url: &str, title: &str, body: &str) -> Result<(), String> {
     let py = env_python_bin().ok_or_else(|| "No active Python environment".to_string())?;
