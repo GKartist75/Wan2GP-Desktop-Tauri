@@ -923,8 +923,12 @@
         <div class="ipkgs-header">Install location check</div>
         <div id="targetVerdictBody"></div>
         <div class="reinstall-buttons" style="margin-top:8px">
-          <button class="btn btn-primary small" id="targetAdoptBtn" style="display:none">Install / repair environment</button>
-          <button class="btn btn-ghost small" id="targetFreshBtn" style="display:none" title="Wipe the repo code and reinstall clean. Model libraries, plugins, finetunes and settings are backed up and restored.">Fresh repo (wipe code, keep models)…</button>
+          <div id="targetChoiceList" class="target-choice-list" style="display:none">
+            <label class="target-choice"><input type="radio" name="targetChoice" value="repair" checked>
+              <span><strong>Install / repair environment</strong> <span class="istack-hint">keeps models &amp; settings</span></span></label>
+            <label class="target-choice"><input type="radio" name="targetChoice" value="fresh">
+              <span><strong>Fresh repo</strong> <span class="istack-hint">wipe code, keep models…</span></span></label>
+          </div>
           <button class="btn btn-primary small" id="targetUseModelsBtn" style="display:none">Reuse its models in a fresh install</button>
           <button class="btn btn-ghost small" id="targetBrowseBtn" style="display:none">Choose empty folder…</button>
         </div>

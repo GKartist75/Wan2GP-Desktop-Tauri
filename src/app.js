@@ -1044,6 +1044,10 @@ function resetTasks(){ Object.values(taskMap).forEach(t=>{ t.className='task pen
 
 // ── Installer ──
 let selectedEnvType = 'uv'
+// Checklist verdict: when the install folder holds a repo without a working env
+// (repo_no_env / ours_broken_env), the choice lives in the #targetChoiceList
+// radios and the big Install button dispatches it (see startInstall).
+let _targetChoiceMode = null
 
 document.querySelectorAll('.env-type-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -1070,7 +1074,8 @@ async function doFreshReinstall() {
   doInstall(null, 'reinstall', choice)
 }
 $('reinstallFreshBtn').addEventListener('click', doFreshReinstall)
-$('targetFreshBtn')?.addEventListener('click', doFreshReinstall)
+// NOTE: no targetFreshBtn binding — the no-env choice is a checklist radio now,
+// dispatched by the big Install button (see startInstall).
 $('reinstallUpdateBtn').addEventListener('click', () => doInstall(null, 'update'))
 $('reinstallSkipBtn').addEventListener('click', () => doInstall(null, 'skip'))
 
@@ -1280,6 +1285,14 @@ async function startInstall(){
     var hasConda = await hasCmd('conda')
     if (!hasConda) { appendLog('[!] Conda not found — showing install help'); showPrereqHelp('Conda not found', 'Miniconda is required for conda installs. Click Download to install it silently, or select venv/uv above.', 'https://docs.anaconda.com/miniconda/', 'conda'); return }
   }
+  // Checklist verdict (repo without a working env): the big Install button
+  // dispatches whichever #targetChoiceList radio is checked. Fresh-cancel
+  // keeps the checklist + Install visible (nothing hidden yet), so retry is free.
+  if (_targetChoiceMode === 'repair-or-fresh') {
+    const checked = document.querySelector('input[name="targetChoice"]:checked')
+    if ((checked && checked.value) === 'fresh') { doFreshReinstall(); return }
+    resetTasks(); doInstall(null, 'update'); return
+  }
   show('installer'); resetTasks()
   $('envTypeSelect').classList.add('disabled')
   document.querySelectorAll('.env-type-btn').forEach(b => b.disabled = true)
@@ -1391,6 +1404,9 @@ function showReinstallBackupModal() {
 
 async function doInstall(installed, mode, opts) {
   $('reinstallChoice').classList.add('hidden')
+  // Checklist verdict consumed — hide it so it can't be re-dispatched mid-install.
+  _targetChoiceMode = null
+  if ($('targetChoiceList')) $('targetChoiceList').style.display = 'none'
   installProgressReset()
   if (mode === 'skip') {
     // Reuse must earn it: a stale envs.json or half-deleted venv used to sail
@@ -1568,16 +1584,16 @@ async function copyDiagnostics() {
 // repo_no_env | pinokio | foreign.
 async function refreshTargetVerdict() {
   const box = $('targetVerdict'), body = $('targetVerdictBody')
-  const adopt = $('targetAdoptBtn'), browse = $('targetBrowseBtn'), useModels = $('targetUseModelsBtn'), fresh = $('targetFreshBtn')
+  const choiceList = $('targetChoiceList'), browse = $('targetBrowseBtn'), useModels = $('targetUseModelsBtn')
   if (!box || !body) return
   let t = null
   try { t = await window.w2gp.classifyTarget() } catch { box.style.display = 'none'; return null }
   if (!t || !t.verdict) { box.style.display = 'none'; return null }
   const v = t.verdict
-  if (adopt) adopt.style.display = 'none'
+  if (choiceList) choiceList.style.display = 'none'
   if (browse) browse.style.display = 'none'
   if (useModels) useModels.style.display = 'none'
-  if (fresh) fresh.style.display = 'none'
+  _targetChoiceMode = null
   const startBtn = $('installStartBtn')
   if (v === 'empty') {
     box.style.display = 'none'
@@ -1600,21 +1616,24 @@ async function refreshTargetVerdict() {
     $('reinstallChoice')?.classList.remove('hidden')
     $('installSubtitle').textContent = 'Wan2GP is already installed.'
   } else if (v === 'repo_no_env' || v === 'ours_broken_env') {
-    // Adopt button covers this — the generic Keep/Update/Skip trio doesn't apply.
+    // Checklist mode: the choice lives in the radios, the big Install button
+    // dispatches it (see startInstall) — no competing action buttons.
+    // Adopt-cover note: the generic Keep/Update/Skip trio doesn't apply.
     $('reinstallChoice')?.classList.add('hidden')
     body.innerHTML = '<div class="istack-w">⚠ ' + escHtml(t.hint || '') + '</div>' +
-      (envNames ? '<div class="istack-hint">Env folders found: ' + escHtml(envNames) + ' — repair recreates the broken one, keeps models & settings.</div>' : '')
-    if (adopt) {
-      adopt.style.display = ''
-      adopt.textContent = 'Install / repair environment (keeps models & settings)'
-      adopt.onclick = function() { resetTasks(); doInstall(null, 'update') }
+      (envNames ? '<div class="istack-hint">Env folders found: ' + escHtml(envNames) + ' — repair recreates the broken one, keeps models & settings.</div>' : '') +
+      '<div class="istack-hint">Tick your choice below, then press Install.</div>'
+    if (choiceList) {
+      choiceList.style.display = ''
+      const repair = choiceList.querySelector('input[value="repair"]')
+      if (repair) repair.checked = true
     }
-    // Fresh wipe alongside Adopt: corrupted repo code (diverged git,
-    // half-updated tree) can't be repaired by an env install — same
-    // backup-modal flow as the healthy-state trio's Reinstall (fresh).
-    if (fresh) {
-      fresh.style.display = ''
-      fresh.onclick = function() { doFreshReinstall() }
+    _targetChoiceMode = 'repair-or-fresh'
+    // Re-arm the big button (the first Install pass hid it to show this card).
+    // Never override a hard block owned elsewhere (disk gates, pinokio, roots).
+    if (startBtn) {
+      startBtn.classList.remove('hidden')
+      if (!startBtn.disabled) { startBtn.textContent = 'Install'; startBtn.title = '' }
     }
     $('installSubtitle').textContent = 'Wan2GP repo found — environment missing or broken.'
   } else { // pinokio | foreign
