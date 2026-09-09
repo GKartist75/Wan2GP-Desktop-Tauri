@@ -1052,6 +1052,9 @@ let _targetChoiceMode = null
 // every exit) — verdict refreshes must never resurrect Install mid-install
 // (e.g. Browse clicked during a fresh install re-trips repo_no_env).
 let _installRunning = false
+// Stashed Fresh-repo backup choice (collect-only modal). The wipe launches
+// solely from the big Install button — never from inside the backup dialog.
+let _freshBackupChoice = null
 
 document.querySelectorAll('.env-type-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -1062,6 +1065,11 @@ document.querySelectorAll('.env-type-btn').forEach(btn => {
 })
 
 $('installStartBtn').addEventListener('click', startInstall)
+// Fresh-repo choice is single-use: switching radios voids a stashed backup
+// choice so a stale pick can never launch without a fresh modal pass.
+document.querySelectorAll('input[name="targetChoice"]').forEach(function(r) {
+  r.addEventListener('change', function() { _freshBackupChoice = null })
+})
 // Fresh wipe shared by the healthy-state trio and the no-env Adopt row:
 // backup dialog first, then doInstall('reinstall') which wipes the repo
 // (trash, not delete), reinstalls, and merges the backup back.
@@ -1289,13 +1297,25 @@ async function startInstall(){
     var hasConda = await hasCmd('conda')
     if (!hasConda) { appendLog('[!] Conda not found — showing install help'); showPrereqHelp('Conda not found', 'Miniconda is required for conda installs. Click Download to install it silently, or select venv/uv above.', 'https://docs.anaconda.com/miniconda/', 'conda'); return }
   }
+  // Fresh-repo: collect the backup choice FIRST (modal never launches —
+  // the wipe starts solely from the big Install button). Stored, then the
+  // user presses Install again for the final are-you-sure + launch.
+  const freshPicked = _targetChoiceMode === 'repair-or-fresh' &&
+    ((document.querySelector('input[name="targetChoice"]:checked') || {}).value === 'fresh')
+  if (freshPicked && !_freshBackupChoice) {
+    const picked = await showReinstallBackupModal().catch(() => null)
+    if (!picked) return
+    _freshBackupChoice = picked
+    showToast('Backup choice saved — press Install to start')
+    return
+  }
   // Are-you-sure gate: the Install button sits below the checks, and
   // nothing starts without explicit confirmation (fresh-repo wipes code).
   let choiceNote = ''
   if (_targetChoiceMode === 'repair-or-fresh') {
     const checked = document.querySelector('input[name="targetChoice"]:checked')
     choiceNote = ((checked && checked.value) === 'fresh')
-      ? 'Fresh repo (wipe code, keep models)'
+      ? 'Fresh repo (wipe code, keep models)' + (_freshBackupChoice ? ((_freshBackupChoice.skip ? ' — no backup' : ' — with backup')) : '')
       : 'Install / repair environment (keeps models & settings)'
   }
   let locNote = ''
@@ -1305,11 +1325,20 @@ async function startInstall(){
   } catch {}
   if (!window.confirm('Start the Wan2GP install now?' + (choiceNote ? '\nChoice: ' + choiceNote : '') + '\nEnvironment: ' + selectedEnvType + locNote + '\n\nThis downloads several GB and takes 5–20 minutes.')) return
   // Checklist verdict (repo without a working env): the big Install button
-  // dispatches whichever #targetChoiceList radio is checked. Fresh-cancel
-  // keeps the checklist + Install visible (nothing hidden yet), so retry is free.
+  // dispatches whichever #targetChoiceList radio is checked. The Fresh wipe
+  // consumes the stashed backup choice (collected earlier) — cancel keeps
+  // it stashed, checklist + Install stay visible, retry is free.
   if (_targetChoiceMode === 'repair-or-fresh') {
     const checked = document.querySelector('input[name="targetChoice"]:checked')
-    if ((checked && checked.value) === 'fresh') { doFreshReinstall(); return }
+    if ((checked && checked.value) === 'fresh') {
+      const stored = _freshBackupChoice
+      if (stored && stored.skip && !window.confirm('Really wipe without any backup? Custom plugins, finetunes, settings and any models inside the folder will be deleted.')) return
+      _freshBackupChoice = null
+      resetTasks()
+      if (stored && stored.skip) { doInstall(null, 'reinstall', { backup: false }); return }
+      doInstall(null, 'reinstall', stored); return
+    }
+    _freshBackupChoice = null
     resetTasks(); doInstall(null, 'update'); return
   }
   show('installer'); resetTasks()
