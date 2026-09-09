@@ -2,8 +2,11 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
-## [Unreleased]
+## [0.5.3] — 2026-09-09
 
+- Healthy-state trio routed through Install too: Update / Reinstall-fresh / Use-existing as radios above the button; backup modal is collect-only, one adaptive confirm per run, Install is the sole launcher everywhere
+- Install button can no longer resurrect mid-install (Browse during a fresh install re-trips the verdict — guarded)
+- New user guide: docs/USER-GUIDE.md covers every screen, tab and button
 - Conda pip routing fixed: `conda run` re-quotes args and corrupts URL-encoded wheel URLs (SpargeAttn %2B → Invalid build number) — setup.py's conda install template is patched to drive pip with the env interpreter directly (venv shape, own marker, drift-refusing)
 
 - Conda ToS gate handled: Anaconda's 2024+ Terms-of-Service enforcement refuses non-interactive channel ops — the installer accepts pkgs/main, pkgs/r, pkgs/msys2 once (transparently logged, persists in conda config) before setup.py runs
