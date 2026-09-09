@@ -1067,29 +1067,13 @@ document.querySelectorAll('.env-type-btn').forEach(btn => {
 $('installStartBtn').addEventListener('click', startInstall)
 // Fresh-repo choice is single-use: switching radios voids a stashed backup
 // choice so a stale pick can never launch without a fresh modal pass.
-document.querySelectorAll('input[name="targetChoice"]').forEach(function(r) {
+document.querySelectorAll('input[name="targetChoice"], input[name="reinstallChoice"]').forEach(function(r) {
   r.addEventListener('change', function() { _freshBackupChoice = null })
 })
-// Fresh wipe shared by the healthy-state trio and the no-env Adopt row:
-// backup dialog first, then doInstall('reinstall') which wipes the repo
-// (trash, not delete), reinstalls, and merges the backup back.
-async function doFreshReinstall() {
-  // Backup dialog first: show folder size + offer model relocation.
-  // Cancel (null) aborts; {skip:true} wipes without backup.
-  const choice = await showReinstallBackupModal().catch(() => null)
-  if (!choice) { appendLog('[*] Reinstall cancelled.') ; return }
-  if (choice.skip) {
-    if (!window.confirm('Really wipe without any backup? Custom plugins, finetunes, settings and any models inside the folder will be deleted.')) return
-    doInstall(null, 'reinstall', { backup: false })
-    return
-  }
-  doInstall(null, 'reinstall', choice)
-}
-$('reinstallFreshBtn').addEventListener('click', doFreshReinstall)
-// NOTE: no targetFreshBtn binding — the no-env choice is a checklist radio now,
-// dispatched by the big Install button (see startInstall).
-$('reinstallUpdateBtn').addEventListener('click', () => doInstall(null, 'update'))
-$('reinstallSkipBtn').addEventListener('click', () => doInstall(null, 'skip'))
+// NOTE: the healthy-state trio and the no-env checklist are radios now —
+// all launching goes through the big Install button (see startInstall).
+// The backup modal below is collect-only; doInstall('reinstall') wipes the
+// repo (trash, not delete), reinstalls, and merges the backup back.
 
 $('validateInstallBtn')?.addEventListener('click', async () => {
   const btn = $('validateInstallBtn')
@@ -1300,12 +1284,14 @@ async function startInstall(){
   // Fresh-repo: collect the backup choice FIRST (modal never launches —
   // the wipe starts solely from the big Install button). Stored, then the
   // user presses Install again for the final are-you-sure + launch.
-  const freshPicked = _targetChoiceMode === 'repair-or-fresh' &&
-    ((document.querySelector('input[name="targetChoice"]:checked') || {}).value === 'fresh')
+  // Applies to the no-env checklist AND the healthy-state trio.
+  const pickedRadio = function(name) { return (document.querySelector('input[name="' + name + '"]:checked') || {}).value || null }
+  const freshPicked = (_targetChoiceMode === 'repair-or-fresh' && pickedRadio('targetChoice') === 'fresh') ||
+    (_targetChoiceMode === 'reinstall-trio' && pickedRadio('reinstallChoice') === 'fresh')
   if (freshPicked && !_freshBackupChoice) {
-    const picked = await showReinstallBackupModal().catch(() => null)
-    if (!picked) return
-    _freshBackupChoice = picked
+    const choice = await showReinstallBackupModal().catch(() => null)
+    if (!choice) return
+    _freshBackupChoice = choice
     showToast('Backup choice saved — press Install to start')
     return
   }
@@ -1317,6 +1303,11 @@ async function startInstall(){
     choiceNote = ((checked && checked.value) === 'fresh')
       ? 'Fresh repo (wipe code, keep models)' + (_freshBackupChoice ? ((_freshBackupChoice.skip ? ' — no backup' : ' — with backup')) : '')
       : 'Install / repair environment (keeps models & settings)'
+  } else if (_targetChoiceMode === 'reinstall-trio') {
+    const v = pickedRadio('reinstallChoice')
+    choiceNote = (v === 'fresh'
+      ? 'Reinstall (fresh)' + (_freshBackupChoice ? ((_freshBackupChoice.skip ? ' — no backup' : ' — with backup')) : '')
+      : v === 'skip' ? 'Use existing (health-check)' : 'Update & keep files')
   }
   let locNote = ''
   try {
@@ -1324,22 +1315,28 @@ async function startInstall(){
     if (paths && (paths.repo || paths.dataDir)) locNote = '\nLocation: ' + (paths.repo || paths.dataDir)
   } catch {}
   if (!window.confirm('Start the Wan2GP install now?' + (choiceNote ? '\nChoice: ' + choiceNote : '') + '\nEnvironment: ' + selectedEnvType + locNote + '\n\nThis downloads several GB and takes 5–20 minutes.')) return
-  // Checklist verdict (repo without a working env): the big Install button
-  // dispatches whichever #targetChoiceList radio is checked. The Fresh wipe
-  // consumes the stashed backup choice (collected earlier) — cancel keeps
-  // it stashed, checklist + Install stay visible, retry is free.
+  // Checklist + trio dispatch: the big Install button is the ONLY launcher.
+  // Fresh wipes consume the stashed backup choice (collected earlier) —
+  // cancel keeps it stashed, UI stays put, retry is free.
+  const launchFresh = function() {
+    const stored = _freshBackupChoice
+    if (stored && stored.skip && !window.confirm('Really wipe without any backup? Custom plugins, finetunes, settings and any models inside the folder will be deleted.')) return
+    _freshBackupChoice = null
+    resetTasks()
+    if (stored && stored.skip) { doInstall(null, 'reinstall', { backup: false }); return }
+    doInstall(null, 'reinstall', stored); return
+  }
   if (_targetChoiceMode === 'repair-or-fresh') {
     const checked = document.querySelector('input[name="targetChoice"]:checked')
-    if ((checked && checked.value) === 'fresh') {
-      const stored = _freshBackupChoice
-      if (stored && stored.skip && !window.confirm('Really wipe without any backup? Custom plugins, finetunes, settings and any models inside the folder will be deleted.')) return
-      _freshBackupChoice = null
-      resetTasks()
-      if (stored && stored.skip) { doInstall(null, 'reinstall', { backup: false }); return }
-      doInstall(null, 'reinstall', stored); return
-    }
+    if ((checked && checked.value) === 'fresh') { launchFresh(); return }
     _freshBackupChoice = null
     resetTasks(); doInstall(null, 'update'); return
+  }
+  if (_targetChoiceMode === 'reinstall-trio') {
+    const v = pickedRadio('reinstallChoice')
+    if (v === 'fresh') { launchFresh(); return }
+    _freshBackupChoice = null
+    resetTasks(); doInstall(null, v === 'skip' ? 'skip' : 'update'); return
   }
   show('installer'); resetTasks()
   $('envTypeSelect').classList.add('disabled')
@@ -1666,8 +1663,16 @@ async function refreshTargetVerdict() {
   const envNames = (t.envs && Object.keys(t.envs).join(', ')) || ''
   if (v === 'ours_healthy') {
     body.innerHTML = '<div class="istack-ok">✓ ' + escHtml(t.hint || '') + '</div>'
-    // Reuse path: the existing reinstall choice owns reuse / update / fresh.
+    // Reuse path: the choice lives in the trio radios, the big Install
+    // button dispatches it — same contract as the no-env checklist.
     $('reinstallChoice')?.classList.remove('hidden')
+    const trio = document.querySelector('input[name="reinstallChoice"][value="update"]')
+    if (trio) trio.checked = true
+    _targetChoiceMode = 'reinstall-trio'
+    if (startBtn && !_installRunning) {
+      startBtn.classList.remove('hidden')
+      if (!startBtn.disabled) { startBtn.textContent = 'Install'; startBtn.title = '' }
+    }
     $('installSubtitle').textContent = 'Wan2GP is already installed.'
   } else if (v === 'repo_no_env' || v === 'ours_broken_env') {
     // Checklist mode: the choice lives in the radios, the big Install button

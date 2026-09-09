@@ -991,13 +991,19 @@
         <button class="btn btn-ghost small" id="copyDiagnosticsBtn" style="margin-top:8px;display:none">Copy diagnostics</button>
       </div>
 
-      <!-- Reinstall choice (shown when Wan2GP already installed) -->
+      <!-- Reinstall choice (shown when Wan2GP already installed): tick one,
+           then press the big Install button — the radios never launch. -->
       <div id="reinstallChoice" class="reinstall-choice hidden">
-        <p class="reinstall-prompt">Wan2GP is already installed. What do you want to do?</p>
+        <p class="reinstall-prompt">Wan2GP is already installed. Tick your choice, then press Install.</p>
         <div class="reinstall-buttons">
-          <button id="reinstallFreshBtn" class="btn btn-ghost">Reinstall (fresh)</button>
-          <button id="reinstallUpdateBtn" class="btn btn-primary">Update &amp; keep files</button>
-          <button id="reinstallSkipBtn" class="btn btn-ghost">Use existing &amp; go to Dashboard</button>
+          <div id="reinstallChoiceList" class="target-choice-list">
+            <label class="target-choice"><input type="radio" name="reinstallChoice" value="update" checked>
+              <span><strong>Update &amp; keep files</strong> <span class="istack-hint">repair env in place</span></span></label>
+            <label class="target-choice"><input type="radio" name="reinstallChoice" value="fresh">
+              <span><strong>Reinstall (fresh)</strong> <span class="istack-hint">wipe code, keep models…</span></span></label>
+            <label class="target-choice"><input type="radio" name="reinstallChoice" value="skip">
+              <span><strong>Use existing</strong> <span class="istack-hint">health-check, then Dashboard</span></span></label>
+          </div>
         </div>
       </div>
 
