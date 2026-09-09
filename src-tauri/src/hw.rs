@@ -311,18 +311,89 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
     "CPU".into()
 }
 
+/// Docs-prescribed GGUF kernel floor: 1.0.21 carries the precompiled
+/// RTX50xx (SM120) async-copy kernels — older builds silently fall back to
+/// slow PyTorch SDPA on Deepy decode (6 tok/s vs 37: #2274, #2193), hit the
+/// Q2_K fallback assert (#2235), or 404 outright on stale URLs (#2249).
+/// Anything older resolves to the known-good 1.0.21 wheel; the floor,
+/// newer builds, and unparseable URLs pass through, so the day upstream
+/// flips setup_config forward we follow it with no code change.
+pub(crate) const GGUF_FLOOR: &str = "1.0.21";
+
+/// Numeric dotted-version compare: true when a > b ("1.0.21" > "1.0.2",
+/// "3.8.0" > "3.3", "3.3.1" > "3.3"). Non-numeric tails ignored,
+/// missing components count as zero. Pure + unit-tested.
+pub(crate) fn version_gt(a: &str, b: &str) -> bool {
+    fn parts(s: &str) -> Vec<u64> {
+        s.split('.').map(|p| p.chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0)).collect()
+    }
+    let (pa, pb) = (parts(a), parts(b));
+    for i in 0..pa.len().max(pb.len()) {
+        let (x, y) = (pa.get(i).copied().unwrap_or(0), pb.get(i).copied().unwrap_or(0));
+        if x != y { return x > y; }
+    }
+    false
+}
+
+/// Dist version out of a llamacpp_gguf_cuda wheel URL
+/// (`.../llamacpp_gguf_cuda-1.0.14+torch210cu130py311-...whl` → "1.0.14").
+/// None for non-GGUF URLs. Pure + unit-tested.
+pub(crate) fn gguf_wheel_version(url: &str) -> Option<String> {
+    let file = url.rsplit('/').next()?;
+    if !file.starts_with("llamacpp_gguf_cuda-") { return None; }
+    let ver = file.split('-').nth(1)?.split('+').next()?;
+    if ver.is_empty() || !ver.chars().next().is_some_and(|c| c.is_ascii_digit()) { return None; }
+    Some(ver.to_string())
+}
+
+/// Pinned triton version out of a setup_config spec: `==3.3.1` pins and
+/// `<3.3` ceilings both resolve to the bound ("3.3.1" / "3.3"); unpinned
+/// specs and exact wheel URLs yield None (deliberate installs proceed).
+/// Pure + unit-tested.
+pub(crate) fn wanted_triton_pin(spec: &str) -> Option<String> {
+    if spec.ends_with(".whl") { return None; }
+    for (i, c) in spec.char_indices() {
+        if c == '=' || c == '<' || c == '>' {
+            let rest = spec[i..].trim_start_matches(['=', '<', '>', ' ', ',']);
+            let ver: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+            let ver = ver.trim_matches('.').to_string();
+            if ver.contains('.') { return Some(ver); }
+            return None;
+        }
+    }
+    None
+}
+
+/// Max Version: across `pip show` blocks (triton-windows + triton are
+/// both reported — take the newest). None when unparseable.
+/// Pure + unit-tested.
+pub(crate) fn parse_pip_show_versions(text: &str) -> Option<String> {
+    let mut best: Option<String> = None;
+    for ln in text.lines() {
+        if let Some(v) = ln.trim().strip_prefix("Version:") {
+            let v = v.trim().to_string();
+            if !v.is_empty() && best.as_ref().map_or(true, |b| version_gt(&v, b)) {
+                best = Some(v);
+            }
+        }
+    }
+    best
+}
+
 /// GGUF wheel URLs shipped by upstream (docs/INSTALLATION.md#gguf-llamacpp-cuda-kernels).
 const GGUF_1021_WIN_PY311: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.21/llamacpp_gguf_cuda-1.0.21%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
 const GGUF_1021_WIN_PY310: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.21/llamacpp_gguf_cuda-1.0.21%2Btorch271cu128py310-cp310-cp310-win_amd64.whl";
-/// GGUF wheel override toward the documented 1.0.21 build (RTX50 SM120
-/// kernels, 50-100% Deepy decode speedup). setup_config.json still ships
-/// 1.0.14, so swap 1.0.14 → 1.0.21 — but pass anything else through untouched,
-/// so the day upstream flips setup_config we follow it verbatim with no code
+/// GGUF floor toward the documented 1.0.21 build (RTX50 SM120 kernels,
+/// 50-100% Deepy decode speedup). setup_config.json lags (1.0.14 and older
+/// in the wild), so anything below the floor swaps to 1.0.21 — but the
+/// floor, anything newer, and non-GGUF URLs pass through untouched, so the
+/// day upstream flips setup_config we follow it verbatim with no code
 /// change (same shape as the Sage post4/post6 swap in sync_kernels).
-/// Applies to every kernel URL (no-op unless it's a 1.0.14 GGUF link), so both
-/// the sync installer and the overview's want/have comparison share it.
+/// Applies to every kernel URL (no-op unless it's a stale GGUF link), so
+/// both the sync installer and the overview's want/have comparison share it.
 pub(crate) fn apply_gguf_override(url: &str) -> String {
-    if !url.contains("llamacpp_gguf_cuda-1.0.14") { return url.to_string(); }
+    let Some(ver) = gguf_wheel_version(url) else { return url.to_string(); };
+    if !version_gt(GGUF_FLOOR, &ver) { return url.to_string(); }
     if url.contains("py310") { GGUF_1021_WIN_PY310.into() } else { GGUF_1021_WIN_PY311.into() }
 }
 
@@ -455,8 +526,60 @@ mod gguf_override_tests {
     fn passes_other_urls_through() {
         for u in [
             "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.21/llamacpp_gguf_cuda-1.0.21+torch210cu130py311-cp311-cp311-win_amd64.whl",
+            // Newer than the floor follows upstream with no swap.
+            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22+torch210cu130py311-cp311-cp311-win_amd64.whl",
             "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl",
         ] { assert_eq!(apply_gguf_override(u), u); }
+    }
+    #[test]
+    fn floor_catches_all_stale_builds() {
+        // #2274 (1.0.2 silent SDPA fallback), #2235, #2249 (1.0.13 404):
+        // anything below 1.0.21 resolves to the known-good wheel.
+        for v in ["1.0.2", "1.0.7", "1.0.12", "1.0.13"] {
+            let u = format!("https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-{v}+torch210cu130py311-cp311-cp311-win_amd64.whl");
+            let out = apply_gguf_override(&u);
+            assert!(out.contains("gguf-v1.0.21") && out.contains("1.0.21") && out.contains("cp311"), "{v} got {out}");
+        }
+        // py310 tag keeps the py310 variant.
+        let old310 = "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.12+torch271cu128py310-cp310-cp310-win_amd64.whl";
+        let out310 = apply_gguf_override(old310);
+        assert!(out310.contains("torch271cu128py310") && out310.contains("1.0.21"), "got {out310}");
+    }
+}
+#[cfg(test)]
+mod version_cmp_tests {
+    use super::{version_gt, gguf_wheel_version, wanted_triton_pin, parse_pip_show_versions};
+    #[test]
+    fn dotted_compare() {
+        assert!(version_gt("1.0.21", "1.0.2"));
+        assert!(!version_gt("1.0.2", "1.0.21"));
+        assert!(version_gt("3.8.0", "3.3"));
+        assert!(version_gt("3.3.1", "3.3"));
+        assert!(!version_gt("1.0.21", "1.0.21"));
+        assert!(!version_gt("3.3", "3.8.0"));
+        assert!(!version_gt("", "1.0.2"));
+    }
+    #[test]
+    fn gguf_version_extract() {
+        assert_eq!(gguf_wheel_version("https://x/llamacpp_gguf_cuda-1.0.14+torch210cu130py311-cp311-cp311-win_amd64.whl").as_deref(), Some("1.0.14"));
+        assert_eq!(gguf_wheel_version("https://x/llamacpp_gguf_cuda-1.0.2+torch210cu130py311-cp311-cp311-win_amd64.whl").as_deref(), Some("1.0.2"));
+        assert_eq!(gguf_wheel_version("https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl"), None);
+        assert_eq!(gguf_wheel_version("triton-windows"), None);
+    }
+    #[test]
+    fn triton_pin_parse() {
+        assert_eq!(wanted_triton_pin("triton-windows<3.3").as_deref(), Some("3.3"));
+        assert_eq!(wanted_triton_pin("triton-windows==3.3.1").as_deref(), Some("3.3.1"));
+        assert_eq!(wanted_triton_pin("triton-windows>=3.3,<4").as_deref(), Some("3.3"));
+        assert_eq!(wanted_triton_pin("triton-windows"), None);
+        assert_eq!(wanted_triton_pin("https://x/triton_windows-3.3.1-cp311-win_amd64.whl"), None);
+    }
+    #[test]
+    fn pip_show_max_wins() {
+        let text = "Name: triton-windows\nVersion: 3.8.0\n---\nName: triton\nVersion: 3.7.1\n";
+        assert_eq!(parse_pip_show_versions(text).as_deref(), Some("3.8.0"));
+        assert_eq!(parse_pip_show_versions("ERROR: Package(s) not found"), None);
+        assert_eq!(parse_pip_show_versions(""), None);
     }
 }
 pub(crate) fn build_install_plan(hw: &serde_json::Value) -> serde_json::Value {

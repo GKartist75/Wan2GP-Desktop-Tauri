@@ -224,6 +224,22 @@ pub(crate) fn kernel_probe_failures(map: &serde_json::Map<String, serde_json::Va
     out
 }
 
+/// Known-stale kernel versions in a kernel-probe map: GGUF builds older
+/// than the 1.0.21 floor look healthy (import ok) while silently disabling
+/// the SM120 async path — 6 tok/s Deepy decode instead of 37 (#2274).
+/// Triton floors are deliberately NOT flagged: RTX_20 boxes want <3.3 per
+/// upstream docs, so "old" triton is profile-relative, not stale.
+/// Pure + unit-tested.
+pub(crate) fn kernel_probe_stale(map: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(v) = map.get("llamacpp-gguf-cuda").and_then(|d| d.get("version")).and_then(|s| s.as_str()) {
+        if crate::hw::version_gt(crate::hw::GGUF_FLOOR, v) {
+            out.push(format!("llamacpp-gguf-cuda {v} predates the {} SM120 kernels — Deepy decode falls back to slow PyTorch SDPA. Re-run Sync kernels.", crate::hw::GGUF_FLOOR));
+        }
+    }
+    out
+}
+
 /// Last `{...}` line of probe stdout → structured result. Pure (tested).
 pub(crate) fn parse_probe_json(stdout: &str) -> Option<ComputeProbe> {
     let line = stdout.lines().rev().find(|l| l.trim_start().starts_with('{'))?;
@@ -256,7 +272,7 @@ pub(crate) fn classify_probe_failure(stderr_tail: &str) -> String {
 
 #[cfg(test)]
 mod probe_tests {
-    use super::{classify_probe_failure, parse_probe_json, read_hsa_choice, write_hsa_choice, HsaChoice, COMPUTE_PROBE, KERNEL_IMPORT_PROBE, parse_kernel_json, kernel_probe_failures};
+    use super::{classify_probe_failure, parse_probe_json, read_hsa_choice, write_hsa_choice, HsaChoice, COMPUTE_PROBE, KERNEL_IMPORT_PROBE, parse_kernel_json, kernel_probe_failures, kernel_probe_stale};
     #[test]
     fn probe_script_is_valid_python() {
         // No torch on CI hosts — syntax-check only (same pattern as the
@@ -330,5 +346,18 @@ mod probe_tests {
         std::fs::write(repo.join(super::HSA_CHOICE_FILE), "garbage!!").unwrap();
         assert_eq!(read_hsa_choice(&repo), None);
         let _ = std::fs::remove_dir_all(&repo);
+    }
+    #[test]
+    fn stale_gguf_flagged_floor_passes() {
+        // #2274: 1.0.2 imports fine but silently disables the SM120 async
+        // path — Verify must say so instead of reporting healthy.
+        let raw_old = r#"{"llamacpp-gguf-cuda": {"version": "1.0.2", "import": "ok", "extra": ""}}"#;
+        let stale = kernel_probe_stale(&parse_kernel_json(raw_old).unwrap());
+        assert_eq!(stale.len(), 1);
+        assert!(stale[0].contains("1.0.2") && stale[0].contains("Sync kernels"), "got {stale:?}");
+        let raw_floor = r#"{"llamacpp-gguf-cuda": {"version": "1.0.21", "import": "ok", "extra": ""}}"#;
+        assert!(kernel_probe_stale(&parse_kernel_json(raw_floor).unwrap()).is_empty());
+        let raw_missing = r#"{"torch": {"version": "x", "import": "ok", "extra": ""}}"#;
+        assert!(kernel_probe_stale(&parse_kernel_json(raw_missing).unwrap()).is_empty());
     }
 }
