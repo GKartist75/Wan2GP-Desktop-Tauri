@@ -99,39 +99,129 @@ pub(crate) fn run_compute_probe(py: &Path, hsa: Option<&str>) -> Result<ComputeP
 }
 
 fn run_compute_probe_inner(py: &Path) -> Result<ComputeProbe, String> {
+    let out = spawn_bounded(py, COMPUTE_PROBE, PROBE_TIMEOUT)?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr_tail = tail(&String::from_utf8_lossy(&out.stderr), 800);
+    if out.status.success() {
+        if let Some(probe) = parse_probe_json(&stdout) {
+            return Ok(probe);
+        }
+        return Err(format!("probe exited 0 but printed no result JSON — stdout tail: {}", tail(&stdout, 300)));
+    }
+    Err(classify_probe_failure(&stderr_tail))
+}
+
+/// Spawn `py -c <script>` with captured output and a hard timeout (see
+/// PROBE_TIMEOUT rationale above). Shared by the compute and kernel
+/// probes so TDR-hang protection can't drift between them.
+fn spawn_bounded(py: &Path, script: &str, timeout: Duration) -> Result<std::process::Output, String> {
     use std::process::Stdio;
     let mut child = std::process::Command::new(py)
-        .args(["-c", COMPUTE_PROBE])
+        .args(["-c", script])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("probe spawn failed ({e})"))?;
-    // Bounded wait: a display-driver hang (TDR — upstream warns AMD
-    // MIOpen can take the driver down) must time out, never wedge install.
     let start = Instant::now();
     loop {
         match child.try_wait().map_err(|e| format!("probe wait failed ({e})"))? {
             Some(_) => break,
             None => {
-                if start.elapsed() > PROBE_TIMEOUT {
+                if start.elapsed() > timeout {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err("compute probe timed out after 300s — possible display-driver hang (TDR). Reboot, update the AMD driver, then Verify again.".into());
+                    return Err(format!("probe timed out after {}s — possible display-driver hang (TDR). Reboot, update the GPU driver, then Verify again.", timeout.as_secs()));
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
         }
     }
-    let out = child.wait_with_output().map_err(|e| format!("probe output failed ({e})"))?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr_tail: String = String::from_utf8_lossy(&out.stderr).chars().rev().take(800).collect::<String>().chars().rev().collect();
-    if out.status.success() {
-        if let Some(probe) = parse_probe_json(&stdout) {
-            return Ok(probe);
-        }
-        return Err(format!("probe exited 0 but printed no result JSON — stdout tail: {}", stdout.chars().rev().take(300).collect::<String>().chars().rev().collect::<String>()));
+    child.wait_with_output().map_err(|e| format!("probe output failed ({e})"))
+}
+
+/// Last `n` chars of s (log-tail helper for bounded error text).
+fn tail(s: &str, n: usize) -> String {
+    s.chars().rev().take(n).collect::<String>().chars().rev().collect()
+}
+
+/// Kernel import health (Maestro pattern): a dist can be installed yet
+/// unimportable (AV-quarantined DLL, wrong-torch ABI) — version scans
+/// miss that, generation crashes on it. Primary module per dist is
+/// hardcoded (stable upstream names); unknown dists fall back to the
+/// first top_level entry. Extra top_level modules are attempted with
+/// failures reported as warnings only. No GPU init — but cold torch
+/// import still costs, so Verify-click only, never background ticks.
+/// Prints one JSON line: {dist: {version, import, extra}}.
+/// `import` is "ok" | "missing" | "<Mod>: <Err>".
+pub(crate) const KERNEL_IMPORT_PROBE: &str = r#"import importlib, importlib.metadata as md, json
+PRIMARY = {"torch": "torch", "triton": "triton", "sageattention": "sageattention", "flash-attn": "flash_attn", "nunchaku": "nunchaku", "lightx2v-kernel": "lightx2v_kernel", "optimum-quanto": "optimum.quanto"}
+DISTS = ["torch", "triton", "sageattention", "flash-attn", "nunchaku", "lightx2v-kernel", "optimum-quanto", "llamacpp-gguf-cuda"]
+out = {}
+for d in DISTS:
+    try: ver = md.version(d)
+    except Exception: ver = None
+    if ver is None:
+        out[d] = {"version": None, "import": "missing", "extra": ""}; continue
+    try: tops = (md.distribution(d).read_text("top_level.txt") or "").split()
+    except Exception: tops = []
+    prim = PRIMARY.get(d, tops[0] if tops else d)
+    try:
+        importlib.import_module(prim)
+        status, warns = "ok", []
+    except Exception as e:
+        status, warns = f"{prim}: {type(e).__name__}", []
+    for t in tops:
+        if t == prim: continue
+        try: importlib.import_module(t)
+        except Exception as e: warns.append(f"{t}: {type(e).__name__}")
+    out[d] = {"version": ver, "import": status, "extra": "; ".join(warns)}
+try:
+    import torch
+    out["quanto_qbytes_mm"] = hasattr(torch.ops.quanto, "qbytes_mm")
+except Exception:
+    out["quanto_qbytes_mm"] = False
+try:
+    from sageattention import _qattn_sm89; out["sage2_symbol"] = True
+except Exception:
+    out["sage2_symbol"] = False
+print(json.dumps(out))"#;
+
+pub(crate) const KERNEL_PROBE_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// Run the kernel import probe. Ok(map) whenever the script itself ran —
+/// per-dist breakage is DATA (import != ok), not a probe failure.
+pub(crate) fn run_kernel_probe(py: &Path) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let out = spawn_bounded(py, KERNEL_IMPORT_PROBE, KERNEL_PROBE_TIMEOUT)?;
+    if !out.status.success() {
+        let tail_s = tail(&String::from_utf8_lossy(&out.stderr), 500);
+        return Err(format!("kernel probe failed to run: {tail_s}"));
     }
-    Err(classify_probe_failure(&stderr_tail))
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    parse_kernel_json(&stdout).ok_or_else(|| "kernel probe printed no result JSON".to_string())
+}
+
+/// Last `{...}` line → per-dist map. Pure (tested). A dist counts as
+/// broken only when installed AND its primary import failed; "missing"
+/// is neutral (presence is the version scan's job).
+pub(crate) fn parse_kernel_json(stdout: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let line = stdout.lines().rev().find(|l| l.trim_start().starts_with('{'))?;
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    v.as_object().cloned()
+}
+
+/// Installed-but-unimportable dists: `dist: detail`. Empty = all healthy
+/// (missing dists ignored). Pure (tested).
+pub(crate) fn kernel_probe_failures(map: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+    let mut out = Vec::new();
+    for (dist, v) in map {
+        if dist == "sage2_symbol" || dist == "quanto_qbytes_mm" { continue; }
+        let status = v.get("import").and_then(|s| s.as_str()).unwrap_or("");
+        if status != "ok" && status != "missing" && !status.is_empty() {
+            let ver = v.get("version").and_then(|s| s.as_str()).unwrap_or("?");
+            out.push(format!("{dist} {ver}: {status}"));
+        }
+    }
+    out
 }
 
 /// Last `{...}` line of probe stdout → structured result. Pure (tested).
@@ -166,7 +256,7 @@ pub(crate) fn classify_probe_failure(stderr_tail: &str) -> String {
 
 #[cfg(test)]
 mod probe_tests {
-    use super::{classify_probe_failure, parse_probe_json, read_hsa_choice, write_hsa_choice, HsaChoice, COMPUTE_PROBE};
+    use super::{classify_probe_failure, parse_probe_json, read_hsa_choice, write_hsa_choice, HsaChoice, COMPUTE_PROBE, KERNEL_IMPORT_PROBE, parse_kernel_json, kernel_probe_failures};
     #[test]
     fn probe_script_is_valid_python() {
         // No torch on CI hosts — syntax-check only (same pattern as the
@@ -199,6 +289,34 @@ mod probe_tests {
         assert!(classify_probe_failure("ModuleNotFoundError: No module named 'torch'").contains("won't import"));
         assert!(classify_probe_failure("torch.cuda.OutOfMemoryError: out of memory").contains("out of GPU memory"));
         assert!(classify_probe_failure("weird new error").contains("compute probe failed"));
+    }
+    #[test]
+    fn kernel_probe_script_is_valid_python() {
+        // Same pattern as the compute probe: syntax-check only, no torch.
+        let tmp = std::env::temp_dir().join(format!("wgp-kprobe-syntax-{}.py", std::process::id()));
+        std::fs::write(&tmp, KERNEL_IMPORT_PROBE).unwrap();
+        let arg = tmp.to_string_lossy().to_string();
+        let ok = std::process::Command::new("python")
+            .args(["-c", "import ast,sys; ast.parse(open(sys.argv[1]).read())", &arg])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(true);
+        let _ = std::fs::remove_file(&tmp);
+        assert!(ok, "KERNEL_IMPORT_PROBE is not valid Python");
+    }
+    #[test]
+    fn kernel_results_classify() {
+        // Broken flash (AV-quarantined DLL shape) + missing lightx2v +
+        // healthy sage: only flash fails; missing is neutral.
+        let raw = r#"{"torch": {"version": "2.10.0+cu130", "import": "ok", "extra": ""}, "flash_attn": {"version": "2.8.3", "import": "flash_attn: DLL load failed", "extra": ""}, "lightx2v-kernel": {"version": null, "import": "missing", "extra": ""}, "sageattention": {"version": "2.2.0", "import": "ok", "extra": ""}, "sage2_symbol": true, "quanto_qbytes_mm": true}"#;
+        let map = parse_kernel_json(raw).expect("should parse");
+        let fails = kernel_probe_failures(&map);
+        assert_eq!(fails.len(), 1);
+        assert!(fails[0].contains("flash_attn") && fails[0].contains("DLL load failed"), "got {fails:?}");
+        // All healthy → empty (symbol/op flags never fail).
+        let raw_ok = r#"{"torch": {"version": "x", "import": "ok", "extra": ""}, "sage2_symbol": false, "quanto_qbytes_mm": false}"#;
+        assert!(kernel_probe_failures(&parse_kernel_json(raw_ok).unwrap()).is_empty());
+        assert!(parse_kernel_json("no json").is_none());
     }
     #[test]
     fn hsa_choice_round_trip() {

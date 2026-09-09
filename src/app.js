@@ -4639,15 +4639,26 @@ $('tsComputeBtn')?.addEventListener('click', async function() {
   this.disabled = true; tsStatus('tsFailsafeStatus', 'Running GPU compute (import + kernels, ~1 min on cold HIP)…')
   try {
     const r = await window.w2gp.tsGpuCompute()
+    const kernelLines = (r, ok) => {
+      const k = (r && r.kernels) || {}
+      return Object.keys(k).filter(d => d !== 'sage2_symbol' && d !== 'quanto_qbytes_mm').map(d => {
+        const e = k[d] || {}; const st = e.import || '?'
+        return (st === 'ok' || st === 'missing' ? '✓ ' : '✗ ') + d + ' ' + (e.version || '') + (st !== 'ok' && st !== 'missing' ? ' — ' + st : '')
+      })
+    }
     if (r && r.ok) {
       const msg = 'GPU compute OK: torch ' + (r.torch || '?') + ' on ' + (r.device || '?') + ' (mode ' + (r.mode || '?') + (r.recorded ? ', recorded for launch' : '') + ')'
       appendLog('[✓] ' + msg)
+      kernelLines(r).forEach(l => appendLog('    ' + l))
+      if (r.kernel_warning) appendLog('[i] ' + r.kernel_warning)
       tsStatus('tsFailsafeStatus', '✓ ' + escHtml(msg))
       showToast('✓ GPU compute passed')
     } else {
       const det = r && r.detail ? ' ' + JSON.stringify(r.detail) : ''
       tsStatus('tsFailsafeStatus', '✗ ' + escHtml((r && r.error) || 'probe failed'))
+      const kl = kernelLines(r).filter(l => l.startsWith('✗'))
       appendLog('[!] GPU compute failed: ' + ((r && r.error) || 'unknown') + det)
+      kl.forEach(l => appendLog('    ' + l))
     }
   } catch (e) { tsStatus('tsFailsafeStatus', '✗ ' + escHtml(errText(e))) }
   this.disabled = false

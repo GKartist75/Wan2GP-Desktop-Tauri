@@ -188,7 +188,7 @@ pub fn troubleshoot_gpu_compute() -> serde_json::Value {
     let profile = kernel_profile_key(vendor, name);
     if !profile.starts_with("AMD") {
         return match crate::amd::run_compute_probe(&py, None) {
-            Ok(p) => serde_json::json!({"ok": true, "torch": p.torch, "device": p.device, "mode": "native"}),
+            Ok(p) => verify_kernels(&py, p.torch, p.device, "native", false, None),
             Err(e) => serde_json::json!({"ok": false, "error": e}),
         };
     }
@@ -203,12 +203,41 @@ pub fn troubleshoot_gpu_compute() -> serde_json::Value {
                 let choice = match hsa { Some(v) => crate::amd::HsaChoice::Override(v.clone()), None => crate::amd::HsaChoice::Native };
                 crate::amd::write_hsa_choice(&repo, &choice);
                 detail.insert(label.to_string(), serde_json::json!({"ok": true, "torch": p.torch, "device": p.device}));
-                return serde_json::json!({"ok": true, "torch": p.torch, "device": p.device, "mode": label, "recorded": true, "detail": detail});
+                return verify_kernels(&py, p.torch, p.device, label, true, Some(serde_json::Value::Object(detail)));
             }
             Err(e) => { detail.insert(label.to_string(), serde_json::json!({"ok": false, "error": e})); }
         }
     }
     serde_json::json!({"ok": false, "error": "compute probe failed in both HSA modes — attach Copy diagnostics", "detail": detail})
+}
+
+/// Kernel import step shared by both Verify paths: compute passed, now
+/// prove the wheels actually import (version-present ≠ loadable — AV
+/// quarantine and wrong-torch ABIs break imports). Installed-but-broken
+/// dists fail the check; missing dists stay neutral (presence is the
+/// version scan's job).
+fn verify_kernels(py: &std::path::Path, torch: String, device: String, mode: &str, recorded: bool, detail: Option<serde_json::Value>) -> serde_json::Value {
+    let mut base = serde_json::json!({"torch": torch, "device": device, "mode": mode, "recorded": recorded});
+    if let Some(d) = detail { base["detail"] = d; }
+    match crate::amd::run_kernel_probe(py) {
+        Err(e) => {
+            base["ok"] = serde_json::json!(true);
+            base["kernels"] = serde_json::Value::Null;
+            base["kernel_warning"] = serde_json::json!(format!("kernel probe did not run ({e}) — compute passed"));
+            base
+        }
+        Ok(map) => {
+            let fails = crate::amd::kernel_probe_failures(&map);
+            base["kernels"] = serde_json::Value::Object(map);
+            if fails.is_empty() {
+                base["ok"] = serde_json::json!(true);
+            } else {
+                base["ok"] = serde_json::json!(false);
+                base["error"] = serde_json::json!(format!("GPU computes, but these wheels won't import: {}. Re-run Sync/Repair, check antivirus quarantine.", fails.join("; ")));
+            }
+            base
+        }
+    }
 }
 
 /// Is the configured server port already listening? If so, who owns it?
