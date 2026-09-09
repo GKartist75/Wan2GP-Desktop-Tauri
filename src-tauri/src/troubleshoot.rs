@@ -227,8 +227,12 @@ fn verify_kernels(py: &std::path::Path, torch: String, device: String, mode: &st
             base
         }
         Ok(map) => {
-            let fails = crate::amd::kernel_probe_failures(&map);
+            let mut fails = crate::amd::kernel_probe_failures(&map);
+            // Sage3 is gated, never synced — a stray install must not fail
+            // Verify; sage3_note() reports it at the right level instead.
+            fails.retain(|f| !f.starts_with("sageattn3"));
             let stale = crate::amd::kernel_probe_stale(&map);
+            let sage_note = crate::amd::sage3_note(&map, crate::amd::is_blackwell_gpu(&device));
             base["kernels"] = serde_json::Value::Object(map);
             if fails.is_empty() {
                 base["ok"] = serde_json::json!(true);
@@ -240,6 +244,9 @@ fn verify_kernels(py: &std::path::Path, torch: String, device: String, mode: &st
             // when everything imports — slowness, not breakage.
             if !stale.is_empty() {
                 base["kernel_warning"] = serde_json::json!(stale.join(" "));
+            }
+            if let Some((level, msg)) = sage_note {
+                base["sage3_note"] = serde_json::json!({"level": level, "msg": msg});
             }
             base
         }
