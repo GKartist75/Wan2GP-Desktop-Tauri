@@ -1225,7 +1225,39 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
     std::env::set_var("PYTHONUNBUFFERED", "1");
     // run setup.py with the env's python (hardware-aware: setup.py reads setup_config.json + GPU)
     {
-        let (py, args): (String, Vec<String>) = if env.as_str() == "conda" { (tool_path("conda"), vec!["run".into(), "-p".into(), env_path.to_string_lossy().to_string(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) } else {
+        let (py, args): (String, Vec<String>) = if env.as_str() == "conda" {
+            if resolve_env_python(&repo, &env_path.to_string_lossy()).is_some() {
+                // Existing env: run through it.
+                (tool_path("conda"), vec!["run".into(), "-p".into(), env_path.to_string_lossy().to_string(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()])
+            } else {
+                // Fresh conda install: env_conda doesn't exist yet (setup.py
+                // creates it in step 1/3) — `conda run -p` would die with
+                // EnvironmentLocationNotFound. Drive setup.py with system
+                // python instead, and put `conda` itself on PATH (scoped,
+                // restored after via saved_path) so setup.py's own
+                // `conda create` finds it even without PATH registration.
+                #[cfg(windows)] {
+                    let conda_bin = tool_path("conda");
+                    if conda_bin != "conda" {
+                        if let Some(dir) = std::path::Path::new(&conda_bin).parent() {
+                            let add = dir.to_string_lossy().to_string();
+                            let old = std::env::var("PATH").unwrap_or_default();
+                            if !old.split(';').any(|p| p.eq_ignore_ascii_case(&add)) {
+                                std::env::set_var("PATH", format!("{add};{old}"));
+                                saved_path = Some(old);
+                            }
+                        }
+                    }
+                }
+                let syspy = tool_path("python");
+                let runs = silent_command(syspy.as_str()).arg("-c").arg("import sys").output().is_ok_and(|o| o.status.success());
+                if !runs {
+                    mutating_done();
+                    return Err("conda env is missing and no system Python can drive setup.py (it creates env_conda itself in step 1/3). Install Python 3.11 via the Download button, or pick the uv env type (it self-provisions).".into());
+                }
+                (syspy, vec!["setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()])
+            }
+        } else {
             let p = if env=="uv" { env_path.join(if cfg!(windows){"Scripts\\python.exe"} else {"bin/python"}) } else { env_path.join(if cfg!(windows){"Scripts\\python.exe"} else {"bin/python3"}) };
             // Missing env interpreter + uv env → run setup.py via `uv run`
             // (uv provisions Python itself). uv_command() is a path or bare
