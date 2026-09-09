@@ -107,15 +107,85 @@ async fn run_capture(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + Sync, 
 /// `uv venv --python X` reuses discovered interpreters), provision second.
 /// Aborting on a failed download while a usable copy sits on disk was
 /// exactly the "installed 3.11 manually but still not found" complaint.
+/// Launcher-owned uv: <dataDir>/.tools/uv[.exe] (+ uvx/uvw siblings).
+/// PATH uv may belong to another app (0.5.3 report: the Hermes agent's
+/// bundled uv — self-updating it hits file locks, and it can vanish under
+/// us). We prefer our own copy; PATH is fallback. Pure glue, unit-tested.
+#[cfg(windows)] const UV_EXE: &str = "uv.exe";
+#[cfg(not(windows))] const UV_EXE: &str = "uv";
+
+fn owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
+    let p = data_dir.join(".tools").join(UV_EXE);
+    // Must exist AND run — a dead copy is worse than PATH fallback.
+    silent_command(&p).arg("--version").output().ok()
+        .filter(|o| o.status.success())
+        .map(|_| p.to_string_lossy().to_string())
+}
+fn owned_uv() -> Option<String> { owned_uv_in(&get_data_dir()) }
+
+/// Locate a working uv on PATH (absolute file, not just `where` success).
+#[cfg(windows)]
+fn path_uv_exe() -> Option<std::path::PathBuf> {
+    silent_command("where").arg("uv.exe").output().ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_file())
+}
+#[cfg(not(windows))]
+fn path_uv_exe() -> Option<std::path::PathBuf> {
+    silent_command("which").arg("uv").output().ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_file())
+}
+
+/// One-time snapshot: copy a working PATH uv (+ siblings when present) into
+/// our tools dir, so self-update and all later runs touch only our binary.
+/// Best-effort — None when nothing usable is around (callers fall back).
+fn snapshot_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
+    if let Some(owned) = owned_uv_in(data_dir) { return Some(owned); }
+    let src = path_uv_exe()?;
+    // Must actually run before we adopt it (Store shims, dead links).
+    silent_command(&src).arg("--version").output().ok().filter(|o| o.status.success())?;
+    let dir = data_dir.join(".tools");
+    std::fs::create_dir_all(&dir).ok()?;
+    if let Some(parent) = src.parent() {
+        #[cfg(windows)] let siblings = ["uv.exe", "uvx.exe", "uvw.exe"];
+        #[cfg(not(windows))] let siblings = ["uv", "uvx"];
+        for name in siblings {
+            let s = parent.join(name);
+            if s.is_file() { let _ = std::fs::copy(&s, dir.join(name)); }
+        }
+    }
+    crate::base::push_log(&format!("[*] uv adopted into launcher tools ({}).", dir.display()), "setup");
+    owned_uv_in(data_dir)
+}
+fn snapshot_owned_uv() -> Option<String> { snapshot_owned_uv_in(&get_data_dir()) }
+
+/// uv command to invoke: owned copy first, snapshot-then-owned, PATH fallback.
+/// Never fails — bare "uv" lets the caller surface the real spawn error.
+fn uv_command() -> String {
+    if let Some(owned) = owned_uv() { return owned; }
+    if let Some(snap) = snapshot_owned_uv() { return snap; }
+    "uv".into()
+}
+
 async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + Sync, wanted: &str) -> Result<String, String> {
     // Never let a user/system config with `python-downloads = "never"` silently
     // break provisioning — spawned processes inherit our env.
     std::env::set_var("UV_PYTHON_DOWNLOADS", "automatic");
-    emit(&format!("[*] Ensuring Python {wanted} via uv (setup.py needs this exact version)…\n"));
+    // Owned copy first (snapshot-then-owned inside) — never self-update
+    // somebody else's binary if we can help it.
+    let uv_bin = uv_command();
+    emit(&format!("[*] Ensuring Python {wanted} via {uv_bin} (setup.py needs this exact version)…\n"));
     // Best-effort self-update first: an old uv doesn't know new patches exist
     // (3.11.14) and fails with the same "No interpreter found" error.
     // Harmless when offline or already current — failures are ignored.
-    let _ = run_capture(app, &emit, "uv", &["self", "update"]).await;
+    let _ = run_capture(app, &emit, uv_bin.as_str(), &["self", "update"]).await;
     // Resolve + verify the EXACT pin actually executes (a neighbouring patch
     // or a corrupted copy won't satisfy setup.py — report it, don't use it).
     let verify_exact = |p: &str| -> Option<String> {
@@ -123,7 +193,7 @@ async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + S
             .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().split_whitespace().next().unwrap_or("").to_string()) } else { None })
             .filter(|v| v.starts_with(wanted))
     };
-    let find = || silent_command("uv").args(["python", "find", wanted]).output().ok()
+    let find = || silent_command(uv_bin.as_str()).args(["python", "find", wanted]).output().ok()
         .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None })
         .filter(|s| !s.is_empty());
     // 1) Fast path: already provisioned or uv-discoverable (managed OR a
@@ -136,7 +206,7 @@ async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + S
         emit(&format!("[!] Found Python at {p} but it won't run — forcing a clean reinstall…\n"));
     }
     // 2) Provision via uv.
-    let (dl_ok, _) = run_capture(app, &emit, "uv", &["python", "install", wanted]).await;
+    let (dl_ok, _) = run_capture(app, &emit, uv_bin.as_str(), &["python", "install", wanted]).await;
     if dl_ok {
         if let Some(p) = find() {
             if let Some(v) = verify_exact(&p) {
@@ -178,7 +248,7 @@ async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + S
                 std::env::set_var("PATH", cur);
             }
             emit(&format!("[*] uv reinstalled — retrying Python {wanted}…\n"));
-            let (retry_ok, _) = run_capture(app, &emit, "uv", &["python", "install", wanted]).await;
+            let (retry_ok, _) = run_capture(app, &emit, uv_bin.as_str(), &["python", "install", wanted]).await;
             if retry_ok {
                 if let Some(p) = find() {
                     if let Some(v) = verify_exact(&p) {
@@ -196,11 +266,11 @@ async fn ensure_uv_python(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + S
     // diagnostics (list what IS installed so the fix is obvious).
     if dl_ok {
         emit(&format!("[!] Managed Python {wanted} is broken (found but won't run). Forcing a clean reinstall…\n"));
-        let (re_ok, _) = run_capture(app, &emit, "uv", &["python", "install", "--reinstall", wanted]).await;
+        let (re_ok, _) = run_capture(app, &emit, uv_bin.as_str(), &["python", "install", "--reinstall", wanted]).await;
         if !re_ok {
             // Older uv without --reinstall: uninstall + install.
-            let _ = run_capture(app, &emit, "uv", &["python", "uninstall", wanted]).await;
-            let (ok2, _) = run_capture(app, &emit, "uv", &["python", "install", wanted]).await;
+            let _ = run_capture(app, &emit, uv_bin.as_str(), &["python", "uninstall", wanted]).await;
+            let (ok2, _) = run_capture(app, &emit, uv_bin.as_str(), &["python", "install", wanted]).await;
             if !ok2 { return Err(diagnose_python_fail(wanted)); }
         }
         if let Some(p) = find() {
@@ -283,9 +353,10 @@ fn diagnose_python_fail(wanted: &str) -> String {
 #[tauri::command]
 pub fn python_preflight() -> serde_json::Value {
     let wanted = pinned_python_wanted();
-    let uv_ver = silent_command("uv").arg("--version").output().ok()
+    let uv_bin = uv_command();
+    let uv_ver = silent_command(uv_bin.as_str()).arg("--version").output().ok()
         .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None });
-    let path = silent_command("uv").args(["python", "find", &wanted]).output().ok()
+    let path = silent_command(uv_bin.as_str()).args(["python", "find", &wanted]).output().ok()
         .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None })
         .filter(|s| !s.is_empty());
     // Version-exact: a neighbouring patch (or a dead exe) must read as NOT ok.
@@ -1038,8 +1109,11 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
     {
         let (py, args): (String, Vec<String>) = if env.as_str() == "conda" { ("conda".into(), vec!["run".into(), "-p".into(), env_path.to_string_lossy().to_string(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) } else {
             let p = if env=="uv" { env_path.join(if cfg!(windows){"Scripts\\python.exe"} else {"bin/python"}) } else { env_path.join(if cfg!(windows){"Scripts\\python.exe"} else {"bin/python3"}) };
-            let py_bin = if p.exists() { p.to_string_lossy().to_string() } else if env=="uv" { "uv".into() } else { "python".into() };
-            if py_bin=="uv" { ("uv".into(), vec!["run".into(), "--with".into(), "setuptools".into(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) }
+            // Missing env interpreter + uv env → run setup.py via `uv run`
+            // (uv provisions Python itself). uv_command() is a path or bare
+            // "uv" fallback — track the branch explicitly, not by string.
+            let (py_bin, via_uv_run) = if p.exists() { (p.to_string_lossy().to_string(), false) } else if env=="uv" { (uv_command(), true) } else { ("python".into(), false) };
+            if via_uv_run { (py_bin, vec!["run".into(), "--with".into(), "setuptools".into(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) }
             else { (py_bin, vec!["setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()]) }
         };
         // setup.py gets up to 2 attempts: a transient network death (the common
@@ -1223,7 +1297,7 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
                 if let Some((_, staging)) = &amd_cmds {
                     emit("[*] Installed ROCm torch fails compute in both HSA modes — re-seating torch to the staging float…\n");
                     let (prog, mut args): (String, Vec<String>) = if env == "uv" {
-                        ("uv".into(), vec!["pip".into(), "install".into(), "--index-strategy".into(), "unsafe-best-match".into(), "--python".into(), env_path.to_string_lossy().to_string()])
+                        (uv_command(), vec!["pip".into(), "install".into(), "--index-strategy".into(), "unsafe-best-match".into(), "--python".into(), env_path.to_string_lossy().to_string()])
                     } else {
                         #[cfg(windows)] let py = env_path.join("Scripts\\python.exe");
                         #[cfg(not(windows))] let py = env_path.join("bin/python3");
@@ -1692,7 +1766,7 @@ fn probe_tool(tool: &str) -> bool {
     let exists = |p: String| PathBuf::from(&p).exists();
     match tool {
         "git" => on_path("git"),
-        "uv" => on_path("uv") || exists(format!("{home}\\.local\\bin\\uv.exe")) || exists(format!("{home}\\.cargo\\bin\\uv.exe")),
+        "uv" => on_path("uv") || owned_uv().is_some() || exists(format!("{home}\\.local\\bin\\uv.exe")) || exists(format!("{home}\\.cargo\\bin\\uv.exe")),
         "python" => tool_usable("python") || tool_usable("py"),
         "conda" => on_path("conda")
             || exists(format!("{home}\\Miniconda3\\condabin\\conda.bat"))
@@ -1872,6 +1946,13 @@ async fn install_prerequisite_windows(app: tauri::AppHandle, tool: String) -> Re
         }
     }
     if probe_tool(&tool) {
+        // uv is ours now: adopt the installed copy into the launcher tools
+        // dir so later runs (incl. self-update) never touch a foreign binary.
+        if tool == "uv" {
+            if let Some(owned) = snapshot_owned_uv() {
+                emit(&format!("[*] uv adopted: {owned}\n"));
+            }
+        }
         emit(&format!("[✓] {tool} installed and on PATH — continuing…\n"));
         return Ok(serde_json::json!({"ok": true, "success": true, "ready": true}));
     }
@@ -2168,5 +2249,42 @@ mod av_msg_tests {
         assert_eq!(av_exclusion_msg("CPU"), None);
         assert_eq!(av_exclusion_msg("APPLE"), None);
         assert_eq!(av_exclusion_msg("unknown"), None);
+    }
+}
+
+#[cfg(test)]
+mod owned_uv_tests {
+    use super::{owned_uv_in, path_uv_exe, snapshot_owned_uv_in, UV_EXE};
+    fn tmp_data(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("wgp-owned-uv-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+    #[test]
+    fn empty_tools_dir_means_no_owned_uv() {
+        let data = tmp_data("empty");
+        assert!(owned_uv_in(&data).is_none());
+        let _ = std::fs::remove_dir_all(&data);
+    }
+    #[test]
+    fn dead_copy_is_not_adopted() {
+        let data = tmp_data("dead");
+        let tools = data.join(".tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(tools.join(UV_EXE), b"not-an-executable").unwrap();
+        assert!(owned_uv_in(&data).is_none());
+        let _ = std::fs::remove_dir_all(&data);
+    }
+    #[test]
+    fn snapshot_adopts_working_path_uv() {
+        let Some(real) = path_uv_exe() else { return; }; // no uv on PATH → nothing to prove
+        assert!(std::process::Command::new(&real).arg("--version").output().is_ok_and(|o| o.status.success()));
+        let data = tmp_data("snap");
+        let adopted = snapshot_owned_uv_in(&data).expect("snapshot a working PATH uv");
+        assert!(owned_uv_in(&data).is_some());
+        // The adopted copy runs standalone (no dependency on the source dir).
+        assert!(std::process::Command::new(&adopted).arg("--version").output().is_ok_and(|o| o.status.success()));
+        let _ = std::fs::remove_dir_all(&data);
     }
 }

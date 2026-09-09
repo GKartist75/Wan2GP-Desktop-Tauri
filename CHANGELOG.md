@@ -2,6 +2,10 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [Unreleased]
+
+- Launcher-owned uv: the installer adopts `uv` into its own `<dataDir>\.tools` on first use (one-time copy of a working PATH copy, or right after it installs the prerequisite) and prefers it for every later run — PATH copies belonging to other apps (0.5.3 report: Hermes agent's bundled uv, self-update hit its file lock) are fallback only, never self-updated
+
 ## [0.5.3] — 2026-09-08
 
 - Pre-install detection gate: fail fast on missing git / Microsoft Basic Display Adapter before any download, warn on pre-2024 AMD drivers, multiple AMD GPUs (dGPU+iGPU order check), unreadable VRAM, and missing Defender exclusions; stale markers and CUDA-era configs are reported instead of tripping the install
