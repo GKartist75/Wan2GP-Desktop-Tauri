@@ -1298,29 +1298,33 @@ async function startInstall(){
   // Are-you-sure gate: the Install button sits below the checks, and
   // nothing starts without explicit confirmation (fresh-repo wipes code).
   let choiceNote = ''
+  let wipeWarn = ''
   if (_targetChoiceMode === 'repair-or-fresh') {
     const checked = document.querySelector('input[name="targetChoice"]:checked')
-    choiceNote = ((checked && checked.value) === 'fresh')
+    const isFresh = (checked && checked.value) === 'fresh'
+    choiceNote = isFresh
       ? 'Fresh repo (wipe code, keep models)' + (_freshBackupChoice ? ((_freshBackupChoice.skip ? ' — no backup' : ' — with backup')) : '')
       : 'Install / repair environment (keeps models & settings)'
+    if (isFresh && _freshBackupChoice && _freshBackupChoice.skip) wipeWarn = '\n⚠ WILL WIPE code, plugins, finetunes, settings and any models inside the folder.'
   } else if (_targetChoiceMode === 'reinstall-trio') {
     const v = pickedRadio('reinstallChoice')
     choiceNote = (v === 'fresh'
       ? 'Reinstall (fresh)' + (_freshBackupChoice ? ((_freshBackupChoice.skip ? ' — no backup' : ' — with backup')) : '')
       : v === 'skip' ? 'Use existing (health-check)' : 'Update & keep files')
+    if (v === 'fresh' && _freshBackupChoice && _freshBackupChoice.skip) wipeWarn = '\n⚠ WILL WIPE code, plugins, finetunes, settings and any models inside the folder.'
   }
   let locNote = ''
   try {
     const paths = await window.w2gp.getInstallPaths().catch(() => null)
     if (paths && (paths.repo || paths.dataDir)) locNote = '\nLocation: ' + (paths.repo || paths.dataDir)
   } catch {}
-  if (!window.confirm('Start the Wan2GP install now?' + (choiceNote ? '\nChoice: ' + choiceNote : '') + '\nEnvironment: ' + selectedEnvType + locNote + '\n\nThis downloads several GB and takes 5–20 minutes.')) return
+  if (!window.confirm('Start the Wan2GP install now?' + (choiceNote ? '\nChoice: ' + choiceNote : '') + '\nEnvironment: ' + selectedEnvType + locNote + wipeWarn + '\n\nThis downloads several GB and takes 5–20 minutes.')) return
   // Checklist + trio dispatch: the big Install button is the ONLY launcher.
-  // Fresh wipes consume the stashed backup choice (collected earlier) —
-  // cancel keeps it stashed, UI stays put, retry is free.
+  // Fresh wipes consume the stashed backup choice (collected earlier) — the
+  // wipe warning already lives in the single CONFIRM above, so dispatch
+  // launches directly with no second dialog.
   const launchFresh = function() {
     const stored = _freshBackupChoice
-    if (stored && stored.skip && !window.confirm('Really wipe without any backup? Custom plugins, finetunes, settings and any models inside the folder will be deleted.')) return
     _freshBackupChoice = null
     resetTasks()
     if (stored && stored.skip) { doInstall(null, 'reinstall', { backup: false }); return }
