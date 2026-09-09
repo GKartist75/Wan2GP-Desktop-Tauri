@@ -46,8 +46,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| {
-            // Closing the launcher also stops Wan2GP, helper servers and our
-            // Explorer windows — no orphaned processes left behind.
+            // Closing the launcher stops the Wan2GP server and helper servers.
+            // Explorer/browser windows are never touched — see shutdown_cleanup.
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { .. } = event {
                     crate::system::shutdown_cleanup(window.app_handle());
