@@ -1850,6 +1850,14 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,Str
                     url = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl".into();
                 }
             }
+            // Sage3 is gated, never synced (#2280): Blackwell-only AND
+            // py>=3.12 wheels, while managed envs are py3.10/3.11. If
+            // setup_config ever lists it, skip loudly instead of failing.
+            if name == "sage3" || name == "sageattn3" {
+                let m = "[*] skipping SageAttention 3 (needs Blackwell GPU + Python >= 3.12; managed envs are 3.10/3.11) — Sage 2.2.0 stays synced\n";
+                crate::base::push_log(m, "setup"); let _ = app.emit("launch-log", m.to_string());
+                continue;
+            }
             // GGUF 1.0.21 override (docs prescription over setup_config lag).
             let url = apply_gguf_override(&url);
             let m = format!("[*] sync kernel {name}\n"); crate::base::push_log(&m, "setup"); let _ = app.emit("launch-log", m);

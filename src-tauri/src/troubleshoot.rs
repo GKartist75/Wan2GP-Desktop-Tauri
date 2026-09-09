@@ -227,13 +227,20 @@ fn verify_kernels(py: &std::path::Path, torch: String, device: String, mode: &st
             base
         }
         Ok(map) => {
-            let fails = crate::amd::kernel_probe_failures(&map);
+            let mut fails = crate::amd::kernel_probe_failures(&map);
+            // Sage3 is gated, never synced — a stray install must not fail
+            // Verify; sage3_note() reports it at the right level instead.
+            fails.retain(|f| !f.starts_with("sageattn3"));
+            let sage_note = crate::amd::sage3_note(&map, crate::amd::is_blackwell_gpu(&device));
             base["kernels"] = serde_json::Value::Object(map);
             if fails.is_empty() {
                 base["ok"] = serde_json::json!(true);
             } else {
                 base["ok"] = serde_json::json!(false);
                 base["error"] = serde_json::json!(format!("GPU computes, but these wheels won't import: {}. Re-run Sync/Repair, check antivirus quarantine.", fails.join("; ")));
+            }
+            if let Some((level, msg)) = sage_note {
+                base["sage3_note"] = serde_json::json!({"level": level, "msg": msg});
             }
             base
         }
