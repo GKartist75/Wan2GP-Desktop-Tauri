@@ -111,12 +111,21 @@ async fn run_capture(app: &tauri::AppHandle, emit: impl Fn(&str) + Send + Sync, 
 /// PATH uv may belong to another app (0.5.3 report: the Hermes agent's
 /// bundled uv — self-updating it hits file locks, and it can vanish under
 /// us). We prefer our own copy; PATH is fallback. Pure glue, unit-tested.
+///
+/// Ownership MUST come from the official standalone installer (UV_INSTALL_DIR
+/// run): uv self-update only works with an install receipt, and a plain file
+/// copy refuses with "Self-update is only available..." (seen live on a
+/// snapshot copy). `.launcher-uv` marker = receipted install, no re-fetch.
 #[cfg(windows)] const UV_EXE: &str = "uv.exe";
 #[cfg(not(windows))] const UV_EXE: &str = "uv";
+/// Marker proving the tools copy came from the installer (self-updatable).
+const UV_MARKER: &str = ".launcher-uv";
 
 fn owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
     let p = data_dir.join(".tools").join(UV_EXE);
-    // Must exist AND run — a dead copy is worse than PATH fallback.
+    // Receipted install (marker) that exists AND runs — anything else (plain
+    // copy, dead file) is worse than PATH fallback.
+    if !data_dir.join(".tools").join(UV_MARKER).is_file() { return None; }
     silent_command(&p).arg("--version").output().ok()
         .filter(|o| o.status.success())
         .map(|_| p.to_string_lossy().to_string())
@@ -143,11 +152,35 @@ fn path_uv_exe() -> Option<std::path::PathBuf> {
         .filter(|p| p.is_file())
 }
 
-/// One-time snapshot: copy a working PATH uv (+ siblings when present) into
-/// our tools dir, so self-update and all later runs touch only our binary.
-/// Best-effort — None when nothing usable is around (callers fall back).
-fn snapshot_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
-    if let Some(owned) = owned_uv_in(data_dir) { return Some(owned); }
+/// Run the official standalone installer INTO our tools dir (writes the
+/// install receipt, so `uv self update` keeps working on our copy).
+/// Best-effort — None offline or on installer failure (caller falls back).
+fn installer_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
+    let dir = data_dir.join(".tools");
+    std::fs::create_dir_all(&dir).ok()?;
+    let dir_s = dir.to_string_lossy().to_string();
+    #[cfg(windows)] let ok = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-ExecutionPolicy", "ByPass", "-Command", "irm https://astral.sh/uv/install.ps1 | iex"])
+        .env("UV_INSTALL_DIR", &dir_s).output().ok().is_some_and(|o| o.status.success());
+    #[cfg(not(windows))] let ok = std::process::Command::new("sh")
+        .args(["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"])
+        .env("UV_INSTALL_DIR", &dir_s).output().ok().is_some_and(|o| o.status.success());
+    if !ok { return None; }
+    // Marker + version stamp (owned_uv_in requires both marker and a run).
+    let ver = silent_command(dir.join(UV_EXE)).arg("--version").output().ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())?;
+    std::fs::write(dir.join(UV_MARKER), &ver).ok()?;
+    crate::base::push_log(&format!("[*] uv installed into launcher tools ({ver})."), "setup");
+    owned_uv_in(data_dir)
+}
+
+/// Offline last resort: copy a working PATH uv (+ siblings) into our tools
+/// dir. Works, but carries NO install receipt (self-update refuses) and NO
+/// marker — a later online run replaces it with a proper install.
+/// Best-effort — None when nothing usable is around.
+fn copy_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
+    if owned_uv_in(data_dir).is_some() { return owned_uv_in(data_dir); }
     let src = path_uv_exe()?;
     // Must actually run before we adopt it (Store shims, dead links).
     silent_command(&src).arg("--version").output().ok().filter(|o| o.status.success())?;
@@ -161,10 +194,22 @@ fn snapshot_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
             if s.is_file() { let _ = std::fs::copy(&s, dir.join(name)); }
         }
     }
-    crate::base::push_log(&format!("[*] uv adopted into launcher tools ({}).", dir.display()), "setup");
-    owned_uv_in(data_dir)
+    crate::base::push_log(&format!("[*] uv copied into launcher tools (no install receipt — self-update unavailable until a proper install)."), "setup");
+    // Runs-check only (marker deliberately absent).
+    let p = dir.join(UV_EXE);
+    silent_command(&p).arg("--version").output().ok()
+        .filter(|o| o.status.success())
+        .map(|_| p.to_string_lossy().to_string())
 }
-fn snapshot_owned_uv() -> Option<String> { snapshot_owned_uv_in(&get_data_dir()) }
+
+/// Ensure a launcher-owned uv: receipted install already present → use it;
+/// else proper installer run → else offline copy → else None (PATH fallback).
+fn ensure_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
+    if let Some(owned) = owned_uv_in(data_dir) { return Some(owned); }
+    if let Some(fresh) = installer_owned_uv_in(data_dir) { return Some(fresh); }
+    copy_owned_uv_in(data_dir)
+}
+fn snapshot_owned_uv() -> Option<String> { ensure_owned_uv_in(&get_data_dir()) }
 
 /// uv command to invoke: owned copy first, snapshot-then-owned, PATH fallback.
 /// Never fails — bare "uv" lets the caller surface the real spawn error.
@@ -2254,7 +2299,7 @@ mod av_msg_tests {
 
 #[cfg(test)]
 mod owned_uv_tests {
-    use super::{owned_uv_in, path_uv_exe, snapshot_owned_uv_in, UV_EXE};
+    use super::{copy_owned_uv_in, owned_uv_in, path_uv_exe, UV_EXE, UV_MARKER};
     fn tmp_data(tag: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("wgp-owned-uv-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -2277,14 +2322,30 @@ mod owned_uv_tests {
         let _ = std::fs::remove_dir_all(&data);
     }
     #[test]
-    fn snapshot_adopts_working_path_uv() {
-        let Some(real) = path_uv_exe() else { return; }; // no uv on PATH → nothing to prove
-        assert!(std::process::Command::new(&real).arg("--version").output().is_ok_and(|o| o.status.success()));
-        let data = tmp_data("snap");
-        let adopted = snapshot_owned_uv_in(&data).expect("snapshot a working PATH uv");
-        assert!(owned_uv_in(&data).is_some());
-        // The adopted copy runs standalone (no dependency on the source dir).
-        assert!(std::process::Command::new(&adopted).arg("--version").output().is_ok_and(|o| o.status.success()));
+    fn receiptless_copy_is_not_owned_but_runnable() {
+        // Live 0.5.3 state: snapshot copy without marker — must NOT count
+        // as owned (self-update refuses it), but the copy fallback sees it.
+        let Some(real) = path_uv_exe() else { return; };
+        let data = tmp_data("nocopy");
+        let tools = data.join(".tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::copy(&real, tools.join(UV_EXE)).unwrap();
+        assert!(owned_uv_in(&data).is_none());
+        assert!(copy_owned_uv_in(&data).is_some());
         let _ = std::fs::remove_dir_all(&data);
     }
+    #[test]
+    fn marker_plus_working_binary_is_owned() {
+        let Some(real) = path_uv_exe() else { return; };
+        let data = tmp_data("marked");
+        let tools = data.join(".tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::copy(&real, tools.join(UV_EXE)).unwrap();
+        std::fs::write(tools.join(UV_MARKER), "test").unwrap();
+        let owned = owned_uv_in(&data).expect("marked working copy is owned");
+        assert!(std::process::Command::new(&owned).arg("--version").output().is_ok_and(|o| o.status.success()));
+        let _ = std::fs::remove_dir_all(&data);
+    }
+    // installer_owned_uv_in is proven manually (network + writes the real
+    // receipt): not in unit tests.
 }
