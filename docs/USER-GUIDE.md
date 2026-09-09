@@ -119,7 +119,7 @@ flowchart TD
 
 1. **Prerequisites card** (only if something is missing) — Git / Python / uv /
    Miniconda. *Download & Install* fetches it silently, *How to install manually*
-   opens the vendor page.
+   opens the vendor page. Fresh tools work immediately — no launcher restart.
 2. **Environment** — pick `uv` (fast, recommended), `venv` (bundled with Python)
    or `conda` (needs Miniconda — one-click install; its terms are accepted
    automatically during setup). All three end up identical: same pinned Python,

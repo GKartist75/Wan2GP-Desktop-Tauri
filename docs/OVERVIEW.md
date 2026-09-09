@@ -34,32 +34,73 @@ Trust rule: **upstream owns** the profile→package mapping (`setup.py`,
 `setup_config.json`) and all model/runtime code. **The launcher owns**
 detection, provisioning, honesty (exit codes, smoke tests), and lifecycle
 (start/stop/update). The launcher mirrors upstream data, never overrides it —
-except where upstream lags its own docs (GGUF 1.0.21) or declares data nothing
-consumes (HSA override); both are documented at the call site and auto-follow
-upstream flips.
+except where upstream lags its own docs (GGUF 1.0.21), declares data nothing
+consumes (HSA override), or ships a template that breaks its own installs
+(conda `conda run` re-quoting corrupts wheel URLs → direct-pip patch); all
+are documented at the call site, drift-refusing, and auto-follow upstream flips.
 
-## Install pipeline (fresh Install button)
+Tooling rule: **never depend on PATH.** uv lives owned in `<dataDir>\.tools`
+(self-updating receipted copy); env interpreters, git/conda/python resolve to
+absolute known locations with PATH only as fallback. Fresh prerequisite
+installs are usable instantly — no restart.
+
+## Install pipeline (big Install button — the ONLY launcher)
+
+User-facing version with screenshots-level detail: [USER-GUIDE.md](USER-GUIDE.md).
 
 ```mermaid
 flowchart TD
-    A["classify_target()\nempty / healthy / broken / repo-only /\nPinokio / foreign"] --> B{"verdict?"}
-    B -->|"not empty/clean"| STOP1["Abort with guidance\n(reuse · repair · wipe · move models)"]
-    B -->|"empty"| DISK["Disk gate: <10 GB free → abort\nbefore downloading anything"]
-    DISK --> CLONE["git clone --depth 1"]
-    CLONE --> MARKER{"marker + torch probe?\n.wan2gp-install-ok"}
-    MARKER -->|"verified"| REUSE["Return success\n(no re-download)"]
-    MARKER -->|"incomplete env"| WIPE["Remove env dir\n(uv cache survives)"]
-    WIPE --> UV["ensure_uv_python()\nexact pin · 3.11.14"]
-    UV --> SETUP["setup.py install --env --auto\n(max 2 attempts;\nauto-retry on network blips)"]
-    SETUP -->|"exit ≠ 0"| FAIL["Honest error + hint\n+ Retry button"]
-    SETUP -->|"exit 0"| SMOKE["Smoke test\nimport torch · CUDA visible?"]
-    SMOKE -->|"fail"| FAIL
-    SMOKE -->|"pass"| DONE["Write marker\nfavourite plugins\nInstallation complete"]
+    S["START: big Install button"] --> V{"classify_target()\nempty / repo-no-env /\nbroken / healthy /\nPinokio / foreign"}
+    V -- "Empty" --> C0["No choice"]
+    V -- "Repo, no working env" --> C1["Checklist\nRepair* / Fresh"]
+    V -- "Healthy install" --> C2["Trio\nUpdate* / Fresh / Use existing"]
+    V -- "Pinokio" --> BLK["BLOCKED\n(reuse models elsewhere)"]
+    V -- "Foreign" --> WRN["Warning\nInstall anyway / Browse"]
+    C0 --> G["Single CONFIRM\nchoice + env + location"]
+    C1 --> G
+    C2 --> G
+    WRN --> G
+    G -- "Fresh?" --> M["Backup modal\ncollect only, never launches"]
+    M --> G
+    G -- "Cancel" --> V
+    G -- "OK" --> CL["git clone (or reuse)"]
+    CL --> MK{"marker + torch probe?\n.wan2gp-install-ok"}
+    MK -- "verified" --> REUSE["Return success\n(no re-download)"]
+    MK -- "broken / absent" --> P{"env?"}
+    P -- "uv" --> BU["owned uv (.tools)\nexact Python pin"]
+    P -- "venv" --> PY["py-3.11 shim if needed"]
+    P -- "conda" --> CA["ToS accept +\nsystem-python drive (fresh)\nconda run (exists)"]
+    BU --> SE["setup.py install --env --auto\n+ launcher patches\n(profile - VRAM - conda-pip)"]
+    PY --> SE
+    CA --> SE
+    SE -->|"exit != 0"| FAIL["Honest error + hint\n+ Retry button"]
+    SE -->|"exit 0"| SM["Smoke test\nimport torch + CUDA\n(all env types)"]
+    SM -->|"fail"| FAIL
+    SM -->|"pass"| AMD{"AMD?"}
+    AMD -- "yes" --> PR["Compute probe, both HSA modes\nrecord winner / reseat"]
+    AMD -- "no" --> DN["Write marker\nfavourite plugins\nInstallation complete"]
+    PR --> DN
 ```
 
-Key properties: no step reports success it didn't earn; every failure names
-the failing command plus a copy-paste fix; Retry never re-downloads a finished
-install and never resumes into a half-built env.
+Key properties: the big Install button is the only launcher (radios and
+modals never start work); one adaptive confirm per run; no step reports
+success it didn't earn; every failure names the failing command plus a
+copy-paste fix; Retry never re-downloads a finished install and never resumes
+into a half-built env; cancelling anywhere returns to the ticked choice.
+
+## Verify (System → Troubleshooting)
+
+```mermaid
+flowchart LR
+    T["Verify GPU compute"] --> I["import torch +\nCUDA visible?"]
+    I --> K["import each wheel\n(top-level modules +
+sage2 symbol + quanto op)"]
+    K --> R["names the broken dist\nor all-green"]
+```
+
+Version-present is not loadable (AV quarantine, wrong-torch ABIs) — Verify
+proves imports and names the culprit. Run after AV restores, driver updates,
+or env surgery.
 
 ## Kernel sync (Manage → Sync Kernels)
 
