@@ -1850,8 +1850,23 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,Str
                     url = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl".into();
                 }
             }
-            // GGUF 1.0.21 override (docs prescription over setup_config lag).
+            // GGUF 1.0.21 floor (docs prescription over setup_config lag).
             let url = apply_gguf_override(&url);
+            // Triton no-downgrade (#2264): a pinned/ceiling spec must not
+            // clobber a working newer triton (H3-sol setups). RTX_20/GTX_10
+            // are exempt — upstream genuinely needs <3.3 on Turing/Pascal.
+            if name == "triton" && !["RTX_20", "GTX_10"].contains(&profile.as_str()) {
+                if let Some(pinned) = crate::hw::wanted_triton_pin(&url) {
+                    let py_s = py.to_string_lossy().to_string();
+                    if let Some(inst) = pip_show_version(&py_s, &["triton-windows", "triton"]).await {
+                        if crate::hw::version_gt(&inst, &pinned) {
+                            let m = format!("[*] keeping installed triton {inst} (newer than wanted {pinned}) — not downgrading (#2264); pin an older triton manually if the old build is required\n");
+                            crate::base::push_log(&m, "setup"); let _ = app.emit("launch-log", m);
+                            continue;
+                        }
+                    }
+                }
+            }
             let m = format!("[*] sync kernel {name}\n"); crate::base::push_log(&m, "setup"); let _ = app.emit("launch-log", m);
             let emit_k = |s: &str| { crate::base::push_log(s, "setup"); let _ = app.emit("launch-log", s.to_string()); };
             let py_s = py.to_string_lossy().to_string();
@@ -1865,6 +1880,15 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,Str
         return Err(format!("kernel sync failed for: {} — see console output", failed.join(", ")));
     }
     Ok(serde_json::json!({"ok": true, "success": true}))
+}
+/// Quiet `pip show` version probe for the sync loop's no-downgrade guard.
+/// None when the dists are absent or pip fails — the guard steps aside.
+async fn pip_show_version(py: &str, dists: &[&str]) -> Option<String> {
+    let mut args = vec!["-m", "pip", "show"];
+    args.extend(dists.iter().copied());
+    let out = silent_command(py).args(&args).output().ok()?;
+    if !out.status.success() { return None; }
+    crate::hw::parse_pip_show_versions(&String::from_utf8_lossy(&out.stdout))
 }
 #[tauri::command]
 pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value,String> {
