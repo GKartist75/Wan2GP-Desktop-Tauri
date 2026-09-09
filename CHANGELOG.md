@@ -10,6 +10,7 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 - No-env setup is now a checklist: repo-without-env states show tick-one-of-two radios (Install / repair environment vs Fresh repo) and the big Install button starts the checked choice — no more competing action buttons under a dead Install
 - Empty Active Environment card offers Run Setup directly after unlinking the last env, instead of a dead end
 - Preflight antivirus warning is AMD-only (observed risk: quarantined nightly wheels); NVIDIA/Intel stay on the reactive missing-DLL hint
+- Launcher-owned uv: the installer adopts `uv` into its own `<dataDir>\.tools` on first use (one-time copy of a working PATH copy, or right after it installs the prerequisite) and prefers it for every later run — PATH copies belonging to other apps (0.5.3 report: Hermes agent's bundled uv, self-update hit its file lock) are fallback only, never self-updated
 
 ## [0.5.3] — 2026-09-08
 
