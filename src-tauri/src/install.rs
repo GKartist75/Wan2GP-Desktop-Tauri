@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::base::*;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
-use crate::{hw::{apply_gguf_override, build_install_plan, classify_amd_driver, get_gpu_info_sync, kernel_profile_key, wmi_all_gpus}, status::{get_active_env, resolve_env_python}};
+use crate::{hw::{apply_gguf_override, build_install_plan, classify_amd_driver, get_gpu_info_sync, kernel_profile_key, wmi_all_gpus, wmi_virtual_adapters}, status::{get_active_env, resolve_env_python}};
 
 /// Pull the first X.Y[.Z] out of a version string ("3.11.14", "3.11", ">=3.11").
 fn scan_version(s: &str) -> String {
@@ -908,6 +908,20 @@ pub(crate) fn run_preflight_checks(repo: &std::path::Path, hw: &serde_json::Valu
         let amds: Vec<String> = wmi_all_gpus().into_iter().filter(|(_, v, _, _)| v == "AMD").map(|(n, _, _, _)| n).collect();
         if amds.len() > 1 {
             checks.push(PreflightCheck { id: "multi-gpu", level: "warn", msg: format!("{} AMD GPUs visible ({}); using {} — order is firmware-dependent, confirm it picked your dGPU.", amds.len(), amds.join(" + "), name) });
+        }
+    }
+    // 3b. virtual display adapters (remote-desktop shims like ToDesk /
+    // GameViewer) must never win the GPU pick (#2224). The WMI fallback
+    // already skips them — say so here, or warn when nothing physical
+    // remains (that box would otherwise silently tier as CPU).
+    #[cfg(windows)] {
+        let virtuals: Vec<String> = wmi_virtual_adapters();
+        if !virtuals.is_empty() {
+            if vendor == "unknown" || name.is_empty() {
+                checks.push(PreflightCheck { id: "virtual-gpu", level: "warn", msg: format!("only virtual display adapter(s) visible ({}); no physical GPU detected — install the vendor driver or reattach the real card.", virtuals.join(" + ")) });
+            } else {
+                checks.push(PreflightCheck { id: "virtual-gpu", level: "info", msg: format!("ignoring virtual display adapter(s) ({}); using {name}.", virtuals.join(" + ")) });
+            }
         }
     }
     // 4. unreadable VRAM mistiers the quality profile.

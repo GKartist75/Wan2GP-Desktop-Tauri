@@ -66,7 +66,7 @@ pub(crate) fn wmi_all_gpus() -> Vec<(String, String, u64, String)> {
         let mut parts = ln.split('|');
         let (Some(n), Some(r)) = (parts.next(), parts.next()) else { continue; };
         let name = n.trim().to_string();
-        if name.is_empty() || name.to_lowercase().contains("nvidia") { continue; }
+        if name.is_empty() || name.to_lowercase().contains("nvidia") || is_virtual_display_adapter(&name) { continue; }
         let lower = name.to_lowercase();
         let vendor = if lower.contains("amd") || lower.contains("radeon") { "AMD" }
             else if lower.contains("intel") || lower.contains("arc") { "INTEL" }
@@ -80,10 +80,43 @@ pub(crate) fn wmi_all_gpus() -> Vec<(String, String, u64, String)> {
 #[cfg(not(windows))]
 pub(crate) fn wmi_all_gpus() -> Vec<(String, String, u64, String)> { Vec::new() }
 
+/// Remote-desktop / VM virtual displays (ToDesk, GameViewer, Parsec, RDP,
+/// Hyper-V, VMware, VirtualBox, indirect-display shims) report as video
+/// controllers but carry no GPU — never tier on them (#2224: a 7900 XT box
+/// was mistiered because a virtual adapter won the pick).
+/// "Basic Display Adapter" is NOT virtual here — it's the no-driver state
+/// with its own fatal preflight check. Pure + unit-tested.
+pub(crate) fn is_virtual_display_adapter(name: &str) -> bool {
+    let l = name.to_lowercase();
+    ["virtual", "indirect display", "todesk", "gameviewer", "parsec",
+     "remote desktop", "remote display", "rdp", "hyper-v", "hyperv",
+     "vmware", "virtualbox", "vbox", "qemu", "bochs", "remotefx",
+     "citrix", "anydesk", "teamviewer", "rustdesk", "splashtop",
+     "moonlight", "sunshine"]
+        .iter().any(|t| l.contains(t))
+}
+
+/// Names of virtual display adapters currently visible (Windows WMI).
+/// Lets preflight name the adapters it ignored (#2224 visibility).
+/// Empty on non-Windows. Uses probe_command so tests can can the answers.
+#[cfg(windows)]
+pub(crate) fn wmi_virtual_adapters() -> Vec<String> {
+    let out = match probe_command("POWERSHELL", "powershell").args(["-NoProfile","-Command","Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }"]).output() {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+    String::from_utf8_lossy(&out.stdout).lines()
+        .map(str::trim).filter(|n| !n.is_empty())
+        .filter(|n| is_virtual_display_adapter(n))
+        .map(str::to_string).collect()
+}
+#[cfg(not(windows))]
+pub(crate) fn wmi_virtual_adapters() -> Vec<String> { Vec::new() }
+
 #[cfg(windows)]
 pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64, String)> {
-    // First non-NVIDIA controller wins (historical behavior); preflight
-    // warns when several AMD entries make that order significant.
+    // First non-NVIDIA, non-virtual controller wins (historical behavior);
+    // preflight warns when several AMD entries make that order significant.
     wmi_all_gpus().into_iter().next()
 }
 #[cfg(not(windows))]
@@ -198,7 +231,7 @@ pub(crate) fn wmi_dedicated_vram_mb(display_name: &str) -> Option<u64> {
         }
         let Some(mb) = mb else { continue; };
         let d = desc.trim().to_lowercase();
-        if d.is_empty() || d.contains("nvidia") { continue; }
+        if d.is_empty() || d.contains("nvidia") || is_virtual_display_adapter(&d) { continue; }
         cands.push((d, mb));
     }
     // 1) Name match (WMI vs DriverDesc can differ slightly).
@@ -235,11 +268,31 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
     let v = vendor.to_uppercase(); let g = name.to_uppercase();
     if v == "APPLE" { return "MPS".into(); }
     if v == "NVIDIA" {
+        // Pascal and older — last generation without attention kernels.
         if g.contains(" 10") || g.contains(" 16") || g.contains("GTX 10") || g.contains("GTX 16") { return "GTX_10".into(); }
-        if g.contains("50") { return "RTX_50".into(); }
-        if g.contains("40") { return "RTX_40".into(); }
-        if g.contains("30") { return "RTX_30".into(); }
-        if g.contains("20") || g.contains("QUADRO") { return "RTX_20".into(); } return "GTX_10".into();
+        // Workstation / datacenter BEFORE consumer tokens: "RTX 5000 Ada"
+        // contains "RTX 50" but is Ada (RTX_40), not Blackwell — and
+        // "RTX PRO 6000 Blackwell" matches no consumer token at all
+        // (old code fell through to GTX_10: #2278, 96GB card mistiered).
+        // Blackwell workstation + datacenter (cu130 torch ships sm_100/120).
+        if g.contains("PRO 6000") || g.contains("PRO 5000") || g.contains("PRO 4000")
+            || g.contains("B100") || g.contains("B200") || g.contains("GB100") { return "RTX_50".into(); }
+        // Hopper datacenter (cu130 torch ships sm_90 kernels).
+        if g.contains("H100") || g.contains("H200") { return "RTX_50".into(); }
+        // Ada workstation (incl. L40/L4 datacenter) + consumer Ada caught
+        // by the spaced token below; ADA rule first for WS names.
+        if g.contains("ADA") || g.contains("L40") || g.contains(" L4") { return "RTX_40".into(); }
+        // Ampere workstation (Ax000 / Ax0 are Ampere, not Ada).
+        if g.contains("RTX A") || g.contains(" A40") || g.contains(" A30") || g.contains(" A16") || g.contains(" A10") || g.contains(" A80") { return "RTX_30".into(); }
+        // Consumer GeForce — spaced generation tokens, so "RTX 3050"
+        // (Ampere) can't match bare "50" and land on Blackwell (the old
+        // check order did exactly that: 3050/4050 → RTX_50).
+        if g.contains("RTX 50") || g.contains("RTX50") { return "RTX_50".into(); }
+        if g.contains("RTX 40") || g.contains("RTX40") { return "RTX_40".into(); }
+        if g.contains("RTX 30") || g.contains("RTX30") { return "RTX_30".into(); }
+        if g.contains("RTX 20") || g.contains("RTX20") || g.contains("QUADRO") { return "RTX_20".into(); }
+        if g.contains("20") { return "RTX_20".into(); }
+        return "GTX_10".into();
     }
     if v == "AMD" {
         // RDNA 2 (gfx103X-dgpu): no upstream setup_config profile — dedicated key so
@@ -286,6 +339,60 @@ mod amd_profile_tests {
         // RDNA 2 has its own key (no upstream setup_config profile to collide with).
         assert_eq!(kernel_profile_key("AMD", "AMD Radeon RX 6800 XT"), "AMD_GFX103X");
         assert_eq!(kernel_profile_key("AMD", "AMD Radeon RX 6700S"), "AMD_GFX103X");
+    }
+}
+#[cfg(test)]
+mod nvidia_profile_tests {
+    use super::kernel_profile_key;
+    #[test]
+    fn consumer_generations() {
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce RTX 5090"), "RTX_50");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce RTX 5060 Ti"), "RTX_50");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce RTX 4070 Laptop GPU"), "RTX_40");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce RTX 4050 Laptop GPU"), "RTX_40");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce RTX 3080"), "RTX_30");
+        // Bare-"50"-first ordering trap: 3050 is Ampere, not Blackwell.
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce RTX 3050"), "RTX_30");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce RTX 2060"), "RTX_20");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce GTX 1080"), "GTX_10");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce GTX 1660 SUPER"), "GTX_10");
+    }
+    #[test]
+    fn workstation_and_datacenter() {
+        // #2278: 96GB Blackwell workstation card fell through to GTX_10.
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA RTX PRO 6000 Blackwell"), "RTX_50");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA RTX 6000 Ada Generation"), "RTX_40");
+        // "RTX 5000 Ada" contains "RTX 50" — WS rule must win.
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA RTX 5000 Ada Generation"), "RTX_40");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA RTX A6000"), "RTX_30");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA RTX A4000"), "RTX_30");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA H100"), "RTX_50");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA A100"), "RTX_30");
+        assert_eq!(kernel_profile_key("NVIDIA", "Quadro RTX 6000"), "RTX_20");
+    }
+}
+#[cfg(test)]
+mod virtual_adapter_tests {
+    use super::is_virtual_display_adapter;
+    #[test]
+    fn virtual_names_detected() {
+        // #2224 reporter names first.
+        for n in ["GameViewer Virtual Display Adapter", "ToDesk Virtual Display Adapter",
+                  "Parsec Virtual Display Adapter", "Microsoft Remote Display Adapter",
+                  "Microsoft Hyper-V Video", "VMware SVGA 3D", "VirtualBox Graphics Adapter",
+                  "Indirect Display Adapter", "Citrix Indirect Display Adapter"] {
+            assert!(is_virtual_display_adapter(n), "{n}");
+        }
+    }
+    #[test]
+    fn physical_names_not_virtual() {
+        for n in ["AMD Radeon RX 7900 XTX", "NVIDIA GeForce RTX 3080",
+                  "NVIDIA RTX PRO 6000 Blackwell", "Intel UHD Graphics 770",
+                  "Intel Arc A770 Graphics",
+                  // No-driver state has its own fatal check — not virtual.
+                  "Microsoft Basic Display Adapter", ""] {
+            assert!(!is_virtual_display_adapter(n), "{n}");
+        }
     }
 }
 #[cfg(test)]
