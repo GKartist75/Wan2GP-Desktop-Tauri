@@ -1285,6 +1285,21 @@ async function startInstall(){
     var hasConda = await hasCmd('conda')
     if (!hasConda) { appendLog('[!] Conda not found — showing install help'); showPrereqHelp('Conda not found', 'Miniconda is required for conda installs. Click Download to install it silently, or select venv/uv above.', 'https://docs.anaconda.com/miniconda/', 'conda'); return }
   }
+  // Are-you-sure gate: the Install button sits below the checks, and
+  // nothing starts without explicit confirmation (fresh-repo wipes code).
+  let choiceNote = ''
+  if (_targetChoiceMode === 'repair-or-fresh') {
+    const checked = document.querySelector('input[name="targetChoice"]:checked')
+    choiceNote = ((checked && checked.value) === 'fresh')
+      ? 'Fresh repo (wipe code, keep models)'
+      : 'Install / repair environment (keeps models & settings)'
+  }
+  let locNote = ''
+  try {
+    const paths = await window.w2gp.getInstallPaths().catch(() => null)
+    if (paths && (paths.repo || paths.dataDir)) locNote = '\nLocation: ' + (paths.repo || paths.dataDir)
+  } catch {}
+  if (!window.confirm('Start the Wan2GP install now?' + (choiceNote ? '\nChoice: ' + choiceNote : '') + '\nEnvironment: ' + selectedEnvType + locNote + '\n\nThis downloads several GB and takes 5–20 minutes.')) return
   // Checklist verdict (repo without a working env): the big Install button
   // dispatches whichever #targetChoiceList radio is checked. Fresh-cancel
   // keeps the checklist + Install visible (nothing hidden yet), so retry is free.

@@ -916,9 +916,7 @@
         <p class="path-hint path-hint-warn">⚠ Model checkpoints &amp; LoRAs are large (tens–hundreds of GB). Store them on a fast, non-system drive — <strong>not</strong> in AppData/Roaming, which roams with your profile and can bloat or sync unexpectedly. Default <code>C:\Wan2GP-Models\ckpts</code> keeps them separate from the repo.</p>
       </div>
 
-      <button id="installStartBtn">Install</button>
-
-      <!-- Target-folder verdict (classify_target): Fresh / Adopt-Reuse / warn -->
+      <!-- Target-folder verdict (classify_target): checks first, Install button after -->
       <div id="targetVerdict" class="install-stack" style="display:none">
         <div class="ipkgs-header">Install location check</div>
         <div id="targetVerdictBody"></div>
@@ -933,6 +931,8 @@
           <button class="btn btn-ghost small" id="targetBrowseBtn" style="display:none">Choose empty folder…</button>
         </div>
       </div>
+
+      <button id="installStartBtn">Install</button>
 
       <!-- Hardware info -->
       <div class="install-hw">
