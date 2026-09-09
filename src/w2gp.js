@@ -46,7 +46,7 @@
     moveFolder: (src, dst) => call('move_folder', { src, dst }), migrateChoose: () => call('migrate_choose'),
     folderSize: (path) => call('folder_size', { path }),
     downloadsSince: (sinceMs) => call('downloads_since', { sinceMs }).then(r => (r && r.files) || []).catch(() => []),
-    saveDownloadedFile: (name) => call('save_downloaded_file', { name }),
+    saveDownloadedFile: (name, dir) => call('save_downloaded_file', { name, dir: dir ?? null }),
     isDataDirRoaming: () => call('is_data_dir_roaming'),
     writeWgpConfig: (cfg) => call('write_wgp_config', { cfg }), selectFolder: () => call('select_folder'),
     resetWgpConfig: () => call('reset_wgp_config'),

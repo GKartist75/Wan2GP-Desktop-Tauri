@@ -2911,12 +2911,14 @@ $('zoomSlider').addEventListener('input', () => {
   }, 120)
 })
 
-// ── Silent-download feedback ──
+// ── Download Save / Save-As prompt ──
 // WebView2 completes iframe downloads with zero UI (no shelf, toast or
 // dialog), so gallery saves look broken while files pile up in Downloads.
-// While the Desktop view is open, poll Downloads for fresh media and toast
-// each arrival with its filename. Baseline resets whenever the view is
-// hidden so old files never announce themselves.
+// While the Desktop view is open, poll Downloads for fresh media and pop a
+// browser-like prompt per arrival: [Save] keeps it in Downloads, [Save As…]
+// opens the native dialog and moves it (dialog reopens at the last-used
+// folder). Baseline resets whenever the view is hidden so old files never
+// announce themselves.
 let _dlWatchTimer = null
 const _dlWatchSeen = new Set()
 let _dlWatchBaseline = 0
@@ -2937,18 +2939,54 @@ function startDownloadsWatch() {
         if (!f.name || _dlWatchSeen.has(key)) continue
         _dlWatchSeen.add(key)
         if (!DL_MEDIA_RE.test(f.name)) continue
-        const fname = f.name
-        showToast('⬇ Saved to Downloads: ' + fname + ' — click to move it', async () => {
-          try {
-            const r = await window.w2gp.saveDownloadedFile(fname)
-            if (r && r.cancelled) { showToast('Kept in Downloads: ' + fname); return }
-            if (r && (r.ok || r.success) && r.path) showToast('✓ Moved to: ' + r.path)
-            else showToast('✗ Move failed: ' + ((r && r.error) || 'unknown'))
-          } catch (e) { showToast('✗ ' + errText(e)) }
-        })
+        showDownloadPrompt(f.name)
       }
     } catch {}
   }, 4000)
+}
+
+// Browser-like arrival prompt: Save (keep in Downloads) vs Save As… (move
+// via native dialog). Remembers the last Save-As folder for the session.
+function showDownloadPrompt(fname) {
+  const t = document.createElement('div')
+  t.setAttribute('role', 'status')
+  t.setAttribute('aria-live', 'polite')
+  t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#333;color:#e8e6e1;padding:8px 12px;border-radius:6px;font-size:13px;z-index:9999;font-family:Geist Mono,monospace;display:flex;gap:8px;align-items:center;max-width:90vw'
+  const label = document.createElement('span')
+  label.textContent = '⬇ ' + fname
+  label.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:46vw'
+  const mkBtn = (text, title) => {
+    const b = document.createElement('button')
+    b.textContent = text
+    b.title = title
+    b.style.cssText = 'background:#4a4a4a;color:#fff;border:1px solid #666;border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;font-family:inherit'
+    return b
+  }
+  const saveBtn = mkBtn('Save', 'Keep it in your Downloads folder')
+  const saveAsBtn = mkBtn('Save As…', 'Choose where to save it')
+  t.append(label, saveBtn, saveAsBtn)
+  document.body.appendChild(t)
+  let gone = false
+  const dismiss = () => { if (gone) return; gone = true; t.style.opacity = '0'; t.style.transition = 'opacity 0.3s'; setTimeout(() => t.remove(), 400) }
+  saveBtn.addEventListener('click', () => { dismiss(); showToast('✓ Saved to Downloads: ' + fname) })
+  saveAsBtn.addEventListener('click', async () => {
+    dismiss()
+    try {
+      let lastDir = null
+      try { lastDir = localStorage.getItem('w2gp.saveAsDir') } catch {}
+      const r = await window.w2gp.saveDownloadedFile(fname, lastDir)
+      if (r && r.cancelled) { showToast('Kept in Downloads: ' + fname); return }
+      if (r && (r.ok || r.success) && r.path) {
+        try {
+          const slash = Math.max(r.path.lastIndexOf('/'), r.path.lastIndexOf('\\'))
+          if (slash > 0) localStorage.setItem('w2gp.saveAsDir', r.path.slice(0, slash))
+        } catch {}
+        showToast('✓ Saved to: ' + r.path)
+      }
+      else showToast('✗ Save failed: ' + ((r && r.error) || 'unknown'))
+    } catch (e) { showToast('✗ ' + errText(e)) }
+  })
+  setTimeout(dismiss, 30000)
 }
 
 // ── Running LED ──
