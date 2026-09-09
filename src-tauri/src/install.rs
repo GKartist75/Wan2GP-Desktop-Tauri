@@ -194,7 +194,7 @@ fn copy_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
             if s.is_file() { let _ = std::fs::copy(&s, dir.join(name)); }
         }
     }
-    crate::base::push_log(&format!("[*] uv copied into launcher tools (no install receipt — self-update unavailable until a proper install)."), "setup");
+    crate::base::push_log("[*] uv copied into launcher tools (no install receipt — self-update unavailable until a proper install).", "setup");
     // Runs-check only (marker deliberately absent).
     let p = dir.join(UV_EXE);
     silent_command(&p).arg("--version").output().ok()
@@ -209,13 +209,13 @@ fn ensure_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
     if let Some(fresh) = installer_owned_uv_in(data_dir) { return Some(fresh); }
     copy_owned_uv_in(data_dir)
 }
-fn snapshot_owned_uv() -> Option<String> { ensure_owned_uv_in(&get_data_dir()) }
+fn ensure_owned_uv() -> Option<String> { ensure_owned_uv_in(&get_data_dir()) }
 
 /// uv command to invoke: owned copy first, snapshot-then-owned, PATH fallback.
 /// Never fails — bare "uv" lets the caller surface the real spawn error.
 fn uv_command() -> String {
     if let Some(owned) = owned_uv() { return owned; }
-    if let Some(snap) = snapshot_owned_uv() { return snap; }
+    if let Some(snap) = ensure_owned_uv() { return snap; }
     "uv".into()
 }
 
@@ -2070,7 +2070,7 @@ async fn install_prerequisite_windows(app: tauri::AppHandle, tool: String) -> Re
         // uv is ours now: adopt the installed copy into the launcher tools
         // dir so later runs (incl. self-update) never touch a foreign binary.
         if tool == "uv" {
-            if let Some(owned) = snapshot_owned_uv() {
+            if let Some(owned) = ensure_owned_uv() {
                 emit(&format!("[*] uv adopted: {owned}\n"));
             }
         }

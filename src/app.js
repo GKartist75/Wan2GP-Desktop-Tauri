@@ -1048,6 +1048,10 @@ let selectedEnvType = 'uv'
 // (repo_no_env / ours_broken_env), the choice lives in the #targetChoiceList
 // radios and the big Install button dispatches it (see startInstall).
 let _targetChoiceMode = null
+// True while an install is actually running (set in doInstall, cleared on
+// every exit) — verdict refreshes must never resurrect Install mid-install
+// (e.g. Browse clicked during a fresh install re-trips repo_no_env).
+let _installRunning = false
 
 document.querySelectorAll('.env-type-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -1421,6 +1425,7 @@ async function doInstall(installed, mode, opts) {
   $('reinstallChoice').classList.add('hidden')
   // Checklist verdict consumed — hide it so it can't be re-dispatched mid-install.
   _targetChoiceMode = null
+  _installRunning = true
   if ($('targetChoiceList')) $('targetChoiceList').style.display = 'none'
   installProgressReset()
   if (mode === 'skip') {
@@ -1431,11 +1436,13 @@ async function doInstall(installed, mode, opts) {
     try { v = await window.w2gp.validateInstall() } catch (e) { v = { ok: false, errors: [e.message || String(e)] } }
     if (v && v.ok) {
       appendLog('[*] Existing install healthy — reusing.')
+      _installRunning = false
       show('dashboard'); refreshDashboard()
       return
     }
     appendLog('[!] Existing install failed checks: ' + ((v && v.errors && v.errors.join('; ')) || 'unknown'))
     $('installSubtitle').textContent = 'Existing install needs repair — see issues above'
+    _installRunning = false
     try { await refreshTargetVerdict() } catch {}
     showToast('✗ Existing install failed health checks — repair instead of reusing')
     return
@@ -1461,6 +1468,7 @@ async function doInstall(installed, mode, opts) {
       $('envTypeSelect').classList.remove('disabled')
       document.querySelectorAll('.env-type-btn').forEach(b => b.disabled = false)
       $('installStartBtn').classList.remove('hidden')
+      _installRunning = false
       return
     }
   } else if (mode === 'update') {
@@ -1509,6 +1517,7 @@ async function doInstall(installed, mode, opts) {
       appendLog(`[!] Failed to write model config: ${errText(e)}`)
     }
     taskComplete('done'); $('installSubtitle').textContent='Wan2GP is ready!'; appendLog('[*] Installation complete!')
+    _installRunning = false
     const vb = $('validateInstallBtn')
     if (vb) { vb.style.display = ''; vb.disabled = false; vb.textContent = 'Validate installation' }
     setTimeout(()=>{ show('dashboard'); refreshDashboard(); startMetricsPolling() }, 1200)
@@ -1527,6 +1536,7 @@ async function doInstall(installed, mode, opts) {
     if (sb) { sb.classList.remove('hidden'); sb.disabled = false; sb.textContent = 'Retry install' }
     const cdb = $('copyDiagnosticsBtn')
     if (cdb) { cdb.style.display = ''; cdb.onclick = copyDiagnostics }
+    _installRunning = false
     showToast('✗ Install failed — fix the issue above, then Retry')
   }
 }
@@ -1645,8 +1655,9 @@ async function refreshTargetVerdict() {
     }
     _targetChoiceMode = 'repair-or-fresh'
     // Re-arm the big button (the first Install pass hid it to show this card).
-    // Never override a hard block owned elsewhere (disk gates, pinokio, roots).
-    if (startBtn) {
+    // Never override a hard block owned elsewhere (disk gates, pinokio, roots),
+    // and never resurrect it while an install is running.
+    if (startBtn && !_installRunning) {
       startBtn.classList.remove('hidden')
       if (!startBtn.disabled) { startBtn.textContent = 'Install'; startBtn.title = '' }
     }
