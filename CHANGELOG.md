@@ -2,6 +2,23 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [Unreleased]
+
+- Conda pip routing fixed: `conda run` re-quotes args and corrupts URL-encoded wheel URLs (SpargeAttn %2B → Invalid build number) — setup.py's conda install template is patched to drive pip with the env interpreter directly (venv shape, own marker, drift-refusing)
+
+- Conda ToS gate handled: Anaconda's 2024+ Terms-of-Service enforcement refuses non-interactive channel ops — the installer accepts pkgs/main, pkgs/r, pkgs/msys2 once (transparently logged, persists in conda config) before setup.py runs
+
+- Fresh conda installs work: env_conda doesn't exist yet when setup.py runs (it creates it in step 1/3), so `conda run -p` died with EnvironmentLocationNotFound — setup.py is now driven by system python on fresh installs (existing envs still run through `conda run`), with conda's own bin dir scoped onto PATH so its `conda create` is found; honest error when no system Python exists
+
+- Viewer is now browser-parity for media flow: drag & drop into Gradio dropzones works (Tauri's native file-drop interception disabled via `dragDropEnabled: false` — it was swallowing drops before Gradio saw them)
+- Gallery downloads are no longer silent: each fresh arrival pops a Save / Save As… prompt — Save keeps it in Downloads, Save As… opens the native dialog (reopens at the last-used folder)
+- Conda env parity: interpreter resolution now knows conda's layout (python.exe at the env root, no Scripts dir) — launch, package install/upgrade/uninstall, requirements restore, update checks and the install smoke test all share one resolver, so conda works the same as uv/venv instead of blocking launch with "can't import torch" on a healthy env (0.5.2 report: RTX 4080 SUPER, env_conda)
+- No-env setup is now a checklist: repo-without-env states show tick-one-of-two radios (Install / repair environment vs Fresh repo) and the big Install button starts the checked choice — no more competing action buttons under a dead Install
+- Empty Active Environment card offers Run Setup directly after unlinking the last env, instead of a dead end
+- Preflight antivirus warning is AMD-only (observed risk: quarantined nightly wheels); NVIDIA/Intel stay on the reactive missing-DLL hint
+- No-restart prerequisites: git/conda/python/py resolve to absolute known locations (plus the owned uv copy), so freshly installed tools work instantly — no PATH refresh, no launcher restart; gates and every spawn site use the same resolver
+- Launcher-owned uv: the installer provisions `uv` into its own `<dataDir>\.tools` via the official standalone installer (`UV_INSTALL_DIR`, keeps the install receipt so `self update` works) and prefers it for every later run — PATH copies belonging to other apps (0.5.3 report: Hermes agent's bundled uv, self-update hit its file lock) are fallback only, never self-updated; offline last resort is a plain copy (works, but receipt-less until a proper install replaces it)
+
 ## [0.5.3] — 2026-09-08
 
 - Pre-install detection gate: fail fast on missing git / Microsoft Basic Display Adapter before any download, warn on pre-2024 AMD drivers, multiple AMD GPUs (dGPU+iGPU order check), unreadable VRAM, and missing Defender exclusions; stale markers and CUDA-era configs are reported instead of tripping the install

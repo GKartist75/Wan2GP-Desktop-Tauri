@@ -916,19 +916,39 @@
         <p class="path-hint path-hint-warn">⚠ Model checkpoints &amp; LoRAs are large (tens–hundreds of GB). Store them on a fast, non-system drive — <strong>not</strong> in AppData/Roaming, which roams with your profile and can bloat or sync unexpectedly. Default <code>C:\Wan2GP-Models\ckpts</code> keeps them separate from the repo.</p>
       </div>
 
-      <button id="installStartBtn">Install</button>
-
-      <!-- Target-folder verdict (classify_target): Fresh / Adopt-Reuse / warn -->
+      <!-- Target-folder verdict (classify_target): checks first, Install button after -->
       <div id="targetVerdict" class="install-stack" style="display:none">
         <div class="ipkgs-header">Install location check</div>
         <div id="targetVerdictBody"></div>
         <div class="reinstall-buttons" style="margin-top:8px">
-          <button class="btn btn-primary small" id="targetAdoptBtn" style="display:none">Install / repair environment</button>
-          <button class="btn btn-ghost small" id="targetFreshBtn" style="display:none" title="Wipe the repo code and reinstall clean. Model libraries, plugins, finetunes and settings are backed up and restored.">Fresh repo (wipe code, keep models)…</button>
+          <div id="targetChoiceList" class="target-choice-list" style="display:none">
+            <label class="target-choice"><input type="radio" name="targetChoice" value="repair" checked>
+              <span><strong>Install / repair environment</strong> <span class="istack-hint">keeps models &amp; settings</span></span></label>
+            <label class="target-choice"><input type="radio" name="targetChoice" value="fresh">
+              <span><strong>Fresh repo</strong> <span class="istack-hint">wipe code, keep models…</span></span></label>
+          </div>
           <button class="btn btn-primary small" id="targetUseModelsBtn" style="display:none">Reuse its models in a fresh install</button>
           <button class="btn btn-ghost small" id="targetBrowseBtn" style="display:none">Choose empty folder…</button>
         </div>
       </div>
+
+      <!-- Reinstall choice (shown when Wan2GP already installed): tick one,
+           then press the big Install button — the radios never launch. -->
+      <div id="reinstallChoice" class="reinstall-choice hidden">
+        <p class="reinstall-prompt">Wan2GP is already installed. Tick your choice, then press Install.</p>
+        <div class="reinstall-buttons">
+          <div id="reinstallChoiceList" class="target-choice-list">
+            <label class="target-choice"><input type="radio" name="reinstallChoice" value="update" checked>
+              <span><strong>Update &amp; keep files</strong> <span class="istack-hint">repair env in place</span></span></label>
+            <label class="target-choice"><input type="radio" name="reinstallChoice" value="fresh">
+              <span><strong>Reinstall (fresh)</strong> <span class="istack-hint">wipe code, keep models…</span></span></label>
+            <label class="target-choice"><input type="radio" name="reinstallChoice" value="skip">
+              <span><strong>Use existing</strong> <span class="istack-hint">health-check, then Dashboard</span></span></label>
+          </div>
+        </div>
+      </div>
+
+      <button id="installStartBtn">Install</button>
 
       <!-- Hardware info -->
       <div class="install-hw">
@@ -987,16 +1007,7 @@
         <button class="btn btn-ghost small" id="copyDiagnosticsBtn" style="margin-top:8px;display:none">Copy diagnostics</button>
       </div>
 
-      <!-- Reinstall choice (shown when Wan2GP already installed) -->
-      <div id="reinstallChoice" class="reinstall-choice hidden">
-        <p class="reinstall-prompt">Wan2GP is already installed. What do you want to do?</p>
-        <div class="reinstall-buttons">
-          <button id="reinstallFreshBtn" class="btn btn-ghost">Reinstall (fresh)</button>
-          <button id="reinstallUpdateBtn" class="btn btn-primary">Update &amp; keep files</button>
-          <button id="reinstallSkipBtn" class="btn btn-ghost">Use existing &amp; go to Dashboard</button>
-        </div>
-      </div>
-
+      <!-- (reinstallChoice lives above, next to the Install button) -->
       <div class="install-bottom">
         <div class="install-task-col">
           <div class="task-list" id="taskList">

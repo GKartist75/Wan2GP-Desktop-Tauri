@@ -667,6 +667,16 @@ body {
 .reinstall-prompt { font-size: 0.8125rem; color: var(--text-primary); margin: 0 0 12px 0; }
 .reinstall-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 
+.target-choice-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; width: 100%; }
+.target-choice {
+  display: flex; gap: 10px; align-items: flex-start; cursor: pointer;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 0.75rem; color: var(--text-primary); line-height: 1.4;
+}
+.target-choice:hover { border-color: var(--accent); }
+.target-choice input[type="radio"] { margin-top: 2px; accent-color: var(--accent); flex-shrink: 0; }
+.target-choice .istack-hint { display: inline; margin-top: 0; }
+
 .install-info {
   font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4;
   margin: -4px 0 12px 0; max-width: 480px;

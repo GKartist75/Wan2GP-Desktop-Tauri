@@ -290,9 +290,10 @@ pub(crate) async fn move_path_inner(app: &tauri::AppHandle, s: &Path, d: &Path) 
 /// Move a just-downloaded gallery file out of ~/Downloads via a native
 /// Save-As dialog (filename prefilled, location/folder chosen by the user).
 /// The download click itself is untouchable (cross-origin Gradio iframe +
-/// zero-UI WebView2 completion), so this runs from the arrival toast's click.
-/// `name` must be a bare filename — any path components are stripped.
-#[tauri::command] pub fn save_downloaded_file(app: tauri::AppHandle, name: String) -> Result<serde_json::Value, String> {
+/// zero-UI WebView2 completion), so this runs from the arrival prompt's
+/// Save-As button. `name` must be a bare filename — any path components
+/// are stripped. `dir` optionally seeds the dialog at the last-used folder.
+#[tauri::command] pub fn save_downloaded_file(app: tauri::AppHandle, name: String, dir: Option<String>) -> Result<serde_json::Value, String> {
     use tauri_plugin_dialog::DialogExt;
     let safe: PathBuf = Path::new(&name).file_name()
         .map(PathBuf::from)
@@ -300,7 +301,12 @@ pub(crate) async fn move_path_inner(app: &tauri::AppHandle, s: &Path, d: &Path) 
         .ok_or_else(|| "bad filename".to_string())?;
     let src = home_dir().join("Downloads").join(&safe);
     if !src.is_file() { return Err("file is no longer in Downloads (moved or deleted?)".into()); }
-    let dst = match app.dialog().file().set_file_name(safe.to_string_lossy().as_ref()).blocking_save_file() {
+    let mut dlg = app.dialog().file().set_file_name(safe.to_string_lossy().as_ref());
+    if let Some(d) = dir.filter(|d| !d.trim().is_empty()) {
+        let dp = PathBuf::from(&d);
+        if dp.is_dir() { dlg = dlg.set_directory(dp); }
+    }
+    let dst = match dlg.blocking_save_file() {
         Some(p) => p.into_path().map_err(|e| e.to_string())?,
         None => return Ok(serde_json::json!({"ok": true, "cancelled": true})),
     };

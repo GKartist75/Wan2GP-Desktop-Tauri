@@ -1044,6 +1044,17 @@ function resetTasks(){ Object.values(taskMap).forEach(t=>{ t.className='task pen
 
 // ── Installer ──
 let selectedEnvType = 'uv'
+// Checklist verdict: when the install folder holds a repo without a working env
+// (repo_no_env / ours_broken_env), the choice lives in the #targetChoiceList
+// radios and the big Install button dispatches it (see startInstall).
+let _targetChoiceMode = null
+// True while an install is actually running (set in doInstall, cleared on
+// every exit) — verdict refreshes must never resurrect Install mid-install
+// (e.g. Browse clicked during a fresh install re-trips repo_no_env).
+let _installRunning = false
+// Stashed Fresh-repo backup choice (collect-only modal). The wipe launches
+// solely from the big Install button — never from inside the backup dialog.
+let _freshBackupChoice = null
 
 document.querySelectorAll('.env-type-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -1054,25 +1065,15 @@ document.querySelectorAll('.env-type-btn').forEach(btn => {
 })
 
 $('installStartBtn').addEventListener('click', startInstall)
-// Fresh wipe shared by the healthy-state trio and the no-env Adopt row:
-// backup dialog first, then doInstall('reinstall') which wipes the repo
-// (trash, not delete), reinstalls, and merges the backup back.
-async function doFreshReinstall() {
-  // Backup dialog first: show folder size + offer model relocation.
-  // Cancel (null) aborts; {skip:true} wipes without backup.
-  const choice = await showReinstallBackupModal().catch(() => null)
-  if (!choice) { appendLog('[*] Reinstall cancelled.') ; return }
-  if (choice.skip) {
-    if (!window.confirm('Really wipe without any backup? Custom plugins, finetunes, settings and any models inside the folder will be deleted.')) return
-    doInstall(null, 'reinstall', { backup: false })
-    return
-  }
-  doInstall(null, 'reinstall', choice)
-}
-$('reinstallFreshBtn').addEventListener('click', doFreshReinstall)
-$('targetFreshBtn')?.addEventListener('click', doFreshReinstall)
-$('reinstallUpdateBtn').addEventListener('click', () => doInstall(null, 'update'))
-$('reinstallSkipBtn').addEventListener('click', () => doInstall(null, 'skip'))
+// Fresh-repo choice is single-use: switching radios voids a stashed backup
+// choice so a stale pick can never launch without a fresh modal pass.
+document.querySelectorAll('input[name="targetChoice"], input[name="reinstallChoice"]').forEach(function(r) {
+  r.addEventListener('change', function() { _freshBackupChoice = null })
+})
+// NOTE: the healthy-state trio and the no-env checklist are radios now —
+// all launching goes through the big Install button (see startInstall).
+// The backup modal below is collect-only; doInstall('reinstall') wipes the
+// repo (trash, not delete), reinstalls, and merges the backup back.
 
 $('validateInstallBtn')?.addEventListener('click', async () => {
   const btn = $('validateInstallBtn')
@@ -1280,6 +1281,67 @@ async function startInstall(){
     var hasConda = await hasCmd('conda')
     if (!hasConda) { appendLog('[!] Conda not found — showing install help'); showPrereqHelp('Conda not found', 'Miniconda is required for conda installs. Click Download to install it silently, or select venv/uv above.', 'https://docs.anaconda.com/miniconda/', 'conda'); return }
   }
+  // Fresh-repo: collect the backup choice FIRST (modal never launches —
+  // the wipe starts solely from the big Install button). Stored, then the
+  // user presses Install again for the final are-you-sure + launch.
+  // Applies to the no-env checklist AND the healthy-state trio.
+  const pickedRadio = function(name) { return (document.querySelector('input[name="' + name + '"]:checked') || {}).value || null }
+  const freshPicked = (_targetChoiceMode === 'repair-or-fresh' && pickedRadio('targetChoice') === 'fresh') ||
+    (_targetChoiceMode === 'reinstall-trio' && pickedRadio('reinstallChoice') === 'fresh')
+  if (freshPicked && !_freshBackupChoice) {
+    const choice = await showReinstallBackupModal().catch(() => null)
+    if (!choice) return
+    _freshBackupChoice = choice
+    showToast('Backup choice saved — press Install to start')
+    return
+  }
+  // Are-you-sure gate: the Install button sits below the checks, and
+  // nothing starts without explicit confirmation (fresh-repo wipes code).
+  let choiceNote = ''
+  let wipeWarn = ''
+  if (_targetChoiceMode === 'repair-or-fresh') {
+    const checked = document.querySelector('input[name="targetChoice"]:checked')
+    const isFresh = (checked && checked.value) === 'fresh'
+    choiceNote = isFresh
+      ? 'Fresh repo (wipe code, keep models)' + (_freshBackupChoice ? ((_freshBackupChoice.skip ? ' — no backup' : ' — with backup')) : '')
+      : 'Install / repair environment (keeps models & settings)'
+    if (isFresh && _freshBackupChoice && _freshBackupChoice.skip) wipeWarn = '\n⚠ WILL WIPE code, plugins, finetunes, settings and any models inside the folder.'
+  } else if (_targetChoiceMode === 'reinstall-trio') {
+    const v = pickedRadio('reinstallChoice')
+    choiceNote = (v === 'fresh'
+      ? 'Reinstall (fresh)' + (_freshBackupChoice ? ((_freshBackupChoice.skip ? ' — no backup' : ' — with backup')) : '')
+      : v === 'skip' ? 'Use existing (health-check)' : 'Update & keep files')
+    if (v === 'fresh' && _freshBackupChoice && _freshBackupChoice.skip) wipeWarn = '\n⚠ WILL WIPE code, plugins, finetunes, settings and any models inside the folder.'
+  }
+  let locNote = ''
+  try {
+    const paths = await window.w2gp.getInstallPaths().catch(() => null)
+    if (paths && (paths.repo || paths.dataDir)) locNote = '\nLocation: ' + (paths.repo || paths.dataDir)
+  } catch {}
+  if (!window.confirm('Start the Wan2GP install now?' + (choiceNote ? '\nChoice: ' + choiceNote : '') + '\nEnvironment: ' + selectedEnvType + locNote + wipeWarn + '\n\nThis downloads several GB and takes 5–20 minutes.')) return
+  // Checklist + trio dispatch: the big Install button is the ONLY launcher.
+  // Fresh wipes consume the stashed backup choice (collected earlier) — the
+  // wipe warning already lives in the single CONFIRM above, so dispatch
+  // launches directly with no second dialog.
+  const launchFresh = function() {
+    const stored = _freshBackupChoice
+    _freshBackupChoice = null
+    resetTasks()
+    if (stored && stored.skip) { doInstall(null, 'reinstall', { backup: false }); return }
+    doInstall(null, 'reinstall', stored); return
+  }
+  if (_targetChoiceMode === 'repair-or-fresh') {
+    const checked = document.querySelector('input[name="targetChoice"]:checked')
+    if ((checked && checked.value) === 'fresh') { launchFresh(); return }
+    _freshBackupChoice = null
+    resetTasks(); doInstall(null, 'update'); return
+  }
+  if (_targetChoiceMode === 'reinstall-trio') {
+    const v = pickedRadio('reinstallChoice')
+    if (v === 'fresh') { launchFresh(); return }
+    _freshBackupChoice = null
+    resetTasks(); doInstall(null, v === 'skip' ? 'skip' : 'update'); return
+  }
   show('installer'); resetTasks()
   $('envTypeSelect').classList.add('disabled')
   document.querySelectorAll('.env-type-btn').forEach(b => b.disabled = true)
@@ -1391,6 +1453,10 @@ function showReinstallBackupModal() {
 
 async function doInstall(installed, mode, opts) {
   $('reinstallChoice').classList.add('hidden')
+  // Checklist verdict consumed — hide it so it can't be re-dispatched mid-install.
+  _targetChoiceMode = null
+  _installRunning = true
+  if ($('targetChoiceList')) $('targetChoiceList').style.display = 'none'
   installProgressReset()
   if (mode === 'skip') {
     // Reuse must earn it: a stale envs.json or half-deleted venv used to sail
@@ -1400,11 +1466,13 @@ async function doInstall(installed, mode, opts) {
     try { v = await window.w2gp.validateInstall() } catch (e) { v = { ok: false, errors: [e.message || String(e)] } }
     if (v && v.ok) {
       appendLog('[*] Existing install healthy — reusing.')
+      _installRunning = false
       show('dashboard'); refreshDashboard()
       return
     }
     appendLog('[!] Existing install failed checks: ' + ((v && v.errors && v.errors.join('; ')) || 'unknown'))
     $('installSubtitle').textContent = 'Existing install needs repair — see issues above'
+    _installRunning = false
     try { await refreshTargetVerdict() } catch {}
     showToast('✗ Existing install failed health checks — repair instead of reusing')
     return
@@ -1430,6 +1498,7 @@ async function doInstall(installed, mode, opts) {
       $('envTypeSelect').classList.remove('disabled')
       document.querySelectorAll('.env-type-btn').forEach(b => b.disabled = false)
       $('installStartBtn').classList.remove('hidden')
+      _installRunning = false
       return
     }
   } else if (mode === 'update') {
@@ -1478,6 +1547,7 @@ async function doInstall(installed, mode, opts) {
       appendLog(`[!] Failed to write model config: ${errText(e)}`)
     }
     taskComplete('done'); $('installSubtitle').textContent='Wan2GP is ready!'; appendLog('[*] Installation complete!')
+    _installRunning = false
     const vb = $('validateInstallBtn')
     if (vb) { vb.style.display = ''; vb.disabled = false; vb.textContent = 'Validate installation' }
     setTimeout(()=>{ show('dashboard'); refreshDashboard(); startMetricsPolling() }, 1200)
@@ -1496,6 +1566,7 @@ async function doInstall(installed, mode, opts) {
     if (sb) { sb.classList.remove('hidden'); sb.disabled = false; sb.textContent = 'Retry install' }
     const cdb = $('copyDiagnosticsBtn')
     if (cdb) { cdb.style.display = ''; cdb.onclick = copyDiagnostics }
+    _installRunning = false
     showToast('✗ Install failed — fix the issue above, then Retry')
   }
 }
@@ -1568,16 +1639,16 @@ async function copyDiagnostics() {
 // repo_no_env | pinokio | foreign.
 async function refreshTargetVerdict() {
   const box = $('targetVerdict'), body = $('targetVerdictBody')
-  const adopt = $('targetAdoptBtn'), browse = $('targetBrowseBtn'), useModels = $('targetUseModelsBtn'), fresh = $('targetFreshBtn')
+  const choiceList = $('targetChoiceList'), browse = $('targetBrowseBtn'), useModels = $('targetUseModelsBtn')
   if (!box || !body) return
   let t = null
   try { t = await window.w2gp.classifyTarget() } catch { box.style.display = 'none'; return null }
   if (!t || !t.verdict) { box.style.display = 'none'; return null }
   const v = t.verdict
-  if (adopt) adopt.style.display = 'none'
+  if (choiceList) choiceList.style.display = 'none'
   if (browse) browse.style.display = 'none'
   if (useModels) useModels.style.display = 'none'
-  if (fresh) fresh.style.display = 'none'
+  _targetChoiceMode = null
   const startBtn = $('installStartBtn')
   if (v === 'empty') {
     box.style.display = 'none'
@@ -1596,25 +1667,37 @@ async function refreshTargetVerdict() {
   const envNames = (t.envs && Object.keys(t.envs).join(', ')) || ''
   if (v === 'ours_healthy') {
     body.innerHTML = '<div class="istack-ok">✓ ' + escHtml(t.hint || '') + '</div>'
-    // Reuse path: the existing reinstall choice owns reuse / update / fresh.
+    // Reuse path: the choice lives in the trio radios, the big Install
+    // button dispatches it — same contract as the no-env checklist.
     $('reinstallChoice')?.classList.remove('hidden')
+    const trio = document.querySelector('input[name="reinstallChoice"][value="update"]')
+    if (trio) trio.checked = true
+    _targetChoiceMode = 'reinstall-trio'
+    if (startBtn && !_installRunning) {
+      startBtn.classList.remove('hidden')
+      if (!startBtn.disabled) { startBtn.textContent = 'Install'; startBtn.title = '' }
+    }
     $('installSubtitle').textContent = 'Wan2GP is already installed.'
   } else if (v === 'repo_no_env' || v === 'ours_broken_env') {
-    // Adopt button covers this — the generic Keep/Update/Skip trio doesn't apply.
+    // Checklist mode: the choice lives in the radios, the big Install button
+    // dispatches it (see startInstall) — no competing action buttons.
+    // Adopt-cover note: the generic Keep/Update/Skip trio doesn't apply.
     $('reinstallChoice')?.classList.add('hidden')
     body.innerHTML = '<div class="istack-w">⚠ ' + escHtml(t.hint || '') + '</div>' +
-      (envNames ? '<div class="istack-hint">Env folders found: ' + escHtml(envNames) + ' — repair recreates the broken one, keeps models & settings.</div>' : '')
-    if (adopt) {
-      adopt.style.display = ''
-      adopt.textContent = 'Install / repair environment (keeps models & settings)'
-      adopt.onclick = function() { resetTasks(); doInstall(null, 'update') }
+      (envNames ? '<div class="istack-hint">Env folders found: ' + escHtml(envNames) + ' — repair recreates the broken one, keeps models & settings.</div>' : '') +
+      '<div class="istack-hint">Tick your choice below, then press Install.</div>'
+    if (choiceList) {
+      choiceList.style.display = ''
+      const repair = choiceList.querySelector('input[value="repair"]')
+      if (repair) repair.checked = true
     }
-    // Fresh wipe alongside Adopt: corrupted repo code (diverged git,
-    // half-updated tree) can't be repaired by an env install — same
-    // backup-modal flow as the healthy-state trio's Reinstall (fresh).
-    if (fresh) {
-      fresh.style.display = ''
-      fresh.onclick = function() { doFreshReinstall() }
+    _targetChoiceMode = 'repair-or-fresh'
+    // Re-arm the big button (the first Install pass hid it to show this card).
+    // Never override a hard block owned elsewhere (disk gates, pinokio, roots),
+    // and never resurrect it while an install is running.
+    if (startBtn && !_installRunning) {
+      startBtn.classList.remove('hidden')
+      if (!startBtn.disabled) { startBtn.textContent = 'Install'; startBtn.title = '' }
     }
     $('installSubtitle').textContent = 'Wan2GP repo found — environment missing or broken.'
   } else { // pinokio | foreign
@@ -2920,12 +3003,14 @@ $('zoomSlider').addEventListener('input', () => {
   }, 120)
 })
 
-// ── Silent-download feedback ──
+// ── Download Save / Save-As prompt ──
 // WebView2 completes iframe downloads with zero UI (no shelf, toast or
 // dialog), so gallery saves look broken while files pile up in Downloads.
-// While the Desktop view is open, poll Downloads for fresh media and toast
-// each arrival with its filename. Baseline resets whenever the view is
-// hidden so old files never announce themselves.
+// While the Desktop view is open, poll Downloads for fresh media and pop a
+// browser-like prompt per arrival: [Save] keeps it in Downloads, [Save As…]
+// opens the native dialog and moves it (dialog reopens at the last-used
+// folder). Baseline resets whenever the view is hidden so old files never
+// announce themselves.
 let _dlWatchTimer = null
 const _dlWatchSeen = new Set()
 let _dlWatchBaseline = 0
@@ -2946,18 +3031,54 @@ function startDownloadsWatch() {
         if (!f.name || _dlWatchSeen.has(key)) continue
         _dlWatchSeen.add(key)
         if (!DL_MEDIA_RE.test(f.name)) continue
-        const fname = f.name
-        showToast('⬇ Saved to Downloads: ' + fname + ' — click to move it', async () => {
-          try {
-            const r = await window.w2gp.saveDownloadedFile(fname)
-            if (r && r.cancelled) { showToast('Kept in Downloads: ' + fname); return }
-            if (r && (r.ok || r.success) && r.path) showToast('✓ Moved to: ' + r.path)
-            else showToast('✗ Move failed: ' + ((r && r.error) || 'unknown'))
-          } catch (e) { showToast('✗ ' + errText(e)) }
-        })
+        showDownloadPrompt(f.name)
       }
     } catch {}
   }, 4000)
+}
+
+// Browser-like arrival prompt: Save (keep in Downloads) vs Save As… (move
+// via native dialog). Remembers the last Save-As folder for the session.
+function showDownloadPrompt(fname) {
+  const t = document.createElement('div')
+  t.setAttribute('role', 'status')
+  t.setAttribute('aria-live', 'polite')
+  t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#333;color:#e8e6e1;padding:8px 12px;border-radius:6px;font-size:13px;z-index:9999;font-family:Geist Mono,monospace;display:flex;gap:8px;align-items:center;max-width:90vw'
+  const label = document.createElement('span')
+  label.textContent = '⬇ ' + fname
+  label.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:46vw'
+  const mkBtn = (text, title) => {
+    const b = document.createElement('button')
+    b.textContent = text
+    b.title = title
+    b.style.cssText = 'background:#4a4a4a;color:#fff;border:1px solid #666;border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;font-family:inherit'
+    return b
+  }
+  const saveBtn = mkBtn('Save', 'Keep it in your Downloads folder')
+  const saveAsBtn = mkBtn('Save As…', 'Choose where to save it')
+  t.append(label, saveBtn, saveAsBtn)
+  document.body.appendChild(t)
+  let gone = false
+  const dismiss = () => { if (gone) return; gone = true; t.style.opacity = '0'; t.style.transition = 'opacity 0.3s'; setTimeout(() => t.remove(), 400) }
+  saveBtn.addEventListener('click', () => { dismiss(); showToast('✓ Saved to Downloads: ' + fname) })
+  saveAsBtn.addEventListener('click', async () => {
+    dismiss()
+    try {
+      let lastDir = null
+      try { lastDir = localStorage.getItem('w2gp.saveAsDir') } catch {}
+      const r = await window.w2gp.saveDownloadedFile(fname, lastDir)
+      if (r && r.cancelled) { showToast('Kept in Downloads: ' + fname); return }
+      if (r && (r.ok || r.success) && r.path) {
+        try {
+          const slash = Math.max(r.path.lastIndexOf('/'), r.path.lastIndexOf('\\'))
+          if (slash > 0) localStorage.setItem('w2gp.saveAsDir', r.path.slice(0, slash))
+        } catch {}
+        showToast('✓ Saved to: ' + r.path)
+      }
+      else showToast('✗ Save failed: ' + ((r && r.error) || 'unknown'))
+    } catch (e) { showToast('✗ ' + errText(e)) }
+  })
+  setTimeout(dismiss, 30000)
 }
 
 // ── Running LED ──

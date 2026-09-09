@@ -176,6 +176,21 @@ pub(crate) fn env_entry_alive(repo: &std::path::Path, entry: &serde_json::Value)
     #[cfg(not(windows))] { base.join("bin/python").exists() || base.join("bin/python3").exists() || base.join("python").exists() }
 }
 
+/// Resolve the interpreter for a registered env dir (relative or absolute).
+/// Layouts differ per env type — uv/venv keep it under Scripts\ (Windows)
+/// or bin/ (unix), conda keeps python.exe at the env ROOT. Returns the
+/// first candidate that exists, or None (callers fall back to their legacy
+/// default so error messages stay identical). Pure + unit-tested.
+/// (0.5.2 report: conda env healthy but launch blocked — resolution only
+/// knew Scripts\, so it tried to execute the env folder itself.)
+pub(crate) fn resolve_env_python(repo: &std::path::Path, raw: &str) -> Option<PathBuf> {
+    if raw.is_empty() { return None; }
+    let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { repo.join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
+    #[cfg(windows)] let cands = [base.join("Scripts\\python.exe"), base.join("python.exe")];
+    #[cfg(not(windows))] let cands = [base.join("bin/python"), base.join("bin/python3"), base.join("python")];
+    cands.into_iter().find(|p| p.is_file())
+}
+
 pub(crate) fn get_active_env() -> serde_json::Value {
     let f = get_envs_file();
     if !f.exists() { return serde_json::Value::Null; }
@@ -211,16 +226,18 @@ pub fn check_installed() -> serde_json::Value {
 
 #[tauri::command]
 pub fn check_command(cmd: String) -> serde_json::Value {
+    // Absolute known locations first (fresh prerequisite installs usable
+    // with no PATH refresh, no restart); PATH/shim check as fallback.
     // Windows: tool_usable filters the Store shim (a bare `where` hit is not
     // proof of a runnable binary — see base::tool_usable).
-    #[cfg(windows)] let found = tool_usable(&cmd);
-    #[cfg(not(windows))] let found = silent_command("which").arg(&cmd).output().is_ok_and(|o| o.status.success());
+    #[cfg(windows)] let found = crate::install::tool_found(&cmd);
+    #[cfg(not(windows))] let found = crate::install::tool_found(&cmd) || silent_command("which").arg(&cmd).output().is_ok_and(|o| o.status.success());
     serde_json::json!({"cmd": cmd, "found": found})
 }
 
 #[cfg(test)]
 mod env_alive_tests {
-    use super::env_entry_alive;
+    use super::{env_entry_alive, resolve_env_python};
     fn tmp_repo(tag: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("wgp-env-alive-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -253,6 +270,35 @@ mod env_alive_tests {
         assert!(env_entry_alive(&repo, &abs));
         // System env (no folder) stays alive.
         assert!(env_entry_alive(&repo, &serde_json::json!({"type": "none", "path": ""})));
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+    #[test]
+    fn resolver_covers_all_env_layouts() {
+        let repo = tmp_repo("resolve");
+        // uv/venv layout: Scripts\python.exe (Windows) / bin/python (unix).
+        std::fs::create_dir_all(repo.join("env_uv")).unwrap();
+        plant_python(&repo.join("env_uv"));
+        assert!(resolve_env_python(&repo, "./env_uv").is_some());
+        // conda layout: python.exe at the env root, no Scripts dir.
+        let conda = repo.join("env_conda");
+        std::fs::create_dir_all(&conda).unwrap();
+        #[cfg(windows)] { std::fs::write(conda.join("python.exe"), b"fake").unwrap(); }
+        #[cfg(not(windows))] { std::fs::write(conda.join("python"), b"fake").unwrap(); }
+        let found = resolve_env_python(&repo, ".\\env_conda").expect("conda root interpreter");
+        #[cfg(windows)] { assert_eq!(found, conda.join("python.exe")); }
+        #[cfg(not(windows))] { assert_eq!(found, conda.join("python")); }
+        // Scripts wins when both exist (uv/venv never have a root python).
+        plant_python(&conda);
+        let both = resolve_env_python(&repo, "./env_conda").unwrap();
+        #[cfg(windows)] { assert_eq!(both, conda.join("Scripts\\python.exe")); }
+        #[cfg(not(windows))] { assert_eq!(both, conda.join("bin/python")); }
+        // Missing dir, empty dir, empty path → None (callers keep legacy fallback).
+        assert!(resolve_env_python(&repo, "./env_gone").is_none());
+        std::fs::create_dir_all(repo.join("env_empty")).unwrap();
+        assert!(resolve_env_python(&repo, "./env_empty").is_none());
+        assert!(resolve_env_python(&repo, "").is_none());
+        // Absolute raw path form.
+        assert!(resolve_env_python(&repo, conda.to_string_lossy().as_ref()).is_some());
         let _ = std::fs::remove_dir_all(&repo);
     }
 }
