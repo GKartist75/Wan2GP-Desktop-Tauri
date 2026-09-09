@@ -90,11 +90,39 @@ copy button for the equivalent command.
 
 Opened on first run, via 🧭 Run Setup, or Manage → Run Setup again.
 
+```mermaid
+flowchart TD
+    A["Installer opens\nfirst run / Run Setup"] --> B{"Prerequisites missing?"}
+    B -- "Yes: Git, Python, uv or Miniconda" --> C["Download and Install\none click, then continue"]
+    C --> B
+    B -- "No, all present" --> D["1. Pick environment\nuv / venv / conda"]
+    D --> E["2. Pick folders\ninstall location + Checkpoints / LoRAs / Output"]
+    E --> F{"3. Folder check:\nwhat is already there?"}
+    F -- "Empty" --> G["No choice needed"]
+    F -- "Repo without env" --> H["Checklist\nRepair default / Fresh"]
+    F -- "Healthy install" --> I["Trio\nUpdate default / Fresh / Use existing"]
+    F -- "Pinokio tree" --> J["Install BLOCKED\nreuse its models elsewhere"]
+    F -- "Foreign files" --> K["Warning\nInstall anyway / Browse"]
+    G --> L["4. Big INSTALL button\nthe ONLY thing that starts a setup"]
+    H --> L
+    I --> L
+    K --> L
+    L --> FQ{"Fresh picked?"}
+    FQ -- "Yes" --> M["Backup modal\ncollects choice only\nCancel = back to choice"]
+    M --> L2["INSTALL again"]
+    L2 --> N["5. Single CONFIRM\nchoice + env + location\n+ wipe warning if no backup"]
+    FQ -- "No" --> N
+    N -- "Cancel" --> F
+    N -- "OK" --> O["6. Install runs\nclone, env, torch, packages,\nkernels, smoke test"]
+    O --> P["Verify + Dashboard"]
+```
+
 1. **Prerequisites card** (only if something is missing) — Git / Python / uv /
    Miniconda. *Download & Install* fetches it silently, *How to install manually*
    opens the vendor page.
 2. **Environment** — pick `uv` (fast, recommended), `venv` (bundled with Python)
-   or `conda` (Anaconda/Miniconda). All three end up identical: same pinned Python,
+   or `conda` (needs Miniconda — one-click install; its terms are accepted
+   automatically during setup). All three end up identical: same pinned Python,
    same torch stack, same smoke test.
 3. **Install location + model folders** — repo/env/settings folder plus
    Checkpoints, LoRAs and Output folders, each with Browse / reset-to-default.
@@ -104,12 +132,16 @@ Opened on first run, via 🧭 Run Setup, or Manage → Run Setup again.
    - *Repo without a working env* → tick one of two radios (**Install / repair
      environment**, keeps models & settings — pre-ticked; or **Fresh repo**,
      wipes code and keeps models via the backup flow), then press Install.
-   - *Healthy install* → Keep / Update / Reinstall-fresh trio.
+   - *Healthy install* → trio radios (**Update & keep files** — pre-ticked;
+     **Reinstall (fresh)**; **Use existing**), then press Install.
    - *Pinokio tree* → Install is blocked; *Reuse its models in a fresh install*
      points your model folders at the Pinokio library, then pick an empty folder.
    - *Foreign files* → Install anyway (not recommended) or Choose empty folder.
-5. **Install button** (below the checks) — pops an are-you-sure dialog (choice,
-   env type, location, ~5–20 min + several GB). Cancel stops everything.
+5. **Install button** (below the checks — the only thing that ever starts a
+   setup) — one adaptive are-you-sure dialog (choice, env type, location,
+   wipe warning when wiping without backup, ~5–20 min + several GB).
+   Fresh-repo takes two presses: Install → backup modal (collects the choice)
+   → Install → confirm → run. Cancel anywhere stops everything.
 6. Below: **hardware summary**, **GPU Profile Overview** (Python, Torch/CUDA,
    Triton, attention backends, kernel wheels), **expected packages**, **live
    download rows**, **resolved install stack** with *Validate installation* and
