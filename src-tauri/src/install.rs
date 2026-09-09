@@ -1226,6 +1226,24 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
     // run setup.py with the env's python (hardware-aware: setup.py reads setup_config.json + GPU)
     {
         let (py, args): (String, Vec<String>) = if env.as_str() == "conda" {
+            // Anaconda ToS gate (2024+): `conda create/install` from
+            // repo.anaconda.com refuses non-interactively until accepted.
+            // Accept once, transparently logged (same precedent as winget
+            // --accept-package-agreements); old condas lack `tos` → ignored.
+            // Acceptance persists in conda config, so one pass covers the
+            // whole install regardless of fresh/existing env.
+            let conda_bin = tool_path("conda");
+            if conda_bin != "conda" {
+                for ch in ["https://repo.anaconda.com/pkgs/main",
+                           "https://repo.anaconda.com/pkgs/r",
+                           "https://repo.anaconda.com/pkgs/msys2"] {
+                    let ok = silent_command(conda_bin.as_str())
+                        .args(["tos", "accept", "--override-channels", "--channel", ch])
+                        .output().is_ok_and(|o| o.status.success());
+                    if (ok) { emit(&format!("[*] Anaconda ToS accepted: {ch}\n")); }
+                    else { emit(&format!("[!] conda ToS accept failed for {ch} (old conda without enforcement, or offline) — continuing; channel ops may refuse.\n")); }
+                }
+            }
             if resolve_env_python(&repo, &env_path.to_string_lossy()).is_some() {
                 // Existing env: run through it.
                 (tool_path("conda"), vec!["run".into(), "-p".into(), env_path.to_string_lossy().to_string(), "python".into(), "setup.py".into(), "install".into(), "--env".into(), env.clone(), "--auto".into()])
