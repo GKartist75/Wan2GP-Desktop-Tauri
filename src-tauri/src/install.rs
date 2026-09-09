@@ -834,6 +834,44 @@ fn patch_setup_py_overrides(repo: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Conda-direct-pip patch: `conda run` re-quotes args on Windows and corrupts
+/// URL-encoded wheel URLs (SpargeAttn %2B -> "Invalid build number"), so the
+/// conda install template drives pip with the env interpreter directly
+/// (venv shape; conda keeps python.exe at the env root).
+/// Separate marker from patch_setup_py_overrides: repos patched by older
+/// builds (marker present, conda template untouched) must still get this.
+/// Refuses on drift like the main patch. Pure glue + unit-tested.
+const SETUP_PY_CONDA_MARKER: &str = "# Launcher override (Tauri installer): conda-direct-pip";
+fn patch_setup_py_conda_pip(repo: &std::path::Path) -> Result<(), String> {
+    let path = repo.join("setup.py");
+    let raw = std::fs::read_to_string(&path).map_err(|e| format!("setup.py unreadable: {e}"))?;
+    if raw.contains(SETUP_PY_CONDA_MARKER) { return Ok(()); }
+    let had_crlf = raw.contains("\r\n");
+    let hay: String = if had_crlf { raw.replace("\r\n", "\n") } else { raw.clone() };
+    const CONDA_ANCHOR: &str = "        \"install\": \"conda run -p \\\"{dir}\\\" pip install\"";
+    const CONDA_PATCH: &str = "        # Launcher override (Tauri installer): conda-direct-pip — `conda run`\n        # re-quotes args on Windows and corrupts URL-encoded wheel URLs\n        # (SpargeAttn %2B -> \"Invalid build number\"). Drive pip with the env\n        # interpreter directly (venv shape; conda keeps python.exe at root).\n        \"install\": (('\"' + os.path.join(\"{dir}\", \"python.exe\") + '\" -m pip install') if IS_WIN else ('\"' + os.path.join(\"{dir}\", \"bin\", \"python\") + '\" -m pip install'))";
+    if !hay.contains(CONDA_ANCHOR) { return Err("anchors missed: conda install template (`conda run -p ... pip install`)".into()); }
+    let patched = hay.replacen(CONDA_ANCHOR, CONDA_PATCH, 1);
+    // Same syntax gate as the main patch (never ship a SyntaxError).
+    let check_src = patched.clone();
+    let check_ok = (|| -> bool {
+        static CHECK_N2: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = CHECK_N2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = std::env::temp_dir().join(format!("wgp-setup-py-conda-check-{}-{n}.py", std::process::id()));
+        if std::fs::write(&tmp, check_src).is_err() { return true; }
+        let arg = tmp.to_string_lossy().to_string();
+        let py = tool_path("python");
+        let ok = silent_command(py.as_str()).args(["-c", "import ast,sys; ast.parse(open(sys.argv[1]).read())", &arg]).output()
+            .map(|o| o.status.success()).unwrap_or(true);
+        let _ = std::fs::remove_file(&tmp);
+        ok
+    })();
+    if !check_ok { return Err("patched setup.py failed ast.parse — upstream drift, refusing to write".into()); }
+    let out = if had_crlf { patched.replace('\n', "\r\n") } else { patched };
+    std::fs::write(&path, out).map_err(|e| format!("setup.py unwritable: {e}"))?;
+    Ok(())
+}
+
 /// Pre-install detection gate: fail fast on missing tooling / missing
 /// vendor driver, and report healable state BEFORE any download (the 0.5.x
 /// AMD saga was all discovered after 20-minute installs). Returns (fatal,
@@ -1182,6 +1220,12 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
         Ok(()) => emit("[*] setup.py launcher-override patch ready (profile + VRAM via WAN2GP_TAURI_*).\n"),
         Err(e) => emit(&format!("[!] setup.py override patch skipped ({e}) — setup.py will use its own detection.\n")),
     }
+    // Conda pip routing (separate marker — applies even to repos patched by
+    // older builds). Attempted on every install like the main patch.
+    match patch_setup_py_conda_pip(&repo) {
+        Ok(()) => emit("[*] setup.py conda pip routing ready (direct interpreter, no `conda run` re-quoting).\n"),
+        Err(e) => emit(&format!("[!] setup.py conda patch skipped ({e}) — conda URL installs may fail.\n")),
+    }
     // Stale wgp_config.json from the 0.5.1 failure mode (CUDA-era attention
     // sage/sage2 written for an AMD box): setup.py's create_wgp_config
     // early-returns when the file exists, so a stale file would pin the
@@ -1240,7 +1284,7 @@ pub async fn install(app: tauri::AppHandle, env_type: Option<String>) -> Result<
                     let ok = silent_command(conda_bin.as_str())
                         .args(["tos", "accept", "--override-channels", "--channel", ch])
                         .output().is_ok_and(|o| o.status.success());
-                    if (ok) { emit(&format!("[*] Anaconda ToS accepted: {ch}\n")); }
+                    if ok { emit(&format!("[*] Anaconda ToS accepted: {ch}\n")); }
                     else { emit(&format!("[!] conda ToS accept failed for {ch} (old conda without enforcement, or offline) — continuing; channel ops may refuse.\n")); }
                 }
             }
@@ -2339,6 +2383,53 @@ mod setup_py_override_tests {
         let err = patch_setup_py_overrides(&d).unwrap_err();
         assert!(err.contains("profile") && err.contains("vram"), "got {err}");
         // Drifted file left untouched.
+        assert_eq!(std::fs::read_to_string(d.join("setup.py")).unwrap(), "print('entirely different file')\n");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod setup_py_conda_tests {
+    use super::patch_setup_py_conda_pip;
+    // Same shape as upstream ENV_TEMPLATES (IS_WIN branch included so the
+    // patched conditional parses on every platform).
+    const CONDA_FIXTURE: &str = "import os\nIS_WIN = os.name == 'nt'\nENV_TEMPLATES = {\n    \"conda\": {\n        \"create\": \"conda create -y -p \\\"{dir}\\\" python={ver}\",\n        \"run\": os.path.join(\"{dir}\", \"python.exe\"),\n        \"install\": \"conda run -p \\\"{dir}\\\" pip install\"\n    },\n}\n";
+    fn conda_dir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("wgp-setup-py-conda-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("setup.py"), CONDA_FIXTURE).unwrap();
+        d
+    }
+    #[test]
+    fn conda_pip_routed_direct_and_idempotent() {
+        let d = conda_dir("ok");
+        patch_setup_py_conda_pip(&d).unwrap();
+        let out = std::fs::read_to_string(d.join("setup.py")).unwrap();
+        assert!(!out.contains("conda run -p"), "conda run survived");
+        assert!(out.contains("conda-direct-pip"), "marker missing");
+        assert!(out.contains("-m pip install"), "direct pip missing");
+        // Parses as Python (proves the generated conditional is valid).
+        let check = std::env::temp_dir().join(format!("wgp-conda-ast-{}-{}.py", std::process::id(), "ok"));
+        std::fs::write(&check, &out).unwrap();
+        let py = super::tool_path("python");
+        let ok = super::silent_command(py.as_str()).args(["-c", "import ast,sys; ast.parse(open(sys.argv[1]).read())", &check.to_string_lossy().to_string()]).output()
+            .map(|o| o.status.success()).unwrap_or(true);
+        let _ = std::fs::remove_file(&check);
+        assert!(ok, "patched fixture failed ast.parse");
+        // Second run is a no-op (own marker, independent of main patch).
+        patch_setup_py_conda_pip(&d).unwrap();
+        let out2 = std::fs::read_to_string(d.join("setup.py")).unwrap();
+        assert_eq!(out, out2, "patch not idempotent");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+    #[test]
+    fn conda_patch_reports_drift() {
+        let d = std::env::temp_dir().join(format!("wgp-setup-py-conda-drift-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        std::fs::write(d.join("setup.py"), "print('entirely different file')\n").unwrap();
+        let err = patch_setup_py_conda_pip(&d).unwrap_err();
+        assert!(err.contains("conda"), "got {err}");
         assert_eq!(std::fs::read_to_string(d.join("setup.py")).unwrap(), "print('entirely different file')\n");
         let _ = std::fs::remove_dir_all(&d);
     }
