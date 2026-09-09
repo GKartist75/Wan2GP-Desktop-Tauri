@@ -2048,13 +2048,15 @@ function refreshEnvUnlink(hasRepo) {
   var btn = $('envUnlinkBtn')
   var restoreBtn = $('envRestoreBtn')
   var reinstallBtn = $('envReinstallBtn')
-  var hideAll = function() { if (btn) btn.style.display = 'none'; if (restoreBtn) restoreBtn.style.display = 'none'; if (reinstallBtn) reinstallBtn.style.display = 'none' }
+  var setupBtn = $('envSetupBtn')
+  var hideAll = function() { if (btn) btn.style.display = 'none'; if (restoreBtn) restoreBtn.style.display = 'none'; if (reinstallBtn) reinstallBtn.style.display = 'none'; if (setupBtn) setupBtn.style.display = 'none' }
   if (hasRepo === false) { hideAll(); return }
   // State-driven: shown whenever an env is known-active, hidden otherwise.
   var hasEnv = window._hasActiveEnv === true
   var name = (hasEnv && window._activeEnvName) || ''
   if (btn) {
     if (name && name !== '—' && name !== 'No active environment') {
+      if (setupBtn) setupBtn.style.display = 'none'
       btn.style.display = ''; if (restoreBtn) restoreBtn.style.display = ''; if (reinstallBtn) reinstallBtn.style.display = ''
       btn.onclick = async () => {
           if (!confirm('Uninstall environment "' + name + '"?')) return
@@ -2062,13 +2064,20 @@ function refreshEnvUnlink(hasRepo) {
           appendLog('[*] Uninstalling environment ' + name + '...')
           try {
             var r = await window.w2gp.uninstallEnv(name)
-            if (r && r.success) { appendLog('[*] Environment ' + name + ' uninstalled.'); refreshDashboard() }
+            if (r && r.success) {
+              appendLog('[*] Environment ' + name + ' uninstalled.')
+              await refreshDashboard()
+              if (window._hasActiveEnv === false) appendLog('[*] No environments remaining — click "🧭 Run Setup" in the Active Environment card to install a fresh one.')
+            }
             else showToast((r && r.error) || 'Failed')
           } catch (e) { showToast(errText(e)) }
           btn.disabled = false; btn.textContent = 'unlink'
         }
       } else {
         hideAll()
+        // No active env (e.g. just unlinked the last one): offer the
+        // installer directly — same destination as Manage → Run Setup.
+        if (setupBtn) { setupBtn.style.display = ''; setupBtn.onclick = function() { openInstallerFresh() } }
       }
     }
     // Restore button handler
