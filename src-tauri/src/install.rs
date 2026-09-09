@@ -740,14 +740,15 @@ pub(crate) fn run_preflight_checks(repo: &std::path::Path, hw: &serde_json::Valu
     (fatal, checks)
 }
 
-/// Defender-exclusion warning by vendor. Only stacks that install
-/// binaries from outside PyPI get checked: TheRock nightlies on AMD,
-/// GitHub-release kernel wheels on NVIDIA (sage/sparge/flash/nunchaku).
-/// PyPI-stable CPU installs skip the noise. Pure + tested.
+/// Defender-exclusion warning by vendor. Proactive warnings need observed
+/// risk, not plausible risk: AMD nightlies were quarantined on a real box
+/// (hourly CI builds, zero reputation). NVIDIA wheels are unsigned too
+/// but have no observed case — they stay on the reactive missing-DLL hint
+/// (all vendors, fires on actual damage), not a proactive warn.
+/// PyPI-stable CPU installs skip the noise entirely. Pure + tested.
 pub(crate) fn av_exclusion_msg(vendor: &str) -> Option<&'static str> {
     match vendor {
         "AMD" => Some("no Defender exclusion for the install folder — nightly DLLs are quarantined heuristically; consider adding one."),
-        "NVIDIA" => Some("no Defender exclusion for the install folder — kernel wheels ship as unsigned binaries and get quarantined heuristically; consider adding one."),
         _ => None,
     }
 }
@@ -2158,10 +2159,11 @@ mod av_msg_tests {
     use super::av_exclusion_msg;
     #[test]
     fn vendor_tailored() {
-        // Intel 0.5.3 log showed the AMD-flavored nightly wording on an
-        // NVIDIA box — messages now match the actual binary source.
+        // Proactive warns need observed risk: only AMD nightlies were
+        // ever quarantined. NVIDIA stays on the reactive missing-DLL
+        // hint; everything else is silent.
         assert!(av_exclusion_msg("AMD").unwrap().contains("nightly"));
-        assert!(av_exclusion_msg("NVIDIA").unwrap().contains("kernel wheels"));
+        assert_eq!(av_exclusion_msg("NVIDIA"), None);
         assert_eq!(av_exclusion_msg("INTEL"), None);
         assert_eq!(av_exclusion_msg("CPU"), None);
         assert_eq!(av_exclusion_msg("APPLE"), None);
