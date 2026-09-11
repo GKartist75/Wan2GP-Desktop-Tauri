@@ -1,10 +1,15 @@
 //! Launcher config, install paths, model folders, env management, uv cache.
-use std::path::{Path, PathBuf};
 use crate::base::*;
-use crate::{hw::{build_install_plan, get_gpu_info_sync}, status::get_active_env};
+use crate::{
+    hw::{build_install_plan, get_gpu_info_sync},
+    status::get_active_env,
+};
+use std::path::{Path, PathBuf};
 
 #[tauri::command]
-pub fn config_load() -> serde_json::Value { load_config_value() }
+pub fn config_load() -> serde_json::Value {
+    load_config_value()
+}
 
 #[tauri::command]
 pub fn config_save(cfg: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -18,9 +23,20 @@ pub fn config_save(cfg: serde_json::Value) -> Result<serde_json::Value, String> 
 pub fn get_install_paths() -> serde_json::Value {
     let data = get_data_dir();
     let repo = get_repo_dir();
-    let orig = if let Ok(a) = std::env::var("APPDATA") { PathBuf::from(a).join("wan2gp-desktop") } else { PathBuf::from("C:\\Users\\Default\\AppData\\Roaming\\wan2gp-desktop") };
-    let models_default = data.with_file_name(format!("{}-Models", data.file_name().unwrap_or_default().to_string_lossy()));
-    let models_default = if models_default.to_string_lossy().is_empty() { PathBuf::from("C:\\Wan2GP-Models") } else { models_default };
+    let orig = if let Ok(a) = std::env::var("APPDATA") {
+        PathBuf::from(a).join("wan2gp-desktop")
+    } else {
+        PathBuf::from("C:\\Users\\Default\\AppData\\Roaming\\wan2gp-desktop")
+    };
+    let models_default = data.with_file_name(format!(
+        "{}-Models",
+        data.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    let models_default = if models_default.to_string_lossy().is_empty() {
+        PathBuf::from("C:\\Wan2GP-Models")
+    } else {
+        models_default
+    };
     serde_json::json!({
         "appData": data.to_string_lossy().to_string(),
         "appDataRoot": orig.to_string_lossy().to_string(),
@@ -40,7 +56,7 @@ pub fn get_install_paths() -> serde_json::Value {
 /// Free/total bytes for the disk hosting `p` (longest-prefix mount match).
 /// Shared by get_disk_space and python_preflight (uv's own data dir).
 pub(crate) fn disk_for_path(p: &str) -> Option<(u64, u64)> {
-    use sysinfo::{Disks, DiskRefreshKind};
+    use sysinfo::{DiskRefreshKind, Disks};
     let disks = Disks::new_with_refreshed_list_specifics(DiskRefreshKind::nothing().with_storage());
     let mut best: Option<&sysinfo::Disk> = None;
     let mut best_len = 0usize;
@@ -62,8 +78,9 @@ pub fn get_disk_space(path: Option<String>) -> serde_json::Value {
         return serde_json::json!({"path": p, "free": free, "total": total});
     }
     {
-        use sysinfo::{Disks, DiskRefreshKind};
-        let disks = Disks::new_with_refreshed_list_specifics(DiskRefreshKind::nothing().with_storage());
+        use sysinfo::{DiskRefreshKind, Disks};
+        let disks =
+            Disks::new_with_refreshed_list_specifics(DiskRefreshKind::nothing().with_storage());
         // fallback: first disk
         if let Some(d) = disks.list().first() {
             return serde_json::json!({"path": p, "free": d.available_space(), "total": d.total_space()});
@@ -80,34 +97,84 @@ pub fn get_model_paths() -> serde_json::Value {
         if let Ok(s) = std::fs::read_to_string(&cfg_path) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
                 let mut out = serde_json::Map::new();
-                if let Some(a) = v.get("checkpointsPaths").and_then(|x| x.as_array()).and_then(|a| a.first()) { out.insert("checkpoints".into(), a.clone()); }
-                else if let Some(a) = v.get("checkpoints_paths").and_then(|x| x.as_array()).and_then(|a| a.first()) { out.insert("checkpoints".into(), a.clone()); }
-                else if let Some(c) = v.get("ckpt_dir") { if let Some(arr)=c.as_array().and_then(|a| a.first()) { out.insert("checkpoints".into(), arr.clone()); } else { out.insert("checkpoints".into(), c.clone()); } }
-                if let Some(l) = v.get("lorasRoot") { out.insert("loras".into(), l.clone()); }
-                else if let Some(l) = v.get("loras_root") { out.insert("loras".into(), l.clone()); }
-                else if let Some(l) = v.get("lora_dir") { out.insert("loras".into(), l.clone()); }
-                if let Some(o) = v.get("savePath") { out.insert("output".into(), o.clone()); }
-                else if let Some(o) = v.get("save_path") { out.insert("output".into(), o.clone()); }
-                if !out.is_empty() { return serde_json::Value::Object(out); }
+                if let Some(a) = v
+                    .get("checkpointsPaths")
+                    .and_then(|x| x.as_array())
+                    .and_then(|a| a.first())
+                {
+                    out.insert("checkpoints".into(), a.clone());
+                } else if let Some(a) = v
+                    .get("checkpoints_paths")
+                    .and_then(|x| x.as_array())
+                    .and_then(|a| a.first())
+                {
+                    out.insert("checkpoints".into(), a.clone());
+                } else if let Some(c) = v.get("ckpt_dir") {
+                    if let Some(arr) = c.as_array().and_then(|a| a.first()) {
+                        out.insert("checkpoints".into(), arr.clone());
+                    } else {
+                        out.insert("checkpoints".into(), c.clone());
+                    }
+                }
+                if let Some(l) = v.get("lorasRoot") {
+                    out.insert("loras".into(), l.clone());
+                } else if let Some(l) = v.get("loras_root") {
+                    out.insert("loras".into(), l.clone());
+                } else if let Some(l) = v.get("lora_dir") {
+                    out.insert("loras".into(), l.clone());
+                }
+                if let Some(o) = v.get("savePath") {
+                    out.insert("output".into(), o.clone());
+                } else if let Some(o) = v.get("save_path") {
+                    out.insert("output".into(), o.clone());
+                }
+                if !out.is_empty() {
+                    return serde_json::Value::Object(out);
+                }
             }
         }
     }
     // ponytail: fallback to desktop-config.json (changeModelFolder also writes there) — so UI shows new path even if wgp_config not yet created
     let dc = load_config_value();
     let mut out = serde_json::Map::new();
-    if let Some(p) = dc.get("modelCkptsPath").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) { out.insert("checkpoints".into(), serde_json::Value::String(p.to_string())); }
-    if let Some(p) = dc.get("modelLorasPath").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) { out.insert("loras".into(), serde_json::Value::String(p.to_string())); }
-    if let Some(p) = dc.get("modelOutputPath").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) { out.insert("output".into(), serde_json::Value::String(p.to_string())); }
-    if !out.is_empty() { return serde_json::Value::Object(out); }
+    if let Some(p) = dc
+        .get("modelCkptsPath")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        out.insert(
+            "checkpoints".into(),
+            serde_json::Value::String(p.to_string()),
+        );
+    }
+    if let Some(p) = dc
+        .get("modelLorasPath")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        out.insert("loras".into(), serde_json::Value::String(p.to_string()));
+    }
+    if let Some(p) = dc
+        .get("modelOutputPath")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        out.insert("output".into(), serde_json::Value::String(p.to_string()));
+    }
+    if !out.is_empty() {
+        return serde_json::Value::Object(out);
+    }
     serde_json::Value::Null
 }
 
 #[tauri::command]
 pub fn detect_model_folders() -> serde_json::Value {
     let repo = get_repo_dir();
-    let candidates = ["ckpts","loras","outputs","output","models"];
+    let candidates = ["ckpts", "loras", "outputs", "output", "models"];
     let mut out = serde_json::Map::new();
-    for c in candidates { out.insert(c.into(), serde_json::Value::Bool(repo.join(c).exists())); }
+    for c in candidates {
+        out.insert(c.into(), serde_json::Value::Bool(repo.join(c).exists()));
+    }
     serde_json::Value::Object(out)
 }
 
@@ -124,8 +191,12 @@ pub fn install_plan() -> serde_json::Value {
 pub fn validate_install() -> serde_json::Value {
     let repo = get_repo_dir();
     let mut errors: Vec<String> = Vec::new();
-    if !repo.join("wgp.py").exists() { errors.push("wgp.py not found — not installed".into()); }
-    if !repo.join("setup_config.json").exists() { errors.push("setup_config.json missing".into()); }
+    if !repo.join("wgp.py").exists() {
+        errors.push("wgp.py not found — not installed".into());
+    }
+    if !repo.join("setup_config.json").exists() {
+        errors.push("setup_config.json missing".into());
+    }
     let env = get_active_env();
     if env.is_null() {
         errors.push("no active env".into());
@@ -133,17 +204,32 @@ pub fn validate_install() -> serde_json::Value {
         // Reuse is only honest if the interpreter exists AND runs (a stale
         // envs.json entry or a half-deleted venv must fail here, not on the
         // dashboard after "Use existing & go to Dashboard").
-        let base = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { repo.join(raw.trim_start_matches(".\\").trim_start_matches("./")) };
+        let base = if std::path::Path::new(raw).is_absolute() {
+            PathBuf::from(raw)
+        } else {
+            repo.join(raw.trim_start_matches(".\\").trim_start_matches("./"))
+        };
         if !base.exists() {
             errors.push(format!("env folder missing on disk: {}", base.display()));
         } else {
-            #[cfg(windows)] let py = base.join("Scripts\\python.exe");
-            #[cfg(not(windows))] let py = base.join("bin/python");
+            #[cfg(windows)]
+            let py = base.join("Scripts\\python.exe");
+            #[cfg(not(windows))]
+            let py = base.join("bin/python");
             if !py.exists() {
-                errors.push(format!("env python missing ({} broken) — repair the environment", base.display()));
+                errors.push(format!(
+                    "env python missing ({} broken) — repair the environment",
+                    base.display()
+                ));
             } else {
-                let runs = silent_command(&py).arg("-c").arg("import sys").output().is_ok_and(|o| o.status.success());
-                if !runs { errors.push("env python won't start — reinstall/repair the environment".into()); }
+                let runs = silent_command(&py)
+                    .arg("-c")
+                    .arg("import sys")
+                    .output()
+                    .is_ok_and(|o| o.status.success());
+                if !runs {
+                    errors.push("env python won't start — reinstall/repair the environment".into());
+                }
             }
         }
     }
@@ -158,52 +244,104 @@ pub fn uv_cache_info() -> serde_json::Value {
 pub async fn uv_cache_size() -> serde_json::Value {
     // ponytail: async walk so Manage → Calculate size doesn't freeze UI (Electron 63b0f90)
     let p = get_repo_dir().join(".uv-cache");
-    if !p.exists() { return serde_json::json!({"exists": false, "sizeBytes": 0, "cacheDir": p.to_string_lossy().to_string()}); }
+    if !p.exists() {
+        return serde_json::json!({"exists": false, "sizeBytes": 0, "cacheDir": p.to_string_lossy().to_string()});
+    }
     let p_clone = p.clone();
     let size = tauri::async_runtime::spawn_blocking(move || {
         let mut size: u64 = 0;
-        fn walk(p: &Path, acc: &mut u64) { if let Ok(rd) = std::fs::read_dir(p) { for e in rd.flatten() { if let Ok(m) = e.metadata() { if m.is_dir() { walk(&e.path(), acc); } else { *acc += m.len(); } } } } }
+        fn walk(p: &Path, acc: &mut u64) {
+            if let Ok(rd) = std::fs::read_dir(p) {
+                for e in rd.flatten() {
+                    if let Ok(m) = e.metadata() {
+                        if m.is_dir() {
+                            walk(&e.path(), acc);
+                        } else {
+                            *acc += m.len();
+                        }
+                    }
+                }
+            }
+        }
         walk(&p_clone, &mut size);
         size
-    }).await.unwrap_or(0);
+    })
+    .await
+    .unwrap_or(0);
     serde_json::json!({"exists": true, "sizeBytes": size, "cacheDir": p.to_string_lossy().to_string()})
 }
 #[tauri::command]
 pub fn manage_list() -> serde_json::Value {
     let f = get_envs_file();
-    if !f.exists() { return serde_json::json!([]); }
+    if !f.exists() {
+        return serde_json::json!([]);
+    }
     if let Ok(s) = std::fs::read_to_string(&f) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
             if let Some(envs) = v.get("envs").and_then(|e| e.as_object()) {
-                return serde_json::Value::Array(envs.keys().map(|k| serde_json::Value::String(k.clone())).collect());
+                return serde_json::Value::Array(
+                    envs.keys()
+                        .map(|k| serde_json::Value::String(k.clone()))
+                        .collect(),
+                );
             }
         }
     }
     serde_json::json!([])
 }
-#[tauri::command] pub fn manage_set_active(name: String) -> Result<serde_json::Value,String> {
-    let f = get_envs_file(); let mut v: serde_json::Value = std::fs::read_to_string(&f).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::json!({"envs":{}, "active":null}));
-    if v.get("envs").and_then(|e| e.get(&name)).is_none() { return Err(format!("env {name} not found")); }
+#[tauri::command]
+pub fn manage_set_active(name: String) -> Result<serde_json::Value, String> {
+    let f = get_envs_file();
+    let mut v: serde_json::Value = std::fs::read_to_string(&f)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(serde_json::json!({"envs":{}, "active":null}));
+    if v.get("envs").and_then(|e| e.get(&name)).is_none() {
+        return Err(format!("env {name} not found"));
+    }
     v["active"] = serde_json::Value::String(name);
-    atomic_write(&f, &serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    atomic_write(
+        &f,
+        &serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
-#[tauri::command] pub async fn uninstall_env(app: tauri::AppHandle, name: String) -> Result<serde_json::Value,String> {
+#[tauri::command]
+pub async fn uninstall_env(
+    app: tauri::AppHandle,
+    name: String,
+) -> Result<serde_json::Value, String> {
     use tauri::Emitter;
-    let log = |m: &str| { crate::base::push_log(m, "setup"); let _ = app.emit("setup-output", m.to_string()); };
-    let f = get_envs_file(); let mut v: serde_json::Value = std::fs::read_to_string(&f).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(serde_json::json!({}));
+    let log = |m: &str| {
+        crate::base::push_log(m, "setup");
+        let _ = app.emit("setup-output", m.to_string());
+    };
+    let f = get_envs_file();
+    let mut v: serde_json::Value = std::fs::read_to_string(&f)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(serde_json::json!({}));
     let entry = v.get("envs").and_then(|e| e.get(&name)).cloned();
-    let Some(entry) = entry else { return Err("Environment not found".into()); };
+    let Some(entry) = entry else {
+        return Err("Environment not found".into());
+    };
     let etype = entry.get("type").and_then(|t| t.as_str()).unwrap_or("?");
     log(&format!("[{name}] type: {etype}\n"));
     if let Some(raw) = entry.get("path").and_then(|p| p.as_str()) {
         if etype != "none" {
             let repo = get_repo_dir();
-            let p = if std::path::Path::new(raw).is_absolute() { PathBuf::from(raw) } else { repo.join(raw.trim_start_matches(['.', '\\', '/'])) };
+            let p = if std::path::Path::new(raw).is_absolute() {
+                PathBuf::from(raw)
+            } else {
+                repo.join(raw.trim_start_matches(['.', '\\', '/']))
+            };
             log(&format!("[{name}] path: {}\n", p.display()));
             // SECURITY (mirrors Electron ensureInsideRepo): never delete outside the repo.
             if !p.starts_with(&repo) {
-                log(&format!("[{name}] SECURITY: env path outside repo — skipped deletion\n"));
+                log(&format!(
+                    "[{name}] SECURITY: env path outside repo — skipped deletion\n"
+                ));
                 return Err("Environment path outside repo — deletion blocked".into());
             }
             if p.exists() {
@@ -260,7 +398,7 @@ pub fn manage_list() -> serde_json::Value {
                                     rm_retry(|| std::fs::remove_file(&q).map_err(|e| e.to_string()));
                                 }
                                 *n += 1;
-                                if *n % 2000 == 0 {
+                                if (*n).is_multiple_of(2000) {
                                     let m = format!("[{name}] …{n} files removed\n");
                                     crate::base::push_log(&m, "setup");
                                     let _ = app.emit("setup-output", m);
@@ -301,15 +439,22 @@ pub fn manage_list() -> serde_json::Value {
                     }
                 }).await.map_err(|e| e.to_string())?;
             } else {
-                log(&format!("[{name}] folder not found on disk, removing from registry\n"));
+                log(&format!(
+                    "[{name}] folder not found on disk, removing from registry\n"
+                ));
             }
         }
     }
-    if let Some(obj) = v.get_mut("envs").and_then(|e| e.as_object_mut()) { obj.remove(&name); }
+    if let Some(obj) = v.get_mut("envs").and_then(|e| e.as_object_mut()) {
+        obj.remove(&name);
+    }
     // If it was active, switch to the first remaining env (Electron parity) —
     // leaving active=null strands the dashboard on "No active environment".
     if v.get("active").and_then(|a| a.as_str()) == Some(&name) {
-        let next = v.get("envs").and_then(|e| e.as_object()).and_then(|m| m.keys().next().cloned());
+        let next = v
+            .get("envs")
+            .and_then(|e| e.as_object())
+            .and_then(|m| m.keys().next().cloned());
         if let Some(nx) = next {
             v["active"] = serde_json::Value::String(nx.clone());
             log(&format!("[*] Switched active env to '{nx}'\n"));
@@ -318,10 +463,20 @@ pub fn manage_list() -> serde_json::Value {
             log("[*] No environments remaining\n");
         }
     }
-    atomic_write(&f, &serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    atomic_write(
+        &f,
+        &serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     crate::base::invalidate_path_cache();
-    if let Some(m) = crate::base::LAST_STATUS.get() { *m.lock().unwrap() = None; }
+    if let Some(m) = crate::base::LAST_STATUS.get() {
+        *m.lock().unwrap() = None;
+    }
     log(&format!("[{name}] uninstalled\n"));
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
-#[tauri::command] pub fn uv_cache_clean(action: Option<String>) -> serde_json::Value { let _=action; serde_json::json!({"success": true}) }
+#[tauri::command]
+pub fn uv_cache_clean(action: Option<String>) -> serde_json::Value {
+    let _ = action;
+    serde_json::json!({"success": true})
+}

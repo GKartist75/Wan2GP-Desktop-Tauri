@@ -9,10 +9,34 @@
   function listen(event, cb){
     try { return window.__TAURI__.event.listen(event, e => cb(e.payload)); } catch(e){ return Promise.resolve(()=>{}); }
   }
-  // Pin exact pixel heights down the embed chain (container → wrapper →
-  // iframe), measured from the container's live viewport position so update
-  // banners and topbar height are accounted for. Re-queries the DOM on every
-  // call (never closes over removed nodes) and no-ops while hidden.
+  // Native-embed bookkeeping: true while a real child Webview (not an iframe)
+  // owns the Gradio view. A native child composites ABOVE the DOM, so overlay
+  // tricks (floating terminal over the view) don't apply — callers must hide
+  // or shrink it via bvSyncBounds instead.
+  let nativeEmbed = false;
+  window.__syncNativeBounds = function(logIt) {
+    try {
+      if (!nativeEmbed) return;
+      const host = document.getElementById('webviewContainer');
+      if (!host || host.classList.contains('hidden')) return;
+      const r = host.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      // The child is an OS window above ALL DOM (incl. the topbar with its
+      // metrics) — clamp so it can never cover the topbar, whatever the
+      // layout does (banners, docks, DPI scaling).
+      let x = r.left, y = r.top, w = r.width, h = r.height;
+      try {
+        const tb = document.querySelector('.topbar');
+        if (tb) { const minY = tb.getBoundingClientRect().bottom; if (y < minY) { h -= (minY - y); y = minY; } }
+      } catch {}
+      x = Math.max(0, x); y = Math.max(0, y);
+      w = Math.min(w, window.innerWidth - x); h = Math.min(h, window.innerHeight - y);
+      if (w < 10 || h < 10) return;
+      if (logIt) console.log('[embed] native bounds', { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
+      call('bv_sync_bounds', { x, y, w, h }).catch(() => {});
+    } catch {}
+  };
+  if (!window.__nativeBoundsWired) { window.addEventListener('resize', () => { try { window.__syncNativeBounds(); } catch {} }); window.__nativeBoundsWired = true; }
   window.__fitBrowserView = function() {
     try {
       const host = document.getElementById('webviewContainer');
@@ -47,6 +71,19 @@
     folderSize: (path) => call('folder_size', { path }),
     downloadsSince: (sinceMs) => call('downloads_since', { sinceMs }).then(r => (r && r.files) || []).catch(() => []),
     saveDownloadedFile: (name, dir) => call('save_downloaded_file', { name, dir: dir ?? null }),
+    // One-shot WebView2/RAM footprint ({webviewMb, webviewProcs, launcherMb, top[]}).
+    webviewMemory: () => call('webview_memory'),
+    bvSyncBounds: () => { try { window.__syncNativeBounds(); } catch {} return Promise.resolve({ ok: true }); },
+    bvSyncBoundsRect: (r) => call('bv_sync_bounds', r).catch(() => ({ ok: false })),
+    // Browser-with-ask finish: staged file → native Save-As dialog → move.
+    saveStagedDownload: (path, dir) => call('save_staged_download', { path, dir: dir ?? null }),
+    isNativeEmbed: () => nativeEmbed,
+    onDownloadFinished: (cb) => { listen('download-finished', cb); return () => {}; },
+    onConsoleMirror: (cb) => { listen('console-mirror', cb); return () => {}; },
+    // Fire-and-forget (hot path — must never throw into appendLog).
+    mirrorConsole: (text) => { try { call('mirror_console', { text }).catch(() => {}); } catch {} return Promise.resolve({ ok: true }); },
+    onDownloadStarted: (cb) => { listen('download-started', cb); return () => {}; },
+    onGradioPageLoad: (cb) => { listen('gradio-page-load', cb); return () => {}; },
     isDataDirRoaming: () => call('is_data_dir_roaming'),
     writeWgpConfig: (cfg) => call('write_wgp_config', { cfg }), selectFolder: () => call('select_folder'),
     resetWgpConfig: () => call('reset_wgp_config'),
@@ -57,15 +94,33 @@
     getStatus: () => call('get_status'), launch: (mode) => call('launch', { mode }), launchWebview: () => call('launch_webview'),
     stopWangp: () => call('stop_wangp'), stopAllServers: () => call('stop_all_servers'), popoutWebview: async (url) => { const u = url || 'http://localhost:7861'; try { await call('open_external', { url: u }); } catch {} window.open(u, '_blank'); return {ok:true}; },
     // ponytail: BrowserView → embedded iframe in webviewContainer (Tauri) — simple, no separate window.
-    // Boot progress lives on the dashboard console (console-first launch), so the
-    // view opens straight onto the live server: direct src, no overlay, no HEAD
-    // poll (Gradio answers HEAD with 405 — the old poll never succeeded and the
-    // overlay got stuck whenever the server was already running).
+    // Manage → Launch → "Desktop embed" switch: embedMode=native renders Gradio in a
+    // real child Webview (backend owns it, downloads arrive as download-finished
+    // events); anything else keeps the iframe path. Backend returns the active mode.
     createBrowserView: async (url, opts) => {
         const u = url || 'http://localhost:7861';
         // close any previous WebviewWindow if it exists (from previous separate-window attempt)
         try { const { WebviewWindow } = window.__TAURI__.webviewWindow; const win = await WebviewWindow.getByLabel('wan2gp-view'); if (win) await win.close(); } catch {}
         document.getElementById('tauri-browser-view')?.remove();
+        let created = { ok: true, mode: 'iframe' };
+        // Pass the wanted mode explicitly (backend falls back to its config read).
+        // If native was wanted but the backend reports iframe, it failed — flag
+        // it so app.js can warn instead of silently running the old renderer.
+        let want = 'native';
+        try { const _cfg = await w2gp.configLoad().catch(() => ({})); want = (_cfg && _cfg.embedMode === 'iframe') ? 'iframe' : 'native'; } catch {}
+        try { created = await call('create_browser_view', { url: u, opts: Object.assign({}, opts ?? null, { mode: want }) }); } catch (e) { created = { ok: false, mode: 'iframe', error: String((e && e.message) || e) }; }
+        if (want === 'native' && (!created || created.mode !== 'native')) created.fallback = true;
+        nativeEmbed = !!(created && created.mode === 'native');
+        if (nativeEmbed) {
+            // Backend owns the view — just make the host measurable and sync bounds.
+            const host = document.getElementById('webviewContainer') || document.body;
+            if (host.id === 'webviewContainer') { host.classList.remove('hidden'); host.style.display = 'flex'; host.style.flex = '1'; host.style.minHeight = '0'; host.style.position = 'relative'; }
+            try { const db = document.getElementById('dashBody'); if (db) db.style.display = 'none'; } catch {}
+            console.log('[tauri] native child webview created for', u);
+            setTimeout(() => { try { window.__syncNativeBounds(); } catch {} }, 50);
+            setTimeout(() => { try { window.__syncNativeBounds(); } catch {} }, 800);
+            return { ok: true, mode: 'native' };
+        }
         const host = document.getElementById('webviewContainer') || document.body;
         const isWebviewHost = host.id === 'webviewContainer';
         // ensure host is visible and has height — webviewContainer is flex:1 inside dashboard (flex column)
@@ -100,16 +155,20 @@
         // ensure dashBody stays hidden while iframe shows (app.js does this, but enforce)
         try { const db=document.getElementById('dashBody'); if(db) db.style.display='none'; } catch {}
         console.log('[tauri] BrowserView iframe created for', u, '— if blank, check F12 Network for', u, 'and X-Frame-Options');
-        try { await call('create_browser_view', { url: u, opts }); } catch {}
-        return {ok:true};
+        return { ok: true, mode: 'iframe' };
     },
     hideBrowserView: async (reason) => {
+        // Native child composites above the DOM — no "keep visible under the
+        // terminal" trick: any hide (incl. 'term') hides the child. The docked
+        // terminal path re-shows + shrinks it via bvSyncBounds instead.
+        if (nativeEmbed) { try { await call('hide_browser_view'); } catch {} return { ok: true }; }
         // ponytail: docked terminal calls hideBrowserView('term') to shrink, not hide — keep iframe visible
         if (reason === 'term') { console.log('[tauri] hideBrowserView(term) — keep iframe visible'); try{await call('hide_browser_view');}catch{} return {ok:true}; }
         try { const { WebviewWindow } = window.__TAURI__.webviewWindow; const win = await WebviewWindow.getByLabel('wan2gp-view'); if (win) { try{ await win.hide(); }catch{} } } catch {}
         const c=document.getElementById('tauri-browser-view'); if(c) c.style.display='none'; try{await call('hide_browser_view');}catch{} return {ok:true};
     },
     destroyBrowserView: async () => {
+        nativeEmbed = false;
         try { const { WebviewWindow } = window.__TAURI__.webviewWindow; const win = await WebviewWindow.getByLabel('wan2gp-view'); if (win) { try{ await win.close(); }catch{} } } catch {}
         document.getElementById('tauri-browser-view')?.remove();
         try { const wc=document.getElementById('webviewContainer'); if(wc){ wc.classList.add('hidden'); wc.innerHTML=''; } const db=document.getElementById('dashBody'); if(db) db.style.display='flex'; } catch {}
@@ -118,6 +177,13 @@
     detachBrowserView: async () => { const c=document.getElementById('tauri-browser-view'); if(c) c.style.display='none'; try{await call('detach_browser_view');}catch{} return {ok:true}; },
     reattachBrowserView: async () => { const c=document.getElementById('tauri-browser-view'); if(c) c.style.display='flex'; try{await call('reattach_browser_view');}catch{} return {ok:true}; },
     createTermView: () => call('create_term_view'), destroyTermView: () => call('destroy_term_view'),
+    toggleTermWindow: () => call('toggle_term_window'),
+    // Term-window buttons (dock/close/export live in the separate window and
+    // have no access to the main window's functions — routed via backend).
+    setDock: (d) => call('term_set_dock', { dock: d }),
+    closeTerm: () => call('destroy_term_view'),
+    exportLogs: (text) => call('export_logs', { text: text ?? null }),
+    onTermSetDock: (cb) => { listen('term-set-dock', cb); return () => {}; },
     bvNavigate: (a) => call('bv_navigate', { action: a }), bvSetZoom: (f) => call('bv_set_zoom', { factor: f }), bvSetDock: (d) => { console.log('[tauri] bvSetDock', d, '— keep iframe visible'); try{ return call('bv_set_dock', { dock: d }); }catch{ return Promise.resolve({ok:true}); } },
     getLogHistory: () => call('get_log_history'),
     openExternal: async (url) => { const u = url || 'http://localhost:7861'; try { await window.__TAURI__.core.invoke('plugin:opener|open_url', { url: u }); } catch { try { window.open(u, '_blank'); } catch {} } try { await call('open_external', { url: u }); } catch {} return {ok:true}; },

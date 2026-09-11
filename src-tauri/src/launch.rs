@@ -1,9 +1,12 @@
 //! Wan2GP server lifecycle (launch/stop/browser modes).
-use tauri::Emitter;
+use crate::base::*;
+use crate::{
+    hw::{get_gpu_info_sync, kernel_profile_key, probe_command, wmi_gpu_fallback},
+    status::{get_active_env, resolve_env_python},
+};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use crate::base::*;
-use crate::{hw::{get_gpu_info_sync, kernel_profile_key, probe_command, wmi_gpu_fallback}, status::{get_active_env, resolve_env_python}};
+use tauri::Emitter;
 
 // Quote-aware split for Extra Launch Args (keeps "--teacache \"a b\"" together).
 fn split_launch_args(s: &str) -> Vec<String> {
@@ -13,93 +16,235 @@ fn split_launch_args(s: &str) -> Vec<String> {
     let mut started = false;
     for ch in s.chars() {
         match ch {
-            '"' => { in_q = !in_q; started = true; }
-            c if c.is_whitespace() && !in_q => {
-                if started { out.push(std::mem::take(&mut cur)); started = false; }
+            '"' => {
+                in_q = !in_q;
+                started = true;
             }
-            c => { cur.push(c); started = true; }
+            c if c.is_whitespace() && !in_q => {
+                if started {
+                    out.push(std::mem::take(&mut cur));
+                    started = false;
+                }
+            }
+            c => {
+                cur.push(c);
+                started = true;
+            }
         }
     }
-    if started { out.push(cur); }
+    if started {
+        out.push(cur);
+    }
     out
 }
-static TERMINAL_TITLE: std::sync::OnceLock<std::sync::Mutex<Option<String>>> = std::sync::OnceLock::new();
+static TERMINAL_TITLE: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
 pub(crate) fn terminal_title() -> Option<String> {
-    TERMINAL_TITLE.get().and_then(|m| m.lock().ok()).and_then(|g| g.clone())
+    TERMINAL_TITLE
+        .get()
+        .and_then(|m| m.lock().ok())
+        .and_then(|g| g.clone())
 }
 // External-terminal mode (run.bat style): generate a script that runs wgp.py
 // with the same args/env, open it in a VISIBLE console window, wait for the
 // server, open the browser. Not a streamed child — the user owns the window.
-fn launch_in_terminal(app: tauri::AppHandle, repo: &PathBuf, py: &str, args: &[String], port: u64, _cfg: &serde_json::Value, hf_token: String, claude_key: String) -> Result<serde_json::Value, String> {
-    let emit = |msg: &str| { crate::base::push_log(msg, "launch"); let _ = app.emit("launch-log", msg.to_string()); };
-    let title = format!("Wan2GP-Launcher-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
-    if let Ok(mut g) = TERMINAL_TITLE.get_or_init(|| std::sync::Mutex::new(None)).lock() { *g = Some(title.clone()); }
+fn launch_in_terminal(
+    app: tauri::AppHandle,
+    repo: &PathBuf,
+    py: &str,
+    args: &[String],
+    port: u64,
+    _cfg: &serde_json::Value,
+    hf_token: String,
+    claude_key: String,
+) -> Result<serde_json::Value, String> {
+    let emit = |msg: &str| {
+        crate::base::push_log(msg, "launch");
+        let _ = app.emit("launch-log", msg.to_string());
+    };
+    let title = format!(
+        "Wan2GP-Launcher-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
+    if let Ok(mut g) = TERMINAL_TITLE
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+    {
+        *g = Some(title.clone());
+    }
     // env lines for the script (tokens + GGUF knobs, same as hidden launch)
     let mut env_lines: Vec<String> = vec![
-        "set PYTHONIOENCODING=utf-8".into(), "set PYTHONUTF8=1".into(), "set PYTHONUNBUFFERED=1".into(),
-        "set TQDM_MININTERVAL=0".into(), "set TQDM_MINITERS=1".into(), "set NO_PROXY=localhost,127.0.0.1,::1".into(),
+        "set PYTHONIOENCODING=utf-8".into(),
+        "set PYTHONUTF8=1".into(),
+        "set PYTHONUNBUFFERED=1".into(),
+        "set TQDM_MININTERVAL=0".into(),
+        "set TQDM_MINITERS=1".into(),
+        "set NO_PROXY=localhost,127.0.0.1,::1".into(),
     ];
-    if !hf_token.is_empty() { env_lines.push(format!("set HF_TOKEN={hf_token}")); }
-    if !claude_key.is_empty() { env_lines.push(format!("set ANTHROPIC_API_KEY={claude_key}"));
+    if !hf_token.is_empty() {
+        env_lines.push(format!("set HF_TOKEN={hf_token}"));
     }
-    for k in ["WGP_GGUF_LLAMACPP_CUDA", "WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE", "WGP_GGUF_LLAMACPP_CUDA_STREAM_K", "WGP_GGUF_LLAMACPP_CUDA_BF16_FP16"] {
-        if let Ok(val) = std::env::var(k) { env_lines.push(format!("set {k}={val}")); }
+    if !claude_key.is_empty() {
+        env_lines.push(format!("set ANTHROPIC_API_KEY={claude_key}"));
     }
-    let arg_str = args.iter().map(|a| if a.contains(' ') { format!("\"{}\"", a.replace('%', "%%")) } else { a.replace('%', "%%") }).collect::<Vec<_>>().join(" ");
-    #[cfg(windows)] {
+    for k in [
+        "WGP_GGUF_LLAMACPP_CUDA",
+        "WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE",
+        "WGP_GGUF_LLAMACPP_CUDA_STREAM_K",
+        "WGP_GGUF_LLAMACPP_CUDA_BF16_FP16",
+    ] {
+        if let Ok(val) = std::env::var(k) {
+            env_lines.push(format!("set {k}={val}"));
+        }
+    }
+    let arg_str = args
+        .iter()
+        .map(|a| {
+            if a.contains(' ') {
+                format!("\"{}\"", a.replace('%', "%%"))
+            } else {
+                a.replace('%', "%%")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    #[cfg(windows)]
+    {
         let script = std::env::temp_dir().join("wan2gp-terminal.bat");
         let url = format!("http://localhost:{port}");
         let full = format!("@echo off\r\ntitle {title}\r\ncd /d \"{repo}\"\r\n{envs}\r\necho [Wan2GP Desktop Launcher] Starting on port {port}...\r\nstart /b \"\" cmd /c \"\"{py}\" -u wgp.py {arg_str}\" 2>&1\r\necho Waiting for server on port {port}...\r\nset RC=0\r\n:waitloop\r\ntimeout /t 2 /nobreak >nul\r\nset /a RC+=1\r\nif %RC% gtr 60 (echo Server failed to start. Check console. ^& pause ^& exit /b 1)\r\npowershell -Command \"try{{$(Invoke-WebRequest -Uri http://127.0.0.1:{port}/config -TimeoutSec 2 -UseBasicParsing).StatusCode -eq 200;exit 0}}catch{{exit 1}}\" >nul 2>&1 && goto ready\r\ngoto waitloop\r\n:ready\r\necho Wan2GP is ready! Opening browser...\r\nstart {url}\r\necho [Wan2GP] Server running. Close this window to stop it.\r\npause >nul\r\n",
             repo = repo.display(), envs = env_lines.join("\r\n"));
-        std::fs::write(&script, full).map_err(|e| { mutating_done(); e.to_string() })?;
-        emit(&format!("[*] Starting Wan2GP in external terminal…\n"));
+        std::fs::write(&script, full).map_err(|e| {
+            mutating_done();
+            e.to_string()
+        })?;
+        emit("[*] Starting Wan2GP in external terminal…\n");
         // visible window: wt.exe preferred, else cmd /K (NOT silent — user must see it)
-        let has_wt = std::process::Command::new("where").arg("wt.exe").output().is_ok_and(|o| o.status.success());
+        let has_wt = std::process::Command::new("where")
+            .arg("wt.exe")
+            .output()
+            .is_ok_and(|o| o.status.success());
         let spawned = if has_wt {
-            std::process::Command::new("wt.exe").args(["-w", "-1", "new-tab", "--title", &title, "cmd.exe", "/K", &script.to_string_lossy().to_string()]).spawn()
+            std::process::Command::new("wt.exe")
+                .args([
+                    "-w",
+                    "-1",
+                    "new-tab",
+                    "--title",
+                    &title,
+                    "cmd.exe",
+                    "/K",
+                    script.to_string_lossy().as_ref(),
+                ])
+                .spawn()
         } else {
-            std::process::Command::new("cmd.exe").args(["/C", "start", &title, "cmd", "/K", &script.to_string_lossy().to_string()]).spawn()
+            std::process::Command::new("cmd.exe")
+                .args([
+                    "/C",
+                    "start",
+                    &title,
+                    "cmd",
+                    "/K",
+                    script.to_string_lossy().as_ref(),
+                ])
+                .spawn()
         };
-        if let Err(e) = spawned { mutating_done(); return Err(format!("Could not open terminal: {e}")); }
+        if let Err(e) = spawned {
+            mutating_done();
+            return Err(format!("Could not open terminal: {e}"));
+        }
         mutating_done();
-        return Ok(serde_json::json!({"ok": true, "port": port, "mode": "terminal", "url": url, "fresh": true}));
+        Ok(
+            serde_json::json!({"ok": true, "port": port, "mode": "terminal", "url": url, "fresh": true}),
+        )
     }
-    #[cfg(not(windows))] {
+    #[cfg(not(windows))]
+    {
         let _ = (cfg, hf_token, claude_key);
         mutating_done();
         return Err("External terminal mode is Windows-only in this build".into());
     }
 }
 #[tauri::command]
-pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde_json::Value, String> {
+pub async fn launch(
+    app: tauri::AppHandle,
+    mode: Option<String>,
+) -> Result<serde_json::Value, String> {
     let mode = mode.unwrap_or("browser".into());
     let repo = get_repo_dir();
-    if !repo.join("wgp.py").exists() { return Err("Wan2GP not installed — run Install first".into()); }
+    if !repo.join("wgp.py").exists() {
+        return Err("Wan2GP not installed — run Install first".into());
+    }
     let cfg = load_config_value();
-    let port = cfg.get("serverPort").and_then(serde_json::Value::as_u64).unwrap_or(7860);
+    let port = cfg
+        .get("serverPort")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(7860);
     // ponytail: if server already listening on :port (desktop→browser switch), reuse it — don't spawn second python on same port (Gradio OSError)
     if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
         let url = format!("http://localhost:{port}");
-        let m = format!("[*] Wan2GP already running on :{port} — opening {url}\n"); crate::base::push_log(&m, "launch"); let _ = app.emit("launch-log", m);
-        return Ok(serde_json::json!({"ok": true, "port": port, "mode": mode, "url": url, "fresh": false}));
+        let m = format!("[*] Wan2GP already running on :{port} — opening {url}\n");
+        crate::base::push_log(&m, "launch");
+        let _ = app.emit("launch-log", m);
+        return Ok(
+            serde_json::json!({"ok": true, "port": port, "mode": mode, "url": url, "fresh": false}),
+        );
     }
     mutating_try("launch")?;
-    let share = cfg.get("share").and_then(serde_json::Value::as_bool).unwrap_or(false);
-    let gpu_device = cfg.get("gpuDevice").and_then(|v| v.as_str()).unwrap_or("auto").trim().to_string();
-    let launcher_gpu = cfg.get("launcherGpu").and_then(|v| v.as_str()).unwrap_or("auto").to_string();
+    let share = cfg
+        .get("share")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let gpu_device = cfg
+        .get("gpuDevice")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto")
+        .trim()
+        .to_string();
+    let launcher_gpu = cfg
+        .get("launcherGpu")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto")
+        .to_string();
     // build args — gpuDevice -> --gpu (mirrors Electron buildCommonLaunchArgs)
-    let server_name = cfg.get("serverName").and_then(|v| v.as_str()).unwrap_or("localhost").to_string();
-    let mut args = vec!["wgp.py".to_string(), "--server-port".into(), port.to_string(), "--server-name".into(), server_name.clone(), "--advanced".into(), "--multiple-images".into()];
-    if share { args.push("--share".into()); }
-    if gpu_device != "auto" && gpu_device.starts_with("cuda:") && !args.contains(&"--gpu".to_string()) {
-        args.push("--gpu".into()); args.push(gpu_device.clone());
+    let server_name = cfg
+        .get("serverName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("localhost")
+        .to_string();
+    let mut args = vec![
+        "wgp.py".to_string(),
+        "--server-port".into(),
+        port.to_string(),
+        "--server-name".into(),
+        server_name.clone(),
+        "--advanced".into(),
+        "--multiple-images".into(),
+    ];
+    if share {
+        args.push("--share".into());
+    }
+    if gpu_device != "auto"
+        && gpu_device.starts_with("cuda:")
+        && !args.contains(&"--gpu".to_string())
+    {
+        args.push("--gpu".into());
+        args.push(gpu_device.clone());
     }
     // Extra Launch Args from Manage tab (quote-aware split, appended last so they win).
     if let Some(extra) = cfg.get("launchArgs").and_then(|v| v.as_str()) {
         let add = split_launch_args(extra);
-        if !add.is_empty() { args.extend(add); }
+        if !add.is_empty() {
+            args.extend(add);
+        }
     }
-    let emit = |msg: &str| { crate::base::push_log(msg, "launch"); let _ = app.emit("launch-log", msg.to_string()); };
+    let emit = |msg: &str| {
+        crate::base::push_log(msg, "launch");
+        let _ = app.emit("launch-log", msg.to_string());
+    };
     emit(&format!("[*] Launching Wan2GP ({mode}) on :{port}…\n"));
     // GPU assignment log (mirrors Electron 9945990)
     {
@@ -107,20 +252,45 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
         let hw_name = hw.get("name").and_then(|v| v.as_str()).unwrap_or("?");
         let hw_vendor = hw.get("vendor").and_then(|v| v.as_str()).unwrap_or("?");
         let hw_vram = hw.get("vramMB").and_then(|v| v.as_str()).unwrap_or("0");
-        let gpu_count = probe_command("NVIDIA_SMI", "nvidia-smi").args(["--query-gpu=index","--format=csv,noheader"]).output().ok()
-            .and_then(|o| o.status.success().then(|| String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count()).filter(|&c| c > 0))
+        let gpu_count = probe_command("NVIDIA_SMI", "nvidia-smi")
+            .args(["--query-gpu=index", "--format=csv,noheader"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                o.status
+                    .success()
+                    .then(|| {
+                        String::from_utf8_lossy(&o.stdout)
+                            .lines()
+                            .filter(|l| !l.trim().is_empty())
+                            .count()
+                    })
+                    .filter(|&c| c > 0)
+            })
             .map(|c| format!("{c} NVIDIA"))
             // AMD/Intel-only box: nvidia-smi absent — WMI name instead of "?".
             .or_else(|| wmi_gpu_fallback().map(|(_, v, _, _)| format!("1 {v}")))
             .unwrap_or("?".into());
-        let gen_label = if gpu_device=="auto" { format!("auto ({hw_name} )") } else { gpu_device.clone() };
+        let gen_label = if gpu_device == "auto" {
+            format!("auto ({hw_name} )")
+        } else {
+            gpu_device.clone()
+        };
         emit(&format!("[*] GPU assignment — Launcher UI: {launcher_gpu} | Generation: {gen_label} | HW: {hw_name} ({hw_vendor}, {hw_vram}) | Detected: {gpu_count}\n"));
     }
     emit(&format!("[*] Args: {}\n", args.join(" ")));
     // HF_TOKEN / config env (mirrors Electron launchCfg)
     let launch_cfg = load_config_value();
-    let hf_token = launch_cfg.get("hfToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let claude_key = launch_cfg.get("claudeApiKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let hf_token = launch_cfg
+        .get("hfToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let claude_key = launch_cfg
+        .get("claudeApiKey")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     // Bootstrap shim (Electron parity): lies isatty()=True so tqdm +
     // huggingface_hub bars render even though stdout is piped, not a tty.
     // Fresh temp file per launch (never repo-local): %TEMP% cleaners or a
@@ -130,11 +300,22 @@ pub async fn launch(app: tauri::AppHandle, mode: Option<String>) -> Result<serde
         let tmp = std::env::temp_dir();
         for stale in std::fs::read_dir(&tmp).into_iter().flatten().flatten() {
             let n = stale.file_name().to_string_lossy().to_string();
-            if n.starts_with("wan2gp-bootstrap-") && n.ends_with(".py") { let _ = std::fs::remove_file(stale.path()); }
+            if n.starts_with("wan2gp-bootstrap-") && n.ends_with(".py") {
+                let _ = std::fs::remove_file(stale.path());
+            }
         }
-        tmp.join(format!("wan2gp-bootstrap-{}-{}.py", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)))
+        tmp.join(format!(
+            "wan2gp-bootstrap-{}-{}.py",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        ))
     };
-    let _ = std::fs::write(&boot, r#"import os, sys, runpy
+    let _ = std::fs::write(
+        &boot,
+        r#"import os, sys, runpy
 os.environ['PYTHONUNBUFFERED'] = '1'
 os.environ['TQDM_MININTERVAL'] = '0'
 os.environ['TQDM_MINITERS'] = '1'
@@ -157,26 +338,51 @@ sys.argv = sys.argv[1:]
 d = os.path.dirname(os.path.abspath(sys.argv[0]))
 if d not in sys.path: sys.path.insert(0, d)
 runpy.run_path(sys.argv[0], run_name='__main__')
-"#);
+"#,
+    );
     args.insert(0, boot.to_string_lossy().to_string()); // py <boot> wgp.py … (target = argv[1])
-    // resolve python for active env (uv/venv: Scripts\ or bin/; conda:
-    // python at the env root — resolve_env_python knows both layouts).
+                                                        // resolve python for active env (uv/venv: Scripts\ or bin/; conda:
+                                                        // python at the env root — resolve_env_python knows both layouts).
     let env = get_active_env();
     let py = if let Some(raw) = env.get("path").and_then(|p| p.as_str()) {
-        let rel = raw.trim_start_matches(".\\").trim_start_matches("./").trim_start_matches(".\\").trim_start_matches("./");
-        let base = if Path::new(raw).is_absolute() { PathBuf::from(raw) } else { get_repo_dir().join(rel) };
-        let legacy = if cfg!(windows) { base.join("Scripts\\python.exe") } else { base.join("bin/python3") };
-        resolve_env_python(&get_repo_dir(), raw).unwrap_or(legacy).to_string_lossy().to_string()
-    } else { "python".to_string() };
+        let rel = raw
+            .trim_start_matches(".\\")
+            .trim_start_matches("./")
+            .trim_start_matches(".\\")
+            .trim_start_matches("./");
+        let base = if Path::new(raw).is_absolute() {
+            PathBuf::from(raw)
+        } else {
+            get_repo_dir().join(rel)
+        };
+        let legacy = if cfg!(windows) {
+            base.join("Scripts\\python.exe")
+        } else {
+            base.join("bin/python3")
+        };
+        resolve_env_python(&get_repo_dir(), raw)
+            .unwrap_or(legacy)
+            .to_string_lossy()
+            .to_string()
+    } else {
+        "python".to_string()
+    };
     // Pre-flight: the interpreter must exist, run, AND import torch.
     // (Screenshot: after the failed install there was no env, launch fell back
     // to system `python` and died with `ModuleNotFoundError: No module named
     // 'torch'.) Refuse here with directions instead of a traceback there.
     {
-        let torch_ok = silent_command(&py).args(["-c", "import torch; print(torch.__version__)"]).output().is_ok_and(|o| o.status.success());
+        let torch_ok = silent_command(&py)
+            .args(["-c", "import torch; print(torch.__version__)"])
+            .output()
+            .is_ok_and(|o| o.status.success());
         if !torch_ok {
             mutating_done();
-            let reason = if env.is_null() { "no Python environment is installed" } else { "the environment's Python can't import torch (install incomplete or env broken)" };
+            let reason = if env.is_null() {
+                "no Python environment is installed"
+            } else {
+                "the environment's Python can't import torch (install incomplete or env broken)"
+            };
             emit(&format!("[!] Launch blocked: {reason} [{py}].\n"));
             return Err(format!("Cannot launch: {reason}. Finish the install first (installer re-opens automatically), or repair the environment — launching now would crash on `import torch`."));
         }
@@ -193,32 +399,55 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     let mut cmd = cmd;
     // set env via std::env for child inheritance as fallback
     // (shell plugin also inherits process env, so set temporarily)
-    if !hf_token.is_empty() { std::env::set_var("HF_TOKEN", &hf_token); std::env::set_var("HUGGINGFACE_HUB_TOKEN", &hf_token); }
-    if !claude_key.is_empty() { std::env::set_var("ANTHROPIC_API_KEY", &claude_key); }
+    if !hf_token.is_empty() {
+        std::env::set_var("HF_TOKEN", &hf_token);
+        std::env::set_var("HUGGINGFACE_HUB_TOKEN", &hf_token);
+    }
+    if !claude_key.is_empty() {
+        std::env::set_var("ANTHROPIC_API_KEY", &claude_key);
+    }
     // GGUF CUDA kernel knobs from Manage → GGUF CUDA Kernel (docs/INSTALLATION.md parity).
     // std::env persists in OUR process across launches, so always reconcile:
     // set what's configured, REMOVE stale leftovers.
     {
-        let g = load_config_value().get("ggufEnv").cloned().unwrap_or(serde_json::Value::Null);
+        let g = load_config_value()
+            .get("ggufEnv")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         let enabled = g.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
         if !enabled {
             std::env::set_var("WGP_GGUF_LLAMACPP_CUDA", "0");
         } else {
             std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA");
-            match g.get("matmulMode").and_then(|v| v.as_str()).unwrap_or("auto") {
-                "fast" | "low_vram" => std::env::set_var("WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE", g["matmulMode"].as_str().unwrap()),
+            match g
+                .get("matmulMode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("auto")
+            {
+                "fast" | "low_vram" => std::env::set_var(
+                    "WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE",
+                    g["matmulMode"].as_str().unwrap(),
+                ),
                 _ => std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE"),
             }
-            if g.get("streamK").and_then(|v| v.as_bool()) == Some(false) { std::env::set_var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K", "0"); }
-            else { std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K"); }
-            if g.get("bf16Fp16").and_then(|v| v.as_bool()) == Some(true) { std::env::set_var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16", "1"); }
-            else { std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16"); }
+            if g.get("streamK").and_then(|v| v.as_bool()) == Some(false) {
+                std::env::set_var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K", "0");
+            } else {
+                std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K");
+            }
+            if g.get("bf16Fp16").and_then(|v| v.as_bool()) == Some(true) {
+                std::env::set_var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16", "1");
+            } else {
+                std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16");
+            }
         }
-        emit(&format!("[i] GGUF env: CUDA={} MATMUL={} STREAM_K={} BF16_FP16={}\n",
+        emit(&format!(
+            "[i] GGUF env: CUDA={} MATMUL={} STREAM_K={} BF16_FP16={}\n",
             std::env::var("WGP_GGUF_LLAMACPP_CUDA").unwrap_or("1".into()),
             std::env::var("WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE").unwrap_or("auto".into()),
             std::env::var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K").unwrap_or("1".into()),
-            std::env::var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16").unwrap_or("0".into())));
+            std::env::var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16").unwrap_or("0".into())
+        ));
     }
     // AMD GPU profile env from setup_config.json (e.g. HSA_OVERRIDE_GFX_VERSION).
     // Neither setup.py nor wgp.py exports these today — verified: only
@@ -229,10 +458,19 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     // verbatim from upstream's file — never invented here.
     {
         let gpu = get_gpu_info_sync();
-        let profile = kernel_profile_key(gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""), gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""));
-        let env_map = std::fs::read_to_string(repo.join("setup_config.json")).ok()
+        let profile = kernel_profile_key(
+            gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
+            gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+        );
+        let env_map = std::fs::read_to_string(repo.join("setup_config.json"))
+            .ok()
             .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|c| c.get("gpu_profiles").and_then(|p| p.get(&profile)).and_then(|pr| pr.get("env")).cloned())
+            .and_then(|c| {
+                c.get("gpu_profiles")
+                    .and_then(|p| p.get(&profile))
+                    .and_then(|pr| pr.get("env"))
+                    .cloned()
+            })
             .unwrap_or(serde_json::Value::Null);
         // Keys this launcher owns: anything upstream ever puts under a
         // profile's `env` today is just the HSA override — remove it when
@@ -245,26 +483,30 @@ runpy.run_path(sys.argv[0], run_name='__main__')
         // AMD card is actually present; a stale file after a GPU switch
         // must never set HSA vars on another vendor.
         if profile.starts_with("AMD") {
-        match crate::amd::read_hsa_choice(&repo) {
-            Some(crate::amd::HsaChoice::Native) => {
-                for key in MANAGED_AMD_ENV { std::env::remove_var(key); }
-                emit("[i] HSA override off (compute probe passed native on this GPU)\n");
-            }
-            Some(crate::amd::HsaChoice::Override(v)) => {
-                std::env::set_var("HSA_OVERRIDE_GFX_VERSION", &v);
-                emit(&format!("[i] HSA override {v} (compute probe winner on this GPU)\n"));
-            }
-            // No probed choice (legacy install): static setup_config behavior.
-            None => {
-                if let Some(obj) = env_map.as_object() {
-                    for (k, val) in obj {
-                        if let Some(s) = val.as_str() {
-                            std::env::set_var(k, s);
-                            emit(&format!("[i] GPU profile env: {k}={s}\n"));
+            match crate::amd::read_hsa_choice(&repo) {
+                Some(crate::amd::HsaChoice::Native) => {
+                    for key in MANAGED_AMD_ENV {
+                        std::env::remove_var(key);
+                    }
+                    emit("[i] HSA override off (compute probe passed native on this GPU)\n");
+                }
+                Some(crate::amd::HsaChoice::Override(v)) => {
+                    std::env::set_var("HSA_OVERRIDE_GFX_VERSION", &v);
+                    emit(&format!(
+                        "[i] HSA override {v} (compute probe winner on this GPU)\n"
+                    ));
+                }
+                // No probed choice (legacy install): static setup_config behavior.
+                None => {
+                    if let Some(obj) = env_map.as_object() {
+                        for (k, val) in obj {
+                            if let Some(s) = val.as_str() {
+                                std::env::set_var(k, s);
+                                emit(&format!("[i] GPU profile env: {k}={s}\n"));
+                            }
                         }
                     }
                 }
-            }
             }
         } else {
             let _ = std::fs::remove_file(crate::amd::hsa_choice_path(&repo));
@@ -281,7 +523,10 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     // them), so unlike HSA they are never removed here.
     {
         let gpu = get_gpu_info_sync();
-        let profile = kernel_profile_key(gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""), gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""));
+        let profile = kernel_profile_key(
+            gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
+            gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+        );
         if profile.starts_with("AMD") {
             for (k, v) in [
                 ("FLASH_ATTENTION_TRITON_AMD_ENABLE", "TRUE"),
@@ -308,11 +553,26 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     // External-terminal mode: visible console window running wgp.py (run.bat style).
     // Not a child we stream — the user owns the window; Stop also kills by title.
     if mode == "terminal" {
-        return launch_in_terminal(app, &repo, &py, &args, port, &cfg, hf_token.clone(), claude_key.clone());
+        return launch_in_terminal(
+            app,
+            &repo,
+            &py,
+            &args,
+            port,
+            &cfg,
+            hf_token.clone(),
+            claude_key.clone(),
+        );
     }
-    let (rx, child) = cmd.spawn().map_err(|e| { mutating_done(); emit(&format!("[LAUNCH ERROR] spawn failed: {e}\n")); e.to_string() })?;
+    let (rx, child) = cmd.spawn().map_err(|e| {
+        mutating_done();
+        emit(&format!("[LAUNCH ERROR] spawn failed: {e}\n"));
+        e.to_string()
+    })?;
     emit(&format!("[*] Spawned PID {}\n", child.pid()));
-    if let Ok(m) = WANGP_PID.get_or_init(|| Mutex::new(None)).lock() { drop(m); }
+    if let Ok(m) = WANGP_PID.get_or_init(|| Mutex::new(None)).lock() {
+        drop(m);
+    }
     *WANGP_PID.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(child.pid());
     // stream logs in background
     let app2 = app.clone();
@@ -320,21 +580,53 @@ runpy.run_path(sys.argv[0], run_name='__main__')
         use tauri_plugin_shell::process::CommandEvent;
         let mut rx = rx;
         while let Some(ev) = rx.recv().await {
-            match ev { CommandEvent::Stdout(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s, "launch"); let _ = app2.emit("launch-log", s); }, CommandEvent::Stderr(b) => { let s = String::from_utf8_lossy(&b).to_string(); crate::base::push_log(&s, "launch"); let _ = app2.emit("launch-log", s); }, CommandEvent::Terminated(s) => { let _ = app2.emit("wangp-exit", serde_json::json!({"code": s.code})); break; }, _ => {} }
+            match ev {
+                CommandEvent::Stdout(b) => {
+                    let s = String::from_utf8_lossy(&b).to_string();
+                    crate::base::push_log(&s, "launch");
+                    let _ = app2.emit("launch-log", s);
+                }
+                CommandEvent::Stderr(b) => {
+                    let s = String::from_utf8_lossy(&b).to_string();
+                    crate::base::push_log(&s, "launch");
+                    let _ = app2.emit("launch-log", s);
+                }
+                CommandEvent::Terminated(s) => {
+                    let _ = app2.emit("wangp-exit", serde_json::json!({"code": s.code}));
+                    break;
+                }
+                _ => {}
+            }
         }
     });
     // wait for port in background (don't hold mutating — launch is done, server boots async)
     let host = "127.0.0.1".to_string();
     let app3 = app.clone();
     std::thread::spawn(move || {
-        for _ in 0..60 { std::thread::sleep(std::time::Duration::from_secs(3)); if std::net::TcpStream::connect(format!("{host}:{port}")).is_ok() { let m = format!("[✓] Wan2GP ready on http://localhost:{port}\n"); crate::base::push_log(&m, "launch"); let _ = app3.emit("launch-log", m); break; } }
+        for _ in 0..60 {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            if std::net::TcpStream::connect(format!("{host}:{port}")).is_ok() {
+                let m = format!("[✓] Wan2GP ready on http://localhost:{port}\n");
+                crate::base::push_log(&m, "launch");
+                let _ = app3.emit("launch-log", m);
+                break;
+            }
+        }
     });
     mutating_done();
     let url = format!("http://localhost:{port}");
     Ok(serde_json::json!({"ok": true, "port": port, "mode": mode, "url": url, "fresh": true}))
 }
+/// Blocking worker (see async wrapper below): WMI/port scans + kill verifies
+/// take seconds — running them on Tauri's invoke pool starves concurrent
+/// commands (metrics, toasts) and the UI visibly stalls.
 #[tauri::command]
-pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
+pub async fn stop_wangp(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || stop_wangp_blocking(app))
+        .await
+        .map_err(|e| e.to_string())
+}
+pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
     // Scoped stop: ONLY our Wan2GP processes — the tracked child plus any python
     // running OUR repo's wgp.py (uv-shim/child split, detached terminal mode).
     // ponytail: the old `taskkill /F /IM python.exe` blanket-killed every Python
@@ -353,9 +645,22 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
     // Plain closure (no captures): killed is passed in so later reads don't
     // fight the borrow checker.
     let kill_pid = |pid: u32, killed: &mut Vec<u32>| {
-        if pid == 0 || pid == std::process::id() || killed.contains(&pid) { return; }
-        #[cfg(windows)] { let _ = silent_command("taskkill").args(["/pid", &pid.to_string(), "/f", "/t"]).output(); }
-        #[cfg(not(windows))] { let _ = silent_command("kill").arg("-9").arg(pid.to_string()).output(); }
+        if pid == 0 || pid == std::process::id() || killed.contains(&pid) {
+            return;
+        }
+        #[cfg(windows)]
+        {
+            let _ = silent_command("taskkill")
+                .args(["/pid", &pid.to_string(), "/f", "/t"])
+                .output();
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = silent_command("kill")
+                .arg("-9")
+                .arg(pid.to_string())
+                .output();
+        }
         killed.push(pid);
     };
     // One scan pass: all python.exe with wgp.py in the command line.
@@ -367,19 +672,36 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
         #[cfg(windows)]
         {
             let ps = "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object { $_.CommandLine -like '*wgp.py*' } | ForEach-Object { $_.ProcessId + '|' + $_.ExecutablePath + '|' + $_.CommandLine }";
-            match silent_command("powershell").args(["-NoProfile", "-Command", ps]).output() {
+            match silent_command("powershell")
+                .args(["-NoProfile", "-Command", ps])
+                .output()
+            {
                 Ok(o) if o.status.success() => {
                     for line in String::from_utf8_lossy(&o.stdout).lines() {
                         let mut parts = line.splitn(3, '|');
-                        if let (Some(pid_s), Some(exe), Some(cmd)) = (parts.next(), parts.next(), parts.next()) {
+                        if let (Some(pid_s), Some(exe), Some(cmd)) =
+                            (parts.next(), parts.next(), parts.next())
+                        {
                             if let Ok(pid) = pid_s.trim().parse::<u32>() {
                                 out.push((pid, exe.to_string(), cmd.to_string()));
                             }
                         }
                     }
                 }
-                Ok(o) => crate::base::push_log(&format!("[stop] WMI scan failed (exit {}): {}\n", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).chars().take(300).collect::<String>()), "launch"),
-                Err(e) => crate::base::push_log(&format!("[stop] WMI scan spawn failed: {e}\n"), "launch"),
+                Ok(o) => crate::base::push_log(
+                    &format!(
+                        "[stop] WMI scan failed (exit {}): {}\n",
+                        o.status.code().unwrap_or(-1),
+                        String::from_utf8_lossy(&o.stderr)
+                            .chars()
+                            .take(300)
+                            .collect::<String>()
+                    ),
+                    "launch",
+                ),
+                Err(e) => {
+                    crate::base::push_log(&format!("[stop] WMI scan spawn failed: {e}\n"), "launch")
+                }
             }
         }
         #[cfg(not(windows))]
@@ -401,11 +723,13 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
         out
     };
     let is_ours = |exe: &str, cmd: &str| -> bool {
-        if !cmd.to_lowercase().contains("wgp.py") { return false; }
+        if !cmd.to_lowercase().contains("wgp.py") {
+            return false;
+        }
         let cl = cmd.to_lowercase();
         cl.contains(&repo_pre)                      // interpreter or script path under repo
             || exe.to_lowercase().replace('/', "\\").starts_with(&repo_pre) // env python, relative argv
-            || cl.contains("wan2gp-bootstrap-")   // our launcher bootstrap (any interpreter)
+            || cl.contains("wan2gp-bootstrap-") // our launcher bootstrap (any interpreter)
     };
     if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
         kill_pid(pid, &mut killed);
@@ -413,60 +737,164 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
     let mut found = 0usize;
     for (pid, exe, cmd) in scan() {
         found += 1;
-        if is_ours(&exe, &cmd) { kill_pid(pid, &mut killed); }
+        if is_ours(&exe, &cmd) {
+            kill_pid(pid, &mut killed);
+        }
     }
     // our external-terminal window (unique timestamped title)
     #[cfg(windows)]
     if let Some(t) = crate::launch::terminal_title() {
-        let _ = silent_command("taskkill").args(["/F", "/FI", &format!("WINDOWTITLE eq {t}*")]).output();
+        let _ = silent_command("taskkill")
+            .args(["/F", "/FI", &format!("WINDOWTITLE eq {t}*")])
+            .output();
     }
-    // Ground truth: whatever LISTENS on the server port dies too. Catches every
+    // Ground truth: whatever LISTENS on a Wan2GP port dies too. Catches every
     // spawn shape (workers, renamed interpreters, stale launchers) — launch
     // itself treats port-in-use as "ours" (reuses instead of spawning), so
     // stop must treat it the same way. Restricted to python* owners: Gradio
     // always runs on Python, and we never kill foreign processes.
-    let sport = load_config_value().get("serverPort").and_then(serde_json::Value::as_u64).unwrap_or(7860);
-    #[cfg(windows)]
-    {
-        let ps = format!("Get-NetTCPConnection -LocalPort {sport} -State Listen | ForEach-Object {{ $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p) {{ $p.Id.ToString() + '|' + $p.ProcessName }} }}");
-        match silent_command("powershell").args(["-NoProfile", "-Command", &ps]).output() {
-            Ok(o) if o.status.success() => {
-                for line in String::from_utf8_lossy(&o.stdout).lines() {
-                    let mut parts = line.splitn(2, '|');
-                    if let (Some(pid_s), Some(name)) = (parts.next(), parts.next()) {
-                        if name.trim().to_lowercase().contains("python") {
-                            if let Ok(pid) = pid_s.trim().parse::<u32>() { kill_pid(pid, &mut killed); }
+    // Ports: configured serverPort + the 7860/7861 defaults. A launcher killed
+    // for a rebuild can't clean up, so the next instance (possibly with a
+    // changed port) must still catch the previous session's listener —
+    // proven orphan class 2026-09-10 (PID on :7861 survived every Stop).
+    let sport = load_config_value()
+        .get("serverPort")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(7860);
+    let mut sports = vec![sport];
+    for p in [7860u64, 7861u64] {
+        if !sports.contains(&p) {
+            sports.push(p);
+        }
+    }
+    // Live progress: the sweep below takes seconds (PowerShell spawns) —
+    // without these the console sits dead and Stop feels frozen.
+    let say = |m: &str| {
+        crate::base::push_log(m, "launch");
+        let _ = app.emit("launch-log", m.to_string());
+    };
+    say("[stop] scanning Wan2GP processes…\n");
+    // Pure scan (no kill): (pid, port) of python listeners on ANY of `ports`.
+    // ONE PowerShell call for all ports (was one per port — the stall).
+    // Used by the sweep below and by the alive check, so survivors are
+    // reported, not hidden.
+    let port_listeners = |ports: &[u64]| -> Vec<(u32, u64)> {
+        let mut out = Vec::new();
+        #[cfg(windows)]
+        {
+            let list = ports
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            let ps = format!("Get-NetTCPConnection -LocalPort {list} -State Listen | ForEach-Object {{ $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p) {{ $p.Id.ToString() + '|' + $p.ProcessName + '|' + $_.LocalPort }} }}");
+            match silent_command("powershell")
+                .args(["-NoProfile", "-Command", &ps])
+                .output()
+            {
+                Ok(o) if o.status.success() => {
+                    for line in String::from_utf8_lossy(&o.stdout).lines() {
+                        let mut parts = line.splitn(3, '|');
+                        if let (Some(pid_s), Some(name), Some(port_s)) =
+                            (parts.next(), parts.next(), parts.next())
+                        {
+                            if name.trim().to_lowercase().contains("python") {
+                                if let (Ok(pid), Ok(port)) =
+                                    (pid_s.trim().parse::<u32>(), port_s.trim().parse::<u64>())
+                                {
+                                    out.push((pid, port));
+                                }
+                            }
+                        }
+                    }
+                }
+                // Exit 1 + "No matching" = no listeners on these ports (the
+                // CLEAN case) — not an error, stay silent so Stop reads clean.
+                Ok(o) => {
+                    let code = o.status.code().unwrap_or(-1);
+                    let err: String = String::from_utf8_lossy(&o.stderr)
+                        .chars()
+                        .take(200)
+                        .collect();
+                    if !(code == 1 && err.contains("No matching")) {
+                        crate::base::push_log(
+                            &format!("[stop] port scan ({list}) failed (exit {code}): {err}\n"),
+                            "launch",
+                        );
+                    }
+                }
+                Err(e) => crate::base::push_log(
+                    &format!("[stop] port scan ({list}) spawn failed: {e}\n"),
+                    "launch",
+                ),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            for port in ports {
+                if let Ok(o) = silent_command("lsof")
+                    .args(["-ti", &format!("tcp:{port}")])
+                    .output()
+                {
+                    if o.status.success() {
+                        for line in String::from_utf8_lossy(&o.stdout).lines() {
+                            if let Ok(pid) = line.trim().parse::<u32>() {
+                                out.push((pid, *port));
+                            }
                         }
                     }
                 }
             }
-            Ok(o) => crate::base::push_log(&format!("[stop] port scan failed (exit {}): {}\n", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).chars().take(200).collect::<String>()), "launch"),
-            Err(e) => crate::base::push_log(&format!("[stop] port scan spawn failed: {e}\n"), "launch"),
         }
+        out
+    };
+    say("[stop] checking Wan2GP ports…\n");
+    for (pid, port) in port_listeners(&sports) {
+        crate::base::push_log(
+            &format!("[stop] port {port}: killing python PID {pid}\n"),
+            "launch",
+        );
+        kill_pid(pid, &mut killed);
     }
-    #[cfg(not(windows))]
-    {
-        if let Ok(o) = silent_command("lsof").args(["-ti", &format!("tcp:{sport}")]).output() {
-            if o.status.success() {
-                for line in String::from_utf8_lossy(&o.stdout).lines() {
-                    if let Ok(pid) = line.trim().parse::<u32>() { kill_pid(pid, &mut killed); }
-                }
-            }
-        }
+    if let Some(m) = WANGP_PID.get() {
+        *m.lock().unwrap() = None;
     }
-    if let Some(m) = WANGP_PID.get() { *m.lock().unwrap() = None; }
     // Verify: re-scan after the dust settles, kill stragglers once, report
     // who's still alive instead of claiming success with orphans around.
     std::thread::sleep(std::time::Duration::from_millis(1200));
     for (pid, exe, cmd) in scan() {
-        if is_ours(&exe, &cmd) && !killed.contains(&pid) { kill_pid(pid, &mut killed); }
+        if is_ours(&exe, &cmd) && !killed.contains(&pid) {
+            kill_pid(pid, &mut killed);
+        }
     }
+    // Stragglers on ANY Wan2GP port (same orphan class as above).
+    for (pid, port) in port_listeners(&sports) {
+        if !killed.contains(&pid) {
+            crate::base::push_log(
+                &format!("[stop] port {port}: killing straggler PID {pid}\n"),
+                "launch",
+            );
+            kill_pid(pid, &mut killed);
+        }
+    }
+    say("[stop] verifying…\n");
     std::thread::sleep(std::time::Duration::from_millis(600));
-    let alive: Vec<u32> = scan().into_iter()
+    let mut alive: Vec<u32> = scan()
+        .into_iter()
         .filter(|(_, exe, cmd)| is_ours(exe, cmd))
         .map(|(pid, _, _)| pid)
         .collect();
-    let _ = app.emit("wangp-exit", serde_json::json!({"stopped": true, "killed": killed}));
+    for (pid, _port) in port_listeners(&sports) {
+        // Still listening = still alive, even if we already tried to kill
+        // it (failed kill must stay visible, never be hidden).
+        if !alive.contains(&pid) {
+            alive.push(pid);
+        }
+    }
+    let _ = app.emit(
+        "wangp-exit",
+        serde_json::json!({"stopped": true, "killed": killed}),
+    );
     if !alive.is_empty() {
         crate::base::push_log(&format!("[!] stop_wangp: {} process(es) survived Kill ({} checked): {:?} — kill them manually or restart.
 ", alive.len(), found, alive), "launch");
@@ -478,14 +906,22 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
 /// the OpenCode server (if we spawned it). One dashboard button, no
 /// leftovers. Reuses stop_wangp so behavior can never diverge from it.
 #[tauri::command]
-pub fn stop_all_servers(app: tauri::AppHandle) -> serde_json::Value {
-    let wangp = stop_wangp(app);
-    let opencode = crate::features::stop_opencode_server();
-    serde_json::json!({"ok": true, "wangp": wangp, "opencode_stopped": opencode})
+pub async fn stop_all_servers(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    // Same pool-starvation fix as stop_wangp: off the invoke pool.
+    tauri::async_runtime::spawn_blocking(move || {
+        let wangp = stop_wangp_blocking(app);
+        let opencode = crate::features::stop_opencode_server();
+        serde_json::json!({"ok": true, "wangp": wangp, "opencode_stopped": opencode})
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 // ── misc stubs to unblock frontend (return safe defaults) ──
-#[tauri::command] pub fn open_external(url: Option<String>) { let _=url; }
+#[tauri::command]
+pub fn open_external(url: Option<String>) {
+    let _ = url;
+}
 /// Expand Windows %VAR% placeholders case-insensitively. The old code only
 /// replaced exact-case and lowercase forms, but Windows env names come back
 /// UPPERCASE (LOCALAPPDATA) — so a literal `%LocalAppData%` never matched and
@@ -510,18 +946,47 @@ fn expand_win_env(s: &str) -> String {
 /// then system-wide Program Files — Brave/Opera/Vivaldi all support those).
 fn browser_candidates(id: &str) -> &[&str] {
     match id {
-        "chrome" => &["%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe", "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe", "%LocalAppData%\\Google\\Chrome\\Application\\chrome.exe"],
-        "edge" => &["%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe", "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe"],
-        "firefox" => &["%ProgramFiles%\\Mozilla Firefox\\firefox.exe", "%ProgramFiles(x86)%\\Mozilla Firefox\\firefox.exe", "%LocalAppData%\\Mozilla Firefox\\firefox.exe"],
-        "brave" => &["%LocalAppData%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", "%ProgramFiles%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", "%ProgramFiles(x86)%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"],
-        "opera" => &["%LocalAppData%\\Programs\\Opera\\launcher.exe", "%ProgramFiles%\\Opera\\launcher.exe", "%ProgramFiles(x86)%\\Opera\\launcher.exe"],
-        "vivaldi" => &["%LocalAppData%\\Vivaldi\\Application\\vivaldi.exe", "%ProgramFiles%\\Vivaldi\\Application\\vivaldi.exe", "%ProgramFiles(x86)%\\Vivaldi\\Application\\vivaldi.exe"],
+        "chrome" => &[
+            "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe",
+            "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe",
+            "%LocalAppData%\\Google\\Chrome\\Application\\chrome.exe",
+        ],
+        "edge" => &[
+            "%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe",
+            "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe",
+        ],
+        "firefox" => &[
+            "%ProgramFiles%\\Mozilla Firefox\\firefox.exe",
+            "%ProgramFiles(x86)%\\Mozilla Firefox\\firefox.exe",
+            "%LocalAppData%\\Mozilla Firefox\\firefox.exe",
+        ],
+        "brave" => &[
+            "%LocalAppData%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+            "%ProgramFiles%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+            "%ProgramFiles(x86)%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+        ],
+        "opera" => &[
+            "%LocalAppData%\\Programs\\Opera\\launcher.exe",
+            "%ProgramFiles%\\Opera\\launcher.exe",
+            "%ProgramFiles(x86)%\\Opera\\launcher.exe",
+        ],
+        "vivaldi" => &[
+            "%LocalAppData%\\Vivaldi\\Application\\vivaldi.exe",
+            "%ProgramFiles%\\Vivaldi\\Application\\vivaldi.exe",
+            "%ProgramFiles(x86)%\\Vivaldi\\Application\\vivaldi.exe",
+        ],
         _ => &[],
     }
 }
-#[tauri::command] pub fn detect_browsers() -> serde_json::Value {
+#[tauri::command]
+pub fn detect_browsers() -> serde_json::Value {
     // mirrors Electron WELL_KNOWN_BROWSERS with win env expansion
-    let cfg = load_config_value(); let def = cfg.get("defaultBrowser").and_then(|v| v.as_str()).unwrap_or("system").to_string();
+    let cfg = load_config_value();
+    let def = cfg
+        .get("defaultBrowser")
+        .and_then(|v| v.as_str())
+        .unwrap_or("system")
+        .to_string();
     let browsers = vec![
         ("chrome", "Google Chrome"),
         ("edge", "Microsoft Edge"),
@@ -533,25 +998,43 @@ fn browser_candidates(id: &str) -> &[&str] {
     let mut out = Vec::new();
     for (id, name) in browsers {
         let mut path: Option<String> = None;
-        for cand in browser_candidates(id) { let ep = expand_win_env(cand); if std::path::Path::new(&ep).exists() { path = Some(ep); break; } }
-        out.push(serde_json::json!({"id": id, "name": name, "installed": path.is_some(), "path": path}));
+        for cand in browser_candidates(id) {
+            let ep = expand_win_env(cand);
+            if std::path::Path::new(&ep).exists() {
+                path = Some(ep);
+                break;
+            }
+        }
+        out.push(
+            serde_json::json!({"id": id, "name": name, "installed": path.is_some(), "path": path}),
+        );
     }
     serde_json::json!({"browsers": out, "defaultBrowser": def})
 }
-#[tauri::command] pub fn launch_browser(app: tauri::AppHandle, url: Option<String>) -> serde_json::Value {
+#[tauri::command]
+pub fn launch_browser(app: tauri::AppHandle, url: Option<String>) -> serde_json::Value {
     use tauri_plugin_opener::OpenerExt;
     let u = url.unwrap_or_else(|| "http://localhost:7861".into());
     if !(u.starts_with("http://") || u.starts_with("https://")) {
         return serde_json::json!({"ok": false, "success": false, "error": "invalid url"});
     }
-    let chosen = load_config_value().get("defaultBrowser").and_then(|v| v.as_str()).unwrap_or("system").to_string();
+    let chosen = load_config_value()
+        .get("defaultBrowser")
+        .and_then(|v| v.as_str())
+        .unwrap_or("system")
+        .to_string();
     // "system" (or anything unresolved) → OS default via opener.
-    let exe = if chosen == "system" { None } else { find_browser_exe(&chosen) };
+    let exe = if chosen == "system" {
+        None
+    } else {
+        find_browser_exe(&chosen)
+    };
     // A stale selection (browser uninstalled after being picked) used to fall
     // back to the system default with zero explanation — "it didn't use it".
     if chosen != "system" && exe.is_none() {
         let m = format!("[!] Default browser '{chosen}' not found — opened with the system default instead. Reinstall it or pick another in Manage → Default Browser.\n");
-        crate::base::push_log(&m, "launch"); let _ = app.emit("launch-log", m);
+        crate::base::push_log(&m, "launch");
+        let _ = app.emit("launch-log", m);
     }
     match exe {
         None => match app.opener().open_url(u, None::<String>) {
@@ -561,10 +1044,13 @@ fn browser_candidates(id: &str) -> &[&str] {
         Some(path) => {
             use tauri::Emitter;
             let m = format!("[*] Opening with {chosen}: {path}\n");
-            crate::base::push_log(&m, "launch"); let _ = app.emit("launch-log", m);
+            crate::base::push_log(&m, "launch");
+            let _ = app.emit("launch-log", m);
             match silent_command(&path).arg(&u).spawn() {
                 Ok(_) => serde_json::json!({"ok": true, "success": true, "via": chosen}),
-                Err(e) => serde_json::json!({"ok": false, "success": false, "error": e.to_string()}),
+                Err(e) => {
+                    serde_json::json!({"ok": false, "success": false, "error": e.to_string()})
+                }
             }
         }
     }
@@ -573,45 +1059,92 @@ fn browser_candidates(id: &str) -> &[&str] {
 fn find_browser_exe(id: &str) -> Option<String> {
     for c in browser_candidates(id) {
         let s = expand_win_env(c);
-        if std::path::Path::new(&s).exists() { return Some(s); }
+        if std::path::Path::new(&s).exists() {
+            return Some(s);
+        }
     }
     None
 }
-#[tauri::command] pub fn launch_browser_no_gpu(url: Option<String>) -> serde_json::Value {
+#[tauri::command]
+pub fn launch_browser_no_gpu(url: Option<String>) -> serde_json::Value {
     // No-GPU browser frees VRAM for generation (mirrors Electron's chrome flags).
     let u = url.unwrap_or_else(|| "http://localhost:7861".into());
     if !(u.starts_with("http://") || u.starts_with("https://")) {
         return serde_json::json!({"ok": false, "success": false, "error": "invalid url"});
     }
-    let chosen = load_config_value().get("defaultBrowser").and_then(|v| v.as_str()).unwrap_or("system").to_string();
+    let chosen = load_config_value()
+        .get("defaultBrowser")
+        .and_then(|v| v.as_str())
+        .unwrap_or("system")
+        .to_string();
     // Prefer Chrome, else the chosen browser, else whatever opener gives (GPU on).
-    let exe = find_browser_exe("chrome")
-        .or_else(|| if chosen != "system" { find_browser_exe(&chosen) } else { None });
+    let exe = find_browser_exe("chrome").or_else(|| {
+        if chosen != "system" {
+            find_browser_exe(&chosen)
+        } else {
+            None
+        }
+    });
     let Some(path) = exe else {
         return serde_json::json!({"ok": false, "success": false, "error": "No Chromium browser found for no-GPU launch"});
     };
-    let args = ["--disable-gpu", "--disable-gpu-compositing", "--disable-accelerated-2d-canvas", "--disable-accelerated-video-decode", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-webgpu"];
+    let args = [
+        "--disable-gpu",
+        "--disable-gpu-compositing",
+        "--disable-accelerated-2d-canvas",
+        "--disable-accelerated-video-decode",
+        "--use-angle=swiftshader",
+        "--enable-unsafe-swiftshader",
+        "--disable-webgpu",
+    ];
     match silent_command(&path).args(args).arg(&u).spawn() {
         Ok(_) => serde_json::json!({"ok": true, "success": true}),
         Err(e) => serde_json::json!({"ok": false, "success": false, "error": e.to_string()}),
     }
 }
-#[tauri::command] pub fn chrome_available() -> bool {
+#[tauri::command]
+pub fn chrome_available() -> bool {
     // ponytail: where chrome only checks PATH, but Chrome is at Program Files — check there like detect_browsers does
-    for p in ["C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"] {
-        if std::path::Path::new(p).exists() { return true; }
+    for p in [
+        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    ] {
+        if std::path::Path::new(p).exists() {
+            return true;
+        }
     }
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        if std::path::Path::new(&format!("{local}\\Google\\Chrome\\Application\\chrome.exe")).exists() { return true; }
+        if std::path::Path::new(&format!("{local}\\Google\\Chrome\\Application\\chrome.exe"))
+            .exists()
+        {
+            return true;
+        }
     }
-    silent_command("where").arg("chrome").output().is_ok_and(|o| o.status.success())
+    silent_command("where")
+        .arg("chrome")
+        .output()
+        .is_ok_and(|o| o.status.success())
 }
 
-#[tauri::command] pub async fn launch_webview(app: tauri::AppHandle) -> Result<serde_json::Value, String> { launch(app, Some("app".into())).await }
-#[tauri::command] pub async fn popout_webview(app: tauri::AppHandle, url: Option<String>) -> Result<serde_json::Value, String> {
+#[tauri::command]
+pub async fn launch_webview(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    launch(app, Some("app".into())).await
+}
+#[tauri::command]
+pub async fn popout_webview(
+    app: tauri::AppHandle,
+    url: Option<String>,
+) -> Result<serde_json::Value, String> {
     let res = launch(app.clone(), Some("browser".into())).await?;
-    let u = url.or_else(|| res.get("url").and_then(|v| v.as_str()).map(std::string::ToString::to_string)).unwrap_or_else(|| "http://localhost:7861".into());
-    use tauri_plugin_opener::OpenerExt; let _ = app.opener().open_url(u, None::<String>);
+    let u = url
+        .or_else(|| {
+            res.get("url")
+                .and_then(|v| v.as_str())
+                .map(std::string::ToString::to_string)
+        })
+        .unwrap_or_else(|| "http://localhost:7861".into());
+    use tauri_plugin_opener::OpenerExt;
+    let _ = app.opener().open_url(u, None::<String>);
     Ok(res)
 }
 
@@ -620,8 +1153,14 @@ mod launch_args_tests {
     use super::*;
     #[test]
     fn split_launch_args_quotes() {
-        assert_eq!(split_launch_args("--profile 4 --attention sage2"), vec!["--profile", "4", "--attention", "sage2"]);
-        assert_eq!(split_launch_args("--teacache \"a b\" --verbose 2"), vec!["--teacache", "a b", "--verbose", "2"]);
+        assert_eq!(
+            split_launch_args("--profile 4 --attention sage2"),
+            vec!["--profile", "4", "--attention", "sage2"]
+        );
+        assert_eq!(
+            split_launch_args("--teacache \"a b\" --verbose 2"),
+            vec!["--teacache", "a b", "--verbose", "2"]
+        );
         assert_eq!(split_launch_args(""), Vec::<String>::new());
     }
 }

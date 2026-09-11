@@ -913,6 +913,21 @@ body {
   font-family: 'Geist Mono', monospace;
   color: var(--text-secondary);
   min-width: 32px;
+}
+.embed-badge {
+  font-size: 0.6rem;
+  font-family: 'Geist Mono', monospace;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+.embed-badge.native { color: var(--signal-green, #7dc888); border-color: var(--signal-green, #7dc888); }
+.embed-dash-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 0.6875rem; color: var(--text-secondary); padding: 2px 4px; }
+.embed-select { background: transparent; cursor: pointer; outline: none; }
+.embed-select option { background: var(--surface, #242424); color: var(--text-primary, #e8e6e1); }
+.embed-top-wrap { display: inline-flex; align-items: center; gap: 4px; font-size: 0.625rem; font-family: 'Geist Mono', monospace; color: var(--text-secondary); margin-right: 8px; white-space: nowrap; }
   text-align: center;
 }
 

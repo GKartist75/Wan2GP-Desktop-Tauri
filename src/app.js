@@ -17,7 +17,12 @@ function scheduleTerminalRender() {
   _renderScheduled = true
   requestAnimationFrame(() => { _renderScheduled = false; renderTerminals() })
 }
-function appendLog(text) {
+// Main console entry. `forward=false` for backend-echoed lines (the backend
+// already emits those to every window — forwarding would duplicate them in
+// the separate term window). Everything else mirrors to the backend bus so
+// floating/docked/dashboard consoles stay identical (history + live).
+function appendLog(text, forward) {
+  if (!text) return
   if (!text) return
   // Normalize Windows \r\n to \n first (avoids \r clearing lastLine before \n pushes it)
   const parts = text.replace(/\r\n/g, '\n').split(/(\r|\n)/)
@@ -44,6 +49,7 @@ function appendLog(text) {
   }
   if (logBuffer.length > MAX_LOG) logBuffer.splice(0, logBuffer.length - MAX_LOG)
   scheduleTerminalRender()
+  if (forward !== false) { try { window.w2gp.mirrorConsole(text) } catch {} }
 }
 
 const termFollow = { termBody: true, ftTermBody: true, installTermBody: true }
@@ -104,6 +110,38 @@ let _ftVisible = false
 // Wan2GP. Strategy: docked (bottom/top/left/right) → shrink the view, DOM console sits beside
 // Wan2GP (side-by-side); floating → console is its OWN window (movable to another monitor) and
 // Wan2GP is detached so the main window isn't left showing a grey Wan2GP panel.
+// Separate-window state (native floating): backend owns truth (X-close invisible
+// to us — synced via the term-closed event).
+let _termWinOpen = false
+// Open the console as its own OS window (native floating): floats above
+// everything incl. the native child, so Gradio stays visible. Keeps the
+// child shown (re-syncs bounds) and clears any hidden-view note.
+function openNativeTermWindow() {
+  hideNativeHiddenNote()
+  // Surface failures LOUDLY: a silent catch here looks exactly like
+  // "floating does nothing" with no way to tell why.
+  window.w2gp.createTermView().then((r) => {
+    _termWinOpen = true
+    appendLog(r && r.existing ? '[*] Console window focused' : '[*] Console opened in its own window (native floating mode)')
+  }).catch((e) => {
+    _termWinOpen = false; _ftVisible = false
+    appendLog('[!] Console window failed to open: ' + errText(e))
+    showToast('✗ Console window failed: ' + errText(e))
+    showNativeHiddenNote()
+  })
+  _termWinOpen = true
+  _ftVisible = true
+  // DOM panel stands down (the window owns the console); mark floating state
+  // so toggles/recovery route back here instead of the DOM path.
+  try {
+    const ft = $('floatingTerminal')
+    if (ft) ft.className = 'floating-term dock-floating hidden'
+    document.querySelectorAll('.dock-btn').forEach(b => b.classList.toggle('active', b.dataset.dock === 'floating'))
+  } catch {}
+  try { reshowNativeView() } catch {}
+  try { renderTerminals() } catch {}
+  syncTermEmbedPadding()
+}
 function currentDock() {
   const ft = $('floatingTerminal')
   for (const d of ['bottom', 'top', 'left', 'right', 'floating']) {
@@ -116,9 +154,16 @@ function currentDock() {
 // terminal window like Electron's TermView, so no special-casing by dock.
 let _termBusy = false
 function showTerminal() {
-  if (_termBusy) return
+  if (_termBusy) { appendLog('[i] showTerminal skipped (_termBusy)'); return }
   _termBusy = true
   try {
+  // Native + floating FIRST: separate OS window (floats above everything,
+  // Gradio stays visible). Skips the DOM terminal entirely — showing it would
+  // leave a dead panel behind once the window owns the console.
+  if (currentDock() === 'floating' && window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) {
+    openNativeTermWindow()
+    return
+  }
   window.w2gp.destroyTermView()
   $('floatingTerminal').classList.remove('hidden')
   _ftVisible = true
@@ -129,22 +174,52 @@ function showTerminal() {
   if (dock !== 'floating') window.w2gp.bvSetDock(dock)
   window.w2gp.hideBrowserView('term')
   syncTermEmbedPadding()
-  } finally { setTimeout(() => _termBusy = false, 50) }
+  // Native child composites above the DOM: hideBrowserView('term') hid it —
+  // for docked (side-by-side) mode re-show it shrunk beside the console.
+  // Floating keeps it hidden (with an explanatory note, not black void).
+  try {
+    if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) {
+      if (dock === 'floating') showNativeHiddenNote()
+      else reshowNativeView()
+    }
+  } catch {}
+  // Synchronous (not timed) guard: both terminal functions run to completion
+  // within one task (all backend calls are fire-and-forget), so same-stack
+  // recursion is still blocked while sequential calls across async gaps —
+  // e.g. term-window X-close → hideTerminal, then dock-back → showTerminal —
+  // are never dropped. The old 50ms timeout ate those and wedged docking.
+  } finally { _termBusy = false }
 }
 function hideTerminal() {
   if (_termBusy) return
   _termBusy = true
+  // Separate window (if any) always closes with the console.
+  _termWinOpen = false
   try {
   $('floatingTerminal').classList.add('hidden')
   _ftVisible = false
   syncTermEmbedPadding()
+  hideNativeHiddenNote()
   window.w2gp.destroyTermView()
   window.w2gp.reattachBrowserView()
-  } finally { setTimeout(() => _termBusy = false, 50) }
+  // Native child: restore full bounds now the console is gone (with settle).
+  try { reshowNativeView() } catch {}
+  // Same synchronous guard as showTerminal (see above): never time-based.
+  } finally { _termBusy = false }
 }
-function toggleFloatingTerm() {
+async function toggleFloatingTerm() {
   if (_termBusy) return
   if ($('dashBody').style.display === 'none') {
+    // Native + floating console lives in its own OS window (backend owns
+    // truth — the DOM panel stays hidden, so classList can't drive this).
+    if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed() && currentDock() === 'floating') {
+      try {
+        const r = await window.w2gp.toggleTermWindow().catch(() => null)
+        _termWinOpen = !!(r && r.open)
+        _ftVisible = _termWinOpen
+      } catch {}
+      return
+    }
     // DOM is truth — the flag desyncs if a toggle ever gets swallowed.
     if ($('floatingTerminal').classList.contains('hidden')) { renderTerminals(); showTerminal() }
     else { hideTerminal() }
@@ -152,6 +227,26 @@ function toggleFloatingTerm() {
 }
 function closeFloatingTerm() {
   hideTerminal()
+}
+// Dock switch pressed inside the separate term window: close it, then dock
+// the DOM console in the main window (same end state as the main dock buttons).
+window.__dockTerminal = async (dock) => {
+  appendLog('[*] Docking console: ' + dock + ' (from separate window)')
+  showToast('Docking console: ' + dock)
+  if (dock === 'floating') { try { await window.w2gp.createTermView() } catch (e) { appendLog('[!] dock/floating reopen failed: ' + errText(e)) } return }
+  try { await window.w2gp.destroyTermView().catch(() => {}) } catch (e) { appendLog('[!] dock/destroy failed: ' + errText(e)) }
+  appendLog('[i] dock step: window closed')
+  _termWinOpen = false
+  _ftVisible = false
+  try {
+    const cfg = await window.w2gp.configLoad().catch(() => ({}))
+    if (cfg && typeof cfg === 'object') { cfg.termDockDefault = dock; window.w2gp.configSave(cfg).catch(() => {}) }
+  } catch (e) { appendLog('[!] dock/config failed: ' + errText(e)) }
+  appendLog('[i] dock step: config saved')
+  try { setFtDock(dock) } catch (e) { appendLog('[!] dock/setFtDock failed: ' + errText(e)) }
+  appendLog('[i] dock step: setFtDock done, dashHidden=' + ($('dashBody').style.display === 'none'))
+  if ($('dashBody').style.display === 'none') showTerminal()
+  appendLog('[i] dock step: showTerminal returned')
 }
 // Apply a dock position to the floating terminal (className + IPC), without toggling visibility.
 // When the console is open this also switches the rendering mode (DOM vs overlay) as needed.
@@ -165,8 +260,16 @@ function setFtDock(dock) {
   if (dock !== 'floating') window.w2gp.bvSetDock(dock)
   // ponytail: don't re-enter showTerminal from here if we just changed dock — toggling dock while open re-shrinks view without loop
   if (wasVisible && $('dashBody').style.display === 'none') {
-    // only re-flow BrowserView, don't re-create terminal DOM in a loop
-    window.w2gp.hideBrowserView('term')
+    const _native = window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()
+    // Switching dock TO floating while open: open the separate window (the
+    // hole that left a hidden child + black view). Leaving floating: close it.
+    if (_native && dock === 'floating') { openNativeTermWindow() }
+    else {
+      if (_native) { try { window.w2gp.destroyTermView().catch(() => {}) } catch {} _termWinOpen = false }
+      // only re-flow BrowserView, don't re-create terminal DOM in a loop
+      window.w2gp.hideBrowserView('term')
+      if (_native) reshowNativeView()
+    }
   }
   syncTermEmbedPadding()
 }
@@ -183,6 +286,73 @@ function syncTermEmbedPadding() {
   wc.style.paddingTop = (visible && dock === 'top') ? ft.offsetHeight + 'px' : ''
   wc.style.paddingLeft = (visible && dock === 'left') ? ft.offsetWidth + 'px' : ''
   wc.style.paddingRight = (visible && dock === 'right') ? ft.offsetWidth + 'px' : ''
+}
+// Native-child placeholder: a native child composites above the DOM, so the
+// free-floating console can't overlay Gradio — the child is hidden instead.
+// Show an explanatory note (not black void) with the way back.
+function showNativeHiddenNote() {
+  try {
+    const wc = $('webviewContainer')
+    if (!wc) return
+    hideNativeHiddenNote()
+    const d = document.createElement('div')
+    d.id = 'nativeHiddenNote'
+    d.style.cssText = 'flex:1;display:flex;align-items:center;justify-content:center;color:#888;font-size:13px;font-family:Geist Mono,monospace;text-align:center;padding:20px;line-height:1.8'
+    d.textContent = 'Desktop view hidden while the floating console is open. Dock the console (Bottom / Left / Top / Right) to see both side-by-side — or switch Renderer back to iframe for overlay.'
+    wc.appendChild(d)
+  } catch {}
+}
+function hideNativeHiddenNote() { try { document.getElementById('nativeHiddenNote')?.remove() } catch {} }
+// Native-child twin of syncTermEmbedPadding: the child ignores CSS padding
+// (it composites above the DOM), so subtract the open docked console's strip
+// from the measured container rect and push real bounds to Rust. Floating /
+// hidden console → full container rect.
+function syncNativeBoundsAdjusted() {
+  try {
+    if (!window.w2gp.isNativeEmbed || !window.w2gp.isNativeEmbed()) return
+    const wc = $('webviewContainer')
+    if (!wc || wc.classList.contains('hidden')) return
+    const r = wc.getBoundingClientRect()
+    if (!r.width || !r.height) return
+    let { left: x, top: y, width: w, height: h } = r
+    const ft = $('floatingTerminal')
+    const dock = currentDock()
+    if (ft && !ft.classList.contains('hidden') && $('dashBody').style.display === 'none') {
+      if (dock === 'bottom') h = Math.max(0, h - ft.offsetHeight)
+      else if (dock === 'top') { const t = ft.offsetHeight; y += t; h = Math.max(0, h - t) }
+      else if (dock === 'left') { const l = ft.offsetWidth; x += l; w = Math.max(0, w - l) }
+      else if (dock === 'right') w = Math.max(0, w - ft.offsetWidth)
+    }
+    // Same topbar clamp as __syncNativeBounds: the child must never cover metrics.
+    try {
+      const tb = document.querySelector('.topbar')
+      if (tb) { const minY = tb.getBoundingClientRect().bottom; if (y < minY) { h -= (minY - y); y = minY } }
+    } catch {}
+    hideNativeHiddenNote()
+    // Bounds spam quieting: transitions fire this up to 3× per flip — log
+    // only on actual change.
+    const _bk = `${Math.round(x)}.${Math.round(y)}.${Math.round(w)}.${Math.round(h)}`
+    if (window.__lastNativeBounds !== _bk) {
+      window.__lastNativeBounds = _bk
+      appendLog(`[embed] native bounds x=${Math.round(x)} y=${Math.round(y)} w=${Math.round(w)} h=${Math.round(h)}`)
+    }
+    if (w > 10 && h > 10) { try { window.w2gp.bvSyncBoundsRect({ x, y, w, h }); } catch {} }
+  } catch {}
+}
+// Re-show the native child with settle re-syncs: measuring right after unhide
+// can catch a stale rect, leaving the child at the wrong size with Gradio
+// controls cut off. Syncs now (forced layout), after paint, and after settle.
+// No-op unless native embed is active.
+function reshowNativeView() {
+  try {
+    if (!window.w2gp.isNativeEmbed || !window.w2gp.isNativeEmbed()) return
+    window.w2gp.reattachBrowserView().then(() => {
+      const once = () => { try { syncNativeBoundsAdjusted() } catch {} }
+      once()
+      try { requestAnimationFrame(once) } catch {}
+      setTimeout(once, 300)
+    }).catch(() => {})
+  } catch {}
 }
 // Settings toggle handlers registered once (avoids memory leak from repeated onchange reassignment).
 let _settingsTogglesReady = false
@@ -312,6 +482,9 @@ function openSettings() {
     // Bind Address picker: reflect saved choice (default localhost)
     const sn = $('serverNameSelect')
     if (sn) sn.value = (cfg.serverName === '127.0.0.1') ? '127.0.0.1' : 'localhost'
+    // Desktop embed picker: native (default) vs iframe child webview
+    const em = $('embedModeSelect')
+    if (em) em.value = (cfg.embedMode === 'iframe') ? 'iframe' : 'native'
   })
   loadBrowserList()
   refreshPlugins()
@@ -683,13 +856,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupScrollUnfollow('termBody','dashTermFollowBtn')
   setupScrollUnfollow('installTermBody','installFollowBtn')
 
-  window.w2gp.onSetupOutput(t => appendLog(t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'').replace(/\x08/g,'')))
+  window.w2gp.onSetupOutput(t => appendLog(t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'').replace(/\x08/g,''), false))
   window.w2gp.onDlss5Progress(dlss5OnEvent)
   window.w2gp.onInstallProgress(installProgressOnEvent)
 
   window.w2gp.onLaunchLog(t => {
     const clean = t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'').replace(/\x08/g,'')
-    appendLog(clean)
+    appendLog(clean, false)
     // Console-first launch: stay on the dashboard while starting, open the
     // destination the moment the backend reports ready.
     if (_pendingOpen && /Wan2GP ready/.test(clean)) {
@@ -1812,6 +1985,13 @@ async function refreshDashboard(){
     window.w2gp.checkInstalled().catch(() => null),
     window.w2gp.manageList().catch(() => [])
   ])
+  // Dashboard renderer switch: reflect the saved embedMode (same source as
+  // Manage → Launch and the topbar quick-switch).
+  try {
+    const _cfg = await window.w2gp.configLoad().catch(() => ({}))
+    const _et = $('embedModeTop')
+    if (_et) _et.value = (_cfg && _cfg.embedMode === 'iframe') ? 'iframe' : 'native'
+  } catch {}
   // Launch buttons only make sense when Wan2GP is actually installed
   try {
     // Launch buttons need a repo AND an active env — repo alone (failed
@@ -2818,12 +2998,35 @@ function armPendingTimeout() {
   }, 180000)
 }
 async function openDesktopView(url, fresh) {
+  // Transition mutex with closeWebview: double-clicks / fast Back-and-forth
+  // used to interleave the two async flows and strand mixed states
+  // (dashboard visible WITH Desktop topbar controls).
+  if (window.__viewBusy) { appendLog('[i] View transition in progress — ignored'); return }
+  window.__viewBusy = true
   $('appBtn').disabled = true; $('appBtn').textContent = 'Opening...'
   try {
+    // Stale-renderer guard: the mode was switched while the view sat
+    // hidden-but-alive → destroy it and fall through to a fresh create below.
+    // (Just re-showing would keep the OLD renderer forever.)
+    try {
+      const _cfg = await window.w2gp.configLoad().catch(() => ({}))
+      const _want = (_cfg && _cfg.embedMode === 'iframe') ? 'iframe' : 'native'
+      const _have = (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) ? 'native'
+        : (document.getElementById('tauri-browser-view') ? 'iframe' : null)
+      if (!fresh && _have && _have !== _want) {
+        appendLog(`[*] Embed mode changed (${_have} → ${_want}) — recreating Desktop view…`)
+        try { await window.w2gp.destroyBrowserView() } catch {}
+        fresh = true
+      }
+    } catch {}
     // Hidden-but-alive view (Back to Dashboard keeps it) → just re-show it.
-    // No relaunch, no port traffic, Gradio session untouched.
-    if (!fresh && document.getElementById('tauri-browser-view')) {
-      document.getElementById('tauri-browser-view').style.display = 'flex'
+    // No relaunch, no port traffic, Gradio session untouched. Native child:
+    // re-show the (still-alive) child instead of recreating it.
+    const _nativeAlive = !fresh && window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()
+    if ((!fresh && document.getElementById('tauri-browser-view')) || _nativeAlive) {
+      const _iv = document.getElementById('tauri-browser-view')
+      if (_iv) _iv.style.display = 'flex'
+      if (_nativeAlive) reshowNativeView()
       $('dashBody').style.display = 'none'
       $('webviewContainer').classList.remove('hidden')
       $('launchInfo').classList.add('hidden')
@@ -2838,7 +3041,9 @@ async function openDesktopView(url, fresh) {
       return
     }
     const created = await window.w2gp.createBrowserView(url, { reload: !!fresh })
-    if (!created || created.error) throw new Error(created && created.error ? created.error : 'failed to create embed')
+    if (!created || (created.error && !created.fallback)) throw new Error(created && created.error ? created.error : 'failed to create embed')
+    noteEmbedFallback(created)
+    appendLog(`[*] Desktop view: ${((created && created.mode) || 'iframe')} renderer — ${url}`)
     $('dashBody').style.display = 'none'
     $('webviewContainer').classList.remove('hidden')
     $('launchInfo').classList.add('hidden')
@@ -2868,6 +3073,7 @@ async function openDesktopView(url, fresh) {
     appendLog(`[LAUNCH ERROR] ${errText(e)}`)
   } finally {
     $('appBtn').disabled = false; setAppLaunchLabel()
+    window.__viewBusy = false
   }
 }
 $('appBtn').addEventListener('click', async () => {
@@ -2891,15 +3097,58 @@ $('appBtn').addEventListener('click', async () => {
   }
 })
 
+// Native was requested but the backend couldn't stand up the child webview
+// (it fell back to iframe) — say so loudly instead of silently running old.
+function noteEmbedFallback(created) {
+  if (created && created.fallback) {
+    const why = created.error ? ' — ' + created.error : ''
+    appendLog('[!] Native embed failed, fell back to iframe' + why + ' (see console / F12)')
+    showToast('✗ Native embed failed — running iframe' + why)
+  }
+}
+// Destroy + recreate the Desktop view (picks up a new embedMode).
+// The Gradio session restarts — that's the point: a live renderer can't
+// change modes, and Back-to-Dashboard only hides it (keeps it alive).
+async function relaunchDesktopView() {
+  if (!currentUrl) { showToast('Nothing to relaunch — launch Wan2GP in Desktop first'); return }
+  appendLog('[*] Relaunching Desktop view…')
+  try { await window.w2gp.destroyBrowserView() } catch {}
+  appRunning = false
+  await openDesktopView(currentUrl, true)
+}
 // Reflect whether the Wan2GP desktop (BrowserView) server is still up behind the
 // dashboard: while it is, the launch button reads "Back to Wan2GP in Desktop".
 function setAppLaunchLabel() {
   $('appBtn').textContent = appRunning ? 'Back to Wan2GP in Desktop' : 'Launch Wan2GP in Desktop'
+  syncEmbedSwitchLocks()
+}
+// Renderer switches are usable only while NO Desktop session is active: while
+// one runs, every switch shows the active viewer locked (stop the server +
+// back to dashboard to change it). One hook — setAppLaunchLabel runs on
+// every open/close/stop/exit transition.
+function syncEmbedSwitchLocks() {
+  const locked = !!appRunning
+  const tip = locked
+    ? 'Active renderer (locked — stop the Wan2GP server to switch)'
+    : 'Desktop renderer — applies on launch'
+  for (const id of ['embedModeSelect', 'embedModeTop']) {
+    const el = $(id)
+    if (!el) continue
+    el.disabled = locked
+    el.title = tip
+  }
 }
 
 function showWebviewUI() {
   $('wvControls').style.display = 'flex'
   $('runningLed').style.display = 'inline-flex'
+  // Topbar renderer switch (permanent, always visible): shows the active
+  // renderer (gray iframe / green native). Locked while a session runs.
+  try {
+    const native = window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()
+    const q = $('embedModeTop')
+    if (q) { q.value = native ? 'native' : 'iframe'; q.classList.toggle('native', !!native) }
+  } catch {}
 }
 
 function hideWebviewUI() {
@@ -2907,7 +3156,10 @@ function hideWebviewUI() {
   $('runningLed').style.display = 'none'
 }
 
-async function closeWebview() {
+async function closeWebview(silent) {
+  if (window.__viewBusy) { appendLog('[i] View transition in progress — ignored'); return }
+  window.__viewBusy = true
+  try {
   // Like Electron's BrowserView hide: the iframe STAYS ALIVE but hidden, so
   // flipping back is instant (no relaunch, no port conflict, Gradio state kept).
   // Only a real server stop destroys it (see onWangpExit).
@@ -2920,10 +3172,13 @@ async function closeWebview() {
   window.w2gp.uiModeSet(null)
   // Server is still running behind the dashboard → the launch button becomes "Back to…"
   setAppLaunchLabel()
-  appendLog('[*] Back on dashboard. Server still running — flip back anytime.')
+  // Silent when invoked from the server-exit path (no server behind us —
+  // claiming otherwise is exactly the stale "still running" confusion).
+  if (!silent) appendLog('[*] Back on dashboard. Server still running — flip back anytime.')
+  } finally { window.__viewBusy = false }
 }
 
-$('backToDashboardBtn').addEventListener('click', closeWebview)
+$('backToDashboardBtn').addEventListener('click', () => closeWebview())
 
 // ── Crash recovery: put the UI back where it was after a renderer crash ──
 // The main process auto-reloads the launcher renderer when it dies (usually a
@@ -2943,7 +3198,9 @@ async function checkCrashRecovery() {
       // Force a reload: after a renderer crash the embedded Gradio page may be in a
       // bad state, so re-open from a fresh load rather than re-attaching a live session.
       const created = await window.w2gp.createBrowserView(info.url, { reload: true })
-      if (!created || created.error) throw new Error(created && created.error ? created.error : 'failed to re-create embed')
+      if (!created || (created.error && !created.fallback)) throw new Error(created && created.error ? created.error : 'failed to re-create embed')
+      noteEmbedFallback(created)
+      appendLog(`[*] Desktop view recovered: ${((created && created.mode) || 'iframe')} renderer — ${info.url}`)
       $('dashBody').style.display = 'none'
       $('webviewContainer').classList.remove('hidden')
       showWebviewUI()
@@ -2987,8 +3244,10 @@ async function checkCrashRecovery() {
 
 // ── BrowserView navigation / zoom (relayed via main process) ──
 // Back/Forward can't work on a cross-origin iframe (Gradio history is
-// unreachable) — only Reload is offered. Zoom is real: CSS zoom on the embed.
+// unreachable) — only Reload is offered. Zoom is real: CSS zoom on the iframe
+// embed, compositor zoom (bv_set_zoom) on the native child embed.
 $('wvReloadBtn').addEventListener('click', () => {
+  if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) { window.w2gp.bvNavigate('reload'); return }
   const f = document.querySelector('#tauri-browser-view iframe')
   if (f) f.src = f.src
 })
@@ -2998,6 +3257,7 @@ $('zoomSlider').addEventListener('input', () => {
   $('zoomLabel').textContent = pct + '%'
   clearTimeout(_zoomDebounce)
   _zoomDebounce = setTimeout(() => {
+    if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) { window.w2gp.bvSetZoom(pct / 100); return }
     const f = document.querySelector('#tauri-browser-view iframe')
     if (f) f.style.zoom = (pct / 100)
   }, 120)
@@ -3005,16 +3265,31 @@ $('zoomSlider').addEventListener('input', () => {
 
 // ── Download Save / Save-As prompt ──
 // WebView2 completes iframe downloads with zero UI (no shelf, toast or
-// dialog), so gallery saves look broken while files pile up in Downloads.
-// While the Desktop view is open, poll Downloads for fresh media and pop a
-// browser-like prompt per arrival: [Save] keeps it in Downloads, [Save As…]
-// opens the native dialog and moves it (dialog reopens at the last-used
-// folder). Baseline resets whenever the view is hidden so old files never
-// announce themselves.
+// dialog), so saves look broken while files pile up in Downloads.
+// While the Desktop view is open, poll Downloads for Wan2GP-issued files
+// and pop a browser-like prompt per arrival: [Save] keeps it in
+// Downloads, [Save As…] opens the native dialog and moves it (dialog
+// reopens at the last-used folder). Covers gallery media, settings
+// .zip/.json, queue .zip, finetune exports, right-click saves — all share
+// the same anchor-download path. Other apps' files never prompt (shape
+// gate mirrors the backend). Baseline resets whenever the view is
+// hidden so old files never announce themselves.
 let _dlWatchTimer = null
 const _dlWatchSeen = new Set()
 let _dlWatchBaseline = 0
-const DL_MEDIA_RE = /\.(png|jpe?g|webp|gif|bmp|mp4|wav|mp3|ogg|flac)$/i
+// Wan2GP shapes only: bundles (.zip/.json/.lset) always prompt, media must
+// carry Wan2GP's timestamp (-YYYY-MM-DD-HHhMMmSSs) or _seed marker.
+// Skip in-progress/partial artifacts and OS noise.
+const DL_BUNDLE_RE = /\.(zip|json|lset)$/i
+const DL_STAMP_RE = /[-_]\d{4}-\d{2}-\d{2}-\d{2}h\d{2}m\d{2}s/i
+const DL_SEED_RE = /_seed\d/i
+const DL_SKIP_RE = /\.(tmp|temp|crdownload|part|partial|download|opdownload|lock|bak|lnk)$/i
+function isWangpDownload(name) {
+  if (!name || name.startsWith('.') || name.startsWith('~$') || DL_SKIP_RE.test(name)) return false
+  if (DL_BUNDLE_RE.test(name)) return true
+  const stem = name.replace(/ \(\d+\)(?=\.[^.]+$)/, '')
+  return DL_STAMP_RE.test(stem) || DL_SEED_RE.test(stem)
+}
 function dlWatchViewOpen() {
   const host = $('webviewContainer')
   return !!(host && !host.classList.contains('hidden') && document.getElementById('tauri-browser-view'))
@@ -3022,21 +3297,72 @@ function dlWatchViewOpen() {
 function startDownloadsWatch() {
   if (_dlWatchTimer) return
   _dlWatchSeen.clear(); _dlWatchBaseline = Date.now()
+  // Native child embed: downloads arrive as exact `download-finished` events
+  // (no polling, no shape-gate — every event IS a Wan2GP download). Register once.
+  if (!startDownloadsWatch._nativeWired) {
+    startDownloadsWatch._nativeWired = true
+    // Native child, browser-with-ask flow: toast while bytes land in staging,
+    // then the native Save-As dialog pops on finish (cancel keeps Downloads).
+    try {
+      window.w2gp.onDownloadStarted((p) => {
+        if (p && p.name) showToast('⬇ Downloading: ' + p.name)
+      })
+    } catch {}
+    try {
+      window.w2gp.onDownloadFinished((p) => {
+        if (!p || !p.path) return
+        if (p.success === false) { showToast('✗ Download failed: ' + (p.name || p.url || 'unknown')); return }
+        const key = 'staged|' + p.path
+        if (_dlWatchSeen.has(key)) return
+        _dlWatchSeen.add(key)
+        appendLog('[*] Download finished: ' + (p.name || p.path))
+        finishNativeDownload(p)
+      })
+    } catch {}
+    try {
+      window.w2gp.onGradioPageLoad((p) => {
+        if (!p) return
+        appendLog(`[embed] Gradio page ${p.started ? 'started' : 'finished'}: ${p.url || ''}`)
+      })
+    } catch {}
+  }
   _dlWatchTimer = setInterval(async () => {
     try {
+      // Native mode is event-driven — keep the iframe baseline fresh so
+      // switching back to iframe never replays old files.
+      if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) { _dlWatchBaseline = Date.now(); return }
       if (!dlWatchViewOpen()) { _dlWatchSeen.clear(); _dlWatchBaseline = Date.now(); return }
       const files = await window.w2gp.downloadsSince(_dlWatchBaseline)
       for (const f of files || []) {
         const key = (f.name || '') + '|' + (f.ms || 0)
         if (!f.name || _dlWatchSeen.has(key)) continue
         _dlWatchSeen.add(key)
-        if (!DL_MEDIA_RE.test(f.name)) continue
+        if (!isWangpDownload(f.name)) continue
         showDownloadPrompt(f.name)
       }
     } catch {}
   }, 4000)
 }
 
+// Browser-with-ask finish for native downloads: staged file → native Save-As
+// dialog (remembers last folder). Cancel keeps it in Downloads. The iframe
+// path keeps using showDownloadPrompt (name-only poll).
+async function finishNativeDownload(p) {
+  try {
+    let lastDir = null
+    try { lastDir = localStorage.getItem('w2gp.saveAsDir') } catch {}
+    const r = await window.w2gp.saveStagedDownload(p.path, lastDir)
+    if (r && (r.ok || r.success) && r.path) {
+      try {
+        const slash = Math.max(r.path.lastIndexOf('/'), r.path.lastIndexOf('\\'))
+        if (slash > 0) localStorage.setItem('w2gp.saveAsDir', r.path.slice(0, slash))
+      } catch {}
+      if (r.cancelled) showToast('Kept in Downloads: ' + (r.name || ''))
+      else { showToast('✓ Saved to: ' + r.path); appendLog('[*] Saved to: ' + r.path) }
+    }
+    else showToast('✗ Save failed: ' + ((r && r.error) || 'unknown'))
+  } catch (e) { showToast('✗ ' + errText(e)) }
+}
 // Browser-like arrival prompt: Save (keep in Downloads) vs Save As… (move
 // via native dialog). Remembers the last Save-As folder for the session.
 function showDownloadPrompt(fname) {
@@ -3150,21 +3476,52 @@ function noteStopResult(r) {
 // Wan2GP (+children, verified) and the OpenCode server in one click.
 // Never hidden — stopping an already-quiet machine is a harmless no-op.
 $('stopAllBtn').addEventListener('click', async () => {
+  const btn = $('stopAllBtn')
   appendLog('[*] Stopping all servers (Wan2GP + OpenCode)...')
+  // Disabled + label while the multi-second sweep runs (async backend keeps
+  // the rest of the UI live; this just prevents double-Stop).
+  if (btn) { btn.disabled = true; btn.title = 'Stopping…' }
   _expectServerExit = true
   if (_expectServerExitTimer) clearTimeout(_expectServerExitTimer)
   _expectServerExitTimer = setTimeout(() => { _expectServerExit = false; _expectServerExitTimer = null }, 10000)
+  let clean = false
   try {
     const r = await window.w2gp.stopAllServers()
     if (r && r.opencode_stopped) appendLog('[*] OpenCode server stopped.')
-    const clean = noteStopResult(r)
+    clean = noteStopResult(r)
     showToast(clean ? '✓ All servers stopped' : '✗ Wan2GP still running — see console')
   } catch (e) { appendLog('[!] Stop-all failed: ' + errText(e)); showToast('✗ ' + errText(e)) }
   updateLed('stopped')
   updateFtStatus('stopped')
+  if (btn) { btn.disabled = false; btn.title = 'Stop all servers (Wan2GP + OpenCode)' }
+  // Server is gone: tear down the Desktop view state NOW (don't wait for the
+  // exit event) so "Back to Wan2GP in Desktop" can never point at a dead
+  // server and no dead page lingers. Survivors (clean=false) keep their view.
+  if (clean) {
+    appRunning = false
+    _termWinOpen = false
+    try { await window.w2gp.destroyBrowserView() } catch {}
+    if (serverMode === 'app') {
+      serverMode = null
+      try { $('webviewContainer').classList.add('hidden'); $('dashBody').style.display = '' } catch {}
+      hideWebviewUI()
+      hideNativeHiddenNote()
+      try { window.w2gp.uiModeSet(null) } catch {}
+    }
+    setAppLaunchLabel()
+    appendLog('[*] Desktop view closed (server stopped).')
+  }
 })
 
 // ── Reset UI when server exits (manual stop or crash) ──
+// Separate term-window wiring (native floating): X-close sync + dock routing.
+try {
+  window.w2gp.onTermClosed(() => {
+    _termWinOpen = false
+    try { if (currentDock() === 'floating') _ftVisible = false } catch {}
+  })
+} catch {}
+try { window.w2gp.onTermSetDock((d) => { try { window.__dockTerminal(d) } catch {} }) } catch {}
 window.w2gp.onWangpExit(c => {
   // Payload shapes: {code: n|null} on process end, {stopped:true} on manual stop.
   // (Was interpolating the whole object → "exited (code [object Object])".)
@@ -3180,7 +3537,7 @@ window.w2gp.onWangpExit(c => {
   // open rebuilds it instead of showing a dead page.
   window.w2gp.destroyBrowserView().catch(() => {})
   if (serverMode === 'app') {
-    if (!$('webviewContainer').classList.contains('hidden')) closeWebview()
+    if (!$('webviewContainer').classList.contains('hidden')) closeWebview(true)
   } else if (serverMode === 'browser') {
     hideBrowserRunningUI()
     resetBrowserLaunchUI()
@@ -4084,6 +4441,62 @@ $('serverNameSaveBtn')?.addEventListener('click', async () => {
   cfg.serverName = val
   await window.w2gp.configSave(cfg)
   showToast('Bind address set to ' + val + ' (applies on next launch)')
+})
+// (Dashboard row switch retired — single permanent topbar switch + Manage.)
+// Permanent topbar switch: usable while stopped (save + applies on launch).
+// Locked while a Desktop session runs (also enforced via disabled).
+$('embedModeTop')?.addEventListener('change', async () => {
+  // Locked while a Desktop session runs (also enforced via disabled).
+  if (appRunning) { showToast('Stop the Wan2GP server to switch renderer'); syncEmbedSwitchLocks(); return }
+  const val = $('embedModeTop')?.value === 'iframe' ? 'iframe' : 'native'
+  try {
+    const cfg = await window.w2gp.configLoad()
+    const prev = cfg.embedMode === 'iframe' ? 'iframe' : 'native'
+    if (val === prev) return
+    cfg.embedMode = val
+    await window.w2gp.configSave(cfg)
+    const mg = $('embedModeSelect')
+    if (mg) mg.value = val
+    appendLog(`[*] Renderer set to ${val} (was ${prev}) — applies on Desktop launch`)
+    showToast('Renderer: ' + val + ' (applies on Desktop launch)')
+  } catch (e) { showToast('✗ ' + errText(e)) }
+})
+// A hidden-but-alive view keeps the OLD renderer, so saving a change while
+// the Desktop view (or its server) is up offers a one-click relaunch.
+$('embedModeSaveBtn')?.addEventListener('click', async () => {
+  if (appRunning) { showToast('Stop the Wan2GP server to switch renderer'); syncEmbedSwitchLocks(); return }
+  const val = $('embedModeSelect')?.value === 'native' ? 'native' : 'iframe'
+  const cfg = await window.w2gp.configLoad()
+  const prev = cfg.embedMode === 'iframe' ? 'iframe' : 'native'
+  cfg.embedMode = val
+  await window.w2gp.configSave(cfg)
+  if (val === prev) { showToast('Desktop embed already ' + val); return }
+  appendLog(`[*] Renderer set to ${val} (was ${prev})`)
+  if ((serverMode === 'app' && currentUrl) || appRunning) {
+    const choice = await window.w2gp.confirmDialog({
+      title: 'Relaunch Desktop view?',
+      message: `Embed mode saved: ${val}. The Desktop view still runs on the old (${prev}) renderer.`,
+      detail: 'OK = destroy + reopen the Desktop view now (Gradio session restarts). Cancel = keep the old view; the new mode applies on your next manual launch.'
+    })
+    if (choice === 'ok') { relaunchDesktopView(); return }
+  }
+  showToast('Desktop embed: ' + val + ' (applies on next Desktop launch)')
+})
+// One-shot WebView2/RAM footprint — run once per embed mode to compare.
+$('webviewMemBtn')?.addEventListener('click', async () => {
+  const st = $('webviewMemStatus')
+  if (st) st.textContent = 'Measuring…'
+  try {
+    const r = await window.w2gp.webviewMemory()
+    const line = (r && r.ok)
+      ? `WebView2: ${r.webviewMb} MB across ${r.webviewProcs} processes · Launcher: ${r.launcherMb} MB`
+      : 'Measurement failed'
+    if (st) st.textContent = line + ((r && r.top && r.top.length) ? ' — biggest: ' + r.top.slice(0, 3).map(t => 'PID ' + t.pid + ' ' + t.mb + 'MB').join(', ') : '')
+    appendLog('[mem] ' + line)
+    if (r && r.top) for (const t of r.top) appendLog(`[mem]   PID ${t.pid}: ${t.mb} MB`)
+  } catch (e) {
+    if (st) st.textContent = '✗ ' + errText(e)
+  }
 })
 $('cliDocsLink')?.addEventListener('click', (e) => {
   e.preventDefault()

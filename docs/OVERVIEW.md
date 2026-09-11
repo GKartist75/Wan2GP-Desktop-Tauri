@@ -70,7 +70,7 @@ flowchart TD
     P -- "uv" --> BU["owned uv (.tools)\nexact Python pin"]
     P -- "venv" --> PY["py-3.11 shim if needed"]
     P -- "conda" --> CA["ToS accept +\nsystem-python drive (fresh)\nconda run (exists)"]
-    BU --> SE["setup.py install --env --auto\n+ launcher patches\n(profile - VRAM - conda-pip)"]
+    BU --> SE["setup hook (or legacy setup.py)\nprofile + VRAM + conda-pip\nvia module import"]
     PY --> SE
     CA --> SE
     SE -->|"exit != 0"| FAIL["Honest error + hint\n+ Retry button"]
