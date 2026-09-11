@@ -53,6 +53,17 @@ pub fn run() {
                     crate::system::shutdown_cleanup(window.app_handle());
                 }
             }
+            // Term console window closed via X: tell the main window so its
+            // console-visible flag doesn't go stale (else Manage-close would
+            // resurrect the console).
+            if window.label() == "term" {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    use tauri::Emitter;
+                    if let Some(m) = window.app_handle().get_window("main") {
+                        let _ = m.emit("term-closed", serde_json::json!({"closed": true}));
+                    }
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             system::greet, hw::detect_gpu, hw::detect_gpus, hw::detect_hardware, hw::get_hardware_profile, hw::get_system_metrics,
@@ -75,6 +86,8 @@ pub fn run() {
             features::set_theme_follow_system, features::set_notifications_enabled,
             updates::check_update, updates::download_update, updates::install_update,
             system::create_browser_view, system::destroy_browser_view, system::get_log_history, config::uv_cache_clean,
+            system::webview_memory, system::bv_sync_bounds, system::save_staged_download,
+            system::toggle_term_window, system::term_set_dock, system::export_logs, system::mirror_console,
             system::open_task_manager, system::get_crash_recovery_info,
             launch::launch_webview, launch::popout_webview, system::hide_browser_view, system::detach_browser_view, system::reattach_browser_view,
             system::create_term_view, system::destroy_term_view, system::bv_navigate, system::bv_set_zoom, system::bv_set_dock,

@@ -245,6 +245,8 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
+- **Unreleased** — native Desktop embed (default): real child Webview with browser-grade Save-As downloads, floating console as its own window, one console stream everywhere, stall-free Stop that kills rebuild orphans, view-transition mutex + Stop teardown (no stale UI states).
+
 - **v0.5.3** — AMD hardening: install runs a real GPU compute probe (both HSA modes, winner recorded for launch), auto-reseats torch to the staging float on failure, pre-install detection gate (git/driver/VRAM/Defender), Verify GPU compute button, deleted envs read as missing. Plus: Verify proves wheels *import* (names the broken dist), no-env setup is a tick-and-Install checklist, conda envs work like uv/venv (root-interpreter resolution + smoke test), viewer drag & drop + Save/Save As download prompt, Run Setup button on the empty env card.
 
 - **v0.5.2** — AMD install fix: `setup.py` re-detected hardware via removed `wmic.exe` → installed the CUDA stack on AMD boxes; the launcher now forces its profile + VRAM verdict into the cloned `setup.py`, with a known-card VRAM table (R9700 → 32 GB) and stale-config cleanup.

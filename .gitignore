@@ -7,3 +7,5 @@ build.pid
 release.log
 release.pid
 relnotes-*.md
+# Local Pi runtime state
+.atl/
