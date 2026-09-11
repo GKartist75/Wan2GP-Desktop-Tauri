@@ -333,8 +333,15 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     let url = format!("http://localhost:{port}");
     Ok(serde_json::json!({"ok": true, "port": port, "mode": mode, "url": url, "fresh": true}))
 }
+/// Blocking worker (see async wrapper below): WMI/port scans + kill verifies
+/// take seconds — running them on Tauri's invoke pool starves concurrent
+/// commands (metrics, toasts) and the UI visibly stalls.
 #[tauri::command]
-pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
+pub async fn stop_wangp(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || stop_wangp_blocking(app))
+        .await.map_err(|e| e.to_string())
+}
+pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
     // Scoped stop: ONLY our Wan2GP processes — the tracked child plus any python
     // running OUR repo's wgp.py (uv-shim/child split, detached terminal mode).
     // ponytail: the old `taskkill /F /IM python.exe` blanket-killed every Python
@@ -420,39 +427,75 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
     if let Some(t) = crate::launch::terminal_title() {
         let _ = silent_command("taskkill").args(["/F", "/FI", &format!("WINDOWTITLE eq {t}*")]).output();
     }
-    // Ground truth: whatever LISTENS on the server port dies too. Catches every
+    // Ground truth: whatever LISTENS on a Wan2GP port dies too. Catches every
     // spawn shape (workers, renamed interpreters, stale launchers) — launch
     // itself treats port-in-use as "ours" (reuses instead of spawning), so
     // stop must treat it the same way. Restricted to python* owners: Gradio
     // always runs on Python, and we never kill foreign processes.
+    // Ports: configured serverPort + the 7860/7861 defaults. A launcher killed
+    // for a rebuild can't clean up, so the next instance (possibly with a
+    // changed port) must still catch the previous session's listener —
+    // proven orphan class 2026-09-10 (PID on :7861 survived every Stop).
     let sport = load_config_value().get("serverPort").and_then(serde_json::Value::as_u64).unwrap_or(7860);
-    #[cfg(windows)]
-    {
-        let ps = format!("Get-NetTCPConnection -LocalPort {sport} -State Listen | ForEach-Object {{ $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p) {{ $p.Id.ToString() + '|' + $p.ProcessName }} }}");
-        match silent_command("powershell").args(["-NoProfile", "-Command", &ps]).output() {
-            Ok(o) if o.status.success() => {
-                for line in String::from_utf8_lossy(&o.stdout).lines() {
-                    let mut parts = line.splitn(2, '|');
-                    if let (Some(pid_s), Some(name)) = (parts.next(), parts.next()) {
-                        if name.trim().to_lowercase().contains("python") {
-                            if let Ok(pid) = pid_s.trim().parse::<u32>() { kill_pid(pid, &mut killed); }
+    let mut sports = vec![sport];
+    for p in [7860u64, 7861u64] { if !sports.contains(&p) { sports.push(p); } }
+    // Live progress: the sweep below takes seconds (PowerShell spawns) —
+    // without these the console sits dead and Stop feels frozen.
+    let say = |m: &str| { crate::base::push_log(m, "launch"); let _ = app.emit("launch-log", m.to_string()); };
+    say("[stop] scanning Wan2GP processes…\n");
+    // Pure scan (no kill): (pid, port) of python listeners on ANY of `ports`.
+    // ONE PowerShell call for all ports (was one per port — the stall).
+    // Used by the sweep below and by the alive check, so survivors are
+    // reported, not hidden.
+    let port_listeners = |ports: &[u64]| -> Vec<(u32, u64)> {
+        let mut out = Vec::new();
+        #[cfg(windows)]
+        {
+            let list = ports.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(",");
+            let ps = format!("Get-NetTCPConnection -LocalPort {list} -State Listen | ForEach-Object {{ $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p) {{ $p.Id.ToString() + '|' + $p.ProcessName + '|' + $_.LocalPort }} }}");
+            match silent_command("powershell").args(["-NoProfile", "-Command", &ps]).output() {
+                Ok(o) if o.status.success() => {
+                    for line in String::from_utf8_lossy(&o.stdout).lines() {
+                        let mut parts = line.splitn(3, '|');
+                        if let (Some(pid_s), Some(name), Some(port_s)) = (parts.next(), parts.next(), parts.next()) {
+                            if name.trim().to_lowercase().contains("python") {
+                                if let (Ok(pid), Ok(port)) = (pid_s.trim().parse::<u32>(), port_s.trim().parse::<u64>()) {
+                                    out.push((pid, port));
+                                }
+                            }
+                        }
+                    }
+                }
+                // Exit 1 + "No matching" = no listeners on these ports (the
+                // CLEAN case) — not an error, stay silent so Stop reads clean.
+                Ok(o) => {
+                    let code = o.status.code().unwrap_or(-1);
+                    let err: String = String::from_utf8_lossy(&o.stderr).chars().take(200).collect();
+                    if !(code == 1 && err.contains("No matching")) {
+                        crate::base::push_log(&format!("[stop] port scan ({list}) failed (exit {code}): {err}\n"), "launch");
+                    }
+                }
+                Err(e) => crate::base::push_log(&format!("[stop] port scan ({list}) spawn failed: {e}\n"), "launch"),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            for port in ports {
+                if let Ok(o) = silent_command("lsof").args(["-ti", &format!("tcp:{port}")]).output() {
+                    if o.status.success() {
+                        for line in String::from_utf8_lossy(&o.stdout).lines() {
+                            if let Ok(pid) = line.trim().parse::<u32>() { out.push((pid, *port)); }
                         }
                     }
                 }
             }
-            Ok(o) => crate::base::push_log(&format!("[stop] port scan failed (exit {}): {}\n", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).chars().take(200).collect::<String>()), "launch"),
-            Err(e) => crate::base::push_log(&format!("[stop] port scan spawn failed: {e}\n"), "launch"),
         }
-    }
-    #[cfg(not(windows))]
-    {
-        if let Ok(o) = silent_command("lsof").args(["-ti", &format!("tcp:{sport}")]).output() {
-            if o.status.success() {
-                for line in String::from_utf8_lossy(&o.stdout).lines() {
-                    if let Ok(pid) = line.trim().parse::<u32>() { kill_pid(pid, &mut killed); }
-                }
-            }
-        }
+        out
+    };
+    say("[stop] checking Wan2GP ports…\n");
+    for (pid, port) in port_listeners(&sports) {
+        crate::base::push_log(&format!("[stop] port {port}: killing python PID {pid}\n"), "launch");
+        kill_pid(pid, &mut killed);
     }
     if let Some(m) = WANGP_PID.get() { *m.lock().unwrap() = None; }
     // Verify: re-scan after the dust settles, kill stragglers once, report
@@ -461,11 +504,24 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
     for (pid, exe, cmd) in scan() {
         if is_ours(&exe, &cmd) && !killed.contains(&pid) { kill_pid(pid, &mut killed); }
     }
+    // Stragglers on ANY Wan2GP port (same orphan class as above).
+    for (pid, port) in port_listeners(&sports) {
+        if !killed.contains(&pid) {
+            crate::base::push_log(&format!("[stop] port {port}: killing straggler PID {pid}\n"), "launch");
+            kill_pid(pid, &mut killed);
+        }
+    }
+    say("[stop] verifying…\n");
     std::thread::sleep(std::time::Duration::from_millis(600));
-    let alive: Vec<u32> = scan().into_iter()
+    let mut alive: Vec<u32> = scan().into_iter()
         .filter(|(_, exe, cmd)| is_ours(exe, cmd))
         .map(|(pid, _, _)| pid)
         .collect();
+    for (pid, _port) in port_listeners(&sports) {
+        // Still listening = still alive, even if we already tried to kill
+        // it (failed kill must stay visible, never be hidden).
+        if !alive.contains(&pid) { alive.push(pid); }
+    }
     let _ = app.emit("wangp-exit", serde_json::json!({"stopped": true, "killed": killed}));
     if !alive.is_empty() {
         crate::base::push_log(&format!("[!] stop_wangp: {} process(es) survived Kill ({} checked): {:?} — kill them manually or restart.
@@ -478,10 +534,13 @@ pub fn stop_wangp(app: tauri::AppHandle) -> serde_json::Value {
 /// the OpenCode server (if we spawned it). One dashboard button, no
 /// leftovers. Reuses stop_wangp so behavior can never diverge from it.
 #[tauri::command]
-pub fn stop_all_servers(app: tauri::AppHandle) -> serde_json::Value {
-    let wangp = stop_wangp(app);
-    let opencode = crate::features::stop_opencode_server();
-    serde_json::json!({"ok": true, "wangp": wangp, "opencode_stopped": opencode})
+pub async fn stop_all_servers(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    // Same pool-starvation fix as stop_wangp: off the invoke pool.
+    tauri::async_runtime::spawn_blocking(move || {
+        let wangp = stop_wangp_blocking(app);
+        let opencode = crate::features::stop_opencode_server();
+        serde_json::json!({"ok": true, "wangp": wangp, "opencode_stopped": opencode})
+    }).await.map_err(|e| e.to_string())
 }
 
 // ── misc stubs to unblock frontend (return safe defaults) ──

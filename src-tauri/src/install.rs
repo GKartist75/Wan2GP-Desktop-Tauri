@@ -1737,7 +1737,7 @@ pub async fn uninstall(app: tauri::AppHandle, options: Option<serde_json::Value>
         }
     };
     // Stop a running server first (locked files won't delete).
-    let _ = crate::launch::stop_wangp(app.clone());
+    let _ = crate::launch::stop_wangp_blocking(app.clone());
     // Keep-dirs under the repo survive; outside-repo model folders survive on their own.
     let mut keep_dirs: Vec<PathBuf> = Vec::new();
     if keep {
