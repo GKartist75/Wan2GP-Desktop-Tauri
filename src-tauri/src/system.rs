@@ -1029,6 +1029,11 @@ pub async fn create_browser_view(
         GRADIO_VIEW_LABEL,
         tauri::WebviewUrl::External(u.parse().map_err(|e| format!("bad embed url: {e}"))?),
     )
+    // Let WebView2/Gradio handle HTML5 drag & drop natively on Windows.
+    // Without this, Tauri's file-drop handler swallows drops before the
+    // page sees them (main window already opts out via
+    // dragDropEnabled:false; the child must opt out per-view).
+    .disable_drag_drop_handler()
     // Diagnostic: prove the Gradio page actually loads in the child (start vs
     // finish). If generation misbehaves, these lines tell load-failure apart
     // from app-failure.
@@ -1493,6 +1498,9 @@ pub fn on_system_theme_change() -> serde_json::Value {
 // launcher opened. Runs synchronously inside CloseRequested so our processes
 // are dead before the app exits.
 pub(crate) fn shutdown_cleanup(app: &tauri::AppHandle) {
-    let _ = crate::launch::stop_wangp(app.clone());
+    // NB: must be the SYNC blocking variant. stop_wangp() is async and
+    // its Future would be dropped unpolled here (CloseRequested is sync),
+    // silently skipping the kill and orphaning the server every close.
+    let _ = crate::launch::stop_wangp_blocking(app.clone());
     crate::features::stop_opencode_server();
 }

@@ -113,7 +113,13 @@ fn launch_in_terminal(
         .join(" ");
     #[cfg(windows)]
     {
-        let script = std::env::temp_dir().join("wan2gp-terminal.bat");
+        // Unique per launch: the old fixed wan2gp-terminal.bat raced when
+        // two launches overlapped (second overwrote the first's script).
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let script = std::env::temp_dir().join(format!("wan2gp-terminal-{millis}.bat"));
         let url = format!("http://localhost:{port}");
         let full = format!("@echo off\r\ntitle {title}\r\ncd /d \"{repo}\"\r\n{envs}\r\necho [Wan2GP Desktop Launcher] Starting on port {port}...\r\nstart /b \"\" cmd /c \"\"{py}\" -u wgp.py {arg_str}\" 2>&1\r\necho Waiting for server on port {port}...\r\nset RC=0\r\n:waitloop\r\ntimeout /t 2 /nobreak >nul\r\nset /a RC+=1\r\nif %RC% gtr 60 (echo Server failed to start. Check console. ^& pause ^& exit /b 1)\r\npowershell -Command \"try{{$(Invoke-WebRequest -Uri http://127.0.0.1:{port}/config -TimeoutSec 2 -UseBasicParsing).StatusCode -eq 200;exit 0}}catch{{exit 1}}\" >nul 2>&1 && goto ready\r\ngoto waitloop\r\n:ready\r\necho Wan2GP is ready! Opening browser...\r\nstart {url}\r\necho [Wan2GP] Server running. Close this window to stop it.\r\npause >nul\r\n",
             repo = repo.display(), envs = env_lines.join("\r\n"));
@@ -735,10 +741,13 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
         kill_pid(pid, &mut killed);
     }
     let mut found = 0usize;
-    for (pid, exe, cmd) in scan() {
-        found += 1;
-        if is_ours(&exe, &cmd) {
-            kill_pid(pid, &mut killed);
+    // Cache the first WMI pass: reused below by the custom-port sweep so
+    // the extra python-listener probe stays the ONE extra PS call.
+    let scan_first = scan();
+    found += scan_first.len();
+    for (pid, exe, cmd) in &scan_first {
+        if is_ours(exe, cmd) {
+            kill_pid(*pid, &mut killed);
         }
     }
     // our external-terminal window (unique timestamped title)
@@ -747,6 +756,22 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
         let _ = silent_command("taskkill")
             .args(["/F", "/FI", &format!("WINDOWTITLE eq {t}*")])
             .output();
+    }
+    // Best-effort cleanup of per-launch terminal scripts (unique
+    // wan2gp-terminal-<millis>.bat files). Files only, ignore errors.
+    {
+        let tmp = std::env::temp_dir();
+        if let Ok(rd) = std::fs::read_dir(&tmp) {
+            for entry in rd.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("wan2gp-terminal-")
+                    && name.ends_with(".bat")
+                    && entry.path().is_file()
+                {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
     }
     // Ground truth: whatever LISTENS on a Wan2GP port dies too. Catches every
     // spawn shape (workers, renamed interpreters, stale launchers) — launch
@@ -855,6 +880,80 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
             "launch",
         );
         kill_pid(pid, &mut killed);
+    }
+    // Custom-port evasion: ONE extra PS call listing ALL python-owned
+    // listeners (any LocalPort). Rust keeps only PIDs whose WMI cmdline
+    // has our signals (via the cached first scan + is_ours) or whose port
+    // is in `sports`. Kill scope is NOT widened — kill_pid only, same as
+    // every other sweep. Non-Windows: skipped (no cheap equivalent).
+    #[cfg(windows)]
+    {
+        let ps_any = "Get-NetTCPConnection -State Listen | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p -and $p.ProcessName -like 'python*') { $p.Id.ToString() + '|' + $_.LocalPort } }";
+        let any_listeners: Vec<(u32, u64)> = match silent_command("powershell")
+            .args(["-NoProfile", "-Command", ps_any])
+            .output()
+        {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter_map(|line| {
+                    let mut parts = line.splitn(2, '|');
+                    match (parts.next(), parts.next()) {
+                        (Some(pid_s), Some(port_s)) => {
+                            match (pid_s.trim().parse::<u32>(), port_s.trim().parse::<u64>()) {
+                                (Ok(pid), Ok(port)) => Some((pid, port)),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    }
+                })
+                .collect(),
+            Ok(o) => {
+                let code = o.status.code().unwrap_or(-1);
+                let err: String = String::from_utf8_lossy(&o.stderr)
+                    .chars()
+                    .take(200)
+                    .collect();
+                if !(code == 1 && err.contains("No matching")) {
+                    crate::base::push_log(
+                        &format!("[stop] python-listener scan failed (exit {code}): {err}\n"),
+                        "launch",
+                    );
+                }
+                Vec::new()
+            }
+            Err(e) => {
+                crate::base::push_log(
+                    &format!("[stop] python-listener scan spawn failed: {e}\n"),
+                    "launch",
+                );
+                Vec::new()
+            }
+        };
+        for (pid, port) in any_listeners {
+            if killed.contains(&pid) {
+                continue;
+            }
+            if sports.contains(&port) {
+                // Already covered by the sports sweep above; a live entry
+                // here means the earlier kill missed — retry loudly.
+                crate::base::push_log(
+                    &format!("[stop] port {port}: killing python PID {pid}\n"),
+                    "launch",
+                );
+                kill_pid(pid, &mut killed);
+            } else if let Some((_, exe, cmd)) = scan_first.iter().find(|(p, _, _)| *p == pid) {
+                // Custom-port evasion: python listener off the known ports
+                // that is still OURS by cmdline signals.
+                if is_ours(exe, cmd) {
+                    crate::base::push_log(
+                        &format!("[stop] custom port {port}: killing ours PID {pid}\n"),
+                        "launch",
+                    );
+                    kill_pid(pid, &mut killed);
+                }
+            }
+        }
     }
     if let Some(m) = WANGP_PID.get() {
         *m.lock().unwrap() = None;

@@ -467,7 +467,13 @@ static OPENCODE_PID: std::sync::OnceLock<std::sync::Mutex<Option<u32>>> =
     std::sync::OnceLock::new();
 // Kill the OpenCode server this launcher spawned (if any). Shared by the
 // serve toggle and the app-close cleanup.
+// Orphan fallback: OPENCODE_PID is memory-only and the child is
+// mem::forget detached, so a restart loses the PID while the server keeps
+// listening on :4096. After the PID kill (or when no PID was stored),
+// sweep local port 4096 and kill ONLY node/opencode owners — never
+// foreign processes. Stays SYNC; returns true if anything was killed.
 pub(crate) fn stop_opencode_server() -> bool {
+    let mut killed_any = false;
     let pid = OPENCODE_PID
         .get()
         .and_then(|m| m.lock().ok())
@@ -484,9 +490,103 @@ pub(crate) fn stop_opencode_server() -> bool {
         {
             let _ = silent_command("kill").arg(pid.to_string()).output();
         }
-        return true;
+        killed_any = true;
     }
-    false
+    // Port-sweep fallback for the :4096 orphan (restart lost the PID).
+    // Windows: ONE Get-NetTCPConnection call, owner resolved in-PS.
+    // Non-Windows: lsof -ti tcp:4096. Owner gate (node/opencode,
+    // case-insensitive) is enforced in Rust before any kill.
+    #[cfg(windows)]
+    {
+        let ps = "Get-NetTCPConnection -LocalPort 4096 -State Listen | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p) { $p.Id.ToString() + '|' + $p.ProcessName } }";
+        match silent_command("powershell")
+            .args(["-NoProfile", "-Command", ps])
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                for line in String::from_utf8_lossy(&o.stdout).lines() {
+                    let mut parts = line.splitn(2, '|');
+                    if let (Some(pid_s), Some(name)) = (parts.next(), parts.next()) {
+                        let owner = name.trim().to_lowercase();
+                        if !(owner.contains("node") || owner.contains("opencode")) {
+                            continue; // never kill foreign processes
+                        }
+                        if let Ok(pid) = pid_s.trim().parse::<u32>() {
+                            if pid == 0 || pid == std::process::id() {
+                                continue;
+                            }
+                            crate::base::push_log(
+                                &format!(
+                                    "[stop] opencode :4096: killing {name} PID {pid}\n",
+                                    name = name.trim(),
+                                ),
+                                "launch",
+                            );
+                            let _ = silent_command("taskkill")
+                                .args(["/F", "/T", "/PID", &pid.to_string()])
+                                .output();
+                            killed_any = true;
+                        }
+                    }
+                }
+            }
+            // Exit 1 + "No matching" = nothing listening (the CLEAN case).
+            Ok(o) => {
+                let code = o.status.code().unwrap_or(-1);
+                let err: String = String::from_utf8_lossy(&o.stderr)
+                    .chars()
+                    .take(200)
+                    .collect();
+                if !(code == 1 && err.contains("No matching")) {
+                    crate::base::push_log(
+                        &format!("[stop] opencode port scan failed (exit {code}): {err}\n"),
+                        "launch",
+                    );
+                }
+            }
+            Err(e) => crate::base::push_log(
+                &format!("[stop] opencode port scan spawn failed: {e}\n"),
+                "launch",
+            ),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // lsof lists PIDs; owner gate via ps so foreign listeners survive.
+        let pids: Vec<u32> = silent_command("lsof")
+            .args(["-ti", "tcp:4096"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .filter_map(|l| l.trim().parse::<u32>().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for pid in pids {
+            if pid == 0 || pid == std::process::id() {
+                continue;
+            }
+            let owner = silent_command("ps")
+                .args(["-p", &pid.to_string(), "-o", "comm="])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_lowercase())
+                .unwrap_or_default();
+            if !(owner.contains("node") || owner.contains("opencode")) {
+                continue; // never kill foreign processes
+            }
+            crate::base::push_log(
+                &format!("[stop] opencode :4096: killing {owner} PID {pid}\n"),
+                "launch",
+            );
+            let _ = silent_command("kill").arg(pid.to_string()).output();
+            killed_any = true;
+        }
+    }
+    killed_any
 }
 #[tauri::command]
 pub fn llm_engine_serve(engine: String, action: String) -> serde_json::Value {

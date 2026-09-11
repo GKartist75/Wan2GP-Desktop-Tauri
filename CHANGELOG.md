@@ -2,6 +2,12 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.6.1] — 2026-09-11
+
+- Native-view drag & drop fixed: the child webview opts out of Tauri file-drop interception (`disable_drag_drop_handler`) so drops reach Gradio
+- Closing the launcher now actually stops servers: `shutdown_cleanup` runs the sync blocking stop instead of dropping an async Future, so no orphaned Wan2GP/OpenCode processes survive app close
+- Stop hardening: OpenCode :4096 port-sweep fallback across restarts, custom-port python-listener sweep, unique per-launch terminal scripts + temp cleanup
+
 ## [0.6.0] — 2026-09-11
 
 - Desktop embed goes native (experimental, now default): Gradio renders in a real child Webview instead of an iframe — switchable anytime via the topbar `Renderer: native/iframe` dropdown (locked while a session runs; dashboard + Manage mirror it). Native brings browser-grade downloads (staged bytes → native Save-As dialog with the gallery's real filename, cancel keeps Downloads), compositor zoom, exact bounds sync below the topbar, and `download-started/finished` events instead of Downloads-folder polling
