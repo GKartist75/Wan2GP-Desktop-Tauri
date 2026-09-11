@@ -76,6 +76,7 @@ C:\Wan2GP-Models\               ← models library
    ├─ loras\                    ← LoRAs
    └─ outputs\                  ← generated videos/images/audio
 ```
+
 > `C:\Wan2GP` / `C:\Wan2GP-Models` are pre-filled defaults — Browse to any drive/folder at install or later via **Dashboard → Migrate to new location**. A custom data folder is remembered in `%USERPROFILE%\.wan2gp-tauri-data-dir` (the old Electron pointer is followed automatically, so your install carries over).
 
 ---
@@ -98,7 +99,7 @@ C:\Wan2GP-Models\               ← models library
 Same launcher, same Wan2GP, same features — new shell. The Electron edition ships its own Chromium + Node.js runtime inside every install. The Tauri edition uses the **WebView2 engine already built into Windows 10/11** and a compiled **Rust** backend. No bundled browser, no Node runtime.
 
 | | Electron edition | **Tauri edition** |
-|---|---|---|
+| --- | --- | --- |
 | Installer download | ≈ 93 MB | **≈ 3 MB (~30× smaller)** |
 | Installed app binary | ≈ 300+ MB (Chromium + Node) | **≈ 7 MB** |
 | Idle RAM (launcher shell) | ~200–400 MB (full Chromium per window) | **~30–80 MB (shared system WebView2)** |
@@ -117,7 +118,7 @@ Same launcher, same Wan2GP, same features — new shell. The Electron edition sh
 **WanGP by [deepbeepmeep](https://github.com/deepbeepmeep/Wan2GP)** is a one-stop super-app for open-source generative models — video, image, audio and TTS — with a full browser UI, queue, galleries, LoRAs, finetunes and plugins. It runs on as little as **6 GB VRAM** and supports old and new GPUs alike. Through this launcher you get the **full WanGP** — same models, same UI, same plugins. Nothing stripped.
 
 | Modality | Supported models (via launcher) |
-|---|---|
+| --- | --- |
 | **Video** | **Wan 2.1 / 2.2** + derivatives, **MiniMax H3** (FL2VA / Ref2VA), **LTX-2 / 2.3 / 2.5**, **HunyuanVideo 1 / 1.5**, **LongCat, Kandinsky, LTXV, MagiHuman, VACE** |
 | **Image** | **Krea 2, Qwen Image, Z-Image, Flux 1 / 2** (Klein, Chroma), **SenseNova, Ideogram 4, HiDream, Flux Kontext** |
 | **Audio / TTS** | **Qwen3 TTS, AceStep 1/2/XL, Omnivoice, IndexTTS 2/2.5, KugelAudio, HeartMula, Chatterbox, Minimax Music, Stable Audio 3** |
@@ -146,7 +147,7 @@ Same launcher, same Wan2GP, same features — new shell. The Electron edition sh
 **VRAM × RAM profile matrix**
 
 | VRAM ↓ \ RAM → | ≥64 GB | ≥32 GB | <32 GB |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **≥24 GB** | P1 max perf | P3 | P3+ RAM saver |
 | **12–23 GB** | P2 | **P4 balanced** | P5 |
 | **<12 GB** | P4 | P4+ VRAM saver | **P5 failsafe** |
@@ -175,7 +176,7 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 **Wheel table & per-GPU sets**
 
 | Wheel | Version | What it does |
-|-------|---------------|---------------|
+| ------- | --------------- | --------------- |
 | **Python** (uv) | `3.11.14` (RTX 20–50) / `3.10.9` (GTX 10) | venv interpreter |
 | **PyTorch + CUDA** | `2.10.0` + CUDA 13.0 | tensor + GPU runtime |
 | **Triton** | `latest` (3.8.x) | JIT for custom CUDA/attention kernels on Windows |
@@ -191,7 +192,7 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 
 **PyTorch matrix:** RTX 20/30/40/50 → Py 3.11.14 + PyTorch 2.10 + CUDA 13.0/13.1 · GTX 10xx → Py 3.10.9 + PyTorch 2.7.1 + CUDA 12.8. Avoids 2.8.0 (RAM leak) + 2.9.0 (VAE VRAM bug). GTX 10/16 stay on **CUDA 12.8** (no R580 needed); every other NVIDIA card needs **R580+** and is checked before install.
 
-**AMD (ROCm/TheRock):** RDNA 2 (`gfx1030–1036`) · RDNA 3 (`gfx1100–1103`: RX 7600–7900) · RDNA 3.5 (`gfx1150` Strix Point / `gfx1151` Strix Halo) · RDNA 4 (`gfx1200/1201`: RX 9060/9070 + Radeon AI PRO R9700). Python 3.11 venv → exact-pinned ROCm 7.15 stack (torch 2.12.0 + torchvision 0.27.0 + torchaudio 2.11.0, all `+rocm7.15.0a20260728`, per-target device packs, `whl-multi-arch` index — verified working on RDNA 4; staging float on retry) → `requirements.txt` → `numpy==1.26.4` pin on the fallback path only (the 7.15 stack resolves with numpy 2.x). Upstream `setup.py` re-detects hardware itself (`wmic.exe`, removed on Win 11 → `Unknown` → wrong CUDA install), so the launcher forces its own verdict into the cloned `setup.py` (profile + VRAM) and clears stale CUDA-era configs. Launch sets `HSA_OVERRIDE_GFX_VERSION` + ROCm session env (`FLASH_ATTENTION_TRITON_AMD_ENABLE`, `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL`, `MIOPEN_FIND_MODE=FAST`) automatically. Needs a recent Adrenalin/Pro driver (≥ 24.5). No CUDA wheels are ever installed on AMD profiles.
+**AMD (ROCm/TheRock):** RDNA 2 (`gfx1030–1036`) · RDNA 3 (`gfx1100–1103`: RX 7600–7900) · RDNA 3.5 (`gfx1150` Strix Point / `gfx1151` Strix Halo) · RDNA 4 (`gfx1200/1201`: RX 9060/9070 + Radeon AI PRO R9700). Python 3.11 venv → exact-pinned ROCm 7.15 stack (torch 2.12.0 + torchvision 0.27.0 + torchaudio 2.11.0, all `+rocm7.15.0a20260728`, per-target device packs, `whl-multi-arch` index — verified working on RDNA 4; staging float on retry) → `requirements.txt` → `numpy==1.26.4` pin on the fallback path only (the 7.15 stack resolves with numpy 2.x). Upstream `setup.py` re-detects hardware itself (`wmic.exe`, removed on Win 11 → `Unknown` → wrong CUDA install), so the launcher drives it through a hook module instead: the hook imports `setup.py`, applies the launcher verdict (profile key validated against the cloned `setup_config.json`, launcher VRAM, conda-direct-pip) and calls `do_install_auto()` directly — upstream `setup.py` is never modified, and any structural surprise fails fast (exit 2) instead of running a doomed install. Stale CUDA-era configs are cleared first. Launch sets `HSA_OVERRIDE_GFX_VERSION` + ROCm session env (`FLASH_ATTENTION_TRITON_AMD_ENABLE`, `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL`, `MIOPEN_FIND_MODE=FAST`) automatically. Needs a recent Adrenalin/Pro driver (≥ 24.5). No CUDA wheels are ever installed on AMD profiles.
 
 > ⚠️ **AMD note from the maintainer:** I don't have AMD hardware, so the AMD path is built from upstream docs + community recipes and covered by a simulated-hardware test — not a real Radeon run. If anything misbehaves on your card, please [open an issue](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/issues) with: the install-log `[hw]` line, `torch.cuda.is_available()` + device name from your env, and `Get-CimInstance Win32_VideoController | Select Name,DriverVersion` output.
 > 🛡️ **Antivirus:** ROCm nightly DLLs get flagged heuristically — if your AV quarantines files inside the install folder, add an exclusion for it, restore, then run **Verify GPU compute** (System → Troubleshooting) before generating.
@@ -245,7 +246,7 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- **v0.6.0** — native Desktop embed (default): real child Webview with browser-grade Save-As downloads, floating console as its own window, one console stream everywhere, stall-free Stop that kills rebuild orphans, view-transition mutex + Stop teardown (no stale UI states).
+- **v0.6.0** — native Desktop embed (default): real child Webview with browser-grade Save-As downloads, floating console as its own window, one console stream everywhere, stall-free Stop that kills rebuild orphans, view-transition mutex + Stop teardown (no stale UI states). AMD install fix (#15): `setup.py` is now driven through a hook module (no more source patching) — profile/VRAM/conda-pip applied via import, fail-closed on upstream drift.
 
 - **v0.5.3** — AMD hardening: install runs a real GPU compute probe (both HSA modes, winner recorded for launch), auto-reseats torch to the staging float on failure, pre-install detection gate (git/driver/VRAM/Defender), Verify GPU compute button, deleted envs read as missing. Plus: Verify proves wheels *import* (names the broken dist), no-env setup is a tick-and-Install checklist, conda envs work like uv/venv (root-interpreter resolution + smoke test), viewer drag & drop + Save/Save As download prompt, Run Setup button on the empty env card.
 

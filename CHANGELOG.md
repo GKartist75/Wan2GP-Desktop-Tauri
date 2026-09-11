@@ -9,6 +9,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 - One console stream everywhere: main-side lines mirror through the backend bus (history + live), so floating/docked/dashboard consoles read identically with no duplicates
 - Stop no longer stalls the UI: async off the invoke pool, one PowerShell call for all ports, live `[stop] …` progress, self-disabling button — and the ground-truth sweep covers the configured port plus 7860/7861, so rebuild orphans from killed launchers die too (survivors stay reported, never hidden)
 - View-transition mutex (no more dashboard-with-topbar mixed states from fast Back-and-forth), Stop tears down view state immediately (stale Back-to-Desktop gone), server-exit close stays silent (no more phantom "still running"), stale-renderer guard rebuilds hidden-alive views after a mode switch, transition-safe terminal guards, `Measure WebView2 memory` one-shot in Manage → Launch
+- AMD install no longer depends on patching upstream `setup.py` (#15: RX 9070 XT got a silent 20-minute CUDA install after both source patches refused on drift — `Unknown` → `RTX_40`, 8 GB VRAM default). The launcher now drives `setup.py` through a hook module that imports it, applies the launcher verdict (profile key validated against the cloned `setup_config.json`, launcher VRAM, conda-direct-pip) and calls `do_install_auto()` directly — upstream `setup.py` is never modified. Fail-closed throughout: a failed TheRock entry patch or hook staging aborts before any download, a profile mismatch in the streamed output kills the child immediately, and hook exit-2 maps to a report-it hint instead of a blind retry
+- Hook corrections from 0.6.0 testing: fresh-uv installs drive setup via `uv run --with setuptools python …` — the hook now replaces only the `setup.py …` tail, keeping the interpreter prefix (first build passed the bare hook path to uv itself → exit 2); RDNA 2 (`AMD_GFX103X`, no upstream key) aliases to the compatible `AMD_GFX110X` entry instead of risking `Unknown` → `RTX_40` on Win11, while Intel/CPU keeps setup.py's own detection
 
 ## [0.5.3] — 2026-09-09
 
@@ -102,6 +104,7 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 No more silent failures: every step of install, reuse, migrate and launch is checked, reported honestly, and recoverable.
 
 **Install tells the truth**
+
 - `setup.py` exit code propagated with actionable hints — a dead install can never report `Installation complete!` again; failure offers Retry + Copy diagnostics
 - Success gated on a post-install smoke test (`import torch` + CUDA visible on NVIDIA), not just exit code 0
 - Task list tracks what `setup.py` actually emits (`[*] Install <Component>` headers + uv package lines) — phases no longer stick on PENDING mid-install
@@ -109,6 +112,7 @@ No more silent failures: every step of install, reuse, migrate and launch is che
 - Missing-tool checks (`git`/`uv`/`python`/`conda`) actually trigger now
 
 **Reuse, migrate & clean, safely**
+
 - Target-folder triage: empty / healthy / broken-env / repo-no-env / Pinokio / foreign, with Fresh / Install-repair / Choose-empty-folder choices instead of blind merges
 - "Use existing" validates first (python exists + runs) and offers repair on failure
 - Reinstall always asks first: backup dialog with folder sizes, optional plugins/settings backup (restored automatically), per-model Move-to… rows
@@ -122,6 +126,7 @@ No more silent failures: every step of install, reuse, migrate and launch is che
 - Active Environment has "reinstall": full env recreate (venv, Python, torch, kernels, smoke test) — "restore" only re-pips requirements
 
 **Launch & everyday polish**
+
 - Launch pre-flights `import torch` and refuses with directions instead of a traceback; exit codes render as numbers; Launch buttons need repo + active env
 - Default browser honored: Brave/Opera/Vivaldi detected (fixed `%LocalAppData%` expansion + Program Files candidates); fallback is logged, successful launches log the browser used
 - Installer overview shows full per-profile versions (Triton/Sage/Sparge/Flash, kernel labels) like Electron
