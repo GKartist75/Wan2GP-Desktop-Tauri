@@ -66,7 +66,7 @@ pub(crate) fn wmi_all_gpus() -> Vec<(String, String, u64, String)> {
         let mut parts = ln.split('|');
         let (Some(n), Some(r)) = (parts.next(), parts.next()) else { continue; };
         let name = n.trim().to_string();
-        if name.is_empty() || name.to_lowercase().contains("nvidia") { continue; }
+        if name.is_empty() || name.to_lowercase().contains("nvidia") || is_virtual_display_adapter(&name) { continue; }
         let lower = name.to_lowercase();
         let vendor = if lower.contains("amd") || lower.contains("radeon") { "AMD" }
             else if lower.contains("intel") || lower.contains("arc") { "INTEL" }
@@ -80,10 +80,43 @@ pub(crate) fn wmi_all_gpus() -> Vec<(String, String, u64, String)> {
 #[cfg(not(windows))]
 pub(crate) fn wmi_all_gpus() -> Vec<(String, String, u64, String)> { Vec::new() }
 
+/// Remote-desktop / VM virtual displays (ToDesk, GameViewer, Parsec, RDP,
+/// Hyper-V, VMware, VirtualBox, indirect-display shims) report as video
+/// controllers but carry no GPU — never tier on them (#2224: a 7900 XT box
+/// was mistiered because a virtual adapter won the pick).
+/// "Basic Display Adapter" is NOT virtual here — it's the no-driver state
+/// with its own fatal preflight check. Pure + unit-tested.
+pub(crate) fn is_virtual_display_adapter(name: &str) -> bool {
+    let l = name.to_lowercase();
+    ["virtual", "indirect display", "todesk", "gameviewer", "parsec",
+     "remote desktop", "remote display", "rdp", "hyper-v", "hyperv",
+     "vmware", "virtualbox", "vbox", "qemu", "bochs", "remotefx",
+     "citrix", "anydesk", "teamviewer", "rustdesk", "splashtop",
+     "moonlight", "sunshine"]
+        .iter().any(|t| l.contains(t))
+}
+
+/// Names of virtual display adapters currently visible (Windows WMI).
+/// Lets preflight name the adapters it ignored (#2224 visibility).
+/// Empty on non-Windows. Uses probe_command so tests can can the answers.
+#[cfg(windows)]
+pub(crate) fn wmi_virtual_adapters() -> Vec<String> {
+    let out = match probe_command("POWERSHELL", "powershell").args(["-NoProfile","-Command","Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }"]).output() {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+    String::from_utf8_lossy(&out.stdout).lines()
+        .map(str::trim).filter(|n| !n.is_empty())
+        .filter(|n| is_virtual_display_adapter(n))
+        .map(str::to_string).collect()
+}
+#[cfg(not(windows))]
+pub(crate) fn wmi_virtual_adapters() -> Vec<String> { Vec::new() }
+
 #[cfg(windows)]
 pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64, String)> {
-    // First non-NVIDIA controller wins (historical behavior); preflight
-    // warns when several AMD entries make that order significant.
+    // First non-NVIDIA, non-virtual controller wins (historical behavior);
+    // preflight warns when several AMD entries make that order significant.
     wmi_all_gpus().into_iter().next()
 }
 #[cfg(not(windows))]
@@ -198,7 +231,7 @@ pub(crate) fn wmi_dedicated_vram_mb(display_name: &str) -> Option<u64> {
         }
         let Some(mb) = mb else { continue; };
         let d = desc.trim().to_lowercase();
-        if d.is_empty() || d.contains("nvidia") { continue; }
+        if d.is_empty() || d.contains("nvidia") || is_virtual_display_adapter(&d) { continue; }
         cands.push((d, mb));
     }
     // 1) Name match (WMI vs DriverDesc can differ slightly).
@@ -235,11 +268,31 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
     let v = vendor.to_uppercase(); let g = name.to_uppercase();
     if v == "APPLE" { return "MPS".into(); }
     if v == "NVIDIA" {
+        // Pascal and older — last generation without attention kernels.
         if g.contains(" 10") || g.contains(" 16") || g.contains("GTX 10") || g.contains("GTX 16") { return "GTX_10".into(); }
-        if g.contains("50") { return "RTX_50".into(); }
-        if g.contains("40") { return "RTX_40".into(); }
-        if g.contains("30") { return "RTX_30".into(); }
-        if g.contains("20") || g.contains("QUADRO") { return "RTX_20".into(); } return "GTX_10".into();
+        // Workstation / datacenter BEFORE consumer tokens: "RTX 5000 Ada"
+        // contains "RTX 50" but is Ada (RTX_40), not Blackwell — and
+        // "RTX PRO 6000 Blackwell" matches no consumer token at all
+        // (old code fell through to GTX_10: #2278, 96GB card mistiered).
+        // Blackwell workstation + datacenter (cu130 torch ships sm_100/120).
+        if g.contains("PRO 6000") || g.contains("PRO 5000") || g.contains("PRO 4000")
+            || g.contains("B100") || g.contains("B200") || g.contains("GB100") { return "RTX_50".into(); }
+        // Hopper datacenter (cu130 torch ships sm_90 kernels).
+        if g.contains("H100") || g.contains("H200") { return "RTX_50".into(); }
+        // Ada workstation (incl. L40/L4 datacenter) + consumer Ada caught
+        // by the spaced token below; ADA rule first for WS names.
+        if g.contains("ADA") || g.contains("L40") || g.contains(" L4") { return "RTX_40".into(); }
+        // Ampere workstation (Ax000 / Ax0 are Ampere, not Ada).
+        if g.contains("RTX A") || g.contains(" A40") || g.contains(" A30") || g.contains(" A16") || g.contains(" A10") || g.contains(" A80") { return "RTX_30".into(); }
+        // Consumer GeForce — spaced generation tokens, so "RTX 3050"
+        // (Ampere) can't match bare "50" and land on Blackwell (the old
+        // check order did exactly that: 3050/4050 → RTX_50).
+        if g.contains("RTX 50") || g.contains("RTX50") { return "RTX_50".into(); }
+        if g.contains("RTX 40") || g.contains("RTX40") { return "RTX_40".into(); }
+        if g.contains("RTX 30") || g.contains("RTX30") { return "RTX_30".into(); }
+        if g.contains("RTX 20") || g.contains("RTX20") || g.contains("QUADRO") { return "RTX_20".into(); }
+        if g.contains("20") { return "RTX_20".into(); }
+        return "GTX_10".into();
     }
     if v == "AMD" {
         // RDNA 2 (gfx103X-dgpu): no upstream setup_config profile — dedicated key so
@@ -258,18 +311,89 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
     "CPU".into()
 }
 
+/// Docs-prescribed GGUF kernel floor: 1.0.21 carries the precompiled
+/// RTX50xx (SM120) async-copy kernels — older builds silently fall back to
+/// slow PyTorch SDPA on Deepy decode (6 tok/s vs 37: #2274, #2193), hit the
+/// Q2_K fallback assert (#2235), or 404 outright on stale URLs (#2249).
+/// Anything older resolves to the known-good 1.0.21 wheel; the floor,
+/// newer builds, and unparseable URLs pass through, so the day upstream
+/// flips setup_config forward we follow it with no code change.
+pub(crate) const GGUF_FLOOR: &str = "1.0.21";
+
+/// Numeric dotted-version compare: true when a > b ("1.0.21" > "1.0.2",
+/// "3.8.0" > "3.3", "3.3.1" > "3.3"). Non-numeric tails ignored,
+/// missing components count as zero. Pure + unit-tested.
+pub(crate) fn version_gt(a: &str, b: &str) -> bool {
+    fn parts(s: &str) -> Vec<u64> {
+        s.split('.').map(|p| p.chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0)).collect()
+    }
+    let (pa, pb) = (parts(a), parts(b));
+    for i in 0..pa.len().max(pb.len()) {
+        let (x, y) = (pa.get(i).copied().unwrap_or(0), pb.get(i).copied().unwrap_or(0));
+        if x != y { return x > y; }
+    }
+    false
+}
+
+/// Dist version out of a llamacpp_gguf_cuda wheel URL
+/// (`.../llamacpp_gguf_cuda-1.0.14+torch210cu130py311-...whl` → "1.0.14").
+/// None for non-GGUF URLs. Pure + unit-tested.
+pub(crate) fn gguf_wheel_version(url: &str) -> Option<String> {
+    let file = url.rsplit('/').next()?;
+    if !file.starts_with("llamacpp_gguf_cuda-") { return None; }
+    let ver = file.split('-').nth(1)?.split('+').next()?;
+    if ver.is_empty() || !ver.chars().next().is_some_and(|c| c.is_ascii_digit()) { return None; }
+    Some(ver.to_string())
+}
+
+/// Pinned triton version out of a setup_config spec: `==3.3.1` pins and
+/// `<3.3` ceilings both resolve to the bound ("3.3.1" / "3.3"); unpinned
+/// specs and exact wheel URLs yield None (deliberate installs proceed).
+/// Pure + unit-tested.
+pub(crate) fn wanted_triton_pin(spec: &str) -> Option<String> {
+    if spec.ends_with(".whl") { return None; }
+    for (i, c) in spec.char_indices() {
+        if c == '=' || c == '<' || c == '>' {
+            let rest = spec[i..].trim_start_matches(['=', '<', '>', ' ', ',']);
+            let ver: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+            let ver = ver.trim_matches('.').to_string();
+            if ver.contains('.') { return Some(ver); }
+            return None;
+        }
+    }
+    None
+}
+
+/// Max Version: across `pip show` blocks (triton-windows + triton are
+/// both reported — take the newest). None when unparseable.
+/// Pure + unit-tested.
+pub(crate) fn parse_pip_show_versions(text: &str) -> Option<String> {
+    let mut best: Option<String> = None;
+    for ln in text.lines() {
+        if let Some(v) = ln.trim().strip_prefix("Version:") {
+            let v = v.trim().to_string();
+            if !v.is_empty() && best.as_ref().map_or(true, |b| version_gt(&v, b)) {
+                best = Some(v);
+            }
+        }
+    }
+    best
+}
+
 /// GGUF wheel URLs shipped by upstream (docs/INSTALLATION.md#gguf-llamacpp-cuda-kernels).
 const GGUF_1021_WIN_PY311: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.21/llamacpp_gguf_cuda-1.0.21%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
 const GGUF_1021_WIN_PY310: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.21/llamacpp_gguf_cuda-1.0.21%2Btorch271cu128py310-cp310-cp310-win_amd64.whl";
-/// GGUF wheel override toward the documented 1.0.21 build (RTX50 SM120
-/// kernels, 50-100% Deepy decode speedup). setup_config.json still ships
-/// 1.0.14, so swap 1.0.14 → 1.0.21 — but pass anything else through untouched,
-/// so the day upstream flips setup_config we follow it verbatim with no code
+/// GGUF floor toward the documented 1.0.21 build (RTX50 SM120 kernels,
+/// 50-100% Deepy decode speedup). setup_config.json lags (1.0.14 and older
+/// in the wild), so anything below the floor swaps to 1.0.21 — but the
+/// floor, anything newer, and non-GGUF URLs pass through untouched, so the
+/// day upstream flips setup_config we follow it verbatim with no code
 /// change (same shape as the Sage post4/post6 swap in sync_kernels).
-/// Applies to every kernel URL (no-op unless it's a 1.0.14 GGUF link), so both
-/// the sync installer and the overview's want/have comparison share it.
+/// Applies to every kernel URL (no-op unless it's a stale GGUF link), so
+/// both the sync installer and the overview's want/have comparison share it.
 pub(crate) fn apply_gguf_override(url: &str) -> String {
-    if !url.contains("llamacpp_gguf_cuda-1.0.14") { return url.to_string(); }
+    let Some(ver) = gguf_wheel_version(url) else { return url.to_string(); };
+    if !version_gt(GGUF_FLOOR, &ver) { return url.to_string(); }
     if url.contains("py310") { GGUF_1021_WIN_PY310.into() } else { GGUF_1021_WIN_PY311.into() }
 }
 
@@ -286,6 +410,60 @@ mod amd_profile_tests {
         // RDNA 2 has its own key (no upstream setup_config profile to collide with).
         assert_eq!(kernel_profile_key("AMD", "AMD Radeon RX 6800 XT"), "AMD_GFX103X");
         assert_eq!(kernel_profile_key("AMD", "AMD Radeon RX 6700S"), "AMD_GFX103X");
+    }
+}
+#[cfg(test)]
+mod nvidia_profile_tests {
+    use super::kernel_profile_key;
+    #[test]
+    fn consumer_generations() {
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce RTX 5090"), "RTX_50");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce RTX 5060 Ti"), "RTX_50");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce RTX 4070 Laptop GPU"), "RTX_40");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce RTX 4050 Laptop GPU"), "RTX_40");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce RTX 3080"), "RTX_30");
+        // Bare-"50"-first ordering trap: 3050 is Ampere, not Blackwell.
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce RTX 3050"), "RTX_30");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce RTX 2060"), "RTX_20");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce GTX 1080"), "GTX_10");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA GeForce GTX 1660 SUPER"), "GTX_10");
+    }
+    #[test]
+    fn workstation_and_datacenter() {
+        // #2278: 96GB Blackwell workstation card fell through to GTX_10.
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA RTX PRO 6000 Blackwell"), "RTX_50");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA RTX 6000 Ada Generation"), "RTX_40");
+        // "RTX 5000 Ada" contains "RTX 50" — WS rule must win.
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA RTX 5000 Ada Generation"), "RTX_40");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA RTX A6000"), "RTX_30");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA RTX A4000"), "RTX_30");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA H100"), "RTX_50");
+        assert_eq!(kernel_profile_key("NVIDIA", "NVIDIA A100"), "RTX_30");
+        assert_eq!(kernel_profile_key("NVIDIA", "Quadro RTX 6000"), "RTX_20");
+    }
+}
+#[cfg(test)]
+mod virtual_adapter_tests {
+    use super::is_virtual_display_adapter;
+    #[test]
+    fn virtual_names_detected() {
+        // #2224 reporter names first.
+        for n in ["GameViewer Virtual Display Adapter", "ToDesk Virtual Display Adapter",
+                  "Parsec Virtual Display Adapter", "Microsoft Remote Display Adapter",
+                  "Microsoft Hyper-V Video", "VMware SVGA 3D", "VirtualBox Graphics Adapter",
+                  "Indirect Display Adapter", "Citrix Indirect Display Adapter"] {
+            assert!(is_virtual_display_adapter(n), "{n}");
+        }
+    }
+    #[test]
+    fn physical_names_not_virtual() {
+        for n in ["AMD Radeon RX 7900 XTX", "NVIDIA GeForce RTX 3080",
+                  "NVIDIA RTX PRO 6000 Blackwell", "Intel UHD Graphics 770",
+                  "Intel Arc A770 Graphics",
+                  // No-driver state has its own fatal check — not virtual.
+                  "Microsoft Basic Display Adapter", ""] {
+            assert!(!is_virtual_display_adapter(n), "{n}");
+        }
     }
 }
 #[cfg(test)]
@@ -348,8 +526,60 @@ mod gguf_override_tests {
     fn passes_other_urls_through() {
         for u in [
             "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.21/llamacpp_gguf_cuda-1.0.21+torch210cu130py311-cp311-cp311-win_amd64.whl",
+            // Newer than the floor follows upstream with no swap.
+            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22+torch210cu130py311-cp311-cp311-win_amd64.whl",
             "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl",
         ] { assert_eq!(apply_gguf_override(u), u); }
+    }
+    #[test]
+    fn floor_catches_all_stale_builds() {
+        // #2274 (1.0.2 silent SDPA fallback), #2235, #2249 (1.0.13 404):
+        // anything below 1.0.21 resolves to the known-good wheel.
+        for v in ["1.0.2", "1.0.7", "1.0.12", "1.0.13"] {
+            let u = format!("https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-{v}+torch210cu130py311-cp311-cp311-win_amd64.whl");
+            let out = apply_gguf_override(&u);
+            assert!(out.contains("gguf-v1.0.21") && out.contains("1.0.21") && out.contains("cp311"), "{v} got {out}");
+        }
+        // py310 tag keeps the py310 variant.
+        let old310 = "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.12+torch271cu128py310-cp310-cp310-win_amd64.whl";
+        let out310 = apply_gguf_override(old310);
+        assert!(out310.contains("torch271cu128py310") && out310.contains("1.0.21"), "got {out310}");
+    }
+}
+#[cfg(test)]
+mod version_cmp_tests {
+    use super::{version_gt, gguf_wheel_version, wanted_triton_pin, parse_pip_show_versions};
+    #[test]
+    fn dotted_compare() {
+        assert!(version_gt("1.0.21", "1.0.2"));
+        assert!(!version_gt("1.0.2", "1.0.21"));
+        assert!(version_gt("3.8.0", "3.3"));
+        assert!(version_gt("3.3.1", "3.3"));
+        assert!(!version_gt("1.0.21", "1.0.21"));
+        assert!(!version_gt("3.3", "3.8.0"));
+        assert!(!version_gt("", "1.0.2"));
+    }
+    #[test]
+    fn gguf_version_extract() {
+        assert_eq!(gguf_wheel_version("https://x/llamacpp_gguf_cuda-1.0.14+torch210cu130py311-cp311-cp311-win_amd64.whl").as_deref(), Some("1.0.14"));
+        assert_eq!(gguf_wheel_version("https://x/llamacpp_gguf_cuda-1.0.2+torch210cu130py311-cp311-cp311-win_amd64.whl").as_deref(), Some("1.0.2"));
+        assert_eq!(gguf_wheel_version("https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl"), None);
+        assert_eq!(gguf_wheel_version("triton-windows"), None);
+    }
+    #[test]
+    fn triton_pin_parse() {
+        assert_eq!(wanted_triton_pin("triton-windows<3.3").as_deref(), Some("3.3"));
+        assert_eq!(wanted_triton_pin("triton-windows==3.3.1").as_deref(), Some("3.3.1"));
+        assert_eq!(wanted_triton_pin("triton-windows>=3.3,<4").as_deref(), Some("3.3"));
+        assert_eq!(wanted_triton_pin("triton-windows"), None);
+        assert_eq!(wanted_triton_pin("https://x/triton_windows-3.3.1-cp311-win_amd64.whl"), None);
+    }
+    #[test]
+    fn pip_show_max_wins() {
+        let text = "Name: triton-windows\nVersion: 3.8.0\n---\nName: triton\nVersion: 3.7.1\n";
+        assert_eq!(parse_pip_show_versions(text).as_deref(), Some("3.8.0"));
+        assert_eq!(parse_pip_show_versions("ERROR: Package(s) not found"), None);
+        assert_eq!(parse_pip_show_versions(""), None);
     }
 }
 pub(crate) fn build_install_plan(hw: &serde_json::Value) -> serde_json::Value {

@@ -86,6 +86,12 @@ window.w2gp.onSetupOutput(t => {
   appendToBuf(strip(t))
 })
 
+// Main-window lines the backend never emits (renderer switches, embed/bounds
+// logs, stop summaries…): mirrored via the backend bus, history included.
+window.w2gp.onConsoleMirror(t => {
+  appendToBuf(strip(String(t ?? '')))
+})
+
 body.addEventListener('scroll', () => {
   const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 30
   if (atBottom !== follow) setFollow(atBottom)
@@ -93,8 +99,15 @@ body.addEventListener('scroll', () => {
 
 document.getElementById('ftFollowBtn').addEventListener('click', () => setFollow(!follow))
 
+function termStatus(t) { try { const el = document.getElementById('termStatus'); if (el) el.textContent = t || ''; } catch {} }
 document.querySelectorAll('.dock-btn').forEach(b => {
-  b.addEventListener('click', () => window.w2gp.setDock(b.dataset.dock))
+  b.addEventListener('click', async () => {
+    const d = b.dataset.dock
+    try { appendToBuf('[term] dock → ' + d) } catch {}
+    termStatus('switching to ' + d + '…')
+    try { await window.w2gp.setDock(d); termStatus('sent ✓ — waiting for main…') }
+    catch (e) { const m = ((e && e.message) || e); termStatus('FAILED: ' + m); try { appendToBuf('[term] dock FAILED: ' + m) } catch {} }
+  })
 })
 document.getElementById('ftCloseBtn').addEventListener('click', () => window.w2gp.closeTerm())
 document.getElementById('logExportBtn').addEventListener('click', () => window.w2gp.exportLogs(buf.join('\n') + (_lastLine ? '\n' + _lastLine : '')))

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::base::*;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
-use crate::{hw::{apply_gguf_override, build_install_plan, classify_amd_driver, get_gpu_info_sync, kernel_profile_key, wmi_all_gpus}, status::{get_active_env, resolve_env_python}};
+use crate::{hw::{apply_gguf_override, build_install_plan, classify_amd_driver, get_gpu_info_sync, kernel_profile_key, wmi_all_gpus, wmi_virtual_adapters}, status::{get_active_env, resolve_env_python}};
 
 /// Pull the first X.Y[.Z] out of a version string ("3.11.14", "3.11", ">=3.11").
 fn scan_version(s: &str) -> String {
@@ -910,6 +910,20 @@ pub(crate) fn run_preflight_checks(repo: &std::path::Path, hw: &serde_json::Valu
             checks.push(PreflightCheck { id: "multi-gpu", level: "warn", msg: format!("{} AMD GPUs visible ({}); using {} — order is firmware-dependent, confirm it picked your dGPU.", amds.len(), amds.join(" + "), name) });
         }
     }
+    // 3b. virtual display adapters (remote-desktop shims like ToDesk /
+    // GameViewer) must never win the GPU pick (#2224). The WMI fallback
+    // already skips them — say so here, or warn when nothing physical
+    // remains (that box would otherwise silently tier as CPU).
+    #[cfg(windows)] {
+        let virtuals: Vec<String> = wmi_virtual_adapters();
+        if !virtuals.is_empty() {
+            if vendor == "unknown" || name.is_empty() {
+                checks.push(PreflightCheck { id: "virtual-gpu", level: "warn", msg: format!("only virtual display adapter(s) visible ({}); no physical GPU detected — install the vendor driver or reattach the real card.", virtuals.join(" + ")) });
+            } else {
+                checks.push(PreflightCheck { id: "virtual-gpu", level: "info", msg: format!("ignoring virtual display adapter(s) ({}); using {name}.", virtuals.join(" + ")) });
+            }
+        }
+    }
     // 4. unreadable VRAM mistiers the quality profile.
     if vendor == "AMD" && plan.get("vramGb").and_then(|v| v.as_f64()).unwrap_or(0.0) < 2048.0 {
         checks.push(PreflightCheck { id: "vram", level: "warn", msg: "VRAM unreadable on this AMD card — quality profile may mistier; check the generated wgp_config profiles after install.".into() });
@@ -1737,7 +1751,7 @@ pub async fn uninstall(app: tauri::AppHandle, options: Option<serde_json::Value>
         }
     };
     // Stop a running server first (locked files won't delete).
-    let _ = crate::launch::stop_wangp(app.clone());
+    let _ = crate::launch::stop_wangp_blocking(app.clone());
     // Keep-dirs under the repo survive; outside-repo model folders survive on their own.
     let mut keep_dirs: Vec<PathBuf> = Vec::new();
     if keep {
@@ -1850,8 +1864,31 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,Str
                     url = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl".into();
                 }
             }
-            // GGUF 1.0.21 override (docs prescription over setup_config lag).
+            // Sage3 is gated, never synced (#2280): Blackwell-only AND
+            // py>=3.12 wheels, while managed envs are py3.10/3.11. If
+            // setup_config ever lists it, skip loudly instead of failing.
+            if name == "sage3" || name == "sageattn3" {
+                let m = "[*] skipping SageAttention 3 (needs Blackwell GPU + Python >= 3.12; managed envs are 3.10/3.11) — Sage 2.2.0 stays synced\n";
+                crate::base::push_log(m, "setup"); let _ = app.emit("launch-log", m.to_string());
+                continue;
+            }
+            // GGUF 1.0.21 floor (docs prescription over setup_config lag).
             let url = apply_gguf_override(&url);
+            // Triton no-downgrade (#2264): a pinned/ceiling spec must not
+            // clobber a working newer triton (H3-sol setups). RTX_20/GTX_10
+            // are exempt — upstream genuinely needs <3.3 on Turing/Pascal.
+            if name == "triton" && !["RTX_20", "GTX_10"].contains(&profile.as_str()) {
+                if let Some(pinned) = crate::hw::wanted_triton_pin(&url) {
+                    let py_s = py.to_string_lossy().to_string();
+                    if let Some(inst) = pip_show_version(&py_s, &["triton-windows", "triton"]).await {
+                        if crate::hw::version_gt(&inst, &pinned) {
+                            let m = format!("[*] keeping installed triton {inst} (newer than wanted {pinned}) — not downgrading (#2264); pin an older triton manually if the old build is required\n");
+                            crate::base::push_log(&m, "setup"); let _ = app.emit("launch-log", m);
+                            continue;
+                        }
+                    }
+                }
+            }
             let m = format!("[*] sync kernel {name}\n"); crate::base::push_log(&m, "setup"); let _ = app.emit("launch-log", m);
             let emit_k = |s: &str| { crate::base::push_log(s, "setup"); let _ = app.emit("launch-log", s.to_string()); };
             let py_s = py.to_string_lossy().to_string();
@@ -1865,6 +1902,15 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,Str
         return Err(format!("kernel sync failed for: {} — see console output", failed.join(", ")));
     }
     Ok(serde_json::json!({"ok": true, "success": true}))
+}
+/// Quiet `pip show` version probe for the sync loop's no-downgrade guard.
+/// None when the dists are absent or pip fails — the guard steps aside.
+async fn pip_show_version(py: &str, dists: &[&str]) -> Option<String> {
+    let mut args = vec!["-m", "pip", "show"];
+    args.extend(dists.iter().copied());
+    let out = silent_command(py).args(&args).output().ok()?;
+    if !out.status.success() { return None; }
+    crate::hw::parse_pip_show_versions(&String::from_utf8_lossy(&out.stdout))
 }
 #[tauri::command]
 pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value,String> {

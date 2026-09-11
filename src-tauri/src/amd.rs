@@ -155,7 +155,7 @@ fn tail(s: &str, n: usize) -> String {
 /// `import` is "ok" | "missing" | "<Mod>: <Err>".
 pub(crate) const KERNEL_IMPORT_PROBE: &str = r#"import importlib, importlib.metadata as md, json
 PRIMARY = {"torch": "torch", "triton": "triton", "sageattention": "sageattention", "flash-attn": "flash_attn", "nunchaku": "nunchaku", "lightx2v-kernel": "lightx2v_kernel", "optimum-quanto": "optimum.quanto"}
-DISTS = ["torch", "triton", "sageattention", "flash-attn", "nunchaku", "lightx2v-kernel", "optimum-quanto", "llamacpp-gguf-cuda"]
+DISTS = ["torch", "triton", "sageattention", "sageattn3", "flash-attn", "nunchaku", "lightx2v-kernel", "optimum-quanto", "llamacpp-gguf-cuda"]
 out = {}
 for d in DISTS:
     try: ver = md.version(d)
@@ -224,6 +224,62 @@ pub(crate) fn kernel_probe_failures(map: &serde_json::Map<String, serde_json::Va
     out
 }
 
+/// Known-stale kernel versions in a kernel-probe map: GGUF builds older
+/// than the 1.0.21 floor look healthy (import ok) while silently disabling
+/// the SM120 async path — 6 tok/s Deepy decode instead of 37 (#2274).
+/// Triton floors are deliberately NOT flagged: RTX_20 boxes want <3.3 per
+/// upstream docs, so "old" triton is profile-relative, not stale.
+/// Pure + unit-tested.
+pub(crate) fn kernel_probe_stale(map: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(v) = map.get("llamacpp-gguf-cuda").and_then(|d| d.get("version")).and_then(|s| s.as_str()) {
+        if crate::hw::version_gt(crate::hw::GGUF_FLOOR, v) {
+            out.push(format!("llamacpp-gguf-cuda {v} predates the {} SM120 kernels — Deepy decode falls back to slow PyTorch SDPA. Re-run Sync kernels.", crate::hw::GGUF_FLOOR));
+        }
+    }
+    out
+}
+
+/// Blackwell-or-newer GPU by display name (nvidia-smi / torch device
+/// name). Sage3's kernel is Blackwell-only — proved by isolated probe
+/// (branch feature/sage3-isolated-probe): installs+imports on py3.13 but
+/// `RuntimeError: only supports Blackwell GPUs or newer` on a 3080.
+/// SKU digits only: old "Quadro RTX 5000" (Turing) contains "RTX 50",
+/// and "RTX 5000 Ada" is Ada — ADA always excludes. Pure + unit-tested.
+pub(crate) fn is_blackwell_gpu(name: &str) -> bool {
+    let g = name.to_uppercase();
+    if g.contains("ADA") { return false; }
+    ["5090", "5080", "5070", "5060", "5050", "PRO 6000", "PRO 5000", "PRO 4000",
+     "B100", "B200", "GB100", "BLACKWELL"]
+        .iter().any(|t| g.contains(t))
+}
+
+/// Sage3 gate verdict for a kernel-probe map (#2280). Sage3 is never
+/// synced (Blackwell-only AND py>=3.12 wheels; managed envs are
+/// py3.10/3.11) — so this explains instead of installing:
+/// - stray install + runnable GPU → info it exists;
+/// - stray install + older GPU → warn it is inert, safe to remove;
+/// - nothing installed + Blackwell → info why sync skipped it;
+/// - nothing installed + older GPU → silent (common case, no noise).
+/// Returns (level, message). Pure + unit-tested.
+pub(crate) fn sage3_note(map: &serde_json::Map<String, serde_json::Value>, blackwell: bool) -> Option<(&'static str, String)> {
+    let (installed, ver, import) = match map.get("sageattn3") {
+        Some(v) => {
+            let imp = v.get("import").and_then(|s| s.as_str()).unwrap_or("");
+            if imp == "missing" { (false, None, imp) }
+            else { (true, v.get("version").and_then(|s| s.as_str()), imp) }
+        }
+        None => (false, None, "missing"),
+    };
+    match (installed, blackwell) {
+        (false, false) => None,
+        (false, true) => Some(("info", "SageAttention 3 needs Python ≥ 3.12 (this env is 3.10/3.11) — Sage 2.2.0 stays synced; nothing to fix.".into())),
+        (true, true) if import == "ok" => Some(("info", format!("sageattn3 {} present on a Blackwell GPU — usable if upstream enables it.", ver.unwrap_or("?")))),
+        (true, false) if import == "ok" => Some(("warn", format!("sageattn3 {} is installed but Blackwell-only — inert on this GPU; safe to uninstall.", ver.unwrap_or("?")))),
+        (true, _) => Some(("warn", format!("sageattn3 {} won't import ({import}) — needs triton plus a Blackwell GPU; harmless, safe to remove.", ver.unwrap_or("?")))),
+    }
+}
+
 /// Last `{...}` line of probe stdout → structured result. Pure (tested).
 pub(crate) fn parse_probe_json(stdout: &str) -> Option<ComputeProbe> {
     let line = stdout.lines().rev().find(|l| l.trim_start().starts_with('{'))?;
@@ -256,7 +312,7 @@ pub(crate) fn classify_probe_failure(stderr_tail: &str) -> String {
 
 #[cfg(test)]
 mod probe_tests {
-    use super::{classify_probe_failure, parse_probe_json, read_hsa_choice, write_hsa_choice, HsaChoice, COMPUTE_PROBE, KERNEL_IMPORT_PROBE, parse_kernel_json, kernel_probe_failures};
+    use super::{classify_probe_failure, parse_probe_json, read_hsa_choice, write_hsa_choice, HsaChoice, COMPUTE_PROBE, KERNEL_IMPORT_PROBE, parse_kernel_json, kernel_probe_failures, kernel_probe_stale, is_blackwell_gpu, sage3_note};
     #[test]
     fn probe_script_is_valid_python() {
         // No torch on CI hosts — syntax-check only (same pattern as the
@@ -330,5 +386,53 @@ mod probe_tests {
         std::fs::write(repo.join(super::HSA_CHOICE_FILE), "garbage!!").unwrap();
         assert_eq!(read_hsa_choice(&repo), None);
         let _ = std::fs::remove_dir_all(&repo);
+    }
+    #[test]
+    fn stale_gguf_flagged_floor_passes() {
+        // #2274: 1.0.2 imports fine but silently disables the SM120 async
+        // path — Verify must say so instead of reporting healthy.
+        let raw_old = r#"{"llamacpp-gguf-cuda": {"version": "1.0.2", "import": "ok", "extra": ""}}"#;
+        let stale = kernel_probe_stale(&parse_kernel_json(raw_old).unwrap());
+        assert_eq!(stale.len(), 1);
+        assert!(stale[0].contains("1.0.2") && stale[0].contains("Sync kernels"), "got {stale:?}");
+        let raw_floor = r#"{"llamacpp-gguf-cuda": {"version": "1.0.21", "import": "ok", "extra": ""}}"#;
+        assert!(kernel_probe_stale(&parse_kernel_json(raw_floor).unwrap()).is_empty());
+        let raw_missing = r#"{"torch": {"version": "x", "import": "ok", "extra": ""}}"#;
+        assert!(kernel_probe_stale(&parse_kernel_json(raw_missing).unwrap()).is_empty());
+    }
+    #[test]
+    fn blackwell_names() {
+        // Proved Blackwell (isolated probe ran on a 3080 → refused).
+        for n in ["NVIDIA GeForce RTX 5090", "NVIDIA GeForce RTX 5070 Laptop GPU",
+                  "NVIDIA RTX PRO 6000 Blackwell", "NVIDIA B200"] {
+            assert!(is_blackwell_gpu(n), "{n}");
+        }
+        // Older / other-arch must stay silent: note the Turing-Quadro
+        // and Ada traps (both contain Blackwell-looking tokens).
+        for n in ["NVIDIA GeForce RTX 3080", "NVIDIA GeForce RTX 4090",
+                  "NVIDIA RTX 5000 Ada Generation", "Quadro RTX 5000",
+                  "NVIDIA H100", "AMD Radeon RX 7900 XTX", ""] {
+            assert!(!is_blackwell_gpu(n), "{n}");
+        }
+    }
+    #[test]
+    fn sage3_gate_levels() {
+        // #2280: explain, never install. Common case stays silent.
+        let missing = parse_kernel_json(r#"{"torch": {"version": "x", "import": "ok", "extra": ""}}"#).unwrap();
+        assert!(sage3_note(&missing, false).is_none());
+        let (lvl, msg) = sage3_note(&missing, true).expect("blackwell wants an explanation");
+        assert_eq!(lvl, "info");
+        assert!(msg.contains("3.12") && msg.contains("2.2.0"), "got {msg}");
+        // Stray install on a runnable GPU: info. On an older GPU: warn.
+        let ok = parse_kernel_json(r#"{"sageattn3": {"version": "1.0.0", "import": "ok", "extra": ""}}"#).unwrap();
+        assert_eq!(sage3_note(&ok, true).unwrap().0, "info");
+        let (lvl, msg) = sage3_note(&ok, false).unwrap();
+        assert_eq!(lvl, "warn");
+        assert!(msg.contains("inert"), "got {msg}");
+        // Broken stray install: warn with the import detail.
+        let broken = parse_kernel_json(r#"{"sageattn3": {"version": "1.0.0", "import": "sageattn3: ModuleNotFoundError", "extra": ""}}"#).unwrap();
+        let (lvl, msg) = sage3_note(&broken, false).unwrap();
+        assert_eq!(lvl, "warn");
+        assert!(msg.contains("won't import"), "got {msg}");
     }
 }

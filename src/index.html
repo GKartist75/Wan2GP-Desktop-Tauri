@@ -188,6 +188,21 @@
             <p class="token-hint">Which GPU runs the launcher window itself (not generation). Integrated frees 1–5 GB VRAM for generation; Disabled uses SwiftShader. Requires restart.</p>
           </div>
           <div class="settings-section" style="margin-top:12px">
+            <h3>Desktop Embed (experimental)</h3>
+            <div class="token-field">
+              <select id="embedModeSelect" class="input" style="max-width:360px">
+                <option value="native" selected>Native child webview — real Save-As downloads (default)</option>
+                <option value="iframe">iframe — simple embed</option>
+              </select>
+              <button class="btn btn-primary small" id="embedModeSaveBtn">Save</button>
+            </div>
+            <p class="token-hint">How Wan2GP renders in Desktop mode. <code>iframe</code> is the classic embed (downloads land silently in Downloads, then prompt). <code>Native</code> uses a real child webview with download events — exact Save-As prompts, no polling — but it composites above the interface, so the console docks beside it instead of overlaying. Applies on next Desktop launch (close the view first).</p>
+            <div class="token-field" style="margin-top:8px">
+              <button class="btn btn-ghost small" id="webviewMemBtn">Measure WebView2 memory</button>
+            </div>
+            <p class="token-hint" id="webviewMemStatus">Sums working-set of all WebView2 processes + the launcher. Run once per embed mode to compare.</p>
+          </div>
+          <div class="settings-section" style="margin-top:12px">
             <h3>SageAttention wheel</h3>
             <div class="token-field">
               <select id="sageSafeSelect" class="input" style="max-width:360px">
@@ -490,6 +505,12 @@
         </span>
       </div>
       <div class="topbar-right">
+        <span class="embed-top-wrap" title="Desktop renderer — switch while stopped, applies on launch">Renderer:
+          <select class="embed-badge embed-select" id="embedModeTop">
+            <option value="native" selected>native</option>
+            <option value="iframe">iframe</option>
+          </select>
+        </span>
         <div class="topbar-metrics" id="topbarMetrics">
           <div class="metric" title="CPU"><span class="metric-label">CPU</span><canvas class="metric-spark" id="sparkCpu" width="44" height="18"></canvas><span class="metric-val" id="valCpu">—</span></div>
           <div class="metric" title="GPU"><span class="metric-label">GPU</span><canvas class="metric-spark" id="sparkGpu" width="44" height="18"></canvas><span class="metric-val" id="valGpu">—</span></div>
