@@ -246,7 +246,9 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.6.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.1) *(latest)* — native-view drag & drop fixed (drops reach Gradio), closing the launcher now stops servers (no orphans), Stop hardening (OpenCode :4096 + custom-port sweeps, unique terminal scripts + cleanup).
+- [**v0.6.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.2) *(latest)* — Windows long paths end to end (preflight warn + one-click enable + install gate), gallery keeps last results (seeded `clear_file_list` default), installer no longer asks twice (backup-stash/radio/foreign-folder fixes).
+
+- [**v0.6.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.1) — native-view drag & drop fixed (drops reach Gradio), closing the launcher now stops servers (no orphans), Stop hardening (OpenCode :4096 + custom-port sweeps, unique terminal scripts + cleanup).
 
 - [**v0.6.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.0) — native Desktop embed (default): real child Webview with browser-grade Save-As downloads, floating console as its own window, one console stream everywhere, stall-free Stop that kills rebuild orphans, view-transition mutex + Stop teardown (no stale UI states). AMD install fix (#15): `setup.py` is now driven through a hook module (no more source patching) — profile/VRAM/conda-pip applied via import, fail-closed on upstream drift.
 

@@ -301,8 +301,16 @@
             <button class="btn btn-ghost small" id="tsPortKillBtn">Kill owner</button>
             <button class="btn btn-primary small" id="tsPortBumpBtn">Use next free port</button>
             <span class="token-hint" id="tsPortStatus" style="margin-left:8px"></span>
-          </div>
-        </div>
+              </div>
+            </div>
+            <div class="settings-section" style="margin-top:12px">
+              <h3>Windows Long Paths</h3>
+              <p class="token-hint">Deep ML package trees fail past 260 chars when Windows long paths are OFF. One click enables the system opt-in (needs admin approval and a reboot).</p>
+              <div class="token-field" style="margin-top:8px">
+                <button class="btn btn-ghost small" id="tsLongPathsBtn">Enable long paths</button>
+                <span class="token-hint" id="tsLongPathsStatus" style="margin-left:8px"></span>
+              </div>
+            </div>
         <div class="settings-section" style="margin-top:12px">
           <h3>Debug Bundle</h3>
           <p class="token-hint">Copies GPU, Python/Torch, launch args, profiles and the last errors as Markdown — paste it into Discord / GitHub.</p>
@@ -1190,7 +1198,8 @@
       </div>
     </div>
   </div>
-
+</div>
+    
   <!-- escape.js first: defines window.escHtml used by app.js. Loaded as a plain
        script tag (NOT via preload require — the window is sandboxed, and
        sandboxed preloads can only require whitelisted modules). Same module the

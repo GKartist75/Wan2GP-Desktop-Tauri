@@ -1544,6 +1544,38 @@ pub(crate) fn run_preflight_checks(
             }
         }
     }
+    // 9. Windows long paths - deep ML trees fail past 260 chars when the
+    // OS-wide opt-in is off. Read-only query, skip silently when
+    // unavailable (same style as check 8). Warn only, never fatal:
+    // shallow installs can still succeed.
+    #[cfg(windows)]
+    {
+        if let Ok(o) = silent_command("reg")
+            .args([
+                "query",
+                "HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem",
+                "/v",
+                "LongPathsEnabled",
+            ])
+            .output()
+        {
+            if o.status.success() {
+                let text = String::from_utf8_lossy(&o.stdout);
+                match long_paths_state(&text) {
+                        Some(true) => checks.push(PreflightCheck {
+                            id: "long-paths",
+                            level: "ok",
+                            msg: "Windows long paths enabled.".into(),
+                        }),
+                        _ => checks.push(PreflightCheck {
+                            id: "long-paths",
+                            level: "warn",
+                            msg: "Windows long paths are OFF - deep ML package trees can fail mid-install past 260 chars; enable via Settings > System > For developers > Long paths (or: reg add HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem /v LongPathsEnabled /t REG_DWORD /d 1 /f as admin) then reboot.".into(),
+                        }),
+                    }
+            }
+        }
+    }
     (fatal, checks)
 }
 
@@ -1558,6 +1590,36 @@ pub(crate) fn av_exclusion_msg(vendor: &str) -> Option<&'static str> {
         "AMD" => Some("no Defender exclusion for the install folder — nightly DLLs are quarantined heuristically; consider adding one."),
         _ => None,
     }
+}
+
+/// Parse `reg query ... /v LongPathsEnabled` stdout.
+/// Some(true) = 0x1, Some(false) = 0x0, None = value missing/unparseable.
+/// Pure + tested; the caller decides warn-vs-skip (see check 9).
+#[allow(dead_code)]
+pub(crate) fn long_paths_state(output: &str) -> Option<bool> {
+    for line in output.lines() {
+        if line.to_ascii_lowercase().contains("longpathsenabled") {
+            let lower = line.to_ascii_lowercase();
+            if lower.contains("0x1") {
+                return Some(true);
+            }
+            if lower.contains("0x0") {
+                return Some(false);
+            }
+            // Fallback for decimal-only rendering: trailing token 1/0.
+            if let Some(tok) = lower.split_whitespace().last() {
+                let t = tok.trim_matches(|c| c == '(' || c == ')');
+                if t == "1" {
+                    return Some(true);
+                }
+                if t == "0" {
+                    return Some(false);
+                }
+            }
+            return None;
+        }
+    }
+    None
 }
 
 #[tauri::command]
@@ -4291,6 +4353,32 @@ mod av_msg_tests {
         assert_eq!(av_exclusion_msg("CPU"), None);
         assert_eq!(av_exclusion_msg("APPLE"), None);
         assert_eq!(av_exclusion_msg("unknown"), None);
+    }
+}
+
+#[cfg(test)]
+mod long_paths_tests {
+    use super::long_paths_state;
+    #[test]
+    fn enabled_hex() {
+        let out = "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem\r\n    LongPathsEnabled    REG_DWORD    0x1\r\n";
+        assert_eq!(long_paths_state(out), Some(true));
+    }
+    #[test]
+    fn disabled_hex() {
+        let out = "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem\r\n    LongPathsEnabled    REG_DWORD    0x0\r\n";
+        assert_eq!(long_paths_state(out), Some(false));
+    }
+    #[test]
+    fn value_missing() {
+        let out = "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem\r\n    NtfsDisable8dot3NameCreation    REG_DWORD    0x2\r\n";
+        assert_eq!(long_paths_state(out), None);
+    }
+    #[test]
+    fn garbage_unparseable() {
+        assert_eq!(long_paths_state(""), None);
+        assert_eq!(long_paths_state("nonsense ((( not a registry dump"), None);
+        assert_eq!(long_paths_state("LongPathsEnabled    REG_DWORD"), None);
     }
 }
 

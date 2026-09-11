@@ -787,6 +787,15 @@ pub fn write_wgp_config(cfg: serde_json::Value) -> Result<serde_json::Value, Str
         m.remove("lorasRoot");
         m.remove("savePath");
     }
+    // ponytail: seed gallery retention when absent. Upstream loads
+    // wgp_config.json wholesale into server_config, so a file WE created
+    // from a partial patch (e.g. model paths before first launch) would
+    // otherwise miss `clear_file_list` forever — upstream never backfills
+    // it, and .get("clear_file_list", 0) then wipes the gallery on every
+    // generation. Setdefault only: an explicit user value (even 0) wins.
+    if let Some(m) = cur.as_object_mut() {
+        m.entry("clear_file_list").or_insert(serde_json::json!(5));
+    }
     let s = serde_json::to_string_pretty(&cur).map_err(|e| e.to_string())?;
     atomic_write(&p, &s).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({"ok": true, "success": true}))

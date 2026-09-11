@@ -1,342 +1,495 @@
-"use strict";
-
 // ── Global Log Buffer ──
-const logBuffer = []
+const logBuffer = [];
 // ponytail: expose for overlay pre-fill (createBrowserView races launch-log)
-window._logBuffer = logBuffer
-window._getLogTail = () => logBuffer.slice(-40).join('\n') + (lastLine ? '\n' + lastLine : '')
-const MAX_LOG = 5000
-let lastLine = ''
-let _carriageReturn = false  // next text part replaces lastLine instead of appending (tqdm progress bars)
-let _renderScheduled = false
+window._logBuffer = logBuffer;
+window._getLogTail = () =>
+  logBuffer.slice(-40).join("\n") + (lastLine ? "\n" + lastLine : "");
+const MAX_LOG = 5000;
+let lastLine = "";
+let _carriageReturn = false; // next text part replaces lastLine instead of appending (tqdm progress bars)
+let _renderScheduled = false;
 // Coalesce terminal rewrites onto one animation frame: a pip/log flood can emit
 // dozens of chunks per second, and each one used to rebuild up to 3 full
 // 5k-line textContent blobs synchronously. Now renders at most once per frame.
 function scheduleTerminalRender() {
-  if (_renderScheduled) return
-  _renderScheduled = true
-  requestAnimationFrame(() => { _renderScheduled = false; renderTerminals() })
+  if (_renderScheduled) return;
+  _renderScheduled = true;
+  requestAnimationFrame(() => {
+    _renderScheduled = false;
+    renderTerminals();
+  });
 }
 // Main console entry. `forward=false` for backend-echoed lines (the backend
 // already emits those to every window — forwarding would duplicate them in
 // the separate term window). Everything else mirrors to the backend bus so
 // floating/docked/dashboard consoles stay identical (history + live).
 function appendLog(text, forward) {
-  if (!text) return
-  if (!text) return
+  if (!text) return;
+  if (!text) return;
   // Normalize Windows \r\n to \n first (avoids \r clearing lastLine before \n pushes it)
-  const parts = text.replace(/\r\n/g, '\n').split(/(\r|\n)/)
+  const parts = text.replace(/\r\n/g, "\n").split(/(\r|\n)/);
   for (const part of parts) {
-    if (part === '\r') {
+    if (part === "\r") {
       // \r = go to start of line — next text OVERWRITES lastLine, doesn't append.
       // The render shows lastLine as the in-progress line, so progress bars stay visible.
-      _carriageReturn = true
-    } else if (part === '\n') {
-      if (lastLine.trim()) logBuffer.push(lastLine.trim())
-      lastLine = ''
-      _carriageReturn = false
-    } else if (part !== '') {
+      _carriageReturn = true;
+    } else if (part === "\n") {
+      if (lastLine.trim()) logBuffer.push(lastLine.trim());
+      lastLine = "";
+      _carriageReturn = false;
+    } else if (part !== "") {
       // NB: skip empty split fragments (chunk ending in \r yields a trailing "").
       // Treating "" as text would wipe lastLine AND disarm _carriageReturn,
       // so \r-terminated progress could never display (stuck pre-0% state).
       if (_carriageReturn) {
-        lastLine = part
-        _carriageReturn = false
+        lastLine = part;
+        _carriageReturn = false;
       } else {
-        lastLine += part
+        lastLine += part;
       }
     }
   }
-  if (logBuffer.length > MAX_LOG) logBuffer.splice(0, logBuffer.length - MAX_LOG)
-  scheduleTerminalRender()
-  if (forward !== false) { try { window.w2gp.mirrorConsole(text) } catch {} }
+  if (logBuffer.length > MAX_LOG)
+    logBuffer.splice(0, logBuffer.length - MAX_LOG);
+  scheduleTerminalRender();
+  if (forward !== false) {
+    try {
+      window.w2gp.mirrorConsole(text);
+    } catch {}
+  }
 }
 
-const termFollow = { termBody: true, ftTermBody: true, installTermBody: true }
-const termAutoScroll = {}
-const termDirty = {}
+const termFollow = { termBody: true, ftTermBody: true, installTermBody: true };
+const termAutoScroll = {};
+const termDirty = {};
 
-const termText = {}
+const termText = {};
 function renderTerminals() {
   // Include the in-progress (carriage-return-updated) line so progress bars are visible
   // before a newline arrives. When lastLine is empty we show buffer only.
-  const text = logBuffer.join('\n') + (lastLine ? '\n' + lastLine : '')
-  ;['termBody','ftTermBody','installTermBody'].forEach(id => {
-    const el = document.getElementById(id)
-    if (!el) return
+  const text = logBuffer.join("\n") + (lastLine ? "\n" + lastLine : "");
+  ["termBody", "ftTermBody", "installTermBody"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
     // Skip offscreen consoles (webview mode hides the dashboard console, the
     // floating overlay hides the DOM console) — writing 5k lines to a hidden
     // element is pure waste. They are flagged dirty and flushed on next show
     // (showTerminal/toggleFloatingTerm call renderTerminals() explicitly).
-    if (el.offsetParent === null) { termDirty[id] = true; return }
-    termDirty[id] = false
+    if (el.offsetParent === null) {
+      termDirty[id] = true;
+      return;
+    }
+    termDirty[id] = false;
     // Dirty-check: skip the textContent write when the text hasn't changed.
-    if (termText[id] !== text) { termText[id] = text; el.textContent = text }
-    if (termFollow[id]) setTimeout(() => { el.scrollTop = el.scrollHeight }, 10)
-  })
+    if (termText[id] !== text) {
+      termText[id] = text;
+      el.textContent = text;
+    }
+    if (termFollow[id])
+      setTimeout(() => {
+        el.scrollTop = el.scrollHeight;
+      }, 10);
+  });
 }
 
 function setupScrollUnfollow(bodyId, btnId) {
-  const body = document.getElementById(bodyId)
-  const btn = btnId ? document.getElementById(btnId) : null
-  if (!body) return
-  body.addEventListener('scroll', () => {
-    const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 30
-    if (!atBottom && termFollow[bodyId]) { termFollow[bodyId] = false; if (btn) { btn.classList.remove('active'); const ft=btn.querySelector('.follow-text'); if(ft) ft.textContent='Follow' } }
-    else if (atBottom && !termFollow[bodyId]) { termFollow[bodyId] = true; if (btn) { btn.classList.add('active'); const ft=btn.querySelector('.follow-text'); if(ft) ft.textContent='Follow' } }
-  })
+  const body = document.getElementById(bodyId);
+  const btn = btnId ? document.getElementById(btnId) : null;
+  if (!body) return;
+  body.addEventListener("scroll", () => {
+    const atBottom =
+      body.scrollHeight - body.scrollTop - body.clientHeight < 30;
+    if (!atBottom && termFollow[bodyId]) {
+      termFollow[bodyId] = false;
+      if (btn) {
+        btn.classList.remove("active");
+        const ft = btn.querySelector(".follow-text");
+        if (ft) ft.textContent = "Follow";
+      }
+    } else if (atBottom && !termFollow[bodyId]) {
+      termFollow[bodyId] = true;
+      if (btn) {
+        btn.classList.add("active");
+        const ft = btn.querySelector(".follow-text");
+        if (ft) ft.textContent = "Follow";
+      }
+    }
+  });
 }
 
-const $ = id => document.getElementById(id)
+const $ = (id) => document.getElementById(id);
 // Tauri invoke() rejects with the raw backend string, not an Error object —
 // reading e.message would print "undefined". Normalizes both shapes.
-function errText(e) { return (e && e.message) || (e == null ? 'unknown error' : e) }
+function errText(e) {
+  return (e && e.message) || (e == null ? "unknown error" : e);
+}
 function show(id) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); $(id).classList.add('active')
+  document
+    .querySelectorAll(".screen")
+    .forEach((s) => s.classList.remove("active"));
+  $(id).classList.add("active");
   // Flush console output buffered while the terminal was offscreen (e.g. the
   // post-install show('dashboard') would otherwise leave the Console card
   // empty until the next log line arrives).
-  if (Object.values(termDirty).some(Boolean)) renderTerminals()
+  if (Object.values(termDirty).some(Boolean)) renderTerminals();
 }
-function breakPath(p) { if (!p) return p; const zwsp = String.fromCharCode(0x200B); const bs = String.fromCharCode(0x5C); const s = String(p); return s.split(bs).join(bs + zwsp).split('/').join('/' + zwsp); }
+function breakPath(p) {
+  if (!p) return p;
+  const zwsp = String.fromCharCode(0x200b);
+  const bs = String.fromCharCode(0x5c);
+  const s = String(p);
+  return s
+    .split(bs)
+    .join(bs + zwsp)
+    .split("/")
+    .join("/" + zwsp);
+}
 // One file-as-folder guard (pasted Temp pngs chosen as folders) shared by pickers.
 function isFilePickedAsFolder(dir) {
-  return /\.(png|jpg|jpeg|webp|bmp|gif)$/i.test(dir) || String(dir).toLowerCase().includes('orca-paste')
+  return (
+    /\.(png|jpg|jpeg|webp|bmp|gif)$/i.test(dir) ||
+    String(dir).toLowerCase().includes("orca-paste")
+  );
 }
 
 // ── Floating Terminal state/helpers (hoisted so the launch handler can use them) ──
-let _ftVisible = false
+let _ftVisible = false;
 // A BrowserView always composites above DOM, so the terminal (plain DOM) can't sit on top of
 // Wan2GP. Strategy: docked (bottom/top/left/right) → shrink the view, DOM console sits beside
 // Wan2GP (side-by-side); floating → console is its OWN window (movable to another monitor) and
 // Wan2GP is detached so the main window isn't left showing a grey Wan2GP panel.
 // Separate-window state (native floating): backend owns truth (X-close invisible
 // to us — synced via the term-closed event).
-let _termWinOpen = false
+let _termWinOpen = false;
 // Open the console as its own OS window (native floating): floats above
 // everything incl. the native child, so Gradio stays visible. Keeps the
 // child shown (re-syncs bounds) and clears any hidden-view note.
 function openNativeTermWindow() {
-  hideNativeHiddenNote()
+  hideNativeHiddenNote();
   // Surface failures LOUDLY: a silent catch here looks exactly like
   // "floating does nothing" with no way to tell why.
-  window.w2gp.createTermView().then((r) => {
-    _termWinOpen = true
-    appendLog(r && r.existing ? '[*] Console window focused' : '[*] Console opened in its own window (native floating mode)')
-  }).catch((e) => {
-    _termWinOpen = false; _ftVisible = false
-    appendLog('[!] Console window failed to open: ' + errText(e))
-    showToast('✗ Console window failed: ' + errText(e))
-    showNativeHiddenNote()
-  })
-  _termWinOpen = true
-  _ftVisible = true
+  window.w2gp
+    .createTermView()
+    .then((r) => {
+      _termWinOpen = true;
+      appendLog(
+        r && r.existing
+          ? "[*] Console window focused"
+          : "[*] Console opened in its own window (native floating mode)",
+      );
+    })
+    .catch((e) => {
+      _termWinOpen = false;
+      _ftVisible = false;
+      appendLog("[!] Console window failed to open: " + errText(e));
+      showToast("✗ Console window failed: " + errText(e));
+      showNativeHiddenNote();
+    });
+  _termWinOpen = true;
+  _ftVisible = true;
   // DOM panel stands down (the window owns the console); mark floating state
   // so toggles/recovery route back here instead of the DOM path.
   try {
-    const ft = $('floatingTerminal')
-    if (ft) ft.className = 'floating-term dock-floating hidden'
-    document.querySelectorAll('.dock-btn').forEach(b => b.classList.toggle('active', b.dataset.dock === 'floating'))
+    const ft = $("floatingTerminal");
+    if (ft) ft.className = "floating-term dock-floating hidden";
+    document
+      .querySelectorAll(".dock-btn")
+      .forEach((b) =>
+        b.classList.toggle("active", b.dataset.dock === "floating"),
+      );
   } catch {}
-  try { reshowNativeView() } catch {}
-  try { renderTerminals() } catch {}
-  syncTermEmbedPadding()
+  try {
+    reshowNativeView();
+  } catch {}
+  try {
+    renderTerminals();
+  } catch {}
+  syncTermEmbedPadding();
 }
 function currentDock() {
-  const ft = $('floatingTerminal')
-  for (const d of ['bottom', 'top', 'left', 'right', 'floating']) {
-    if (ft.classList.contains('dock-' + d)) return d
+  const ft = $("floatingTerminal");
+  for (const d of ["bottom", "top", "left", "right", "floating"]) {
+    if (ft.classList.contains("dock-" + d)) return d;
   }
-  return 'bottom'
+  return "bottom";
 }
 // Show the console for the current dock. In Tauri the console is ALWAYS the
 // DOM terminal (all docks incl. floating overlay) — there is no separate native
 // terminal window like Electron's TermView, so no special-casing by dock.
-let _termBusy = false
+let _termBusy = false;
 function showTerminal() {
-  if (_termBusy) { appendLog('[i] showTerminal skipped (_termBusy)'); return }
-  _termBusy = true
-  try {
-  // Native + floating FIRST: separate OS window (floats above everything,
-  // Gradio stays visible). Skips the DOM terminal entirely — showing it would
-  // leave a dead panel behind once the window owns the console.
-  if (currentDock() === 'floating' && window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) {
-    openNativeTermWindow()
-    return
+  if (_termBusy) {
+    appendLog("[i] showTerminal skipped (_termBusy)");
+    return;
   }
-  window.w2gp.destroyTermView()
-  $('floatingTerminal').classList.remove('hidden')
-  _ftVisible = true
-  renderTerminals()
-  window.w2gp.reattachBrowserView()
-  // ponytail: guard — bvSetDock/showTerminal recursion caused open/close loop (floating vs dock)
-  const dock = currentDock()
-  if (dock !== 'floating') window.w2gp.bvSetDock(dock)
-  window.w2gp.hideBrowserView('term')
-  syncTermEmbedPadding()
-  // Native child composites above the DOM: hideBrowserView('term') hid it —
-  // for docked (side-by-side) mode re-show it shrunk beside the console.
-  // Floating keeps it hidden (with an explanatory note, not black void).
+  _termBusy = true;
   try {
-    if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) {
-      if (dock === 'floating') showNativeHiddenNote()
-      else reshowNativeView()
+    // Native + floating FIRST: separate OS window (floats above everything,
+    // Gradio stays visible). Skips the DOM terminal entirely — showing it would
+    // leave a dead panel behind once the window owns the console.
+    if (
+      currentDock() === "floating" &&
+      window.w2gp.isNativeEmbed &&
+      window.w2gp.isNativeEmbed()
+    ) {
+      openNativeTermWindow();
+      return;
     }
-  } catch {}
-  // Synchronous (not timed) guard: both terminal functions run to completion
-  // within one task (all backend calls are fire-and-forget), so same-stack
-  // recursion is still blocked while sequential calls across async gaps —
-  // e.g. term-window X-close → hideTerminal, then dock-back → showTerminal —
-  // are never dropped. The old 50ms timeout ate those and wedged docking.
-  } finally { _termBusy = false }
+    window.w2gp.destroyTermView();
+    $("floatingTerminal").classList.remove("hidden");
+    _ftVisible = true;
+    renderTerminals();
+    window.w2gp.reattachBrowserView();
+    // ponytail: guard — bvSetDock/showTerminal recursion caused open/close loop (floating vs dock)
+    const dock = currentDock();
+    if (dock !== "floating") window.w2gp.bvSetDock(dock);
+    window.w2gp.hideBrowserView("term");
+    syncTermEmbedPadding();
+    // Native child composites above the DOM: hideBrowserView('term') hid it —
+    // for docked (side-by-side) mode re-show it shrunk beside the console.
+    // Floating keeps it hidden (with an explanatory note, not black void).
+    try {
+      if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) {
+        if (dock === "floating") showNativeHiddenNote();
+        else reshowNativeView();
+      }
+    } catch {}
+    // Synchronous (not timed) guard: both terminal functions run to completion
+    // within one task (all backend calls are fire-and-forget), so same-stack
+    // recursion is still blocked while sequential calls across async gaps —
+    // e.g. term-window X-close → hideTerminal, then dock-back → showTerminal —
+    // are never dropped. The old 50ms timeout ate those and wedged docking.
+  } finally {
+    _termBusy = false;
+  }
 }
 function hideTerminal() {
-  if (_termBusy) return
-  _termBusy = true
+  if (_termBusy) return;
+  _termBusy = true;
   // Separate window (if any) always closes with the console.
-  _termWinOpen = false
+  _termWinOpen = false;
   try {
-  $('floatingTerminal').classList.add('hidden')
-  _ftVisible = false
-  syncTermEmbedPadding()
-  hideNativeHiddenNote()
-  window.w2gp.destroyTermView()
-  window.w2gp.reattachBrowserView()
-  // Native child: restore full bounds now the console is gone (with settle).
-  try { reshowNativeView() } catch {}
-  // Same synchronous guard as showTerminal (see above): never time-based.
-  } finally { _termBusy = false }
+    $("floatingTerminal").classList.add("hidden");
+    _ftVisible = false;
+    syncTermEmbedPadding();
+    hideNativeHiddenNote();
+    window.w2gp.destroyTermView();
+    window.w2gp.reattachBrowserView();
+    // Native child: restore full bounds now the console is gone (with settle).
+    try {
+      reshowNativeView();
+    } catch {}
+    // Same synchronous guard as showTerminal (see above): never time-based.
+  } finally {
+    _termBusy = false;
+  }
 }
 async function toggleFloatingTerm() {
-  if (_termBusy) return
-  if ($('dashBody').style.display === 'none') {
+  if (_termBusy) return;
+  if ($("dashBody").style.display === "none") {
     // Native + floating console lives in its own OS window (backend owns
     // truth — the DOM panel stays hidden, so classList can't drive this).
-    if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed() && currentDock() === 'floating') {
+    if (
+      window.w2gp.isNativeEmbed &&
+      window.w2gp.isNativeEmbed() &&
+      currentDock() === "floating"
+    ) {
       try {
-        const r = await window.w2gp.toggleTermWindow().catch(() => null)
-        _termWinOpen = !!(r && r.open)
-        _ftVisible = _termWinOpen
+        const r = await window.w2gp.toggleTermWindow().catch(() => null);
+        _termWinOpen = !!(r && r.open);
+        _ftVisible = _termWinOpen;
       } catch {}
-      return
+      return;
     }
     // DOM is truth — the flag desyncs if a toggle ever gets swallowed.
-    if ($('floatingTerminal').classList.contains('hidden')) { renderTerminals(); showTerminal() }
-    else { hideTerminal() }
+    if ($("floatingTerminal").classList.contains("hidden")) {
+      renderTerminals();
+      showTerminal();
+    } else {
+      hideTerminal();
+    }
   }
 }
 function closeFloatingTerm() {
-  hideTerminal()
+  hideTerminal();
 }
 // Dock switch pressed inside the separate term window: close it, then dock
 // the DOM console in the main window (same end state as the main dock buttons).
 window.__dockTerminal = async (dock) => {
-  appendLog('[*] Docking console: ' + dock + ' (from separate window)')
-  showToast('Docking console: ' + dock)
-  if (dock === 'floating') { try { await window.w2gp.createTermView() } catch (e) { appendLog('[!] dock/floating reopen failed: ' + errText(e)) } return }
-  try { await window.w2gp.destroyTermView().catch(() => {}) } catch (e) { appendLog('[!] dock/destroy failed: ' + errText(e)) }
-  appendLog('[i] dock step: window closed')
-  _termWinOpen = false
-  _ftVisible = false
+  appendLog("[*] Docking console: " + dock + " (from separate window)");
+  showToast("Docking console: " + dock);
+  if (dock === "floating") {
+    try {
+      await window.w2gp.createTermView();
+    } catch (e) {
+      appendLog("[!] dock/floating reopen failed: " + errText(e));
+    }
+    return;
+  }
   try {
-    const cfg = await window.w2gp.configLoad().catch(() => ({}))
-    if (cfg && typeof cfg === 'object') { cfg.termDockDefault = dock; window.w2gp.configSave(cfg).catch(() => {}) }
-  } catch (e) { appendLog('[!] dock/config failed: ' + errText(e)) }
-  appendLog('[i] dock step: config saved')
-  try { setFtDock(dock) } catch (e) { appendLog('[!] dock/setFtDock failed: ' + errText(e)) }
-  appendLog('[i] dock step: setFtDock done, dashHidden=' + ($('dashBody').style.display === 'none'))
-  if ($('dashBody').style.display === 'none') showTerminal()
-  appendLog('[i] dock step: showTerminal returned')
-}
+    await window.w2gp.destroyTermView().catch(() => {});
+  } catch (e) {
+    appendLog("[!] dock/destroy failed: " + errText(e));
+  }
+  appendLog("[i] dock step: window closed");
+  _termWinOpen = false;
+  _ftVisible = false;
+  try {
+    const cfg = await window.w2gp.configLoad().catch(() => ({}));
+    if (cfg && typeof cfg === "object") {
+      cfg.termDockDefault = dock;
+      window.w2gp.configSave(cfg).catch(() => {});
+    }
+  } catch (e) {
+    appendLog("[!] dock/config failed: " + errText(e));
+  }
+  appendLog("[i] dock step: config saved");
+  try {
+    setFtDock(dock);
+  } catch (e) {
+    appendLog("[!] dock/setFtDock failed: " + errText(e));
+  }
+  appendLog(
+    "[i] dock step: setFtDock done, dashHidden=" +
+      ($("dashBody").style.display === "none"),
+  );
+  if ($("dashBody").style.display === "none") showTerminal();
+  appendLog("[i] dock step: showTerminal returned");
+};
 // Apply a dock position to the floating terminal (className + IPC), without toggling visibility.
 // When the console is open this also switches the rendering mode (DOM vs overlay) as needed.
 function setFtDock(dock) {
-  if (_termBusy) return
-  const ft = $('floatingTerminal')
-  const wasVisible = !ft.classList.contains('hidden') && _ftVisible
-  ft.className = 'floating-term dock-' + dock + (ft.classList.contains('hidden') ? ' hidden' : '')
-  if (dock !== 'floating') ft.style.cssText = ''
-  document.querySelectorAll('.dock-btn').forEach(b => b.classList.toggle('active', b.dataset.dock === dock))
-  if (dock !== 'floating') window.w2gp.bvSetDock(dock)
+  if (_termBusy) return;
+  const ft = $("floatingTerminal");
+  const wasVisible = !ft.classList.contains("hidden") && _ftVisible;
+  ft.className =
+    "floating-term dock-" +
+    dock +
+    (ft.classList.contains("hidden") ? " hidden" : "");
+  if (dock !== "floating") ft.style.cssText = "";
+  document
+    .querySelectorAll(".dock-btn")
+    .forEach((b) => b.classList.toggle("active", b.dataset.dock === dock));
+  if (dock !== "floating") window.w2gp.bvSetDock(dock);
   // ponytail: don't re-enter showTerminal from here if we just changed dock — toggling dock while open re-shrinks view without loop
-  if (wasVisible && $('dashBody').style.display === 'none') {
-    const _native = window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()
+  if (wasVisible && $("dashBody").style.display === "none") {
+    const _native = window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed();
     // Switching dock TO floating while open: open the separate window (the
     // hole that left a hidden child + black view). Leaving floating: close it.
-    if (_native && dock === 'floating') { openNativeTermWindow() }
-    else {
-      if (_native) { try { window.w2gp.destroyTermView().catch(() => {}) } catch {} _termWinOpen = false }
+    if (_native && dock === "floating") {
+      openNativeTermWindow();
+    } else {
+      if (_native) {
+        try {
+          window.w2gp.destroyTermView().catch(() => {});
+        } catch {}
+        _termWinOpen = false;
+      }
       // only re-flow BrowserView, don't re-create terminal DOM in a loop
-      window.w2gp.hideBrowserView('term')
-      if (_native) reshowNativeView()
+      window.w2gp.hideBrowserView("term");
+      if (_native) reshowNativeView();
     }
   }
-  syncTermEmbedPadding()
+  syncTermEmbedPadding();
 }
 // ponytail: Tauri has no native BrowserView — bvSetDock is a stub no-op, so a
 // docked console would overlay and cover part of the Wan2GP iframe. Shrink the
 // embed instead via container padding matching the console's real size.
 function syncTermEmbedPadding() {
-  const wc = $('webviewContainer')
-  if (!wc) return
-  const ft = $('floatingTerminal')
-  const dock = currentDock()
-  const visible = $('dashBody').style.display === 'none' && !ft.classList.contains('hidden') && dock !== 'floating'
-  wc.style.paddingBottom = (visible && dock === 'bottom') ? ft.offsetHeight + 'px' : ''
-  wc.style.paddingTop = (visible && dock === 'top') ? ft.offsetHeight + 'px' : ''
-  wc.style.paddingLeft = (visible && dock === 'left') ? ft.offsetWidth + 'px' : ''
-  wc.style.paddingRight = (visible && dock === 'right') ? ft.offsetWidth + 'px' : ''
+  const wc = $("webviewContainer");
+  if (!wc) return;
+  const ft = $("floatingTerminal");
+  const dock = currentDock();
+  const visible =
+    $("dashBody").style.display === "none" &&
+    !ft.classList.contains("hidden") &&
+    dock !== "floating";
+  wc.style.paddingBottom =
+    visible && dock === "bottom" ? ft.offsetHeight + "px" : "";
+  wc.style.paddingTop = visible && dock === "top" ? ft.offsetHeight + "px" : "";
+  wc.style.paddingLeft =
+    visible && dock === "left" ? ft.offsetWidth + "px" : "";
+  wc.style.paddingRight =
+    visible && dock === "right" ? ft.offsetWidth + "px" : "";
 }
 // Native-child placeholder: a native child composites above the DOM, so the
 // free-floating console can't overlay Gradio — the child is hidden instead.
 // Show an explanatory note (not black void) with the way back.
 function showNativeHiddenNote() {
   try {
-    const wc = $('webviewContainer')
-    if (!wc) return
-    hideNativeHiddenNote()
-    const d = document.createElement('div')
-    d.id = 'nativeHiddenNote'
-    d.style.cssText = 'flex:1;display:flex;align-items:center;justify-content:center;color:#888;font-size:13px;font-family:Geist Mono,monospace;text-align:center;padding:20px;line-height:1.8'
-    d.textContent = 'Desktop view hidden while the floating console is open. Dock the console (Bottom / Left / Top / Right) to see both side-by-side — or switch Renderer back to iframe for overlay.'
-    wc.appendChild(d)
+    const wc = $("webviewContainer");
+    if (!wc) return;
+    hideNativeHiddenNote();
+    const d = document.createElement("div");
+    d.id = "nativeHiddenNote";
+    d.style.cssText =
+      "flex:1;display:flex;align-items:center;justify-content:center;color:#888;font-size:13px;font-family:Geist Mono,monospace;text-align:center;padding:20px;line-height:1.8";
+    d.textContent =
+      "Desktop view hidden while the floating console is open. Dock the console (Bottom / Left / Top / Right) to see both side-by-side — or switch Renderer back to iframe for overlay.";
+    wc.appendChild(d);
   } catch {}
 }
-function hideNativeHiddenNote() { try { document.getElementById('nativeHiddenNote')?.remove() } catch {} }
+function hideNativeHiddenNote() {
+  try {
+    document.getElementById("nativeHiddenNote")?.remove();
+  } catch {}
+}
 // Native-child twin of syncTermEmbedPadding: the child ignores CSS padding
 // (it composites above the DOM), so subtract the open docked console's strip
 // from the measured container rect and push real bounds to Rust. Floating /
 // hidden console → full container rect.
 function syncNativeBoundsAdjusted() {
   try {
-    if (!window.w2gp.isNativeEmbed || !window.w2gp.isNativeEmbed()) return
-    const wc = $('webviewContainer')
-    if (!wc || wc.classList.contains('hidden')) return
-    const r = wc.getBoundingClientRect()
-    if (!r.width || !r.height) return
-    let { left: x, top: y, width: w, height: h } = r
-    const ft = $('floatingTerminal')
-    const dock = currentDock()
-    if (ft && !ft.classList.contains('hidden') && $('dashBody').style.display === 'none') {
-      if (dock === 'bottom') h = Math.max(0, h - ft.offsetHeight)
-      else if (dock === 'top') { const t = ft.offsetHeight; y += t; h = Math.max(0, h - t) }
-      else if (dock === 'left') { const l = ft.offsetWidth; x += l; w = Math.max(0, w - l) }
-      else if (dock === 'right') w = Math.max(0, w - ft.offsetWidth)
+    if (!window.w2gp.isNativeEmbed || !window.w2gp.isNativeEmbed()) return;
+    const wc = $("webviewContainer");
+    if (!wc || wc.classList.contains("hidden")) return;
+    const r = wc.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    let { left: x, top: y, width: w, height: h } = r;
+    const ft = $("floatingTerminal");
+    const dock = currentDock();
+    if (
+      ft &&
+      !ft.classList.contains("hidden") &&
+      $("dashBody").style.display === "none"
+    ) {
+      if (dock === "bottom") h = Math.max(0, h - ft.offsetHeight);
+      else if (dock === "top") {
+        const t = ft.offsetHeight;
+        y += t;
+        h = Math.max(0, h - t);
+      } else if (dock === "left") {
+        const l = ft.offsetWidth;
+        x += l;
+        w = Math.max(0, w - l);
+      } else if (dock === "right") w = Math.max(0, w - ft.offsetWidth);
     }
     // Same topbar clamp as __syncNativeBounds: the child must never cover metrics.
     try {
-      const tb = document.querySelector('.topbar')
-      if (tb) { const minY = tb.getBoundingClientRect().bottom; if (y < minY) { h -= (minY - y); y = minY } }
+      const tb = document.querySelector(".topbar");
+      if (tb) {
+        const minY = tb.getBoundingClientRect().bottom;
+        if (y < minY) {
+          h -= minY - y;
+          y = minY;
+        }
+      }
     } catch {}
-    hideNativeHiddenNote()
+    hideNativeHiddenNote();
     // Bounds spam quieting: transitions fire this up to 3× per flip — log
     // only on actual change.
-    const _bk = `${Math.round(x)}.${Math.round(y)}.${Math.round(w)}.${Math.round(h)}`
+    const _bk = `${Math.round(x)}.${Math.round(y)}.${Math.round(w)}.${Math.round(h)}`;
     if (window.__lastNativeBounds !== _bk) {
-      window.__lastNativeBounds = _bk
-      appendLog(`[embed] native bounds x=${Math.round(x)} y=${Math.round(y)} w=${Math.round(w)} h=${Math.round(h)}`)
+      window.__lastNativeBounds = _bk;
+      appendLog(
+        `[embed] native bounds x=${Math.round(x)} y=${Math.round(y)} w=${Math.round(w)} h=${Math.round(h)}`,
+      );
     }
-    if (w > 10 && h > 10) { try { window.w2gp.bvSyncBoundsRect({ x, y, w, h }); } catch {} }
+    if (w > 10 && h > 10) {
+      try {
+        window.w2gp.bvSyncBoundsRect({ x, y, w, h });
+      } catch {}
+    }
   } catch {}
 }
 // Re-show the native child with settle re-syncs: measuring right after unhide
@@ -345,754 +498,1156 @@ function syncNativeBoundsAdjusted() {
 // No-op unless native embed is active.
 function reshowNativeView() {
   try {
-    if (!window.w2gp.isNativeEmbed || !window.w2gp.isNativeEmbed()) return
-    window.w2gp.reattachBrowserView().then(() => {
-      const once = () => { try { syncNativeBoundsAdjusted() } catch {} }
-      once()
-      try { requestAnimationFrame(once) } catch {}
-      setTimeout(once, 300)
-    }).catch(() => {})
+    if (!window.w2gp.isNativeEmbed || !window.w2gp.isNativeEmbed()) return;
+    window.w2gp
+      .reattachBrowserView()
+      .then(() => {
+        const once = () => {
+          try {
+            syncNativeBoundsAdjusted();
+          } catch {}
+        };
+        once();
+        try {
+          requestAnimationFrame(once);
+        } catch {}
+        setTimeout(once, 300);
+      })
+      .catch(() => {});
   } catch {}
 }
 // Settings toggle handlers registered once (avoids memory leak from repeated onchange reassignment).
-let _settingsTogglesReady = false
+let _settingsTogglesReady = false;
 function initSettingsToggles() {
-  if (_settingsTogglesReady) return
-  _settingsTogglesReady = true
+  if (_settingsTogglesReady) return;
+  _settingsTogglesReady = true;
 
-  $('autoStartToggle')?.addEventListener('change', async () => {
-    const el = $('autoStartToggle')
-    const r = await window.w2gp.setAutoStart(el.checked)
-    if (r && r.success) showToast(el.checked ? 'Will start with Windows' : 'Removed from startup')
-    else showToast('✗ ' + (r && r.error ? r.error : 'Failed'))
-  })
-  $('followSystemThemeToggle')?.addEventListener('change', async () => {
-    const el = $('followSystemThemeToggle')
-    await window.w2gp.setThemeFollowSystem(el.checked)
-    if (el.checked) applyTheme(matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-    showToast(el.checked ? 'Theme will follow system' : 'Manual theme control restored')
-  })
-  $('notificationsToggle')?.addEventListener('change', async () => {
-    const el = $('notificationsToggle')
-    await window.w2gp.setNotificationsEnabled(el.checked)
-    showToast(el.checked ? 'Notifications enabled' : 'Notifications disabled')
-  })
-  $('autoUpdateToggle')?.addEventListener('change', async () => {
-    const el = $('autoUpdateToggle')
-    const c = await window.w2gp.configLoad()
-    c.autoUpdateEnabled = el.checked
-    await window.w2gp.configSave(c)
-    showToast(el.checked ? 'Update check on launch enabled' : 'Update check on launch disabled — updates only via "Check for updates"')
-  })
-  $('shareToggle')?.addEventListener('change', async () => {
-    const el = $('shareToggle')
-    const c = await window.w2gp.configLoad()
-    c.share = el.checked
-    await window.w2gp.configSave(c)
-    showToast(el.checked ? 'Share link enabled — Gradio will create a public tunnel on next launch' : 'Share link disabled')
-  })
+  $("autoStartToggle")?.addEventListener("change", async () => {
+    const el = $("autoStartToggle");
+    const r = await window.w2gp.setAutoStart(el.checked);
+    if (r && r.success)
+      showToast(
+        el.checked ? "Will start with Windows" : "Removed from startup",
+      );
+    else showToast("✗ " + (r && r.error ? r.error : "Failed"));
+  });
+  $("followSystemThemeToggle")?.addEventListener("change", async () => {
+    const el = $("followSystemThemeToggle");
+    await window.w2gp.setThemeFollowSystem(el.checked);
+    if (el.checked)
+      applyTheme(
+        matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
+      );
+    showToast(
+      el.checked ? "Theme will follow system" : "Manual theme control restored",
+    );
+  });
+  $("notificationsToggle")?.addEventListener("change", async () => {
+    const el = $("notificationsToggle");
+    await window.w2gp.setNotificationsEnabled(el.checked);
+    showToast(el.checked ? "Notifications enabled" : "Notifications disabled");
+  });
+  $("autoUpdateToggle")?.addEventListener("change", async () => {
+    const el = $("autoUpdateToggle");
+    const c = await window.w2gp.configLoad();
+    c.autoUpdateEnabled = el.checked;
+    await window.w2gp.configSave(c);
+    showToast(
+      el.checked
+        ? "Update check on launch enabled"
+        : 'Update check on launch disabled — updates only via "Check for updates"',
+    );
+  });
+  $("shareToggle")?.addEventListener("change", async () => {
+    const el = $("shareToggle");
+    const c = await window.w2gp.configLoad();
+    c.share = el.checked;
+    await window.w2gp.configSave(c);
+    showToast(
+      el.checked
+        ? "Share link enabled — Gradio will create a public tunnel on next launch"
+        : "Share link disabled",
+    );
+  });
 
   // ── Queue Notifier ──
   const notifStatus = (msg, isErr) => {
-    const el = $('notifStatus')
-    if (!el) return
-    el.textContent = msg || ''
-    el.style.color = isErr ? 'var(--signal-red)' : 'var(--signal-green)'
-  }
+    const el = $("notifStatus");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.style.color = isErr ? "var(--signal-red)" : "var(--signal-green)";
+  };
   const notifCollect = () => ({
-    enabled: $('notifEnabled')?.checked || false,
-    notifyOnComplete: $('notifOnComplete')?.checked || false,
-    notifyOnFail: $('notifOnFail')?.checked || false,
-    notifyOnProgress: $('notifOnProgress')?.checked || false,
-    progressStep: parseInt($('notifProgressStep')?.value || '25', 10) || 25,
-    url: ($('notifUrl')?.value || '').trim()
-  })
+    enabled: $("notifEnabled")?.checked || false,
+    notifyOnComplete: $("notifOnComplete")?.checked || false,
+    notifyOnFail: $("notifOnFail")?.checked || false,
+    notifyOnProgress: $("notifOnProgress")?.checked || false,
+    progressStep: parseInt($("notifProgressStep")?.value || "25", 10) || 25,
+    url: ($("notifUrl")?.value || "").trim(),
+  });
   const notifApplyDom = (cfg) => {
-    if (!$('notifEnabled')) return
-    $('notifEnabled').checked = !!cfg.enabled
-    $('notifOnComplete').checked = cfg.notifyOnComplete !== false
-    $('notifOnFail').checked = cfg.notifyOnFail !== false
-    $('notifOnProgress').checked = !!cfg.notifyOnProgress
-    $('notifProgressStep').value = cfg.progressStep || 25
-    $('notifUrl').value = cfg.url || ''
-  }
-  window.w2gp.notifierConfig().then((r) => { if (r && r.ok) notifApplyDom(r.config) }).catch(() => {})
-  $('notifSaveBtn')?.addEventListener('click', async () => {
-    const r = await window.w2gp.notifierSet(notifCollect())
-    if (r && r.ok) { notifStatus('✓ Saved', false); if (r.config.enabled && r.config.url) window.w2gp.notifierEnsure().catch(() => {}) }
-    else notifStatus('✗ ' + ((r && r.error) || 'save failed'), true)
-  })
-  $('notifTestBtn')?.addEventListener('click', async () => {
-    const r = await window.w2gp.notifierTest(notifCollect())
-    if (r && r.ok) notifStatus('✓ Test sent', false)
-    else notifStatus('✗ ' + ((r && r.error) || 'test failed'), true)
-  })
-  $('notifEnsureBtn')?.addEventListener('click', async () => {
-    notifStatus('Installing Apprise…', false)
-    const r = await window.w2gp.notifierEnsure()
-    if (r && r.ok) notifStatus(r.already ? 'Apprise already present' : '✓ Apprise installed', false)
-    else notifStatus('✗ ' + ((r && r.error) || 'install failed'), true)
-  })
-  $('notifAppriseLink')?.addEventListener('click', (e) => { e.preventDefault(); window.w2gp.openExternal('https://github.com/caronc/apprise') })
+    if (!$("notifEnabled")) return;
+    $("notifEnabled").checked = !!cfg.enabled;
+    $("notifOnComplete").checked = cfg.notifyOnComplete !== false;
+    $("notifOnFail").checked = cfg.notifyOnFail !== false;
+    $("notifOnProgress").checked = !!cfg.notifyOnProgress;
+    $("notifProgressStep").value = cfg.progressStep || 25;
+    $("notifUrl").value = cfg.url || "";
+  };
+  window.w2gp
+    .notifierConfig()
+    .then((r) => {
+      if (r && r.ok) notifApplyDom(r.config);
+    })
+    .catch(() => {});
+  $("notifSaveBtn")?.addEventListener("click", async () => {
+    const r = await window.w2gp.notifierSet(notifCollect());
+    if (r && r.ok) {
+      notifStatus("✓ Saved", false);
+      if (r.config.enabled && r.config.url)
+        window.w2gp.notifierEnsure().catch(() => {});
+    } else notifStatus("✗ " + ((r && r.error) || "save failed"), true);
+  });
+  $("notifTestBtn")?.addEventListener("click", async () => {
+    const r = await window.w2gp.notifierTest(notifCollect());
+    if (r && r.ok) notifStatus("✓ Test sent", false);
+    else notifStatus("✗ " + ((r && r.error) || "test failed"), true);
+  });
+  $("notifEnsureBtn")?.addEventListener("click", async () => {
+    notifStatus("Installing Apprise…", false);
+    const r = await window.w2gp.notifierEnsure();
+    if (r && r.ok)
+      notifStatus(
+        r.already ? "Apprise already present" : "✓ Apprise installed",
+        false,
+      );
+    else notifStatus("✗ " + ((r && r.error) || "install failed"), true);
+  });
+  $("notifAppriseLink")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    window.w2gp.openExternal("https://github.com/caronc/apprise");
+  });
 }
 
 function openSettings() {
-  initSettingsToggles()
-  $('settingsPanel').classList.add('open'); $('settingsOverlay').classList.add('visible')
+  initSettingsToggles();
+  $("settingsPanel").classList.add("open");
+  $("settingsOverlay").classList.add("visible");
   // In webview (desktop) mode a BrowserView always composites above DOM, so it can't be
   // covered — detach it while Manage is open so the panel renders in front of the viewer.
   // The opaque backdrop class replaces the viewer area (no black flash).
-  if ($('dashBody').style.display === 'none') {
-    window.w2gp.detachBrowserView()
-    $('settingsOverlay').classList.add('opaque')
+  if ($("dashBody").style.display === "none") {
+    window.w2gp.detachBrowserView();
+    $("settingsOverlay").classList.add("opaque");
   }
-  window.w2gp.configLoad().then(function(cfg) {
-    if ($('launchArgsInput')) $('launchArgsInput').value = cfg.launchArgs || ''
-    if ($('portInput')) $('portInput').value = cfg.serverPort || 7860
-    if ($('githubTokenInput')) $('githubTokenInput').value = cfg.githubToken || ''
-    if ($('hfTokenInput')) $('hfTokenInput').value = cfg.hfToken || ''
-    if ($('claudeApiKeyInput')) $('claudeApiKeyInput').value = cfg.claudeApiKey || ''
+  window.w2gp.configLoad().then((cfg) => {
+    if ($("launchArgsInput")) $("launchArgsInput").value = cfg.launchArgs || "";
+    if ($("portInput")) $("portInput").value = cfg.serverPort || 7860;
+    if ($("githubTokenInput"))
+      $("githubTokenInput").value = cfg.githubToken || "";
+    if ($("hfTokenInput")) $("hfTokenInput").value = cfg.hfToken || "";
+    if ($("claudeApiKeyInput"))
+      $("claudeApiKeyInput").value = cfg.claudeApiKey || "";
     // Floating terminal default dock
-    const td = cfg.termDockDefault || 'bottom'
-    document.querySelectorAll('input[name="termDock"]').forEach(r => { r.checked = (r.value === td) })
+    const td = cfg.termDockDefault || "bottom";
+    document.querySelectorAll('input[name="termDock"]').forEach((r) => {
+      r.checked = r.value === td;
+    });
     // Sync toggle states from config (handlers already registered via initSettingsToggles)
-    const autoStart = $('autoStartToggle')
-    if (autoStart) autoStart.checked = cfg.autoStart === true
-    const followTheme = $('followSystemThemeToggle')
-    if (followTheme) followTheme.checked = cfg.themeFollowSystem === true
-    const notifications = $('notificationsToggle')
-    if (notifications) notifications.checked = cfg.notificationsEnabled !== false
-    const autoUpdate = $('autoUpdateToggle')
-    if (autoUpdate) autoUpdate.checked = cfg.autoUpdateEnabled !== false
-    const share = $('shareToggle')
-    if (share) share.checked = cfg.share === true
+    const autoStart = $("autoStartToggle");
+    if (autoStart) autoStart.checked = cfg.autoStart === true;
+    const followTheme = $("followSystemThemeToggle");
+    if (followTheme) followTheme.checked = cfg.themeFollowSystem === true;
+    const notifications = $("notificationsToggle");
+    if (notifications)
+      notifications.checked = cfg.notificationsEnabled !== false;
+    const autoUpdate = $("autoUpdateToggle");
+    if (autoUpdate) autoUpdate.checked = cfg.autoUpdateEnabled !== false;
+    const share = $("shareToggle");
+    if (share) share.checked = cfg.share === true;
     // GGUF CUDA kernel controls
-    const g = cfg.ggufEnv || { enabled: true, matmulMode: 'auto', streamK: true, bf16Fp16: false }
-    if ($('ggufEnabled')) $('ggufEnabled').checked = g.enabled !== false
-    if ($('ggufMatmulMode')) $('ggufMatmulMode').value = g.matmulMode || 'auto'
-    if ($('ggufStreamK')) $('ggufStreamK').checked = g.streamK !== false
-    if ($('ggufBf16Fp16')) $('ggufBf16Fp16').checked = g.bf16Fp16 === true
+    const g = cfg.ggufEnv || {
+      enabled: true,
+      matmulMode: "auto",
+      streamK: true,
+      bf16Fp16: false,
+    };
+    if ($("ggufEnabled")) $("ggufEnabled").checked = g.enabled !== false;
+    if ($("ggufMatmulMode")) $("ggufMatmulMode").value = g.matmulMode || "auto";
+    if ($("ggufStreamK")) $("ggufStreamK").checked = g.streamK !== false;
+    if ($("ggufBf16Fp16")) $("ggufBf16Fp16").checked = g.bf16Fp16 === true;
     // GPU device picker: fill the dropdown from the main process, keep current choice
-    loadGpuDeviceOptions(cfg.gpuDevice || 'auto')
+    loadGpuDeviceOptions(cfg.gpuDevice || "auto");
     // Launcher GPU picker — auto | integrated | dedicated | disabled
-    const lg = $('launcherGpuSelect')
-    if (lg) lg.value = (cfg.launcherGpu || (cfg.electronGpu === false ? 'disabled' : 'auto'))
-    const ss = $('sageSafeSelect')
-    if (ss) ss.value = (cfg.sageSafe === false ? 'upstream' : 'safe') // ponytail: 1348e5b — default safe
+    const lg = $("launcherGpuSelect");
+    if (lg)
+      lg.value =
+        cfg.launcherGpu || (cfg.electronGpu === false ? "disabled" : "auto");
+    const ss = $("sageSafeSelect");
+    if (ss) ss.value = cfg.sageSafe === false ? "upstream" : "safe"; // ponytail: 1348e5b — default safe
     // Bind Address picker: reflect saved choice (default localhost)
-    const sn = $('serverNameSelect')
-    if (sn) sn.value = (cfg.serverName === '127.0.0.1') ? '127.0.0.1' : 'localhost'
+    const sn = $("serverNameSelect");
+    if (sn)
+      sn.value = cfg.serverName === "127.0.0.1" ? "127.0.0.1" : "localhost";
     // Desktop embed picker: native (default) vs iframe child webview
-    const em = $('embedModeSelect')
-    if (em) em.value = (cfg.embedMode === 'iframe') ? 'iframe' : 'native'
-  })
-  loadBrowserList()
-  refreshPlugins()
+    const em = $("embedModeSelect");
+    if (em) em.value = cfg.embedMode === "iframe" ? "iframe" : "native";
+  });
+  loadBrowserList();
+  refreshPlugins();
   // Check hf_xet install status
-  updateXetStatus()
+  updateXetStatus();
   // Show current uv wheel cache size
-  refreshUvCacheInfo()
+  refreshUvCacheInfo();
   // Legacy Electron launcher: show removal section only when detected
-  refreshElectronSection()
+  refreshElectronSection();
 }
 // ponytail: one-shot detect per Manage open — registry read, no polling
 async function refreshElectronSection() {
-  const sec = $('electronSection')
-  if (!sec) return
-  sec.style.display = 'none'
-  let det = null
-  try { det = await window.w2gp.detectElectron() } catch {}
-  if (!det || !det.found) return
-  sec.style.display = ''
-  const st = $('electronStatus')
-  if (st) st.textContent = 'Found: ' + (det.name || 'Electron launcher') + (det.version ? ' v' + det.version : '') + (det.installLocation ? ' — ' + det.installLocation : '')
-}
-$('removeElectronBtn')?.addEventListener('click', async function() {
-  const btn = this
-  const choice = await window.w2gp.confirmDialog({
-    title: 'Remove Electron launcher?',
-    message: 'Uninstall the legacy Electron launcher?',
-    detail: 'Only the old launcher app is removed. Your Wan2GP install, models, LoRAs, outputs and settings are kept and carry over automatically.'
-  })
-  if (choice !== 'ok') return
-  btn.disabled = true
-  const orig = btn.textContent
-  btn.textContent = 'Removing… (see console)'
-  appendLog('[*] Removing legacy Electron launcher — progress below…')
+  const sec = $("electronSection");
+  if (!sec) return;
+  sec.style.display = "none";
+  let det = null;
   try {
-    const r = await window.w2gp.uninstallElectron()
+    det = await window.w2gp.detectElectron();
+  } catch {}
+  if (!det || !det.found) return;
+  sec.style.display = "";
+  const st = $("electronStatus");
+  if (st)
+    st.textContent =
+      "Found: " +
+      (det.name || "Electron launcher") +
+      (det.version ? " v" + det.version : "") +
+      (det.installLocation ? " — " + det.installLocation : "");
+}
+$("removeElectronBtn")?.addEventListener("click", async function () {
+  const choice = await window.w2gp.confirmDialog({
+    title: "Remove Electron launcher?",
+    message: "Uninstall the legacy Electron launcher?",
+    detail:
+      "Only the old launcher app is removed. Your Wan2GP install, models, LoRAs, outputs and settings are kept and carry over automatically.",
+  });
+  if (choice !== "ok") return;
+  this.disabled = true;
+  const orig = this.textContent;
+  this.textContent = "Removing… (see console)";
+  appendLog("[*] Removing legacy Electron launcher — progress below…");
+  try {
+    const r = await window.w2gp.uninstallElectron();
     if (r && r.ok) {
-      showToast(r.removed ? '✓ Electron launcher removed — data kept' : '✓ Uninstaller ran (verify in Add/Remove Programs)')
-      refreshElectronSection()
+      showToast(
+        r.removed
+          ? "✓ Electron launcher removed — data kept"
+          : "✓ Uninstaller ran (verify in Add/Remove Programs)",
+      );
+      refreshElectronSection();
     } else {
-      showToast('✗ ' + ((r && r.error) || 'removal failed'))
+      showToast("✗ " + ((r && r.error) || "removal failed"));
     }
   } catch (e) {
-    showToast('✗ ' + e.message)
+    showToast("✗ " + e.message);
   } finally {
-    btn.disabled = false
-    btn.textContent = orig
+    this.disabled = false;
+    this.textContent = orig;
   }
-})
-function closeSettings() { $('settingsPanel').classList.remove('open'); $('settingsOverlay').classList.remove('visible')
+});
+function closeSettings() {
+  $("settingsPanel").classList.remove("open");
+  $("settingsOverlay").classList.remove("visible");
   // Restore the BrowserView (re-attach the still-alive view) when leaving Manage in webview mode.
-  if ($('dashBody').style.display === 'none') {
-    $('settingsOverlay').classList.remove('opaque')
+  if ($("dashBody").style.display === "none") {
+    $("settingsOverlay").classList.remove("opaque");
     // Don't reattach over an open terminal — restore the correct view state instead.
-    if (_ftVisible) showTerminal()
-    else window.w2gp.reattachBrowserView()
+    if (_ftVisible) showTerminal();
+    else window.w2gp.reattachBrowserView();
   }
- }
+}
 // ── Plugins (Wan2GP plugin manager parity: enable + install/update/uninstall + favourites) ──
-let _pluginFavs = []
-let _pluginData = []
-let _pluginUpdates = {}
-let _pluginQuery = ''
-let _pluginSort = { key: 'name', dir: 1 }
-$('pluginSearchInput')?.addEventListener('input', e => { _pluginQuery = e.target.value || ''; renderPlugins() })
-document.querySelectorAll('.plugin-sort').forEach(b => {
-  b.addEventListener('click', () => {
-    const k = b.dataset.sort
-    if (_pluginSort.key === k) _pluginSort.dir *= -1
-    else _pluginSort = { key: k, dir: k === 'date' ? -1 : 1 }
-    renderPlugins()
-  })
-})
+let _pluginFavs = [];
+let _pluginData = [];
+let _pluginUpdates = {};
+let _pluginQuery = "";
+let _pluginSort = { key: "name", dir: 1 };
+$("pluginSearchInput")?.addEventListener("input", (e) => {
+  _pluginQuery = e.target.value || "";
+  renderPlugins();
+});
+document.querySelectorAll(".plugin-sort").forEach((b) => {
+  b.addEventListener("click", () => {
+    const k = b.dataset.sort;
+    if (_pluginSort.key === k) _pluginSort.dir *= -1;
+    else _pluginSort = { key: k, dir: k === "date" ? -1 : 1 };
+    renderPlugins();
+  });
+});
 async function refreshPlugins() {
-  const list = $('pluginList')
-  if (!list) return
-  list.innerHTML = '<p class="token-hint">Loading…</p>'
-  let r
-  try { r = await window.w2gp.pluginsList() } catch (e) { list.innerHTML = '<p class="token-hint">✗ ' + escHtml(e.message) + '</p>'; return }
-  if (!r || !r.ok) { list.innerHTML = '<p class="token-hint">' + escHtml((r && r.error) || 'Failed to load') + '</p>'; return }
-  try { const cfg = await window.w2gp.configLoad(); _pluginFavs = cfg.favoritePlugins || [] } catch { _pluginFavs = [] }
-  _pluginData = r.plugins || []
-  renderPlugins()
+  const list = $("pluginList");
+  if (!list) return;
+  list.innerHTML = '<p class="token-hint">Loading…</p>';
+  let r;
+  try {
+    r = await window.w2gp.pluginsList();
+  } catch (e) {
+    list.innerHTML = '<p class="token-hint">✗ ' + escHtml(e.message) + "</p>";
+    return;
+  }
+  if (!r || !r.ok) {
+    list.innerHTML =
+      '<p class="token-hint">' +
+      escHtml((r && r.error) || "Failed to load") +
+      "</p>";
+    return;
+  }
+  try {
+    const cfg = await window.w2gp.configLoad();
+    _pluginFavs = cfg.favoritePlugins || [];
+  } catch {
+    _pluginFavs = [];
+  }
+  _pluginData = r.plugins || [];
+  renderPlugins();
 }
 function renderPlugins() {
-  const list = $('pluginList')
-  if (!list) return
-  const q = _pluginQuery.trim().toLowerCase()
-  let arr = _pluginData.filter(p => !q || ((p.name || '') + ' ' + (p.author || '') + ' ' + p.id + ' ' + (p.description || '')).toLowerCase().includes(q))
-  const { key, dir } = _pluginSort
-  const grp = p => p.group === 'system' ? 1 : 0
-  arr = [...arr].sort((a, b) => grp(a) - grp(b) || (() => { const x = (a[key] || '').toLowerCase(), y = (b[key] || '').toLowerCase(); return x < y ? -dir : x > y ? dir : 0 })())
-  document.querySelectorAll('.plugin-sort').forEach(b => {
-    const active = b.dataset.sort === _pluginSort.key
-    b.classList.toggle('active', active)
-    b.textContent = b.textContent.replace(/ [▲▼]/, '') + (active ? (_pluginSort.dir === 1 ? ' ▲' : ' ▼') : '')
-  })
-  list.innerHTML = ''
-  let lastGroup = ''
+  const list = $("pluginList");
+  if (!list) return;
+  const q = _pluginQuery.trim().toLowerCase();
+  let arr = _pluginData.filter(
+    (p) =>
+      !q ||
+      (
+        (p.name || "") +
+        " " +
+        (p.author || "") +
+        " " +
+        p.id +
+        " " +
+        (p.description || "")
+      )
+        .toLowerCase()
+        .includes(q),
+  );
+  const { key, dir } = _pluginSort;
+  const grp = (p) => (p.group === "system" ? 1 : 0);
+  arr = [...arr].sort(
+    (a, b) =>
+      grp(a) - grp(b) ||
+      (() => {
+        const x = (a[key] || "").toLowerCase(),
+          y = (b[key] || "").toLowerCase();
+        return x < y ? -dir : x > y ? dir : 0;
+      })(),
+  );
+  document.querySelectorAll(".plugin-sort").forEach((b) => {
+    const active = b.dataset.sort === _pluginSort.key;
+    b.classList.toggle("active", active);
+    b.textContent =
+      b.textContent.replace(/ [▲▼]/, "") +
+      (active ? (_pluginSort.dir === 1 ? " ▲" : " ▼") : "");
+  });
+  list.innerHTML = "";
+  let lastGroup = "";
   for (const p of arr) {
-    const g = p.group === 'system' ? 'system' : 'community'
+    const g = p.group === "system" ? "system" : "community";
     if (g !== lastGroup) {
-      lastGroup = g
-      const h = document.createElement('div')
-      h.className = 'plugin-group'
-      h.textContent = g === 'system' ? 'System plugins (deepbeepmeep)' : 'Community plugins'
-      list.appendChild(h)
+      lastGroup = g;
+      const h = document.createElement("div");
+      h.className = "plugin-group";
+      h.textContent =
+        g === "system" ? "System plugins (deepbeepmeep)" : "Community plugins";
+      list.appendChild(h);
     }
-    const row = document.createElement('div')
-    row.className = 'browser-row'
-    const label = document.createElement('label')
-    label.className = 'browser-opt'
-    const cb = document.createElement('input')
-    cb.type = 'checkbox'; cb.checked = !!p.enabled; cb.dataset.pluginId = p.id
+    const row = document.createElement("div");
+    row.className = "browser-row";
+    const label = document.createElement("label");
+    label.className = "browser-opt";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!p.enabled;
+    cb.dataset.pluginId = p.id;
     // ponytail: enabling a non-cloned plugin is a no-op (Wan2GP skips missing dirs) —
     // lock the box until installed so Save can't promise what isn't there.
-    if (p.system || p.locked) { cb.checked = true; cb.disabled = true; if (p.locked) label.title = (p.description ? p.description + ' — ' : '') + 'Default plugin, always enabled.' }
-    if (!p.installed) cb.disabled = true
-    label.appendChild(cb)
-    const badgeBase = (p.system ? 'system' : (p.installed ? 'installed' : 'available')) + (p.version ? ' v' + p.version : '')
-    const badges = [badgeBase].concat(p.author ? ['by ' + p.author] : []).join(' · ')
-    label.appendChild(document.createTextNode(' ' + p.name + ' (' + badges))
-    // Available update: amber row wash + bold badge (was a grey text fragment).
-    const updCount = _pluginUpdates[p.id]
-    if (updCount) {
-      row.classList.add('plugin-has-update')
-      label.appendChild(document.createTextNode(' · '))
-      const ub = document.createElement('span')
-      ub.className = 'plugin-update-badge'
-      ub.textContent = '⇪ ' + updCount + ' update(s)'
-      label.appendChild(ub)
+    if (p.system || p.locked) {
+      cb.checked = true;
+      cb.disabled = true;
+      if (p.locked)
+        label.title =
+          (p.description ? p.description + " — " : "") +
+          "Default plugin, always enabled.";
     }
-    label.appendChild(document.createTextNode(')'))
-    if (p.description) label.title = p.description
-    row.appendChild(label)
+    if (!p.installed) cb.disabled = true;
+    label.appendChild(cb);
+    const badgeBase =
+      (p.system ? "system" : p.installed ? "installed" : "available") +
+      (p.version ? " v" + p.version : "");
+    const badges = [badgeBase]
+      .concat(p.author ? ["by " + p.author] : [])
+      .join(" · ");
+    label.appendChild(document.createTextNode(" " + p.name + " (" + badges));
+    // Available update: amber row wash + bold badge (was a grey text fragment).
+    const updCount = _pluginUpdates[p.id];
+    if (updCount) {
+      row.classList.add("plugin-has-update");
+      label.appendChild(document.createTextNode(" · "));
+      const ub = document.createElement("span");
+      ub.className = "plugin-update-badge";
+      ub.textContent = "⇪ " + updCount + " update(s)";
+      label.appendChild(ub);
+    }
+    label.appendChild(document.createTextNode(")"));
+    if (p.description) label.title = p.description;
+    row.appendChild(label);
     // ★ favourite (auto-installed on fresh setup) — needs a URL to reinstall from
     if (p.url) {
-      const fav = document.createElement('button')
-      fav.className = 'btn btn-ghost small'
-      fav.textContent = _pluginFavs.includes(p.url) ? '★' : '☆'
-      fav.title = 'Favourite — auto-install on fresh setup'
-      fav.style.marginLeft = '6px'
-      fav.addEventListener('click', async () => {
-        const cfg = await window.w2gp.configLoad()
-        let favs = cfg.favoritePlugins || []
-        favs = favs.includes(p.url) ? favs.filter(u => u !== p.url) : [...favs, p.url]
-        cfg.favoritePlugins = favs
-        await window.w2gp.configSave(cfg)
-        _pluginFavs = favs
-        fav.textContent = favs.includes(p.url) ? '★' : '☆'
-        showToast(favs.includes(p.url) ? '★ Favourited — will auto-install on setup' : '☆ Unfavourited')
-      })
-      row.appendChild(fav)
+      const fav = document.createElement("button");
+      fav.className = "btn btn-ghost small";
+      fav.textContent = _pluginFavs.includes(p.url) ? "★" : "☆";
+      fav.title = "Favourite — auto-install on fresh setup";
+      fav.style.marginLeft = "6px";
+      fav.addEventListener("click", async () => {
+        const cfg = await window.w2gp.configLoad();
+        let favs = cfg.favoritePlugins || [];
+        favs = favs.includes(p.url)
+          ? favs.filter((u) => u !== p.url)
+          : [...favs, p.url];
+        cfg.favoritePlugins = favs;
+        await window.w2gp.configSave(cfg);
+        _pluginFavs = favs;
+        fav.textContent = favs.includes(p.url) ? "★" : "☆";
+        showToast(
+          favs.includes(p.url)
+            ? "★ Favourited — will auto-install on setup"
+            : "☆ Unfavourited",
+        );
+      });
+      row.appendChild(fav);
     }
     // ⬇ install (catalog entries not yet cloned)
     if (!p.installed && p.url) {
-      const ins = document.createElement('button')
-      ins.className = 'btn btn-primary small'
-      ins.textContent = 'Install'
-      ins.style.marginLeft = '6px'
-      ins.addEventListener('click', async () => {
-        const orig = ins.textContent; ins.disabled = true; ins.textContent = 'Installing…'
-        appendLog('[*] Installing plugin ' + p.name + ' — progress below…')
+      const ins = document.createElement("button");
+      ins.className = "btn btn-primary small";
+      ins.textContent = "Install";
+      ins.style.marginLeft = "6px";
+      ins.addEventListener("click", async () => {
+        const orig = ins.textContent;
+        ins.disabled = true;
+        ins.textContent = "Installing…";
+        appendLog("[*] Installing plugin " + p.name + " — progress below…");
         try {
-          const r = await window.w2gp.pluginInstall(p.url)
-          if (r && r.ok) showToast('✓ ' + p.name + ' installed & enabled — restart Wan2GP to load it')
-          else showToast('✗ ' + ((r && r.error) || 'install failed'))
-        } catch (e) { showToast('✗ ' + e.message) }
-        finally { refreshPlugins() }
-      })
-      row.appendChild(ins)
+          const r = await window.w2gp.pluginInstall(p.url);
+          if (r && r.ok)
+            showToast(
+              "✓ " +
+                p.name +
+                " installed & enabled — restart Wan2GP to load it",
+            );
+          else showToast("✗ " + ((r && r.error) || "install failed"));
+        } catch (e) {
+          showToast("✗ " + e.message);
+        } finally {
+          refreshPlugins();
+        }
+      });
+      row.appendChild(ins);
     }
     if (p.installed && !p.system && p.url) {
-      const up = document.createElement('button')
-      up.className = 'btn btn-ghost small'
-      up.textContent = '↻'
-      up.title = 'Check for updates'
-      up.style.marginLeft = '4px'
-      up.addEventListener('click', async () => {
-        up.disabled = true; const orig = up.textContent; up.textContent = '…'
+      const up = document.createElement("button");
+      up.className = "btn btn-ghost small";
+      up.textContent = "↻";
+      up.title = "Check for updates";
+      up.style.marginLeft = "4px";
+      up.addEventListener("click", async () => {
+        up.disabled = true;
+        const orig = up.textContent;
+        up.textContent = "…";
         try {
-          const c = await window.w2gp.pluginCheckUpdate(p.id)
+          const c = await window.w2gp.pluginCheckUpdate(p.id);
           if (c && c.update) {
-            up.textContent = '⇪'
-            appendLog('[*] Updating plugin ' + p.id + ' (' + c.behind + ' behind) — progress below…')
-            const u = await window.w2gp.pluginUpdate(p.id)
-            if (u && u.ok) showToast('✓ ' + p.name + ' updated — restart Wan2GP to load it')
-            else showToast('✗ ' + ((u && u.error) || 'update failed'))
+            up.textContent = "⇪";
+            appendLog(
+              "[*] Updating plugin " +
+                p.id +
+                " (" +
+                c.behind +
+                " behind) — progress below…",
+            );
+            const u = await window.w2gp.pluginUpdate(p.id);
+            if (u && u.ok)
+              showToast("✓ " + p.name + " updated — restart Wan2GP to load it");
+            else showToast("✗ " + ((u && u.error) || "update failed"));
           } else {
-            showToast('✓ ' + p.name + ' is up to date' + ((c && c.error) ? ' (' + c.error + ')' : ''))
+            showToast(
+              "✓ " +
+                p.name +
+                " is up to date" +
+                (c && c.error ? " (" + c.error + ")" : ""),
+            );
           }
-        } catch (e) { showToast('✗ ' + e.message) }
-        finally { up.disabled = false; up.textContent = orig }
-      })
-      row.appendChild(up)
+        } catch (e) {
+          showToast("✗ " + e.message);
+        } finally {
+          up.disabled = false;
+          up.textContent = orig;
+        }
+      });
+      row.appendChild(up);
       // 🗑 uninstall (not system/bundled)
-      if (!['downloads', 'media_flow', 'models_manager', 'motion_designer', 'sample'].includes(p.id)) {
-        const del = document.createElement('button')
-        del.className = 'btn btn-ghost small'
-        del.textContent = '🗑'
-        del.title = 'Uninstall plugin'
-        del.style.marginLeft = '4px'
-        del.addEventListener('click', async () => {
-          const choice = await window.w2gp.confirmDialog({ title: 'Uninstall ' + p.name + '?', message: 'Remove the plugin folder and disable it?' })
-          if (choice !== 'ok') return
-          del.disabled = true
+      if (
+        ![
+          "downloads",
+          "media_flow",
+          "models_manager",
+          "motion_designer",
+          "sample",
+        ].includes(p.id)
+      ) {
+        const del = document.createElement("button");
+        del.className = "btn btn-ghost small";
+        del.textContent = "🗑";
+        del.title = "Uninstall plugin";
+        del.style.marginLeft = "4px";
+        del.addEventListener("click", async () => {
+          const choice = await window.w2gp.confirmDialog({
+            title: "Uninstall " + p.name + "?",
+            message: "Remove the plugin folder and disable it?",
+          });
+          if (choice !== "ok") return;
+          del.disabled = true;
           try {
-            const u = await window.w2gp.pluginUninstall(p.id)
-            if (u && u.ok) showToast(u.pending ? '⏳ ' + (u.hint || 'Locked — deleted on next start') : '✓ ' + p.name + ' uninstalled')
-            else showToast('✗ ' + ((u && u.error) || 'uninstall failed'))
-          } catch (e) { showToast('✗ ' + e.message) }
-          finally { refreshPlugins() }
-        })
-        row.appendChild(del)
+            const u = await window.w2gp.pluginUninstall(p.id);
+            if (u && u.ok)
+              showToast(
+                u.pending
+                  ? "⏳ " + (u.hint || "Locked — deleted on next start")
+                  : "✓ " + p.name + " uninstalled",
+              );
+            else showToast("✗ " + ((u && u.error) || "uninstall failed"));
+          } catch (e) {
+            showToast("✗ " + e.message);
+          } finally {
+            refreshPlugins();
+          }
+        });
+        row.appendChild(del);
       }
     }
-    list.appendChild(row)
+    list.appendChild(row);
   }
-  if (!arr.length) list.innerHTML = '<p class="token-hint">No plugins match.</p>'
+  if (!arr.length)
+    list.innerHTML = '<p class="token-hint">No plugins match.</p>';
 }
-$('pluginCheckUpdatesBtn')?.addEventListener('click', async () => {
-  const btn = $('pluginCheckUpdatesBtn'), st = $('pluginRefreshStatus')
-  const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Checking…'
-  if (st) st.textContent = '⏳ Fetching plugin remotes — progress in the console…'
-  appendLog('[*] Checking all plugins for updates — progress below…')
+$("pluginCheckUpdatesBtn")?.addEventListener("click", async () => {
+  const btn = $("pluginCheckUpdatesBtn"),
+    st = $("pluginRefreshStatus");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Checking…";
+  if (st)
+    st.textContent = "⏳ Fetching plugin remotes — progress in the console…";
+  appendLog("[*] Checking all plugins for updates — progress below…");
   try {
-    const r = await window.w2gp.pluginCheckUpdates()
+    const r = await window.w2gp.pluginCheckUpdates();
     if (r && r.ok) {
-      _pluginUpdates = {}
-      for (const u of r.updates || []) if (u.update) _pluginUpdates[u.id] = u.behind
-      renderPlugins()
-      if (st) st.textContent = r.updates_available ? '⇪ ' + r.updates_available + ' update(s) available — use ↻ per plugin' : '✓ All plugins up to date'
-      showToast(r.updates_available ? '⇪ ' + r.updates_available + ' update(s) available' : '✓ All plugins up to date')
-    } else showToast('✗ ' + ((r && r.error) || 'check failed'))
-  } catch (e) { showToast('✗ ' + e.message); if (st) st.textContent = '✗ ' + e.message }
-  finally { btn.disabled = false; btn.textContent = orig }
-})
-$('pluginRefreshBtn')?.addEventListener('click', async () => {
-  const btn = $('pluginRefreshBtn'), st = $('pluginRefreshStatus')
-  const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Refreshing…'
-  if (st) st.textContent = '⏳ Contacting GitHub — progress in the console…'
-  appendLog('[*] Refreshing plugin library from GitHub — progress below…')
-  try {
-    const r = await window.w2gp.pluginRefreshCatalog()
-    if (r && r.ok) {
-      if (st) st.textContent = '✓ ' + r.checked + ' checked, ' + r.updated + ' updated' + (r.updates_available ? ', ' + r.updates_available + ' update(s) available — use ↻ per plugin' : '')
-      showToast('✓ Library refreshed')
-    } else showToast('✗ ' + ((r && r.error) || 'refresh failed'))
-  } catch (e) { showToast('✗ ' + e.message); if (st) st.textContent = '✗ ' + e.message }
-  finally { btn.disabled = false; btn.textContent = orig; refreshPlugins() }
-})
-$('pluginSaveBtn')?.addEventListener('click', async () => {
-  const btn = $('pluginSaveBtn'), st = $('pluginSaveStatus')
-  const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Saving…'
-  const ids = [...document.querySelectorAll('#pluginList input[type="checkbox"]')].filter(c => c.checked).map(c => c.dataset.pluginId)
-  try {
-    await window.w2gp.writeWgpConfig({ enabled_plugins: ids })
-    if (st) st.textContent = '✓ Saved — takes effect on next Wan2GP launch.'
-    showToast('✓ Plugins saved')
+      _pluginUpdates = {};
+      for (const u of r.updates || [])
+        if (u.update) _pluginUpdates[u.id] = u.behind;
+      renderPlugins();
+      if (st)
+        st.textContent = r.updates_available
+          ? "⇪ " +
+            r.updates_available +
+            " update(s) available — use ↻ per plugin"
+          : "✓ All plugins up to date";
+      showToast(
+        r.updates_available
+          ? "⇪ " + r.updates_available + " update(s) available"
+          : "✓ All plugins up to date",
+      );
+    } else showToast("✗ " + ((r && r.error) || "check failed"));
   } catch (e) {
-    if (st) st.textContent = '✗ ' + e.message
-    showToast('✗ ' + e.message)
-  } finally { btn.disabled = false; btn.textContent = orig }
-})
-$('pluginInstallBtn')?.addEventListener('click', async () => {
-  const input = $('pluginUrlInput')
-  const st = $('pluginSaveStatus')
-  const url = (input?.value || '').trim()
-  if (!url) { showToast('Paste a plugin git URL first'); return }
-  const btn = $('pluginInstallBtn')
-  const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Installing…'
-  if (st) st.textContent = '⏳ Installing — progress in the console…'
-  appendLog('[*] Installing plugin from ' + url + ' — progress below…')
+    showToast("✗ " + e.message);
+    if (st) st.textContent = "✗ " + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+});
+$("pluginRefreshBtn")?.addEventListener("click", async () => {
+  const btn = $("pluginRefreshBtn"),
+    st = $("pluginRefreshStatus");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Refreshing…";
+  if (st) st.textContent = "⏳ Contacting GitHub — progress in the console…";
+  appendLog("[*] Refreshing plugin library from GitHub — progress below…");
   try {
-    const r = await window.w2gp.pluginInstall(url)
-    if (r && r.ok) { showToast('✓ Plugin installed & enabled — restart Wan2GP to load it'); if (input) input.value = ''; if (st) st.textContent = '✓ Installed ' + r.id
+    const r = await window.w2gp.pluginRefreshCatalog();
+    if (r && r.ok) {
+      if (st)
+        st.textContent =
+          "✓ " +
+          r.checked +
+          " checked, " +
+          r.updated +
+          " updated" +
+          (r.updates_available
+            ? ", " +
+              r.updates_available +
+              " update(s) available — use ↻ per plugin"
+            : "");
+      showToast("✓ Library refreshed");
+    } else showToast("✗ " + ((r && r.error) || "refresh failed"));
+  } catch (e) {
+    showToast("✗ " + e.message);
+    if (st) st.textContent = "✗ " + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+    refreshPlugins();
+  }
+});
+$("pluginSaveBtn")?.addEventListener("click", async () => {
+  const btn = $("pluginSaveBtn"),
+    st = $("pluginSaveStatus");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  const ids = [
+    ...document.querySelectorAll('#pluginList input[type="checkbox"]'),
+  ]
+    .filter((c) => c.checked)
+    .map((c) => c.dataset.pluginId);
+  try {
+    await window.w2gp.writeWgpConfig({ enabled_plugins: ids });
+    if (st) st.textContent = "✓ Saved — takes effect on next Wan2GP launch.";
+    showToast("✓ Plugins saved");
+  } catch (e) {
+    if (st) st.textContent = "✗ " + e.message;
+    showToast("✗ " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+});
+$("pluginInstallBtn")?.addEventListener("click", async () => {
+  const input = $("pluginUrlInput");
+  const st = $("pluginSaveStatus");
+  const url = (input?.value || "").trim();
+  if (!url) {
+    showToast("Paste a plugin git URL first");
+    return;
+  }
+  const btn = $("pluginInstallBtn");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Installing…";
+  if (st) st.textContent = "⏳ Installing — progress in the console…";
+  appendLog("[*] Installing plugin from " + url + " — progress below…");
+  try {
+    const r = await window.w2gp.pluginInstall(url);
+    if (r && r.ok) {
+      showToast("✓ Plugin installed & enabled — restart Wan2GP to load it");
+      if (input) input.value = "";
+      if (st) st.textContent = "✓ Installed " + r.id;
+    } else {
+      showToast("✗ " + ((r && r.error) || "install failed"));
+      if (st) st.textContent = "✗ " + ((r && r.error) || "install failed");
     }
-    else { showToast('✗ ' + ((r && r.error) || 'install failed')); if (st) st.textContent = '✗ ' + ((r && r.error) || 'install failed') }
-  } catch (e) { showToast('✗ ' + e.message); if (st) st.textContent = '✗ ' + e.message }
-  finally { btn.disabled = false; btn.textContent = orig; refreshPlugins() }
-})
+  } catch (e) {
+    showToast("✗ " + e.message);
+    if (st) st.textContent = "✗ " + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+    refreshPlugins();
+  }
+});
 // Populate the Manage "Default Browser" list from the main process.
 async function loadBrowserList() {
-  const list = $('browserList')
-  if (!list) return
-  list.innerHTML = '<div class="browser-row"><label class="browser-opt"><input type="radio" name="defaultBrowser" value="system" checked> System default</label></div>'
+  const list = $("browserList");
+  if (!list) return;
+  list.innerHTML =
+    '<div class="browser-row"><label class="browser-opt"><input type="radio" name="defaultBrowser" value="system" checked> System default</label></div>';
   try {
-    const { browsers, defaultBrowser } = await window.w2gp.detectBrowsers()
+    const { browsers, defaultBrowser } = await window.w2gp.detectBrowsers();
     for (const b of browsers) {
-      const row = document.createElement('div')
-      row.className = 'browser-row'
-      const label = document.createElement('label')
-      label.className = 'browser-opt'
-      const radio = document.createElement('input')
-      radio.type = 'radio'; radio.name = 'defaultBrowser'; radio.value = b.id
-      radio.disabled = !b.installed
-      if (b.id === defaultBrowser) radio.checked = true
-      label.appendChild(radio)
-      label.appendChild(document.createTextNode(' ' + b.name + (b.installed ? '' : ' (not installed)')))
-      row.appendChild(label)
-      list.appendChild(row)
+      const row = document.createElement("div");
+      row.className = "browser-row";
+      const label = document.createElement("label");
+      label.className = "browser-opt";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "defaultBrowser";
+      radio.value = b.id;
+      radio.disabled = !b.installed;
+      if (b.id === defaultBrowser) radio.checked = true;
+      label.appendChild(radio);
+      label.appendChild(
+        document.createTextNode(
+          " " + b.name + (b.installed ? "" : " (not installed)"),
+        ),
+      );
+      row.appendChild(label);
+      list.appendChild(row);
     }
-    list.querySelectorAll('input[name="defaultBrowser"]').forEach(r => {
-      r.addEventListener('change', async () => {
-        if (!r.checked) return
-        const cfg = await window.w2gp.configLoad()
-        cfg.defaultBrowser = r.value
-        await window.w2gp.configSave(cfg)
-        appendLog(`[*] Default browser set to: ${r.value}`)
-      })
-    })
-  } catch (e) { appendLog(`[!] Browser detection failed: ${errText(e)}`) }
+    list.querySelectorAll('input[name="defaultBrowser"]').forEach((r) => {
+      r.addEventListener("change", async () => {
+        if (!r.checked) return;
+        const cfg = await window.w2gp.configLoad();
+        cfg.defaultBrowser = r.value;
+        await window.w2gp.configSave(cfg);
+        appendLog(`[*] Default browser set to: ${r.value}`);
+      });
+    });
+  } catch (e) {
+    appendLog(`[!] Browser detection failed: ${errText(e)}`);
+  }
 }
 // ── Theme ──
 function applyTheme(theme) {
-  const html = document.documentElement
-  document.querySelectorAll('.theme-toggle').forEach(btn => {
-    const sun = btn.querySelector('.sun-icon')
-    const moon = btn.querySelector('.moon-icon')
-    if (theme === 'dark') {
-      if (sun) sun.style.display = 'none'
-      if (moon) moon.style.display = ''
+  const html = document.documentElement;
+  document.querySelectorAll(".theme-toggle").forEach((btn) => {
+    const sun = btn.querySelector(".sun-icon");
+    const moon = btn.querySelector(".moon-icon");
+    if (theme === "dark") {
+      if (sun) sun.style.display = "none";
+      if (moon) moon.style.display = "";
     } else {
-      if (sun) sun.style.display = ''
-      if (moon) moon.style.display = 'none'
+      if (sun) sun.style.display = "";
+      if (moon) moon.style.display = "none";
     }
-  })
-  if (theme === 'dark') html.setAttribute('data-theme', 'dark')
-  else html.removeAttribute('data-theme')
+  });
+  if (theme === "dark") html.setAttribute("data-theme", "dark");
+  else html.removeAttribute("data-theme");
 }
 
 async function toggleTheme() {
-  const cfg = await window.w2gp.configLoad()
-  const next = cfg.theme === 'dark' ? 'light' : 'dark'
-  cfg.theme = next
-  await window.w2gp.configSave(cfg)
-  applyTheme(next)
+  const cfg = await window.w2gp.configLoad();
+  const next = cfg.theme === "dark" ? "light" : "dark";
+  cfg.theme = next;
+  await window.w2gp.configSave(cfg);
+  applyTheme(next);
 }
 
-let prevPhaseId = null
+let prevPhaseId = null;
 
 // Show renderer errors on splash so blank-screen root cause is visible
-window.addEventListener('error', e => {
-  const el = $('splashError')
-  if (el) { el.textContent = e.error?.stack || e.message || String(e); el.classList.remove('hidden') }
-})
-window.addEventListener('unhandledrejection', e => {
-  const el = $('splashError')
-  if (el) { el.textContent = e.reason?.stack || String(e.reason); el.classList.remove('hidden') }
-})
+window.addEventListener("error", (e) => {
+  const el = $("splashError");
+  if (el) {
+    el.textContent = e.error?.stack || e.message || String(e);
+    el.classList.remove("hidden");
+  }
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const el = $("splashError");
+  if (el) {
+    el.textContent = e.reason?.stack || String(e.reason);
+    el.classList.remove("hidden");
+  }
+});
 
 // ── Init ──
-document.addEventListener('DOMContentLoaded', async () => {
+document.addEventListener("DOMContentLoaded", async () => {
   try {
-  // ponytail: keep splash visible while loading — covers WebView2 + python scan (was showing empty dashboard)
-  $('splashStatus').textContent = 'Loading...'
-  setDesktopUpdateIndicator(false)
-  const [installed, cfgPreload] = await Promise.all([window.w2gp.checkInstalled(), window.w2gp.configLoad().catch(()=>({}))])
-  await checkCrashRecovery()
+    // ponytail: keep splash visible while loading — covers WebView2 + python scan (was showing empty dashboard)
+    $("splashStatus").textContent = "Loading...";
+    setDesktopUpdateIndicator(false);
+    const [installed, cfgPreload] = await Promise.all([
+      window.w2gp.checkInstalled(),
+      window.w2gp.configLoad().catch(() => ({})),
+    ]);
+    await checkCrashRecovery();
 
-  window.w2gp.getDesktopVersion().then(function(v) {
-    if (!v) return
-    document.title = 'Wan2GP Desktop Launcher v' + v
-    var verEl = $('settingsVersionNum')
-    if (verEl) verEl.textContent = v
-    var appVerEl = $('appVersionTag')
-    if (appVerEl) appVerEl.textContent = 'v' + v
-  })
-  setupScrollUnfollow('termBody','dashTermFollowBtn')
-  setupScrollUnfollow('installTermBody','installFollowBtn')
+    window.w2gp.getDesktopVersion().then((v) => {
+      if (!v) return;
+      document.title = "Wan2GP Desktop Launcher v" + v;
+      var verEl = $("settingsVersionNum");
+      if (verEl) verEl.textContent = v;
+      var appVerEl = $("appVersionTag");
+      if (appVerEl) appVerEl.textContent = "v" + v;
+    });
+    setupScrollUnfollow("termBody", "dashTermFollowBtn");
+    setupScrollUnfollow("installTermBody", "installFollowBtn");
 
-  window.w2gp.onSetupOutput(t => appendLog(t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'').replace(/\x08/g,''), false))
-  window.w2gp.onDlss5Progress(dlss5OnEvent)
-  window.w2gp.onInstallProgress(installProgressOnEvent)
+    window.w2gp.onSetupOutput((t) =>
+      appendLog(
+        t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "").replace(/\x08/g, ""),
+        false,
+      ),
+    );
+    window.w2gp.onDlss5Progress(dlss5OnEvent);
+    window.w2gp.onInstallProgress(installProgressOnEvent);
 
-  window.w2gp.onLaunchLog(t => {
-    const clean = t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'').replace(/\x08/g,'')
-    appendLog(clean, false)
-    // Console-first launch: stay on the dashboard while starting, open the
-    // destination the moment the backend reports ready.
-    if (_pendingOpen && /Wan2GP ready/.test(clean)) {
-      const p = _pendingOpen
-      _pendingOpen = null
-      if (p.kind === 'desktop') openDesktopView(p.url, true)
-      else openBrowserView(p.url, p.noGpu).catch(e => appendLog(`[LAUNCH ERROR] ${errText(e)}`))
+    window.w2gp.onLaunchLog((t) => {
+      const clean = t
+        .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
+        .replace(/\x08/g, "");
+      appendLog(clean, false);
+      // Console-first launch: stay on the dashboard while starting, open the
+      // destination the moment the backend reports ready.
+      if (_pendingOpen && /Wan2GP ready/.test(clean)) {
+        const p = _pendingOpen;
+        _pendingOpen = null;
+        if (p.kind === "desktop") openDesktopView(p.url, true);
+        else
+          openBrowserView(p.url, p.noGpu).catch((e) =>
+            appendLog(`[LAUNCH ERROR] ${errText(e)}`),
+          );
+      }
+    });
+    window.w2gp.onSetupPhase((p) => {
+      if (p.done) {
+        if (prevPhaseId && prevPhaseId !== p.id) taskComplete(prevPhaseId);
+        taskComplete(p.id);
+        prevPhaseId = null;
+      } else {
+        if (prevPhaseId && prevPhaseId !== p.id) taskComplete(prevPhaseId);
+        taskStart(p.id);
+        appendLog("[*] " + p.label);
+        prevPhaseId = p.id;
+      }
+    });
+    window.w2gp.onSetupProfile((p) => {
+      $("installProfile").textContent = p;
+      $("installProfileRow").style.display = "flex";
+    });
+
+    const cfg =
+      cfgPreload || (await window.w2gp.configLoad().catch(() => ({})));
+    if (cfg.themeFollowSystem)
+      applyTheme(
+        matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
+      );
+    else if (cfg.theme === "dark") applyTheme("dark");
+    // System theme follow (real matchMedia — backend only persists the preference).
+    // The native onSystemThemeChange event never fires in Tauri; this is the mechanism.
+    if (!window.__themeFollowBound) {
+      window.__themeFollowBound = true;
+      matchMedia("(prefers-color-scheme: dark)").addEventListener(
+        "change",
+        async () => {
+          try {
+            const c = await window.w2gp.configLoad();
+            if (c.themeFollowSystem)
+              applyTheme(
+                matchMedia("(prefers-color-scheme: dark)").matches
+                  ? "dark"
+                  : "light",
+              );
+          } catch {}
+        },
+      );
     }
-  })
-  window.w2gp.onSetupPhase(p => {
-    if (p.done) {
-      if (prevPhaseId && prevPhaseId !== p.id) taskComplete(prevPhaseId)
-      taskComplete(p.id)
-      prevPhaseId = null
-    } else {
-      if (prevPhaseId && prevPhaseId !== p.id) taskComplete(prevPhaseId)
-      taskStart(p.id)
-      appendLog('[*] ' + p.label)
-      prevPhaseId = p.id
-    }
-  })
-  window.w2gp.onSetupProfile(p => { $('installProfile').textContent=p; $('installProfileRow').style.display='flex' })
 
-  const cfg = cfgPreload || await window.w2gp.configLoad().catch(()=>({}))
-  if (cfg.themeFollowSystem) applyTheme(matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-  else if (cfg.theme === 'dark') applyTheme('dark')
-  // System theme follow (real matchMedia — backend only persists the preference).
-  // The native onSystemThemeChange event never fires in Tauri; this is the mechanism.
-  if (!window.__themeFollowBound) {
-    window.__themeFollowBound = true
-    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', async () => {
-      try {
-        const c = await window.w2gp.configLoad()
-        if (c.themeFollowSystem) applyTheme(matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-      } catch {}
-    })
-  }
+    // Embedded-Wan2GP view crashed and was auto-reloaded by the main process.
+    window.w2gp.onBvCrashRecovered(() =>
+      showToast("Wan2GP view reloaded after a crash"),
+    );
 
-  // Embedded-Wan2GP view crashed and was auto-reloaded by the main process.
-  window.w2gp.onBvCrashRecovered(() => showToast('Wan2GP view reloaded after a crash'))
-
-  // hardware probe — fire-and-forget, fills specs when ready (no await)
-  loadHardware().then(s => { if (s) appendLog(`[*] Hardware: ${s.cpu || '?'} · ${s.ram || '?'} RAM · ${s.gpu || '?'} (${s.vram || '?'})`) }).catch(e => { console.warn('[hw] detectHardware failed', e) })
-  setTimeout(() => loadHardware().catch(()=>{}), 2000)
-
-  window.w2gp.getDesktopVersion().then(function(v) {
-    if (v) appendLog(`[*] Launcher v${v} ready — dashboard live. Metrics polling every 3s; update checks in background.`)
-  }).catch(() => {})
-
-  if (installed.repo && installed.env) {
-    // ponytail: fast paint — show dashboard instantly (~300ms), fill versions in background
-    appendLog('[*] Wan2GP install found — loading dashboard…')
-    show('dashboard')
-    refreshDashboard().then(() => {
-      const env = $('envName')?.textContent?.trim() || '—'
-      const torch = $('specTorch')?.textContent?.trim() || '—'
-      appendLog(`[*] Environment ready: ${env} · torch ${torch}`)
-    }).catch(() => {})
-    startMetricsPolling()
-    startDownloadsWatch()
-    // Periodic Wan2GP update re-check while the app is open (30 min) + Desktop (5h).
-    // Launch-time check alone misses updates released mid-session; the
-    // renderer-side timers re-poll and re-flag the green dot + changelog.
-    startWangpPolling()
-    startDesktopPolling()
-    // immediate Desktop check removed — main.js does the 5s launch check (single API hit)
-    // D1: silent settings auto-scan (issue #7 class) — out-of-range dropdown
-    // values make Wan2GP reject the whole settings form on save; repair them
-    // in the background so the user never hits the "can't save" wall. Writes
-    // only when a fix is actually found (console log + toast otherwise quiet).
-    silentSettingsRepair()
-  } else {
-    $('splashStatus').textContent = 'First-time setup...'
-    appendLog('[*] First run — no Wan2GP install detected. Complete the installer below to set up.')
-    // External drive disconnected or letter changed (e.g. J:\WanGPApp was there
-    // and now isn't)? Say so explicitly instead of a blank "first run".
-    if (installed && installed.missingPrevious) {
-      appendLog('[!] Previous install not found: ' + installed.missingPrevious)
-      appendLog('[!] If that is an external drive, reconnect it (check the drive letter) and restart the launcher — or install fresh / pick the new location below.')
-      $('installSubtitle').textContent = 'Previous install at ' + installed.missingPrevious + ' is missing — reconnect the drive, or set up again below.'
-      try { showToast('⚠ Previous install folder missing — reconnect the drive or reinstall') } catch {}
-    }
-    const hw = await window.w2gp.detectHardware()
-    $('installCpu').textContent=hw.cpu||'—'; $('installRam').textContent=hw.ram||'—'
-    $('installGpu').textContent=hw.gpu||'—'; $('installVram').textContent=hw.vram||'—'
-    loadPaths()
-    try {
-      const mf = await window.w2gp.detectModelFolders()
-      if (mf.checkpointsPaths && mf.checkpointsPaths.length) {
-        _modelCkpts = mf.checkpointsPaths[0]
-        $('installCkptsPath').textContent = _modelCkpts
-      }
-      if (mf.lorasRoot) {
-        _modelLoras = mf.lorasRoot
-        $('installLorasPath').textContent = _modelLoras
-      }
-    } catch {}
-    show('installer')
-    if (!(installed && installed.missingPrevious)) $('installSubtitle').textContent = 'Select environment type, then click Install'
-    // Target-folder triage: ATFGriff's J:\\WanGPApp wasn't empty (Pinokio? previous
-    // attempt?) and we merged blindly over it. Show what's there first.
-    refreshTargetVerdict().catch(function() {})
-    refreshModelDiskGates().catch(function() {})
-    $('installStartBtn').classList.remove('hidden')
-    $('envTypeSelect').classList.remove('disabled')
-    document.querySelectorAll('.env-type-btn').forEach(b => b.disabled = false)
-    // Show expected packages for this hardware
-    window.w2gp.getHardwareProfile().then(function(hp) {
-      if (!hp) return
-      var list = $('installPkgsList')
-      var header = $('installPkgsProfile')
-      if (list && hp.packages && hp.packages.length) {
-        if (header) header.textContent = '(' + hp.profile.replace(/_/g,' ') + ')'
-        list.innerHTML = hp.packages.map(function(p) { return '<span class="ipkg-item">' + escHtml(p) + '</span>' }).join('')
-        $('installPkgs').style.display = ''
-      }
-      // Distinct kernel-wheels group (so the wheels are clearly visible pre-install)
-      var klist = $('installKernelsList')
-      var kheader = $('installKernelsProfile')
-      if (klist && hp.kernels && hp.kernels.length) {
-        if (kheader) kheader.textContent = '(' + hp.profile.replace(/_/g,' ') + ')'
-        klist.innerHTML = hp.kernels.map(function(k) {
-          return '<div class="ikernel-item"><span class="ikernel-label">' + escHtml(k.label) + '</span><span class="ikernel-dist">' + escHtml(k.dist) + '</span></div>'
-        }).join('')
-        $('installKernels').style.display = ''
-      }
-      // GPU Profile Overview — installer only (different screen; the dashboard
-      // consolidates detected versions + kernel wheels into the env_uv card).
-      renderProfileOverview(hp.detail, {
-        box: 'installProfileOverview', profile: 'ipoProfile',
-        python: 'ipoPython', torch: 'ipoTorch', triton: 'ipoTriton',
-        sage: 'ipoSage', sparge: 'ipoSparge', flash: 'ipoFlash', kernels: 'ipoKernels'
+    // hardware probe — fire-and-forget, fills specs when ready (no await)
+    loadHardware()
+      .then((s) => {
+        if (s)
+          appendLog(
+            `[*] Hardware: ${s.cpu || "?"} · ${s.ram || "?"} RAM · ${s.gpu || "?"} (${s.vram || "?"})`,
+          );
       })
-    })
-    // Pre-flight resolved stack: GPU/CUDA/driver/disk gates + exact Python pin.
-    // (Tauri install_plan shape: { plan: {gpuName,vendor,cuda,torch,driverWarning,profile}, disk: {free,total} }.)
-    window.w2gp.installPlan().then(function(r) {
-      if (!r || !r.plan) return
-      const grid = $('installStackGrid')
-      const warn = $('installStackWarn')
-      const stack = $('installStack')
-      if (!grid) return
-      const p = r.plan
-      const freeBytes = (r.disk && r.disk.free != null) ? r.disk.free : null
-      const freeGb = freeBytes != null ? (freeBytes / 1073741824).toFixed(1) : '?'
-      const rows = [
-        ['GPU', p.gpuName || p.vendor],
-        ['CUDA build', p.cuda],
-        ['PyTorch', p.torch],
-        ['Profile', (p.profile || '').replace(/_/g, ' ')],
-        ['Free disk', freeGb + ' GB']
-      ]
-      const renderRows = function() {
-        grid.innerHTML = rows.map(function(row) {
-          return '<div class="istack-row"><span class="istack-k">' + escHtml(row[0]) + '</span><span class="istack-v">' + escHtml(row[1]) + '</span></div>'
-        }).join('')
+      .catch((e) => {
+        console.warn("[hw] detectHardware failed", e);
+      });
+    setTimeout(() => loadHardware().catch(() => {}), 2000);
+
+    window.w2gp
+      .getDesktopVersion()
+      .then((v) => {
+        if (v)
+          appendLog(
+            `[*] Launcher v${v} ready — dashboard live. Metrics polling every 3s; update checks in background.`,
+          );
+      })
+      .catch(() => {});
+
+    if (installed.repo && installed.env) {
+      // ponytail: fast paint — show dashboard instantly (~300ms), fill versions in background
+      appendLog("[*] Wan2GP install found — loading dashboard…");
+      show("dashboard");
+      refreshDashboard()
+        .then(() => {
+          const env = $("envName")?.textContent?.trim() || "—";
+          const torch = $("specTorch")?.textContent?.trim() || "—";
+          appendLog(`[*] Environment ready: ${env} · torch ${torch}`);
+        })
+        .catch(() => {});
+      startMetricsPolling();
+      startDownloadsWatch();
+      // Periodic Wan2GP update re-check while the app is open (30 min) + Desktop (5h).
+      // Launch-time check alone misses updates released mid-session; the
+      // renderer-side timers re-poll and re-flag the green dot + changelog.
+      startWangpPolling();
+      startDesktopPolling();
+      // immediate Desktop check removed — main.js does the 5s launch check (single API hit)
+      // D1: silent settings auto-scan (issue #7 class) — out-of-range dropdown
+      // values make Wan2GP reject the whole settings form on save; repair them
+      // in the background so the user never hits the "can't save" wall. Writes
+      // only when a fix is actually found (console log + toast otherwise quiet).
+      silentSettingsRepair();
+    } else {
+      $("splashStatus").textContent = "First-time setup...";
+      appendLog(
+        "[*] First run — no Wan2GP install detected. Complete the installer below to set up.",
+      );
+      // External drive disconnected or letter changed (e.g. J:\WanGPApp was there
+      // and now isn't)? Say so explicitly instead of a blank "first run".
+      if (installed && installed.missingPrevious) {
+        appendLog(
+          "[!] Previous install not found: " + installed.missingPrevious,
+        );
+        appendLog(
+          "[!] If that is an external drive, reconnect it (check the drive letter) and restart the launcher — or install fresh / pick the new location below.",
+        );
+        $("installSubtitle").textContent =
+          "Previous install at " +
+          installed.missingPrevious +
+          " is missing — reconnect the drive, or set up again below.";
+        try {
+          showToast(
+            "⚠ Previous install folder missing — reconnect the drive or reinstall",
+          );
+        } catch {}
       }
-      renderRows()
-      // Exact Python pin setup.py will demand via `uv venv --python X`
-      // (pythonPreflight is check-only — the download happens on Install).
-      window.w2gp.pythonPreflight().then(function(pf) {
-        if (!pf || !pf.wanted) return
-        const uvTag = pf.uvVersion ? ' (' + pf.uvVersion.split(' ').slice(0, 2).join(' ') + ')' : ''
-        const state = !pf.uvVersion ? '✗ uv not found'
-          : pf.path && pf.runs ? '✓ ' + pf.wanted + ' ready'
-          : pf.path ? '⚠ ' + pf.wanted + ' corrupted — auto-reinstall on Install'
-          : '⬇ ' + pf.wanted + ' — auto-download on Install'
-        rows.push(['Python' + uvTag, state])
-        renderRows()
-        if (pf.hint && warn) warn.innerHTML += '<div class="istack-hint">' + escHtml(pf.hint) + '</div>'
-      }).catch(function() {})
-      const warns = []
-      if (p.driverWarning) warns.push(p.driverWarning)
-      if (freeBytes != null && freeBytes < 10 * 1073741824) warns.push('Only ' + freeGb + ' GB free — 50+ GB recommended (models are tens–hundreds of GB).')
-      let warnHtml = warns.length ? warns.map(function(w) { return '<div class="istack-w">⚠ ' + escHtml(w) + '</div>' }).join('') : ''
-      if (freeBytes != null && freeBytes >= 10 * 1073741824 && freeBytes < 50 * 1073741824) warnHtml += '<div class="istack-hint">' + freeGb + ' GB free is tight — models alone can exceed 50 GB. A non-system drive is recommended.</div>'
-      warn.innerHTML = warnHtml
-      stack.style.display = ''
-      // Hard block only when install can't succeed (cu130 driver too old, or ~no disk).
-      const startBtn = $('installStartBtn')
-      const hardBlocked = /R580/.test(p.driverWarning || '') || (freeBytes != null && freeBytes < 10 * 1073741824)
-      if (startBtn && hardBlocked) {
-        startBtn.disabled = true
-        startBtn.title = 'Resolve the warnings above before installing'
-        startBtn.textContent = 'Install blocked — see warnings'
-      }
-    }).catch(function() {})
-  }
+      const hw = await window.w2gp.detectHardware();
+      $("installCpu").textContent = hw.cpu || "—";
+      $("installRam").textContent = hw.ram || "—";
+      $("installGpu").textContent = hw.gpu || "—";
+      $("installVram").textContent = hw.vram || "—";
+      loadPaths();
+      try {
+        const mf = await window.w2gp.detectModelFolders();
+        if (mf.checkpointsPaths && mf.checkpointsPaths.length) {
+          _modelCkpts = mf.checkpointsPaths[0];
+          $("installCkptsPath").textContent = _modelCkpts;
+        }
+        if (mf.lorasRoot) {
+          _modelLoras = mf.lorasRoot;
+          $("installLorasPath").textContent = _modelLoras;
+        }
+      } catch {}
+      show("installer");
+      if (!(installed && installed.missingPrevious))
+        $("installSubtitle").textContent =
+          "Select environment type, then click Install";
+      // Target-folder triage: ATFGriff's J:\\WanGPApp wasn't empty (Pinokio? previous
+      // attempt?) and we merged blindly over it. Show what's there first.
+      refreshTargetVerdict().catch(() => {});
+      refreshModelDiskGates().catch(() => {});
+      $("installStartBtn").classList.remove("hidden");
+      $("envTypeSelect").classList.remove("disabled");
+      document
+        .querySelectorAll(".env-type-btn")
+        .forEach((b) => (b.disabled = false));
+      // Show expected packages for this hardware
+      window.w2gp.getHardwareProfile().then((hp) => {
+        if (!hp) return;
+        var list = $("installPkgsList");
+        var header = $("installPkgsProfile");
+        if (list && hp.packages && hp.packages.length) {
+          if (header)
+            header.textContent = "(" + hp.profile.replace(/_/g, " ") + ")";
+          list.innerHTML = hp.packages
+            .map((p) => '<span class="ipkg-item">' + escHtml(p) + "</span>")
+            .join("");
+          $("installPkgs").style.display = "";
+        }
+        // Distinct kernel-wheels group (so the wheels are clearly visible pre-install)
+        var klist = $("installKernelsList");
+        var kheader = $("installKernelsProfile");
+        if (klist && hp.kernels && hp.kernels.length) {
+          if (kheader)
+            kheader.textContent = "(" + hp.profile.replace(/_/g, " ") + ")";
+          klist.innerHTML = hp.kernels
+            .map(
+              (k) =>
+                '<div class="ikernel-item"><span class="ikernel-label">' +
+                escHtml(k.label) +
+                '</span><span class="ikernel-dist">' +
+                escHtml(k.dist) +
+                "</span></div>",
+            )
+            .join("");
+          $("installKernels").style.display = "";
+        }
+        // GPU Profile Overview — installer only (different screen; the dashboard
+        // consolidates detected versions + kernel wheels into the env_uv card).
+        renderProfileOverview(hp.detail, {
+          box: "installProfileOverview",
+          profile: "ipoProfile",
+          python: "ipoPython",
+          torch: "ipoTorch",
+          triton: "ipoTriton",
+          sage: "ipoSage",
+          sparge: "ipoSparge",
+          flash: "ipoFlash",
+          kernels: "ipoKernels",
+        });
+      });
+      // Pre-flight resolved stack: GPU/CUDA/driver/disk gates + exact Python pin.
+      // (Tauri install_plan shape: { plan: {gpuName,vendor,cuda,torch,driverWarning,profile}, disk: {free,total} }.)
+      window.w2gp
+        .installPlan()
+        .then((r) => {
+          if (!r || !r.plan) return;
+          const grid = $("installStackGrid");
+          const warn = $("installStackWarn");
+          const stack = $("installStack");
+          if (!grid) return;
+          const p = r.plan;
+          const freeBytes = r.disk && r.disk.free != null ? r.disk.free : null;
+          const freeGb =
+            freeBytes == null ? "?" : (freeBytes / 1073741824).toFixed(1);
+          const rows = [
+            ["GPU", p.gpuName || p.vendor],
+            ["CUDA build", p.cuda],
+            ["PyTorch", p.torch],
+            ["Profile", (p.profile || "").replace(/_/g, " ")],
+            ["Free disk", freeGb + " GB"],
+          ];
+          const renderRows = () => {
+            grid.innerHTML = rows
+              .map(
+                (row) =>
+                  '<div class="istack-row"><span class="istack-k">' +
+                  escHtml(row[0]) +
+                  '</span><span class="istack-v">' +
+                  escHtml(row[1]) +
+                  "</span></div>",
+              )
+              .join("");
+          };
+          renderRows();
+          // Exact Python pin setup.py will demand via `uv venv --python X`
+          // (pythonPreflight is check-only — the download happens on Install).
+          window.w2gp
+            .pythonPreflight()
+            .then((pf) => {
+              if (!pf || !pf.wanted) return;
+              const uvTag = pf.uvVersion
+                ? " (" + pf.uvVersion.split(" ").slice(0, 2).join(" ") + ")"
+                : "";
+              const state = pf.uvVersion
+                ? pf.path && pf.runs
+                  ? "✓ " + pf.wanted + " ready"
+                  : pf.path
+                    ? "⚠ " +
+                      pf.wanted +
+                      " corrupted — auto-reinstall on Install"
+                    : "⬇ " + pf.wanted + " — auto-download on Install"
+                : "✗ uv not found";
+              rows.push(["Python" + uvTag, state]);
+              renderRows();
+              if (pf.hint && warn)
+                warn.innerHTML +=
+                  '<div class="istack-hint">' + escHtml(pf.hint) + "</div>";
+            })
+            .catch(() => {});
+          const warns = [];
+          if (p.driverWarning) warns.push(p.driverWarning);
+          if (freeBytes != null && freeBytes < 10 * 1073741824)
+            warns.push(
+              "Only " +
+                freeGb +
+                " GB free — 50+ GB recommended (models are tens–hundreds of GB).",
+            );
+          let warnHtml = warns.length
+            ? warns
+                .map((w) => '<div class="istack-w">⚠ ' + escHtml(w) + "</div>")
+                .join("")
+            : "";
+          if (
+            freeBytes != null &&
+            freeBytes >= 10 * 1073741824 &&
+            freeBytes < 50 * 1073741824
+          )
+            warnHtml +=
+              '<div class="istack-hint">' +
+              freeGb +
+              " GB free is tight — models alone can exceed 50 GB. A non-system drive is recommended.</div>";
+          warn.innerHTML = warnHtml;
+          stack.style.display = "";
+          // Hard block only when install can't succeed (cu130 driver too old, or ~no disk).
+          const startBtn = $("installStartBtn");
+          const hardBlocked =
+            /R580/.test(p.driverWarning || "") ||
+            (freeBytes != null && freeBytes < 10 * 1073741824);
+          if (startBtn && hardBlocked) {
+            startBtn.disabled = true;
+            startBtn.title = "Resolve the warnings above before installing";
+            startBtn.textContent = "Install blocked — see warnings";
+          }
+        })
+        .catch(() => {});
+    }
   } catch (e) {
-    const el = $('splashError')
-    if (el) { el.textContent = e.stack || String(e); el.classList.remove('hidden') }
-    $('splashStatus').textContent = 'Startup error'
+    const el = $("splashError");
+    if (el) {
+      el.textContent = e.stack || String(e);
+      el.classList.remove("hidden");
+    }
+    $("splashStatus").textContent = "Startup error";
   }
-})
+});
 
 // ── Hardware ──
 async function loadHardware() {
-  const s = await window.w2gp.detectHardware()
-  $('specCpu').textContent=s.cpu||'—'; $('specRam').textContent=s.ram||'—'
-  $('specGpu').textContent=s.gpu||'—'; $('specVram').textContent=s.vram||'—'
-  return s
+  const s = await window.w2gp.detectHardware();
+  $("specCpu").textContent = s.cpu || "—";
+  $("specRam").textContent = s.ram || "—";
+  $("specGpu").textContent = s.gpu || "—";
+  $("specVram").textContent = s.vram || "—";
+  return s;
 }
 
 // ── Live topbar metrics (CPU/GPU/RAM/VRAM sparklines) ──
-const _sparkHistory = { cpu: [], gpu: [], gpu2: [], ram: [], vram: [], vram2: [] }
-const _sparkMax = 60  // samples kept (~2 min at 2s)
+const _sparkHistory = {
+  cpu: [],
+  gpu: [],
+  gpu2: [],
+  ram: [],
+  vram: [],
+  vram2: [],
+};
+const _sparkMax = 60; // samples kept (~2 min at 2s)
 
 function drawSpark(id, data, color) {
-  const c = $(id); if (!c) return
-  const ctx = c.getContext('2d')
-  const w = c.width, h = c.height
-  ctx.clearRect(0, 0, w, h)
-  if (data.length < 2) return
-  const max = 100
-  ctx.beginPath()
+  const c = $(id);
+  if (!c) return;
+  const ctx = c.getContext("2d");
+  const w = c.width,
+    h = c.height;
+  ctx.clearRect(0, 0, w, h);
+  if (data.length < 2) return;
+  const max = 100;
+  ctx.beginPath();
   data.forEach((v, i) => {
-    const x = (i / (data.length - 1)) * w
-    const y = h - (Math.max(0, Math.min(max, v)) / max) * h
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
-  })
-  ctx.strokeStyle = color; ctx.lineWidth = 1.25; ctx.stroke()
+    const x = (i / (data.length - 1)) * w;
+    const y = h - (Math.max(0, Math.min(max, v)) / max) * h;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.25;
+  ctx.stroke();
   // fill under curve
-  ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath()
-  ctx.fillStyle = color + '22'; ctx.fill()
+  ctx.lineTo(w, h);
+  ctx.lineTo(0, h);
+  ctx.closePath();
+  ctx.fillStyle = color + "22";
+  ctx.fill();
 }
 
 function pushMetric(key, val) {
-  const arr = _sparkHistory[key]
-  arr.push(val == null ? 0 : val)
-  if (arr.length > _sparkMax) arr.shift()
+  const arr = _sparkHistory[key];
+  arr.push(val == null ? 0 : val);
+  if (arr.length > _sparkMax) arr.shift();
 }
 
 function startMetricsPolling() {
@@ -1100,56 +1655,101 @@ function startMetricsPolling() {
     // Skip sampling while the dashboard is hidden (webview/embed open): the
     // IPC + nvidia-smi query every 2s was running even when nothing displayed
     // it. The next shown-state tick resumes automatically.
-    const dash = $('dashBody')
-    if (dash && dash.style.display === 'none') return
-    let m
-    try { m = await window.w2gp.getSystemMetrics() } catch { return }
-    if (!m) return
-    if (m.ramFree) { const el = $('specRamFree'); if (el) el.textContent = '(' + m.ramFree + ' free)' }
-    if (m.vramFree) { const el = $('specVramFree'); if (el) el.textContent = '(' + m.vramFree + ' free)' }
-    pushMetric('cpu', m.cpu); pushMetric('gpu', m.gpu); pushMetric('ram', m.ram); pushMetric('vram', m.vram)
-    if ($('valCpu')) $('valCpu').textContent = m.cpu != null ? m.cpu + '%' : '—'
-    if ($('valGpu')) $('valGpu').textContent = m.gpu != null ? m.gpu + '%' : '—'
-    if ($('valRam')) $('valRam').textContent = m.ramUsed != null ? m.ramUsed + '/' + m.ramTotal : '—'
-    if ($('valVram')) $('valVram').textContent = m.vramUsed ? m.vramUsed + '/' + m.vramTotal : '—'
-    drawSpark('sparkCpu', _sparkHistory.cpu, '#4ADE80')
-    drawSpark('sparkGpu', _sparkHistory.gpu, '#60A5FA')
-    drawSpark('sparkRam', _sparkHistory.ram, '#FBBF24')
-    drawSpark('sparkVram', _sparkHistory.vram, '#F472B6')
-    // 2nd GPU (iGPU or dual dGPU) — ponytail: flicker fix — only toggle display when state actually changes
-    const hasGpu2 = m.gpus && m.gpus.length > 1 && m.gpus[1] != null
-    const g2 = hasGpu2 ? m.gpus[1] : (m.gpu2 != null ? { gpu: m.gpu2, vram: m.vram2, vramUsed: m.vramUsed2, vramTotal: m.vramTotal2 } : null)
-    const mg2 = $('metricGpu2'), mv2 = $('metricVram2')
-    const shouldShow = !!(g2 && g2.gpu != null)
-    const isShown = mg2 && mg2.style.display !== 'none'
-    if (shouldShow) {
-      pushMetric('gpu2', g2.gpu); pushMetric('vram2', g2.vram)
-      if ($('valGpu2')) $('valGpu2').textContent = g2.gpu + '%'
-      if ($('valVram2')) $('valVram2').textContent = g2.vramUsed ? g2.vramUsed + '/' + g2.vramTotal : '—'
-      drawSpark('sparkGpu2', _sparkHistory.gpu2, '#A78BFA')
-      drawSpark('sparkVram2', _sparkHistory.vram2, '#FB7185')
-      if (!isShown) { if (mg2) mg2.style.display = ''; if (mv2) mv2.style.display = '' }
-      if (mg2) mg2.title = 'GPU 2' + (m.gpus[1] ? ' — ' + (m.gpus[1].vramTotal || '') : '')
-      if (mv2) mv2.title = 'VRAM 2 ' + (g2.vramUsed || '') + '/' + (g2.vramTotal || '')
-    } else if (isShown) {
-      if (mg2) mg2.style.display = 'none'; if (mv2) mv2.style.display = 'none'
+    const dash = $("dashBody");
+    if (dash && dash.style.display === "none") return;
+    let m;
+    try {
+      m = await window.w2gp.getSystemMetrics();
+    } catch {
+      return;
     }
-  }
-  if (window.__metricsTimer) clearInterval(window.__metricsTimer)
-  window.__metricsTick = tick
-  tick()
-  window.__metricsTimer = setInterval(tick, 3000)
+    if (!m) return;
+    if (m.ramFree) {
+      const el = $("specRamFree");
+      if (el) el.textContent = "(" + m.ramFree + " free)";
+    }
+    if (m.vramFree) {
+      const el = $("specVramFree");
+      if (el) el.textContent = "(" + m.vramFree + " free)";
+    }
+    pushMetric("cpu", m.cpu);
+    pushMetric("gpu", m.gpu);
+    pushMetric("ram", m.ram);
+    pushMetric("vram", m.vram);
+    if ($("valCpu"))
+      $("valCpu").textContent = m.cpu == null ? "—" : m.cpu + "%";
+    if ($("valGpu"))
+      $("valGpu").textContent = m.gpu == null ? "—" : m.gpu + "%";
+    if ($("valRam"))
+      $("valRam").textContent =
+        m.ramUsed == null ? "—" : m.ramUsed + "/" + m.ramTotal;
+    if ($("valVram"))
+      $("valVram").textContent = m.vramUsed
+        ? m.vramUsed + "/" + m.vramTotal
+        : "—";
+    drawSpark("sparkCpu", _sparkHistory.cpu, "#4ADE80");
+    drawSpark("sparkGpu", _sparkHistory.gpu, "#60A5FA");
+    drawSpark("sparkRam", _sparkHistory.ram, "#FBBF24");
+    drawSpark("sparkVram", _sparkHistory.vram, "#F472B6");
+    // 2nd GPU (iGPU or dual dGPU) — ponytail: flicker fix — only toggle display when state actually changes
+    const hasGpu2 = m.gpus && m.gpus.length > 1 && m.gpus[1] != null;
+    const g2 = hasGpu2
+      ? m.gpus[1]
+      : m.gpu2 == null
+        ? null
+        : {
+            gpu: m.gpu2,
+            vram: m.vram2,
+            vramUsed: m.vramUsed2,
+            vramTotal: m.vramTotal2,
+          };
+    const mg2 = $("metricGpu2"),
+      mv2 = $("metricVram2");
+    const shouldShow = !!(g2 && g2.gpu != null);
+    const isShown = mg2 && mg2.style.display !== "none";
+    if (shouldShow) {
+      pushMetric("gpu2", g2.gpu);
+      pushMetric("vram2", g2.vram);
+      if ($("valGpu2")) $("valGpu2").textContent = g2.gpu + "%";
+      if ($("valVram2"))
+        $("valVram2").textContent = g2.vramUsed
+          ? g2.vramUsed + "/" + g2.vramTotal
+          : "—";
+      drawSpark("sparkGpu2", _sparkHistory.gpu2, "#A78BFA");
+      drawSpark("sparkVram2", _sparkHistory.vram2, "#FB7185");
+      if (!isShown) {
+        if (mg2) mg2.style.display = "";
+        if (mv2) mv2.style.display = "";
+      }
+      if (mg2)
+        mg2.title =
+          "GPU 2" + (m.gpus[1] ? " — " + (m.gpus[1].vramTotal || "") : "");
+      if (mv2)
+        mv2.title =
+          "VRAM 2 " + (g2.vramUsed || "") + "/" + (g2.vramTotal || "");
+    } else if (isShown) {
+      if (mg2) mg2.style.display = "none";
+      if (mv2) mv2.style.display = "none";
+    }
+  };
+  if (window.__metricsTimer) clearInterval(window.__metricsTimer);
+  window.__metricsTick = tick;
+  tick();
+  window.__metricsTimer = setInterval(tick, 3000);
   // Pause the 2s nvidia-smi sampling while the window is hidden/minimized;
   // resume with an immediate tick on visibility.
   if (!window.__metricsVisBound) {
     window.__metricsVisBound = () => {
       if (document.hidden) {
-        if (window.__metricsTimer) { clearInterval(window.__metricsTimer); window.__metricsTimer = null }
+        if (window.__metricsTimer) {
+          clearInterval(window.__metricsTimer);
+          window.__metricsTimer = null;
+        }
       } else if (!window.__metricsTimer) {
-        startMetricsPolling()
+        startMetricsPolling();
       }
-    }
-    document.addEventListener('visibilitychange', window.__metricsVisBound)
+    };
+    document.addEventListener("visibilitychange", window.__metricsVisBound);
   }
 }
 
@@ -1159,376 +1759,673 @@ function startMetricsPolling() {
 // manual refresh. Silent re-check (no loading flash); the GitHub cache in
 // main.js keeps this off the rate-limit radar. Skips while the dashboard is
 // hidden (user is in the webview / embedded browser).
-const WANGP_POLL_MS = 30 * 60 * 1000
-const DESKTOP_POLL_MS = 5 * 60 * 60 * 1000
+const WANGP_POLL_MS = 30 * 60 * 1000;
+const DESKTOP_POLL_MS = 5 * 60 * 60 * 1000;
 function startWangpPolling() {
-  if (window.__wangpPollTimer) clearInterval(window.__wangpPollTimer)
+  if (window.__wangpPollTimer) clearInterval(window.__wangpPollTimer);
   const poll = () => {
-    const dash = $('dashBody')
-    if (dash && dash.style.display === 'none') return
-    loadWangpChangelog(false)
-  }
-  poll()  // immediate tick on (re)start
-  window.__wangpPollTimer = setInterval(poll, WANGP_POLL_MS)
+    const dash = $("dashBody");
+    if (dash && dash.style.display === "none") return;
+    loadWangpChangelog(false);
+  };
+  poll(); // immediate tick on (re)start
+  window.__wangpPollTimer = setInterval(poll, WANGP_POLL_MS);
   // Same visibility pause/resume as startMetricsPolling.
   if (!window.__wangpVisBound) {
     window.__wangpVisBound = () => {
       if (document.hidden) {
-        if (window.__wangpPollTimer) { clearInterval(window.__wangpPollTimer); window.__wangpPollTimer = null }
+        if (window.__wangpPollTimer) {
+          clearInterval(window.__wangpPollTimer);
+          window.__wangpPollTimer = null;
+        }
       } else if (!window.__wangpPollTimer) {
-        startWangpPolling()
+        startWangpPolling();
       }
-    }
-    document.addEventListener('visibilitychange', window.__wangpVisBound)
+    };
+    document.addEventListener("visibilitychange", window.__wangpVisBound);
   }
 }
 function startDesktopPolling() {
-  if (window.__desktopPollTimer) clearInterval(window.__desktopPollTimer)
+  if (window.__desktopPollTimer) clearInterval(window.__desktopPollTimer);
   const poll = () => {
-    const dash = $('dashBody')
-    if (dash && dash.style.display === 'none') return
-    try { window.w2gp.checkUpdate() } catch {}
-  }
-  window.__desktopPollTimer = setInterval(poll, DESKTOP_POLL_MS)
+    const dash = $("dashBody");
+    if (dash && dash.style.display === "none") return;
+    try {
+      window.w2gp.checkUpdate();
+    } catch {}
+  };
+  window.__desktopPollTimer = setInterval(poll, DESKTOP_POLL_MS);
   // One early check shortly after boot — the 5h interval alone means a fresh
   // release sits unknown for hours (seen with v0.1.3). Delayed, not immediate,
   // so backend/network are up and the boot sequence stays undisturbed.
   if (!window.__desktopBootCheckDone) {
-    window.__desktopBootCheckDone = true
-    setTimeout(poll, 30000)
+    window.__desktopBootCheckDone = true;
+    setTimeout(poll, 30000);
   }
   if (!window.__desktopVisBound) {
     window.__desktopVisBound = () => {
       if (document.hidden) {
-        if (window.__desktopPollTimer) { clearInterval(window.__desktopPollTimer); window.__desktopPollTimer = null }
+        if (window.__desktopPollTimer) {
+          clearInterval(window.__desktopPollTimer);
+          window.__desktopPollTimer = null;
+        }
       } else if (!window.__desktopPollTimer) {
-        startDesktopPolling()
+        startDesktopPolling();
       }
-    }
-    document.addEventListener('visibilitychange', window.__desktopVisBound)
+    };
+    document.addEventListener("visibilitychange", window.__desktopVisBound);
   }
 }
 
 // ── Task List ──
-const taskMap = {}; document.querySelectorAll('.task').forEach(t => { taskMap[t.dataset.id]=t })
-function taskStart(id){ const t=taskMap[id];if(!t)return; t.className='task active'; t.querySelector('.task-icon').textContent='○'; t.querySelector('.task-status').textContent='running' }
-function taskComplete(id,failed){ const t=taskMap[id];if(!t)return; t.className=failed?'task fail':'task done'; t.querySelector('.task-icon').textContent=failed?'✕':'✓'; t.querySelector('.task-status').textContent=failed?'failed':'done' }
-function resetTasks(){ Object.values(taskMap).forEach(t=>{ t.className='task pending'; t.querySelector('.task-icon').textContent='○'; t.querySelector('.task-status').textContent='pending' }) }
+const taskMap = {};
+document.querySelectorAll(".task").forEach((t) => {
+  taskMap[t.dataset.id] = t;
+});
+function taskStart(id) {
+  const t = taskMap[id];
+  if (!t) return;
+  t.className = "task active";
+  t.querySelector(".task-icon").textContent = "○";
+  t.querySelector(".task-status").textContent = "running";
+}
+function taskComplete(id, failed) {
+  const t = taskMap[id];
+  if (!t) return;
+  t.className = failed ? "task fail" : "task done";
+  t.querySelector(".task-icon").textContent = failed ? "✕" : "✓";
+  t.querySelector(".task-status").textContent = failed ? "failed" : "done";
+}
+function resetTasks() {
+  Object.values(taskMap).forEach((t) => {
+    t.className = "task pending";
+    t.querySelector(".task-icon").textContent = "○";
+    t.querySelector(".task-status").textContent = "pending";
+  });
+}
 
 // ── Installer ──
-let selectedEnvType = 'uv'
+let selectedEnvType = "uv";
 // Checklist verdict: when the install folder holds a repo without a working env
 // (repo_no_env / ours_broken_env), the choice lives in the #targetChoiceList
 // radios and the big Install button dispatches it (see startInstall).
-let _targetChoiceMode = null
+let _targetChoiceMode = null;
 // True while an install is actually running (set in doInstall, cleared on
 // every exit) — verdict refreshes must never resurrect Install mid-install
 // (e.g. Browse clicked during a fresh install re-trips repo_no_env).
-let _installRunning = false
+let _installRunning = false;
 // Stashed Fresh-repo backup choice (collect-only modal). The wipe launches
 // solely from the big Install button — never from inside the backup dialog.
-let _freshBackupChoice = null
+let _freshBackupChoice = null;
+// Snapshot of the live radio pick backing _freshBackupChoice. Compared at
+// dispatch time so touching a radio after the modal only re-collects when
+// the pick actually moved on (Loop 3 fix).
+let _freshBackupPick = null;
+// Verdict mode last rendered by refreshTargetVerdict (null = none yet).
+// Guards the radio force-check defaults so refreshes preserve user picks.
+let _verdictModeShown = null;
+// Latest classifyTarget verdict (null when hidden/failed). Lets the
+// fallthrough dispatch ask once for foreign folders instead of bouncing.
+let _lastVerdict = null;
 
-document.querySelectorAll('.env-type-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.env-type-btn').forEach(b => b.classList.remove('selected'))
-    btn.classList.add('selected')
-    selectedEnvType = btn.dataset.env
-  })
-})
+document.querySelectorAll(".env-type-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document
+      .querySelectorAll(".env-type-btn")
+      .forEach((b) => b.classList.remove("selected"));
+    btn.classList.add("selected");
+    selectedEnvType = btn.dataset.env;
+  });
+});
 
-$('installStartBtn').addEventListener('click', startInstall)
-// Fresh-repo choice is single-use: switching radios voids a stashed backup
-// choice so a stale pick can never launch without a fresh modal pass.
-document.querySelectorAll('input[name="targetChoice"], input[name="reinstallChoice"]').forEach(function(r) {
-  r.addEventListener('change', function() { _freshBackupChoice = null })
-})
+$("installStartBtn").addEventListener("click", startInstall);
+// NOTE: no radio change listener voids _freshBackupChoice here. Stash
+// staleness is reconciled at dispatch time (snapshot vs live pick), so
+// touching a radio after the backup modal must not force a reopen.
 // NOTE: the healthy-state trio and the no-env checklist are radios now —
 // all launching goes through the big Install button (see startInstall).
 // The backup modal below is collect-only; doInstall('reinstall') wipes the
 // repo (trash, not delete), reinstalls, and merges the backup back.
 
-$('validateInstallBtn')?.addEventListener('click', async () => {
-  const btn = $('validateInstallBtn')
-  const warn = $('installStackWarn')
-  btn.disabled = true; btn.textContent = 'Validating…'
-  if (warn) warn.innerHTML = ''
+$("validateInstallBtn")?.addEventListener("click", async () => {
+  const btn = $("validateInstallBtn");
+  const warn = $("installStackWarn");
+  btn.disabled = true;
+  btn.textContent = "Validating…";
+  if (warn) warn.innerHTML = "";
   try {
-    const r = await window.w2gp.validateInstall()
+    const r = await window.w2gp.validateInstall();
     if (r && r.ok) {
-      const line = `✓ torch ${r.torch} · CUDA available: ${r.cudaAvailable} (${r.cudaVer})`
-      if (warn) warn.innerHTML = '<div class="istack-ok">⚡ ' + escHtml(line) + '</div>'
-      btn.textContent = 'Validated ✓'
+      const line = `✓ torch ${r.torch} · CUDA available: ${r.cudaAvailable} (${r.cudaVer})`;
+      if (warn)
+        warn.innerHTML =
+          '<div class="istack-ok">⚡ ' + escHtml(line) + "</div>";
+      btn.textContent = "Validated ✓";
     } else {
-      if (warn) warn.innerHTML = '<div class="istack-w">✗ ' + escHtml((r && r.error) || 'validation failed') + '</div>'
-      btn.textContent = 'Validate failed'
+      if (warn)
+        warn.innerHTML =
+          '<div class="istack-w">✗ ' +
+          escHtml((r && r.error) || "validation failed") +
+          "</div>";
+      btn.textContent = "Validate failed";
     }
   } catch (e) {
-    if (warn) warn.innerHTML = '<div class="istack-w">✗ ' + escHtml(e.message) + '</div>'
-    btn.textContent = 'Validate failed'
+    if (warn)
+      warn.innerHTML =
+        '<div class="istack-w">✗ ' + escHtml(e.message) + "</div>";
+    btn.textContent = "Validate failed";
   }
-})
+});
 
 // When the user picks a bare drive root (e.g. D:), we DON'T apply it (installing
 // on a root fails). Instead we show a cross + message on the Install button.
 // Cleared as soon as a valid folder is chosen.
-let _pendingRoot = null
+let _pendingRoot = null;
 
 function reflectRootBlock(rootPath) {
-  const set = (id, val) => { const e = $(id); if (e) { e.textContent = breakPath(val) || '—'; e.title = val || '' } }
-  set('installAppDataPath', rootPath)
-  const startBtn = $('installStartBtn')
-  const rootWarn = $('installRootWarn')
-  if (startBtn) { startBtn.disabled = true; startBtn.title = 'Choose a folder, not a drive root.' }
+  const set = (id, val) => {
+    const e = $(id);
+    if (e) {
+      e.textContent = breakPath(val) || "—";
+      e.title = val || "";
+    }
+  };
+  set("installAppDataPath", rootPath);
+  const startBtn = $("installStartBtn");
+  const rootWarn = $("installRootWarn");
+  if (startBtn) {
+    startBtn.disabled = true;
+    startBtn.title = "Choose a folder, not a drive root.";
+  }
   if (rootWarn) {
-    rootWarn.textContent = '⚠ Install location is a drive root (' + rootPath + '). Pick a folder using Browse.'
-    rootWarn.classList.remove('hidden')
+    rootWarn.textContent =
+      "⚠ Install location is a drive root (" +
+      rootPath +
+      "). Pick a folder using Browse.";
+    rootWarn.classList.remove("hidden");
   }
 }
 
-$('browseAppDataPath')?.addEventListener('click', async () => {
-  const folder = await window.w2gp.selectFolder()
-  if (!folder) return
+$("browseAppDataPath")?.addEventListener("click", async () => {
+  const folder = await window.w2gp.selectFolder();
+  if (!folder) return;
   // Bare drive root: don't block — show it resolved to <root>\Wan2GP and use
   // that (backend rejects raw roots too, defense in depth).
   if (isDriveRoot(folder)) {
-    const suggested = pathJoin(folder, 'Wan2GP')
-    appendLog('[*] Drive root selected (' + folder + ') — using ' + suggested + ' instead.')
-    showToast('Using ' + suggested)
+    const suggested = pathJoin(folder, "Wan2GP");
+    appendLog(
+      "[*] Drive root selected (" +
+        folder +
+        ") — using " +
+        suggested +
+        " instead.",
+    );
+    showToast("Using " + suggested);
     try {
-      await window.w2gp.setDataDir(suggested)
+      await window.w2gp.setDataDir(suggested);
     } catch (e) {
-      appendLog('[!] Could not set install folder: ' + ((e && e.message) || e))
-      _pendingRoot = suggested
-      reflectRootBlock(suggested)
-      return
+      appendLog("[!] Could not set install folder: " + ((e && e.message) || e));
+      _pendingRoot = suggested;
+      reflectRootBlock(suggested);
+      return;
     }
-    _pendingRoot = null
-    loadPaths()
-    return
+    _pendingRoot = null;
+    loadPaths();
+    return;
   }
-  _pendingRoot = null
+  _pendingRoot = null;
   try {
-    await window.w2gp.setDataDir(folder)
+    await window.w2gp.setDataDir(folder);
   } catch (e) {
     if (/drive-root/.test((e && e.message) || String(e))) {
-      _pendingRoot = folder
-      reflectRootBlock(folder)
-      return
+      _pendingRoot = folder;
+      reflectRootBlock(folder);
+      return;
     }
-    throw e
+    throw e;
   }
-  loadPaths()
-})
+  loadPaths();
+});
 
-$('clearAppDataPath')?.addEventListener('click', async () => {
-  await window.w2gp.resetDataDir()
-  loadPaths(true)
-})
+$("clearAppDataPath")?.addEventListener("click", async () => {
+  await window.w2gp.resetDataDir();
+  loadPaths(true);
+});
 
-let _modelCkpts = '', _modelLoras = '', _modelOutput = ''
+let _modelCkpts = "",
+  _modelLoras = "",
+  _modelOutput = "";
 
 function setModelPath(type, folder) {
-  const elMap = { ckpts: 'installCkptsPath', loras: 'installLorasPath', output: 'installOutputPath' }
-  const clearMap = { ckpts: 'clearCkptsPath', loras: 'clearLorasPath', output: 'clearOutputPath' }
-  const el = $(elMap[type])
-  const clearBtn = $(clearMap[type])
-  if (!el) return
+  const elMap = {
+    ckpts: "installCkptsPath",
+    loras: "installLorasPath",
+    output: "installOutputPath",
+  };
+  const clearMap = {
+    ckpts: "clearCkptsPath",
+    loras: "clearLorasPath",
+    output: "clearOutputPath",
+  };
+  const el = $(elMap[type]);
+  const clearBtn = $(clearMap[type]);
+  if (!el) return;
   if (folder) {
-    el.textContent = folder; el.style.color = ''
-    if (clearBtn) clearBtn.style.display = ''
-    if (type === 'ckpts') _modelCkpts = folder
-    else if (type === 'loras') _modelLoras = folder
-    else _modelOutput = folder
+    el.textContent = folder;
+    el.style.color = "";
+    if (clearBtn) clearBtn.style.display = "";
+    if (type === "ckpts") _modelCkpts = folder;
+    else if (type === "loras") _modelLoras = folder;
+    else _modelOutput = folder;
   } else {
-    el.textContent = '(default)'; el.style.color = 'var(--text-tertiary)'
-    if (clearBtn) clearBtn.style.display = 'none'
-    if (type === 'ckpts') _modelCkpts = ''
-    else if (type === 'loras') _modelLoras = ''
-    else _modelOutput = ''
+    el.textContent = "(default)";
+    el.style.color = "var(--text-tertiary)";
+    if (clearBtn) clearBtn.style.display = "none";
+    if (type === "ckpts") _modelCkpts = "";
+    else if (type === "loras") _modelLoras = "";
+    else _modelOutput = "";
   }
   // Model drive changed → re-gate disk space (installer screen only).
-  try { if ($('installer') && $('installer').classList.contains('active')) refreshModelDiskGates().catch(function() {}) } catch {}
+  try {
+    if ($("installer") && $("installer").classList.contains("active"))
+      refreshModelDiskGates().catch(() => {});
+  } catch {}
 }
 
 async function browseModelFolder(type) {
-  const folder = await window.w2gp.selectFolder()
-  if (!folder) return
-  setModelPath(type, folder)
+  const folder = await window.w2gp.selectFolder();
+  if (!folder) return;
+  setModelPath(type, folder);
   // Persist BOTH: the user-facing choice (desktop-config.json, for the UI) AND
   // the file Wan2GP actually reads (wgp_config.json). Previously only the former
   // was written, so the Settings slider was cosmetic and downloads ignored it
   // (issue #74, "Model folders" always reverted to C:\Wan2GP-Models on refresh).
-  if (type === 'ckpts') await window.w2gp.writeWgpConfig({ checkpointsPaths: [folder, '.'] })
-  else if (type === 'loras') await window.w2gp.writeWgpConfig({ lorasRoot: folder })
-  else await window.w2gp.writeWgpConfig({ savePath: folder })
-  const cfg = await window.w2gp.configLoad()
-  if (type === 'ckpts') cfg.modelCkptsPath = folder
-  else if (type === 'loras') cfg.modelLorasPath = folder
-  else cfg.modelOutputPath = folder
-  await window.w2gp.configSave(cfg)
+  if (type === "ckpts")
+    await window.w2gp.writeWgpConfig({ checkpointsPaths: [folder, "."] });
+  else if (type === "loras")
+    await window.w2gp.writeWgpConfig({ lorasRoot: folder });
+  else await window.w2gp.writeWgpConfig({ savePath: folder });
+  const cfg = await window.w2gp.configLoad();
+  if (type === "ckpts") cfg.modelCkptsPath = folder;
+  else if (type === "loras") cfg.modelLorasPath = folder;
+  else cfg.modelOutputPath = folder;
+  await window.w2gp.configSave(cfg);
 }
 
-$('browseCkptsPath')?.addEventListener('click', () => browseModelFolder('ckpts'))
-$('browseLorasPath')?.addEventListener('click', () => browseModelFolder('loras'))
-$('clearCkptsPath')?.addEventListener('click', async () => {
-  const p = await window.w2gp.getInstallPaths()
-  const def = (p?.modelsDefault ? pathJoin(p.modelsDefault, 'ckpts') : '(default)')
-  setModelPath('ckpts', '')
-  const el = $('installCkptsPath')
-  if (el) { el.textContent = def; el.style.color = 'var(--text-tertiary)' }
+$("browseCkptsPath")?.addEventListener("click", () =>
+  browseModelFolder("ckpts"),
+);
+$("browseLorasPath")?.addEventListener("click", () =>
+  browseModelFolder("loras"),
+);
+$("clearCkptsPath")?.addEventListener("click", async () => {
+  const p = await window.w2gp.getInstallPaths();
+  const def = p?.modelsDefault
+    ? pathJoin(p.modelsDefault, "ckpts")
+    : "(default)";
+  setModelPath("ckpts", "");
+  const el = $("installCkptsPath");
+  if (el) {
+    el.textContent = def;
+    el.style.color = "var(--text-tertiary)";
+  }
   // Reset the real config too, so the UI and Wan2GP stay in sync (issue #74).
-  await window.w2gp.writeWgpConfig({ checkpointsPaths: [def, '.'] })
-  const cfg = await window.w2gp.configLoad()
-  delete cfg.modelCkptsPath
-  await window.w2gp.configSave(cfg)
-})
-$('clearLorasPath')?.addEventListener('click', async () => {
-  const p = await window.w2gp.getInstallPaths()
-  const def = (p?.modelsDefault ? pathJoin(p.modelsDefault, 'loras') : '(default)')
-  setModelPath('loras', '')
-  const el = $('installLorasPath')
-  if (el) { el.textContent = def; el.style.color = 'var(--text-tertiary)' }
-  await window.w2gp.writeWgpConfig({ lorasRoot: def })
-  const cfg = await window.w2gp.configLoad()
-  delete cfg.modelLorasPath
-  await window.w2gp.configSave(cfg)
-})
-$('browseOutputPath')?.addEventListener('click', () => browseModelFolder('output'))
-$('clearOutputPath')?.addEventListener('click', async () => {
-  const p = await window.w2gp.getInstallPaths()
-  const def = (p?.modelsDefault ? pathJoin(p.modelsDefault, 'outputs') : '(default)')
-  setModelPath('output', '')
-  const el = $('installOutputPath')
-  if (el) { el.textContent = def; el.style.color = 'var(--text-tertiary)' }
-  await window.w2gp.writeWgpConfig({ savePath: def })
-  const cfg = await window.w2gp.configLoad()
-  delete cfg.modelOutputPath
-  await window.w2gp.configSave(cfg)
-})
+  await window.w2gp.writeWgpConfig({ checkpointsPaths: [def, "."] });
+  const cfg = await window.w2gp.configLoad();
+  delete cfg.modelCkptsPath;
+  await window.w2gp.configSave(cfg);
+});
+$("clearLorasPath")?.addEventListener("click", async () => {
+  const p = await window.w2gp.getInstallPaths();
+  const def = p?.modelsDefault
+    ? pathJoin(p.modelsDefault, "loras")
+    : "(default)";
+  setModelPath("loras", "");
+  const el = $("installLorasPath");
+  if (el) {
+    el.textContent = def;
+    el.style.color = "var(--text-tertiary)";
+  }
+  await window.w2gp.writeWgpConfig({ lorasRoot: def });
+  const cfg = await window.w2gp.configLoad();
+  delete cfg.modelLorasPath;
+  await window.w2gp.configSave(cfg);
+});
+$("browseOutputPath")?.addEventListener("click", () =>
+  browseModelFolder("output"),
+);
+$("clearOutputPath")?.addEventListener("click", async () => {
+  const p = await window.w2gp.getInstallPaths();
+  const def = p?.modelsDefault
+    ? pathJoin(p.modelsDefault, "outputs")
+    : "(default)";
+  setModelPath("output", "");
+  const el = $("installOutputPath");
+  if (el) {
+    el.textContent = def;
+    el.style.color = "var(--text-tertiary)";
+  }
+  await window.w2gp.writeWgpConfig({ savePath: def });
+  const cfg = await window.w2gp.configLoad();
+  delete cfg.modelOutputPath;
+  await window.w2gp.configSave(cfg);
+});
 
-async function startInstall(){
+async function startInstall() {
   // Helper to show prereq help card
   function showPrereqHelp(title, text, url, tool) {
-    $('prereqHelp').classList.remove('hidden')
-    $('prereqTitle').textContent = title
-    $('prereqText').innerHTML = text
-    $('prereqDownloadBtn').onclick = async function() {
-      this.disabled = true; this.textContent = 'Installing...'
-      appendLog('[*] Installing ' + tool + '...')
-      var r
-      try { r = await window.w2gp.installPrerequisite(tool) }
-      catch (e) { r = { error: (e && e.message) || String(e) } } // never leave the button frozen
-      this.disabled = false; this.textContent = 'Download & Install'
+    $("prereqHelp").classList.remove("hidden");
+    $("prereqTitle").textContent = title;
+    $("prereqText").innerHTML = text;
+    $("prereqDownloadBtn").onclick = async function () {
+      this.disabled = true;
+      this.textContent = "Installing...";
+      appendLog("[*] Installing " + tool + "...");
+      var r;
+      try {
+        r = await window.w2gp.installPrerequisite(tool);
+      } catch (e) {
+        r = { error: (e && e.message) || String(e) };
+      } // never leave the button frozen
+      this.disabled = false;
+      this.textContent = "Download & Install";
       if (r && r.success) {
         if (r.ready) {
           // Tool is on PATH already (registry refresh) — continue automatically.
-          $('prereqHelp').classList.add('hidden')
-          showToast('✓ ' + tool + ' installed — continuing…')
-          startInstall()
-        } else showToast('✓ ' + tool + ' installed. Please restart the launcher.')
-      }
-      else showToast('✗ Install failed: ' + (r?.error || 'unknown'))
-    }
-    $('prereqManualBtn').onclick = function() { window.w2gp.openExternal(url) }
-    $('installStartBtn').classList.remove('hidden')
-    $('envTypeSelect').classList.remove('disabled')
-    document.querySelectorAll('.env-type-btn').forEach(b => b.disabled = false)
+          $("prereqHelp").classList.add("hidden");
+          showToast("✓ " + tool + " installed — continuing…");
+          startInstall();
+        } else
+          showToast("✓ " + tool + " installed. Please restart the launcher.");
+      } else showToast("✗ Install failed: " + (r?.error || "unknown"));
+    };
+    $("prereqManualBtn").onclick = () => {
+      window.w2gp.openExternal(url);
+    };
+    $("installStartBtn").classList.remove("hidden");
+    $("envTypeSelect").classList.remove("disabled");
+    document
+      .querySelectorAll(".env-type-btn")
+      .forEach((b) => (b.disabled = false));
   }
 
   // Check prerequisites (check_command returns {cmd, found} — an object is
   // always truthy, so compare .found; previously a missing tool sailed through
   // and failed 10 minutes into setup.py instead of showing the help card).
-  const hasCmd = async (c) => { try { const r = await window.w2gp.checkCommand(c); return !!(r && r.found) } catch { return false } }
-  var hasGit = await hasCmd('git')
-  if (!hasGit) { appendLog('[!] Git not found — showing install help'); showPrereqHelp('Git not found', 'Git is required to clone the Wan2GP repository. Click Download to install it silently, or use the manual button.', 'https://git-scm.com/downloads', 'git'); return }
-  if (selectedEnvType === 'venv') {
-    var hasPy = await hasCmd('python')
-    if (!hasPy) { appendLog('[!] Python not found — showing install help'); showPrereqHelp('Python not found', 'Python 3.10 or 3.11 is required for venv installs. Click Download to install Python 3.11 silently, or select uv/conda above.', 'https://www.python.org/downloads/', 'python'); return }
+  const hasCmd = async (c) => {
+    try {
+      const r = await window.w2gp.checkCommand(c);
+      return !!(r && r.found);
+    } catch {
+      return false;
+    }
+  };
+  var hasGit = await hasCmd("git");
+  if (!hasGit) {
+    appendLog("[!] Git not found — showing install help");
+    showPrereqHelp(
+      "Git not found",
+      "Git is required to clone the Wan2GP repository. Click Download to install it silently, or use the manual button.",
+      "https://git-scm.com/downloads",
+      "git",
+    );
+    return;
   }
-  if (selectedEnvType === 'uv') {
-    var hasUv = await hasCmd('uv')
-    if (!hasUv) { appendLog('[!] uv not found — showing install help'); showPrereqHelp('uv not found', 'uv is required for uv installs. Click Download to install it via PowerShell, or select venv/conda above.', 'https://docs.astral.sh/uv/#installation', 'uv'); return }
+  if (selectedEnvType === "venv") {
+    var hasPy = await hasCmd("python");
+    if (!hasPy) {
+      appendLog("[!] Python not found — showing install help");
+      showPrereqHelp(
+        "Python not found",
+        "Python 3.10 or 3.11 is required for venv installs. Click Download to install Python 3.11 silently, or select uv/conda above.",
+        "https://www.python.org/downloads/",
+        "python",
+      );
+      return;
+    }
   }
-  if (selectedEnvType === 'conda') {
-    var hasConda = await hasCmd('conda')
-    if (!hasConda) { appendLog('[!] Conda not found — showing install help'); showPrereqHelp('Conda not found', 'Miniconda is required for conda installs. Click Download to install it silently, or select venv/uv above.', 'https://docs.anaconda.com/miniconda/', 'conda'); return }
+  if (selectedEnvType === "uv") {
+    var hasUv = await hasCmd("uv");
+    if (!hasUv) {
+      appendLog("[!] uv not found — showing install help");
+      showPrereqHelp(
+        "uv not found",
+        "uv is required for uv installs. Click Download to install it via PowerShell, or select venv/conda above.",
+        "https://docs.astral.sh/uv/#installation",
+        "uv",
+      );
+      return;
+    }
+  }
+  if (selectedEnvType === "conda") {
+    var hasConda = await hasCmd("conda");
+    if (!hasConda) {
+      appendLog("[!] Conda not found — showing install help");
+      showPrereqHelp(
+        "Conda not found",
+        "Miniconda is required for conda installs. Click Download to install it silently, or select venv/uv above.",
+        "https://docs.anaconda.com/miniconda/",
+        "conda",
+      );
+      return;
+    }
   }
   // Fresh-repo: collect the backup choice FIRST (modal never launches —
   // the wipe starts solely from the big Install button). Stored, then the
   // user presses Install again for the final are-you-sure + launch.
   // Applies to the no-env checklist AND the healthy-state trio.
-  const pickedRadio = function(name) { return (document.querySelector('input[name="' + name + '"]:checked') || {}).value || null }
-  const freshPicked = (_targetChoiceMode === 'repair-or-fresh' && pickedRadio('targetChoice') === 'fresh') ||
-    (_targetChoiceMode === 'reinstall-trio' && pickedRadio('reinstallChoice') === 'fresh')
+  const pickedRadio = (name) =>
+    (document.querySelector('input[name="' + name + '"]:checked') || {})
+      .value || null;
+  const liveFreshPick = () =>
+    _targetChoiceMode === "repair-or-fresh"
+      ? pickedRadio("targetChoice")
+      : _targetChoiceMode === "reinstall-trio"
+        ? pickedRadio("reinstallChoice")
+        : null;
+  const collectFreshBackup = async () => {
+    const choice = await showReinstallBackupModal().catch(() => null);
+    if (!choice) return false;
+    _freshBackupChoice = choice;
+    _freshBackupPick = { mode: _targetChoiceMode, value: liveFreshPick() };
+    showToast("Backup choice saved — press Install to start");
+    return true;
+  };
+  const freshPicked =
+    (_targetChoiceMode === "repair-or-fresh" &&
+      pickedRadio("targetChoice") === "fresh") ||
+    (_targetChoiceMode === "reinstall-trio" &&
+      pickedRadio("reinstallChoice") === "fresh");
   if (freshPicked && !_freshBackupChoice) {
-    const choice = await showReinstallBackupModal().catch(() => null)
-    if (!choice) return
-    _freshBackupChoice = choice
-    showToast('Backup choice saved — press Install to start')
-    return
+    await collectFreshBackup();
+    return;
   }
   // Are-you-sure gate: the Install button sits below the checks, and
   // nothing starts without explicit confirmation (fresh-repo wipes code).
-  let choiceNote = ''
-  let wipeWarn = ''
-  if (_targetChoiceMode === 'repair-or-fresh') {
-    const checked = document.querySelector('input[name="targetChoice"]:checked')
-    const isFresh = (checked && checked.value) === 'fresh'
+  let choiceNote = "";
+  let wipeWarn = "";
+  if (_targetChoiceMode === "repair-or-fresh") {
+    const checked = document.querySelector(
+      'input[name="targetChoice"]:checked',
+    );
+    const isFresh = (checked && checked.value) === "fresh";
     choiceNote = isFresh
-      ? 'Fresh repo (wipe code, keep models)' + (_freshBackupChoice ? ((_freshBackupChoice.skip ? ' — no backup' : ' — with backup')) : '')
-      : 'Install / repair environment (keeps models & settings)'
-    if (isFresh && _freshBackupChoice && _freshBackupChoice.skip) wipeWarn = '\n⚠ WILL WIPE code, plugins, finetunes, settings and any models inside the folder.'
-  } else if (_targetChoiceMode === 'reinstall-trio') {
-    const v = pickedRadio('reinstallChoice')
-    choiceNote = (v === 'fresh'
-      ? 'Reinstall (fresh)' + (_freshBackupChoice ? ((_freshBackupChoice.skip ? ' — no backup' : ' — with backup')) : '')
-      : v === 'skip' ? 'Use existing (health-check)' : 'Update & keep files')
-    if (v === 'fresh' && _freshBackupChoice && _freshBackupChoice.skip) wipeWarn = '\n⚠ WILL WIPE code, plugins, finetunes, settings and any models inside the folder.'
+      ? "Fresh repo (wipe code, keep models)" +
+        (_freshBackupChoice
+          ? _freshBackupChoice.skip
+            ? " — no backup"
+            : " — with backup"
+          : "")
+      : "Install / repair environment (keeps models & settings)";
+    if (isFresh && _freshBackupChoice && _freshBackupChoice.skip)
+      wipeWarn =
+        "\n⚠ WILL WIPE code, plugins, finetunes, settings and any models inside the folder.";
+  } else if (_targetChoiceMode === "reinstall-trio") {
+    const v = pickedRadio("reinstallChoice");
+    choiceNote =
+      v === "fresh"
+        ? "Reinstall (fresh)" +
+          (_freshBackupChoice
+            ? _freshBackupChoice.skip
+              ? " — no backup"
+              : " — with backup"
+            : "")
+        : v === "skip"
+          ? "Use existing (health-check)"
+          : "Update & keep files";
+    if (v === "fresh" && _freshBackupChoice && _freshBackupChoice.skip)
+      wipeWarn =
+        "\n⚠ WILL WIPE code, plugins, finetunes, settings and any models inside the folder.";
   }
-  let locNote = ''
+  let locNote = "";
   try {
-    const paths = await window.w2gp.getInstallPaths().catch(() => null)
-    if (paths && (paths.repo || paths.dataDir)) locNote = '\nLocation: ' + (paths.repo || paths.dataDir)
+    const paths = await window.w2gp.getInstallPaths().catch(() => null);
+    if (paths && (paths.repo || paths.dataDir))
+      locNote = "\nLocation: " + (paths.repo || paths.dataDir);
   } catch {}
-  if (!window.confirm('Start the Wan2GP install now?' + (choiceNote ? '\nChoice: ' + choiceNote : '') + '\nEnvironment: ' + selectedEnvType + locNote + wipeWarn + '\n\nThis downloads several GB and takes 5–20 minutes.')) return
+  if (
+    !window.confirm(
+      "Start the Wan2GP install now?" +
+        (choiceNote ? "\nChoice: " + choiceNote : "") +
+        "\nEnvironment: " +
+        selectedEnvType +
+        locNote +
+        wipeWarn +
+        "\n\nThis downloads several GB and takes 5–20 minutes.",
+    )
+  )
+    return;
+  // Windows long paths gate (issue #15): enabling only takes effect
+  // after a reboot, so offer it BEFORE any download — and stop here
+  // when enabled, telling the user to reboot and re-run Install.
+  // Covers every pipeline (AMD/Intel/NVIDIA share this entry point).
+  try {
+    const lp = await window.w2gp.tsLongPathsStatus().catch(() => null);
+    if (lp && !lp.enabled) {
+      const lpChoice = await window.w2gp.confirmDialog({
+        title: "Enable Windows long paths?",
+        message:
+          "Long paths are OFF - deep ML package trees can fail mid-install past 260 chars. Enable now (needs admin approval)? You must reboot BEFORE installing for it to take effect.",
+      });
+      if (lpChoice === "ok" || lpChoice === 0) {
+        try {
+          const lr = await window.w2gp.tsLongPathsEnable();
+          if (lr && (lr.ok || lr.already)) {
+            appendLog(
+              "[*] Long paths enabled - reboot Windows now, then run Install again.",
+            );
+            showToast("Long paths enabled - reboot, then Install again");
+          } else {
+            appendLog(
+              "[!] Long paths enable failed: " +
+                ((lr && lr.error) || "unknown") +
+                " - see Manage → Troubleshooting.",
+            );
+          }
+        } catch (e) {
+          appendLog("[!] Long paths enable failed: " + errText(e));
+        }
+        return;
+      }
+      appendLog(
+        "[!] Continuing without Windows long paths - mid-install failures past 260 chars are possible.",
+      );
+    }
+  } catch {}
   // Checklist + trio dispatch: the big Install button is the ONLY launcher.
   // Fresh wipes consume the stashed backup choice (collected earlier) — the
   // wipe warning already lives in the single CONFIRM above, so dispatch
   // launches directly with no second dialog.
-  const launchFresh = function() {
-    const stored = _freshBackupChoice
-    _freshBackupChoice = null
-    resetTasks()
-    if (stored && stored.skip) { doInstall(null, 'reinstall', { backup: false }); return }
-    doInstall(null, 'reinstall', stored); return
+  const launchFresh = async () => {
+    const live = liveFreshPick();
+    const match =
+      _freshBackupChoice &&
+      _freshBackupPick &&
+      _freshBackupPick.mode === _targetChoiceMode &&
+      _freshBackupPick.value === live;
+    if (!match) {
+      // Live pick moved on (or no stash survived triage) — re-collect the
+      // backup choice instead of launching stale, then wait for Press 2.
+      _freshBackupChoice = null;
+      _freshBackupPick = { mode: _targetChoiceMode, value: live };
+      const choice = await showReinstallBackupModal().catch(() => null);
+      if (!choice) return;
+      _freshBackupChoice = choice;
+      _freshBackupPick = { mode: _targetChoiceMode, value: liveFreshPick() };
+      showToast("Backup choice saved — press Install to start");
+      return;
+    }
+    const stored = _freshBackupChoice;
+    _freshBackupChoice = null;
+    _freshBackupPick = null;
+    resetTasks();
+    if (stored && stored.skip) {
+      doInstall(null, "reinstall", { backup: false });
+      return;
+    }
+    doInstall(null, "reinstall", stored);
+    return;
+  };
+  if (_targetChoiceMode === "repair-or-fresh") {
+    const checked = document.querySelector(
+      'input[name="targetChoice"]:checked',
+    );
+    if ((checked && checked.value) === "fresh") {
+      await launchFresh();
+      return;
+    }
+    _freshBackupChoice = null;
+    _freshBackupPick = null;
+    resetTasks();
+    doInstall(null, "update");
+    return;
   }
-  if (_targetChoiceMode === 'repair-or-fresh') {
-    const checked = document.querySelector('input[name="targetChoice"]:checked')
-    if ((checked && checked.value) === 'fresh') { launchFresh(); return }
-    _freshBackupChoice = null
-    resetTasks(); doInstall(null, 'update'); return
+  if (_targetChoiceMode === "reinstall-trio") {
+    const v = pickedRadio("reinstallChoice");
+    if (v === "fresh") {
+      await launchFresh();
+      return;
+    }
+    _freshBackupChoice = null;
+    _freshBackupPick = null;
+    resetTasks();
+    doInstall(null, v === "skip" ? "skip" : "update");
+    return;
   }
-  if (_targetChoiceMode === 'reinstall-trio') {
-    const v = pickedRadio('reinstallChoice')
-    if (v === 'fresh') { launchFresh(); return }
-    _freshBackupChoice = null
-    resetTasks(); doInstall(null, v === 'skip' ? 'skip' : 'update'); return
-  }
-  show('installer'); resetTasks()
-  $('envTypeSelect').classList.add('disabled')
-  document.querySelectorAll('.env-type-btn').forEach(b => b.disabled = true)
-  $('installStartBtn').classList.add('hidden')
-  $('installSubtitle').textContent='Setting up Wan2GP...'
-  const installed = await window.w2gp.checkInstalled()
-  if(installed.repo) {
+  show("installer");
+  resetTasks();
+  $("envTypeSelect").classList.add("disabled");
+  document
+    .querySelectorAll(".env-type-btn")
+    .forEach((b) => (b.disabled = true));
+  $("installStartBtn").classList.add("hidden");
+  $("installSubtitle").textContent = "Setting up Wan2GP...";
+  const installed = await window.w2gp.checkInstalled();
+  if (installed.repo) {
+    if (_lastVerdict === "foreign") {
+      // Foreign folder with no checklist/trio: ask once whether to merge
+      // upstream over the unknown files instead of bouncing to a re-render.
+      const foreignChoice = await window.w2gp
+        .confirmDialog({
+          title: "Install into this folder anyway?",
+          message:
+            "Unknown files live here - upstream Wan2GP merges over them (empty folder is safer). Proceed?",
+        })
+        .catch(() => null);
+      if (foreignChoice === "ok" || foreignChoice === 0) {
+        doInstall(installed);
+        return;
+      }
+      showToast("Cancelled - pick an empty folder with Browse to install");
+      return;
+    }
     // The verdict card owns the choices (healthy → Keep/Update/Skip trio,
     // broken → adopt/repair, pinokio → models reuse) so stale buttons can
     // never offer Keep/Skip for a folder that holds no install.
-    await refreshTargetVerdict().catch(() => null)
-    return
+    await refreshTargetVerdict().catch(() => null);
+    return;
   }
-  doInstall(installed)
+  doInstall(installed);
 }
 
 // Reinstall backup dialog: folder size + breakdown, backup checkbox,
@@ -1536,211 +2433,336 @@ async function startInstall(){
 // {skip:true} | null (cancel). Model destinations must be OUTSIDE the wiped folder.
 function showReinstallBackupModal() {
   return new Promise(async (resolve) => {
-    const modal = $('backupModal')
-    if (!modal) { resolve({ backup: true, moveModels: [] }); return }
-    const done = (v) => { modal.classList.add('hidden'); resolve(v) }
-    $('backupCloseBtn').onclick = () => done(null)
-    $('backupCancelBtn').onclick = () => done(null)
-    $('backupSkipBtn').onclick = () => done({ skip: true })
-    const sumEl = $('backupSizeSummary'), bdEl = $('backupBreakdown')
-    const secEl = $('backupModelsSection'), rowsEl = $('backupModelsRows')
-    sumEl.textContent = 'calculating…'; bdEl.innerHTML = ''
-    secEl.style.display = 'none'; rowsEl.innerHTML = ''
-    $('backupIncludeCheckbox').checked = true
-    modal.classList.remove('hidden')
+    const modal = $("backupModal");
+    if (!modal) {
+      resolve({ backup: true, moveModels: [] });
+      return;
+    }
+    const done = (v) => {
+      modal.classList.add("hidden");
+      resolve(v);
+    };
+    $("backupCloseBtn").onclick = () => done(null);
+    $("backupCancelBtn").onclick = () => done(null);
+    $("backupSkipBtn").onclick = () => done({ skip: true });
+    const sumEl = $("backupSizeSummary"),
+      bdEl = $("backupBreakdown");
+    const secEl = $("backupModelsSection"),
+      rowsEl = $("backupModelsRows");
+    sumEl.textContent = "calculating…";
+    bdEl.innerHTML = "";
+    secEl.style.display = "none";
+    rowsEl.innerHTML = "";
+    $("backupIncludeCheckbox").checked = true;
+    modal.classList.remove("hidden");
     // Gather: repo path, size breakdown, model locations.
-    const paths = await window.w2gp.getInstallPaths().catch(() => null)
-    const repo = (paths && paths.repo) || ''
-    let size = null
-    try { size = await window.w2gp.folderSize(repo) } catch (e) { size = { error: e.message } }
+    const paths = await window.w2gp.getInstallPaths().catch(() => null);
+    const repo = (paths && paths.repo) || "";
+    let size = null;
+    try {
+      size = await window.w2gp.folderSize(repo);
+    } catch (e) {
+      size = { error: e.message };
+    }
     if (!size || size.error) {
-      sumEl.textContent = 'size unavailable (' + ((size && size.error) || 'unknown') + ')'
+      sumEl.textContent =
+        "size unavailable (" + ((size && size.error) || "unknown") + ")";
     } else {
-      sumEl.textContent = fmtBytes(size.bytes) + ' total'
-      bdEl.innerHTML = (size.entries || []).slice(0, 8).map(function(e) {
-        return '<div class="istack-row"><span class="istack-k">' + escHtml(e.name) + '</span><span class="istack-v">' + escHtml(fmtBytes(e.bytes)) + '</span></div>'
-      }).join('')
+      sumEl.textContent = fmtBytes(size.bytes) + " total";
+      bdEl.innerHTML = (size.entries || [])
+        .slice(0, 8)
+        .map(
+          (e) =>
+            '<div class="istack-row"><span class="istack-k">' +
+            escHtml(e.name) +
+            '</span><span class="istack-v">' +
+            escHtml(fmtBytes(e.bytes)) +
+            "</span></div>",
+        )
+        .join("");
     }
-    const entryBytes = {}
-    for (const e of ((size && size.entries) || [])) entryBytes[e.name.toLowerCase()] = e.bytes
+    const entryBytes = {};
+    for (const e of (size && size.entries) || [])
+      entryBytes[e.name.toLowerCase()] = e.bytes;
     // Which model folders live INSIDE the wiped repo?
-    const mp = await window.w2gp.getModelPaths().catch(() => null)
-    const norm = (p) => (p || '').replace(/\//g, '\\')
-    const abs = (p) => (/^[A-Za-z]:\\/.test(p || '') || /\\\\/.test(p || '')) ? norm(p) : norm(repo + '\\' + (p || ''))
-    const inside = (p) => { const a = abs(p).toLowerCase(); return a.startsWith(repo.toLowerCase().replace(/\\+$/, '') + '\\') }
-    const found = []
-    const repoNorm = repo.toLowerCase().replace(/\\+$/, '')
+    const mp = await window.w2gp.getModelPaths().catch(() => null);
+    const norm = (p) => (p || "").replace(/\//g, "\\");
+    const abs = (p) =>
+      /^[A-Za-z]:\\/.test(p || "") || /\\\\/.test(p || "")
+        ? norm(p)
+        : norm(repo + "\\" + (p || ""));
+    const inside = (p) => {
+      const a = abs(p).toLowerCase();
+      return a.startsWith(repo.toLowerCase().replace(/\\+$/, "") + "\\");
+    };
+    const found = [];
+    const repoNorm = repo.toLowerCase().replace(/\\+$/, "");
     const push = (type, label, from, trusted) => {
-      if (!from) return
-      const a = abs(from)
-      if (a.toLowerCase() === repoNorm) return // '.' == the repo itself — never offer to move it
-      if (!inside(from) || found.some((f) => f.from.toLowerCase() === a.toLowerCase())) return
-      found.push({ type, label, from: a, trusted: !!trusted })
-    }
+      if (!from) return;
+      const a = abs(from);
+      if (a.toLowerCase() === repoNorm) return; // '.' == the repo itself — never offer to move it
+      if (
+        !inside(from) ||
+        found.some((f) => f.from.toLowerCase() === a.toLowerCase())
+      )
+        return;
+      found.push({ type, label, from: a, trusted: !!trusted });
+    };
     if (mp) {
-      push('ckpts', 'Checkpoints', mp.checkpoints, true)
-      push('loras', 'LoRAs', mp.loras, true)
-      push('output', 'Output', mp.output, true)
+      push("ckpts", "Checkpoints", mp.checkpoints, true);
+      push("loras", "LoRAs", mp.loras, true);
+      push("output", "Output", mp.output, true);
     }
     // Default subdirs count too (ckpts/, loras/, outputs/ under the repo).
-    for (const [sub, type, label] of [['ckpts', 'ckpts', 'Checkpoints'], ['loras', 'loras', 'LoRAs'], ['outputs', 'output', 'Output'], ['output', 'output', 'Output']]) {
-      push(type, label, repo + '\\' + sub, false)
+    for (const [sub, type, label] of [
+      ["ckpts", "ckpts", "Checkpoints"],
+      ["loras", "loras", "LoRAs"],
+      ["outputs", "output", "Output"],
+      ["output", "output", "Output"],
+    ]) {
+      push(type, label, repo + "\\" + sub, false);
     }
     // Untrusted (default-subdir) rows need a size entry proving they exist;
     // config-listed rows are trusted as-is.
-    const rows = found.filter(function(f) {
-      if (f.trusted) return true
-      const base = f.from.split('\\').pop().toLowerCase()
-      return Object.prototype.hasOwnProperty.call(entryBytes, base)
-    })
-    const dsts = {}
-    $('backupGoBtn').onclick = function() {
-      const moveModels = []
-      rows.forEach(function(r, i) { if (dsts[i]) moveModels.push({ type: r.type, from: r.from, to: dsts[i] }) })
-      done({ backup: $('backupIncludeCheckbox').checked, moveModels })
-    }
-    if (!rows.length) return
-    secEl.style.display = ''
-    rowsEl.innerHTML = ''
-    rows.forEach(function(r, i) {
-      const base = r.from.split('\\').pop().toLowerCase()
-      const div = document.createElement('div')
-      div.className = 'migrate-row'
-      div.innerHTML = '<label>' + escHtml(r.label + ' (' + fmtBytes(entryBytes[base]) + ')') + '</label>' +
-        '<div class="migrate-path"><input type="text" id="backupDst' + i + '" readonly placeholder="stays — will be deleted">' +
-        '<button class="btn btn-ghost small" id="backupBrowse' + i + '">Move to…</button></div>' +
-        '<div class="istack-hint">' + escHtml(r.from) + '</div>'
-      rowsEl.appendChild(div)
-      $('backupBrowse' + i).onclick = async function() {
-        const dir = await window.w2gp.selectFolder().catch(() => null)
-        if (!dir) return
-        if (isDriveRoot(dir)) { alert('Pick a folder, not a drive root.'); return }
-        if (dir.toLowerCase().startsWith(repo.toLowerCase().replace(/\\+$/, '') + '\\')) { alert('Destination must be OUTSIDE the wiped folder — it would be deleted too.'); return }
-        dsts[i] = dir
-        $('backupDst' + i).value = dir
-        $('backupDst' + i).title = dir
-      }
-    })
-  })
+    const rows = found.filter((f) => {
+      if (f.trusted) return true;
+      const base = f.from.split("\\").pop().toLowerCase();
+      return Object.hasOwn(entryBytes, base);
+    });
+    const dsts = {};
+    $("backupGoBtn").onclick = () => {
+      const moveModels = [];
+      rows.forEach((r, i) => {
+        if (dsts[i])
+          moveModels.push({ type: r.type, from: r.from, to: dsts[i] });
+      });
+      done({ backup: $("backupIncludeCheckbox").checked, moveModels });
+    };
+    if (!rows.length) return;
+    secEl.style.display = "";
+    rowsEl.innerHTML = "";
+    rows.forEach((r, i) => {
+      const base = r.from.split("\\").pop().toLowerCase();
+      const div = document.createElement("div");
+      div.className = "migrate-row";
+      div.innerHTML =
+        "<label>" +
+        escHtml(r.label + " (" + fmtBytes(entryBytes[base]) + ")") +
+        "</label>" +
+        '<div class="migrate-path"><input type="text" id="backupDst' +
+        i +
+        '" readonly placeholder="stays — will be deleted">' +
+        '<button class="btn btn-ghost small" id="backupBrowse' +
+        i +
+        '">Move to…</button></div>' +
+        '<div class="istack-hint">' +
+        escHtml(r.from) +
+        "</div>";
+      rowsEl.appendChild(div);
+      $("backupBrowse" + i).onclick = async () => {
+        const dir = await window.w2gp.selectFolder().catch(() => null);
+        if (!dir) return;
+        if (isDriveRoot(dir)) {
+          alert("Pick a folder, not a drive root.");
+          return;
+        }
+        if (
+          dir
+            .toLowerCase()
+            .startsWith(repo.toLowerCase().replace(/\\+$/, "") + "\\")
+        ) {
+          alert(
+            "Destination must be OUTSIDE the wiped folder — it would be deleted too.",
+          );
+          return;
+        }
+        dsts[i] = dir;
+        $("backupDst" + i).value = dir;
+        $("backupDst" + i).title = dir;
+      };
+    });
+  });
 }
 
 async function doInstall(installed, mode, opts) {
-  $('reinstallChoice').classList.add('hidden')
+  $("reinstallChoice").classList.add("hidden");
   // Checklist verdict consumed — hide it so it can't be re-dispatched mid-install.
-  _targetChoiceMode = null
-  _installRunning = true
-  if ($('targetChoiceList')) $('targetChoiceList').style.display = 'none'
-  installProgressReset()
-  if (mode === 'skip') {
+  _targetChoiceMode = null;
+  _verdictModeShown = null;
+  _installRunning = true;
+  if ($("targetChoiceList")) $("targetChoiceList").style.display = "none";
+  installProgressReset();
+  if (mode === "skip") {
     // Reuse must earn it: a stale envs.json or half-deleted venv used to sail
     // through to a broken dashboard. Validate first, offer repair on failure.
-    appendLog('[*] Checking existing install health before reuse…')
-    let v = null
-    try { v = await window.w2gp.validateInstall() } catch (e) { v = { ok: false, errors: [e.message || String(e)] } }
-    if (v && v.ok) {
-      appendLog('[*] Existing install healthy — reusing.')
-      _installRunning = false
-      show('dashboard'); refreshDashboard()
-      return
+    appendLog("[*] Checking existing install health before reuse…");
+    let v = null;
+    try {
+      v = await window.w2gp.validateInstall();
+    } catch (e) {
+      v = { ok: false, errors: [e.message || String(e)] };
     }
-    appendLog('[!] Existing install failed checks: ' + ((v && v.errors && v.errors.join('; ')) || 'unknown'))
-    $('installSubtitle').textContent = 'Existing install needs repair — see issues above'
-    _installRunning = false
-    try { await refreshTargetVerdict() } catch {}
-    showToast('✗ Existing install failed health checks — repair instead of reusing')
-    return
+    if (v && v.ok) {
+      appendLog("[*] Existing install healthy — reusing.");
+      _installRunning = false;
+      show("dashboard");
+      refreshDashboard();
+      return;
+    }
+    appendLog(
+      "[!] Existing install failed checks: " +
+        ((v && v.errors && v.errors.join("; ")) || "unknown"),
+    );
+    $("installSubtitle").textContent =
+      "Existing install needs repair — see issues above";
+    _installRunning = false;
+    try {
+      await refreshTargetVerdict();
+    } catch {}
+    showToast(
+      "✗ Existing install failed health checks — repair instead of reusing",
+    );
+    return;
   }
-  let skipClone = false
-  if (mode === 'reinstall') {
-    $('installSubtitle').textContent='Removing existing installation...'
-    appendLog('[*] Removing existing Wan2GP installation...')
-    const ok = await window.w2gp.reinstall(opts || null)
+  let skipClone = false;
+  if (mode === "reinstall") {
+    $("installSubtitle").textContent = "Removing existing installation...";
+    appendLog("[*] Removing existing Wan2GP installation...");
+    const ok = await window.w2gp.reinstall(opts || null);
     if (ok && ok.movedModels && ok.movedModels.length) {
-      appendLog('[*] Models relocated: ' + ok.movedModels.join('; '))
+      appendLog("[*] Models relocated: " + ok.movedModels.join("; "));
       // Adopt the new locations so wgp_config.json points at them post-install.
       for (const m of (opts && opts.moveModels) || []) {
-        if (m.type === 'ckpts') _modelCkpts = m.to
-        else if (m.type === 'loras') _modelLoras = m.to
-        else if (m.type === 'output') _modelOutput = m.to
+        if (m.type === "ckpts") _modelCkpts = m.to;
+        else if (m.type === "loras") _modelLoras = m.to;
+        else if (m.type === "output") _modelOutput = m.to;
       }
-    }    if (!ok) {
-      appendLog('[!] Reinstall aborted — the existing installation could not be removed (files likely locked by a running process or a terminal open in the folder).')
-      appendLog('[!] Close any terminal/Explorer window open in the Wan2GP folder, then retry.')
-      showToast('✗ Could not remove existing installation')
-      $('installSubtitle').textContent='Setup Wan2GP'
-      $('envTypeSelect').classList.remove('disabled')
-      document.querySelectorAll('.env-type-btn').forEach(b => b.disabled = false)
-      $('installStartBtn').classList.remove('hidden')
-      _installRunning = false
-      return
     }
-  } else if (mode === 'update') {
-    $('installSubtitle').textContent='Update instead of fresh install...'
-    skipClone = true
+    if (!ok) {
+      appendLog(
+        "[!] Reinstall aborted — the existing installation could not be removed (files likely locked by a running process or a terminal open in the folder).",
+      );
+      appendLog(
+        "[!] Close any terminal/Explorer window open in the Wan2GP folder, then retry.",
+      );
+      showToast("✗ Could not remove existing installation");
+      $("installSubtitle").textContent = "Setup Wan2GP";
+      $("envTypeSelect").classList.remove("disabled");
+      document
+        .querySelectorAll(".env-type-btn")
+        .forEach((b) => (b.disabled = false));
+      $("installStartBtn").classList.remove("hidden");
+      _installRunning = false;
+      return;
+    }
+  } else if (mode === "update") {
+    $("installSubtitle").textContent = "Update instead of fresh install...";
+    skipClone = true;
   } else {
     // Fresh install (startInstall passes no mode): clone the repo normally —
     // previously this branch treated fresh installs as updates, showing
     // "Update instead of fresh install..." and marking the clone task done
     // before it had even run.
-    skipClone = false
+    skipClone = false;
   }
-  if(!skipClone) { taskStart('clone'); prevPhaseId = 'clone'; appendLog('[*] Cloning Wan2GP repository...') } else { taskComplete('clone'); prevPhaseId = 'clone' }
+  if (skipClone) {
+    taskComplete("clone");
+    prevPhaseId = "clone";
+  } else {
+    taskStart("clone");
+    prevPhaseId = "clone";
+    appendLog("[*] Cloning Wan2GP repository...");
+  }
   try {
-    appendLog('[*] Installing Wan2GP (environment: ' + selectedEnvType + ')...')
-    await window.w2gp.install(selectedEnvType)
+    appendLog(
+      "[*] Installing Wan2GP (environment: " + selectedEnvType + ")...",
+    );
+    await window.w2gp.install(selectedEnvType);
     try {
-      const gpu = await window.w2gp.detectGpu(); const hw = await window.w2gp.detectHardware()
-      const name=(gpu.name||hw.gpu||'').toUpperCase(); const vendor=gpu.vendor||''
-      let profile='STANDARD'
-      if(vendor==='APPLE') profile='MPS'
-      else if(name.match(/RTX 50|50\d0/)) profile='RTX 50'
-      else if(name.match(/RTX 40|40\d0/)) profile='RTX 40'
-      else if(name.match(/RTX 30|30\d0/)) profile='RTX 30'
-      else if(name.match(/RTX 20|20\d0/)) profile='RTX 20'
-      else if(name.includes('GTX')||name.includes('10')) profile='GTX 10'
-      else if(vendor==='AMD') profile='AMD'
-      $('installProfile').textContent=profile; $('installProfileRow').style.display='flex'
+      const gpu = await window.w2gp.detectGpu();
+      const hw = await window.w2gp.detectHardware();
+      const name = (gpu.name || hw.gpu || "").toUpperCase();
+      const vendor = gpu.vendor || "";
+      let profile = "STANDARD";
+      if (vendor === "APPLE") profile = "MPS";
+      else if (name.match(/RTX 50|50\d0/)) profile = "RTX 50";
+      else if (name.match(/RTX 40|40\d0/)) profile = "RTX 40";
+      else if (name.match(/RTX 30|30\d0/)) profile = "RTX 30";
+      else if (name.match(/RTX 20|20\d0/)) profile = "RTX 20";
+      else if (name.includes("GTX") || name.includes("10")) profile = "GTX 10";
+      else if (vendor === "AMD") profile = "AMD";
+      $("installProfile").textContent = profile;
+      $("installProfileRow").style.display = "flex";
     } catch {}
     try {
       // Fresh reinstall wiped the repo — merge the .reinstall-backup back first
       // (custom plugins/finetunes/old settings), then apply model paths on top.
-      if (mode === 'reinstall') {
+      if (mode === "reinstall") {
         try {
-          const rb = await window.w2gp.restoreBackup()
-          if (rb && rb.restored && rb.restored.length) appendLog('[*] Restored from backup: ' + rb.restored.join(', '))
-        } catch (e) { appendLog('[!] Backup restore failed: ' + e.message + ' — files remain in .reinstall-backup') }
+          const rb = await window.w2gp.restoreBackup();
+          if (rb && rb.restored && rb.restored.length)
+            appendLog("[*] Restored from backup: " + rb.restored.join(", "));
+        } catch (e) {
+          appendLog(
+            "[!] Backup restore failed: " +
+              e.message +
+              " — files remain in .reinstall-backup",
+          );
+        }
       }
-      const modelCfg = {}
-      if (_modelCkpts) modelCfg.checkpointsPaths = [_modelCkpts, '.']
-      if (_modelLoras) modelCfg.lorasRoot = _modelLoras
-      if (_modelOutput) modelCfg.savePath = _modelOutput
-      await window.w2gp.writeWgpConfig(modelCfg)
-      appendLog(`[*] wgp_config.json updated: ckpts=${_modelCkpts || '(default)'}, loras=${_modelLoras || '(default)'}`)
+      const modelCfg = {};
+      if (_modelCkpts) modelCfg.checkpointsPaths = [_modelCkpts, "."];
+      if (_modelLoras) modelCfg.lorasRoot = _modelLoras;
+      if (_modelOutput) modelCfg.savePath = _modelOutput;
+      await window.w2gp.writeWgpConfig(modelCfg);
+      appendLog(
+        `[*] wgp_config.json updated: ckpts=${_modelCkpts || "(default)"}, loras=${_modelLoras || "(default)"}`,
+      );
     } catch (e) {
-      appendLog(`[!] Failed to write model config: ${errText(e)}`)
+      appendLog(`[!] Failed to write model config: ${errText(e)}`);
     }
-    taskComplete('done'); $('installSubtitle').textContent='Wan2GP is ready!'; appendLog('[*] Installation complete!')
-    _installRunning = false
-    const vb = $('validateInstallBtn')
-    if (vb) { vb.style.display = ''; vb.disabled = false; vb.textContent = 'Validate installation' }
-    setTimeout(()=>{ show('dashboard'); refreshDashboard(); startMetricsPolling() }, 1200)
-  } catch(e){
+    taskComplete("done");
+    $("installSubtitle").textContent = "Wan2GP is ready!";
+    appendLog("[*] Installation complete!");
+    _installRunning = false;
+    const vb = $("validateInstallBtn");
+    if (vb) {
+      vb.style.display = "";
+      vb.disabled = false;
+      vb.textContent = "Validate installation";
+    }
+    setTimeout(() => {
+      show("dashboard");
+      refreshDashboard();
+      startMetricsPolling();
+    }, 1200);
+  } catch (e) {
     // Honest failure: fail any still-running task, offer Retry + diagnostics.
     // (Previously only 'done' was marked and the Install button stayed hidden.)
-    taskComplete('done',true)
-    document.querySelectorAll('.task.active').forEach(function(t) {
-      t.className = 'task fail'
-      const ic = t.querySelector('.task-icon'); if (ic) ic.textContent = '✕'
-      const st = t.querySelector('.task-status'); if (st) st.textContent = 'failed'
-    })
-    $('installSubtitle').textContent = 'Installation failed — see console output above'
-    appendLog(`[ERROR] ${(e && e.message) || e}`)
-    const sb = $('installStartBtn')
-    if (sb) { sb.classList.remove('hidden'); sb.disabled = false; sb.textContent = 'Retry install' }
-    const cdb = $('copyDiagnosticsBtn')
-    if (cdb) { cdb.style.display = ''; cdb.onclick = copyDiagnostics }
-    _installRunning = false
-    showToast('✗ Install failed — fix the issue above, then Retry')
+    taskComplete("done", true);
+    document.querySelectorAll(".task.active").forEach((t) => {
+      t.className = "task fail";
+      const ic = t.querySelector(".task-icon");
+      if (ic) ic.textContent = "✕";
+      const st = t.querySelector(".task-status");
+      if (st) st.textContent = "failed";
+    });
+    $("installSubtitle").textContent =
+      "Installation failed — see console output above";
+    appendLog(`[ERROR] ${(e && e.message) || e}`);
+    const sb = $("installStartBtn");
+    if (sb) {
+      sb.classList.remove("hidden");
+      sb.disabled = false;
+      sb.textContent = "Retry install";
+    }
+    const cdb = $("copyDiagnosticsBtn");
+    if (cdb) {
+      cdb.style.display = "";
+      cdb.onclick = copyDiagnostics;
+    }
+    _installRunning = false;
+    showToast("✗ Install failed — fix the issue above, then Retry");
   }
 }
 
@@ -1748,406 +2770,679 @@ async function doInstall(installed, mode, opts) {
 // (or the same one) — the app-drive check in the install stack doesn't cover
 // them, and a model library eats tens–hundreds of GB. Warn <50 GB, block <10.
 function driveRootOf(p) {
-  const m = /^([A-Za-z]:\\)/.exec(p || '')
-  return m ? m[1].toUpperCase() : (p || '')
+  const m = /^([A-Za-z]:\\)/.exec(p || "");
+  return m ? m[1].toUpperCase() : p || "";
 }
-let _gatesRun = 0
+let _gatesRun = 0;
 async function refreshModelDiskGates() {
-  const box = $('modelDiskGates')
-  if (!box) return
-  const my = ++_gatesRun // superseded runs abort before painting
-  const targets = [['Checkpoints', _modelCkpts], ['LoRAs', _modelLoras], ['Output', _modelOutput]]
-    .filter(function(t) { return t[1] && !isDriveRoot(t[1]) })
-  if (!targets.length) { if (my === _gatesRun) { box.innerHTML = ''; window._modelDriveBlocked = false } return }
-  const seen = new Set()
-  let html = '', blocked = false
+  const box = $("modelDiskGates");
+  if (!box) return;
+  const my = ++_gatesRun; // superseded runs abort before painting
+  const targets = [
+    ["Checkpoints", _modelCkpts],
+    ["LoRAs", _modelLoras],
+    ["Output", _modelOutput],
+  ].filter((t) => t[1] && !isDriveRoot(t[1]));
+  if (!targets.length) {
+    if (my === _gatesRun) {
+      box.innerHTML = "";
+      window._modelDriveBlocked = false;
+    }
+    return;
+  }
+  const seen = new Set();
+  let html = "",
+    blocked = false;
   for (const [label, p] of targets) {
-    const root = driveRootOf(p)
-    if (seen.has(root)) continue
-    seen.add(root)
-    let d = null
-    try { d = await window.w2gp.getDiskSpace(p) } catch { continue }
-    if (my !== _gatesRun) return
-    if (!d || d.free == null || d.total == null) continue
-    const gb = d.free / 1073741824
+    const root = driveRootOf(p);
+    if (seen.has(root)) continue;
+    seen.add(root);
+    let d = null;
+    try {
+      d = await window.w2gp.getDiskSpace(p);
+    } catch {
+      continue;
+    }
+    if (my !== _gatesRun) return;
+    if (!d || d.free == null || d.total == null) continue;
+    const gb = d.free / 1073741824;
     if (gb < 10) {
-      blocked = true
-      html += '<div class="istack-w">⛔ ' + escHtml(label + ' drive ' + root + ' has only ' + gb.toFixed(1) + ' GB free — a model library needs tens of GB. Pick a roomier drive.') + '</div>'
+      blocked = true;
+      html +=
+        '<div class="istack-w">⛔ ' +
+        escHtml(
+          label +
+            " drive " +
+            root +
+            " has only " +
+            gb.toFixed(1) +
+            " GB free — a model library needs tens of GB. Pick a roomier drive.",
+        ) +
+        "</div>";
     } else if (gb < 50) {
-      html += '<div class="istack-hint">⚠ ' + escHtml(label + ' drive ' + root + ': ' + gb.toFixed(1) + ' GB free — tight for a model library.') + '</div>'
+      html +=
+        '<div class="istack-hint">⚠ ' +
+        escHtml(
+          label +
+            " drive " +
+            root +
+            ": " +
+            gb.toFixed(1) +
+            " GB free — tight for a model library.",
+        ) +
+        "</div>";
     }
   }
-  if (my !== _gatesRun) return
-  box.innerHTML = html
-  window._modelDriveBlocked = blocked
-  const startBtn = $('installStartBtn')
+  if (my !== _gatesRun) return;
+  box.innerHTML = html;
+  window._modelDriveBlocked = blocked;
+  const startBtn = $("installStartBtn");
   if (blocked && startBtn) {
-    startBtn.disabled = true
-    startBtn.title = 'Free space on the model drive(s) before installing'
-    startBtn.textContent = 'Install blocked — model drive full'
+    startBtn.disabled = true;
+    startBtn.title = "Free space on the model drive(s) before installing";
+    startBtn.textContent = "Install blocked — model drive full";
   }
 }
 
 // Copy a diagnostics bundle (hardware + paths + python preflight + log tail)
 // for Discord/GitHub reports — ATFGriff-class issues arrive without this.
 async function copyDiagnostics() {
-  let info = ''
+  let info = "";
   try {
     const parts = await Promise.all([
       window.w2gp.detectHardware().catch(() => null),
       window.w2gp.getInstallPaths().catch(() => null),
       window.w2gp.pythonPreflight().catch(() => null),
-      window.w2gp.classifyTarget().catch(() => null)
-    ])
-    info = 'Hardware: ' + JSON.stringify(parts[0]) + '\nPaths: ' + JSON.stringify(parts[1]) +
-      '\nPython: ' + JSON.stringify(parts[2]) + '\nTarget: ' + JSON.stringify(parts[3]) + '\n\n'
+      window.w2gp.classifyTarget().catch(() => null),
+    ]);
+    info =
+      "Hardware: " +
+      JSON.stringify(parts[0]) +
+      "\nPaths: " +
+      JSON.stringify(parts[1]) +
+      "\nPython: " +
+      JSON.stringify(parts[2]) +
+      "\nTarget: " +
+      JSON.stringify(parts[3]) +
+      "\n\n";
   } catch {}
-  const tail = (typeof window._getLogTail === 'function') ? window._getLogTail() : ''
-  try { await navigator.clipboard.writeText(info + tail); showToast('✓ Diagnostics copied — paste it in Discord/GitHub') }
-  catch { showToast('✗ Copy failed — select the console text manually') }
+  const tail =
+    typeof window._getLogTail === "function" ? window._getLogTail() : "";
+  try {
+    await navigator.clipboard.writeText(info + tail);
+    showToast("✓ Diagnostics copied — paste it in Discord/GitHub");
+  } catch {
+    showToast("✗ Copy failed — select the console text manually");
+  }
 }
 
 // Target-folder triage UI: what is already in the install location?
 // Verdicts from classify_target: empty | ours_healthy | ours_broken_env |
 // repo_no_env | pinokio | foreign.
 async function refreshTargetVerdict() {
-  const box = $('targetVerdict'), body = $('targetVerdictBody')
-  const choiceList = $('targetChoiceList'), browse = $('targetBrowseBtn'), useModels = $('targetUseModelsBtn')
-  if (!box || !body) return
-  let t = null
-  try { t = await window.w2gp.classifyTarget() } catch { box.style.display = 'none'; return null }
-  if (!t || !t.verdict) { box.style.display = 'none'; return null }
-  const v = t.verdict
-  if (choiceList) choiceList.style.display = 'none'
-  if (browse) browse.style.display = 'none'
-  if (useModels) useModels.style.display = 'none'
-  _targetChoiceMode = null
-  const startBtn = $('installStartBtn')
-  if (v === 'empty') {
-    box.style.display = 'none'
+  const box = $("targetVerdict"),
+    body = $("targetVerdictBody");
+  const choiceList = $("targetChoiceList"),
+    browse = $("targetBrowseBtn"),
+    useModels = $("targetUseModelsBtn");
+  if (!box || !body) return;
+  let t = null;
+  try {
+    t = await window.w2gp.classifyTarget();
+  } catch {
+    _lastVerdict = null;
+    box.style.display = "none";
+    return null;
+  }
+  if (!t || !t.verdict) {
+    _lastVerdict = null;
+    box.style.display = "none";
+    return null;
+  }
+  const v = t.verdict;
+  _lastVerdict = v;
+  const newMode =
+    v === "ours_healthy"
+      ? "reinstall-trio"
+      : v === "repo_no_env" || v === "ours_broken_env"
+        ? "repair-or-fresh"
+        : null;
+  // Only force-check the default radio when the verdict MODE changed — a
+  // same-mode refresh (Browse re-triage) leaves the user's pick alone.
+  const verdictModeChanged = newMode !== _verdictModeShown;
+  _verdictModeShown = newMode;
+  if (choiceList) choiceList.style.display = "none";
+  if (browse) browse.style.display = "none";
+  if (useModels) useModels.style.display = "none";
+  _targetChoiceMode = null;
+  const startBtn = $("installStartBtn");
+  if (v === "empty") {
+    box.style.display = "none";
     // No install here → no Keep / reuse choices either.
-    $('reinstallChoice')?.classList.add('hidden')
+    $("reinstallChoice")?.classList.add("hidden");
     // Restore the label if a previous verdict changed it (pinokio/foreign only —
     // never touch driver/disk hard blocks, the installPlan block owns those).
-    if (startBtn && (startBtn.textContent.startsWith('Install anyway') || startBtn.textContent.startsWith('Install blocked — Pinokio'))) {
-      startBtn.textContent = 'Install'
-      startBtn.disabled = false
-      startBtn.title = ''
+    if (
+      startBtn &&
+      (startBtn.textContent.startsWith("Install anyway") ||
+        startBtn.textContent.startsWith("Install blocked — Pinokio"))
+    ) {
+      startBtn.textContent = "Install";
+      startBtn.disabled = false;
+      startBtn.title = "";
     }
-    return t
+    return t;
   }
-  box.style.display = ''
-  const envNames = (t.envs && Object.keys(t.envs).join(', ')) || ''
-  if (v === 'ours_healthy') {
-    body.innerHTML = '<div class="istack-ok">✓ ' + escHtml(t.hint || '') + '</div>'
+  box.style.display = "";
+  const envNames = (t.envs && Object.keys(t.envs).join(", ")) || "";
+  if (v === "ours_healthy") {
+    body.innerHTML =
+      '<div class="istack-ok">✓ ' + escHtml(t.hint || "") + "</div>";
     // Reuse path: the choice lives in the trio radios, the big Install
     // button dispatches it — same contract as the no-env checklist.
-    $('reinstallChoice')?.classList.remove('hidden')
-    const trio = document.querySelector('input[name="reinstallChoice"][value="update"]')
-    if (trio) trio.checked = true
-    _targetChoiceMode = 'reinstall-trio'
+    $("reinstallChoice")?.classList.remove("hidden");
+    const trio = document.querySelector(
+      'input[name="reinstallChoice"][value="update"]',
+    );
+    if (verdictModeChanged && trio) trio.checked = true;
+    _targetChoiceMode = "reinstall-trio";
     if (startBtn && !_installRunning) {
-      startBtn.classList.remove('hidden')
-      if (!startBtn.disabled) { startBtn.textContent = 'Install'; startBtn.title = '' }
+      startBtn.classList.remove("hidden");
+      if (!startBtn.disabled) {
+        startBtn.textContent = "Install";
+        startBtn.title = "";
+      }
     }
-    $('installSubtitle').textContent = 'Wan2GP is already installed.'
-  } else if (v === 'repo_no_env' || v === 'ours_broken_env') {
+    $("installSubtitle").textContent = "Wan2GP is already installed.";
+  } else if (v === "repo_no_env" || v === "ours_broken_env") {
     // Checklist mode: the choice lives in the radios, the big Install button
     // dispatches it (see startInstall) — no competing action buttons.
     // Adopt-cover note: the generic Keep/Update/Skip trio doesn't apply.
-    $('reinstallChoice')?.classList.add('hidden')
-    body.innerHTML = '<div class="istack-w">⚠ ' + escHtml(t.hint || '') + '</div>' +
-      (envNames ? '<div class="istack-hint">Env folders found: ' + escHtml(envNames) + ' — repair recreates the broken one, keeps models & settings.</div>' : '') +
-      '<div class="istack-hint">Tick your choice below, then press Install.</div>'
+    $("reinstallChoice")?.classList.add("hidden");
+    body.innerHTML =
+      '<div class="istack-w">⚠ ' +
+      escHtml(t.hint || "") +
+      "</div>" +
+      (envNames
+        ? '<div class="istack-hint">Env folders found: ' +
+          escHtml(envNames) +
+          " — repair recreates the broken one, keeps models & settings.</div>"
+        : "") +
+      '<div class="istack-hint">Tick your choice below, then press Install.</div>';
     if (choiceList) {
-      choiceList.style.display = ''
-      const repair = choiceList.querySelector('input[value="repair"]')
-      if (repair) repair.checked = true
+      choiceList.style.display = "";
+      const repair = choiceList.querySelector('input[value="repair"]');
+      if (verdictModeChanged && repair) repair.checked = true;
     }
-    _targetChoiceMode = 'repair-or-fresh'
+    _targetChoiceMode = "repair-or-fresh";
     // Re-arm the big button (the first Install pass hid it to show this card).
     // Never override a hard block owned elsewhere (disk gates, pinokio, roots),
     // and never resurrect it while an install is running.
     if (startBtn && !_installRunning) {
-      startBtn.classList.remove('hidden')
-      if (!startBtn.disabled) { startBtn.textContent = 'Install'; startBtn.title = '' }
+      startBtn.classList.remove("hidden");
+      if (!startBtn.disabled) {
+        startBtn.textContent = "Install";
+        startBtn.title = "";
+      }
     }
-    $('installSubtitle').textContent = 'Wan2GP repo found — environment missing or broken.'
-  } else { // pinokio | foreign
-    const isPinokio = (v === 'pinokio')
-    const icon = isPinokio ? '🧩' : '⚠'
-    let detail = 'Folder: ' + (t.repo || '') + ' (' + (t.entryCount || 0) + ' entries'
-    if (t.hasConfig) detail += ', has wgp_config.json'
-    if (t.modelDirs && t.modelDirs.length) detail += ', model dirs: ' + t.modelDirs.join(', ')
-    detail += ').'
+    $("installSubtitle").textContent =
+      "Wan2GP repo found — environment missing or broken.";
+  } else {
+    // pinokio | foreign
+    const isPinokio = v === "pinokio";
+    const icon = isPinokio ? "🧩" : "⚠";
+    let detail =
+      "Folder: " + (t.repo || "") + " (" + (t.entryCount || 0) + " entries";
+    if (t.hasConfig) detail += ", has wgp_config.json";
+    if (t.modelDirs && t.modelDirs.length)
+      detail += ", model dirs: " + t.modelDirs.join(", ");
+    detail += ").";
     // For Pinokio libraries, show what we found + sizes (proves reuse is worth it).
     if (isPinokio && t.modelDirs && t.modelDirs.length) {
       try {
-        const sz = await window.w2gp.folderSize(t.repo).catch(() => null)
-        const byName = {}
-        for (const e of ((sz && sz.entries) || [])) byName[e.name.toLowerCase()] = e.bytes
-        const lines = t.modelDirs.map(function(d) {
-          const b = byName[d.toLowerCase()]
-          return d + (b != null ? ' (' + fmtBytes(b) + ')' : '')
-        })
-        detail += ' Reusable library: ' + lines.join(', ') + '.'
+        const sz = await window.w2gp.folderSize(t.repo).catch(() => null);
+        const byName = {};
+        for (const e of (sz && sz.entries) || [])
+          byName[e.name.toLowerCase()] = e.bytes;
+        const lines = t.modelDirs.map((d) => {
+          const b = byName[d.toLowerCase()];
+          return d + (b == null ? "" : " (" + fmtBytes(b) + ")");
+        });
+        detail += " Reusable library: " + lines.join(", ") + ".";
       } catch {}
     }
-    body.innerHTML = '<div class="istack-w">' + icon + ' ' + escHtml(t.hint || '') + '</div>' +
-      '<div class="istack-hint">' + escHtml(detail) + (isPinokio ? '' : ' Installing here merges upstream over unknown files — an empty folder is safer.') + '</div>'
-    if (browse) { browse.style.display = ''; browse.onclick = function() { $('browseAppDataPath')?.click() } }
+    body.innerHTML =
+      '<div class="istack-w">' +
+      icon +
+      " " +
+      escHtml(t.hint || "") +
+      "</div>" +
+      '<div class="istack-hint">' +
+      escHtml(detail) +
+      (isPinokio
+        ? ""
+        : " Installing here merges upstream over unknown files — an empty folder is safer.") +
+      "</div>";
+    if (browse) {
+      browse.style.display = "";
+      browse.onclick = () => {
+        $("browseAppDataPath")?.click();
+      };
+    }
     // Foreign content → no Keep / reuse choices either.
-    $('reinstallChoice')?.classList.add('hidden')
+    $("reinstallChoice")?.classList.add("hidden");
     if (isPinokio) {
       // Hard stop: backend install/reinstall/uninstall refuse Pinokio trees too.
-      if (startBtn) { startBtn.disabled = true; startBtn.title = 'Pick an empty folder first — installing into a Pinokio tree would corrupt it.'; startBtn.textContent = 'Install blocked — Pinokio folder' }
-      $('reinstallChoice')?.classList.add('hidden')
-      if (useModels && t.modelDirs && t.modelDirs.length) {
-        useModels.style.display = ''
-        useModels.onclick = function() { usePinokioModels(t) }
+      if (startBtn) {
+        startBtn.disabled = true;
+        startBtn.title =
+          "Pick an empty folder first — installing into a Pinokio tree would corrupt it.";
+        startBtn.textContent = "Install blocked — Pinokio folder";
       }
-      $('installSubtitle').textContent = 'Pinokio-managed Wan2GP found — reuse its models in a fresh install below.'
+      $("reinstallChoice")?.classList.add("hidden");
+      if (useModels && t.modelDirs && t.modelDirs.length) {
+        useModels.style.display = "";
+        useModels.onclick = () => {
+          usePinokioModels(t);
+        };
+      }
+      $("installSubtitle").textContent =
+        "Pinokio-managed Wan2GP found — reuse its models in a fresh install below.";
     } else if (startBtn && !startBtn.disabled) {
-      startBtn.textContent = 'Install anyway (folder not empty)'
+      startBtn.textContent = "Install anyway (folder not empty)";
     }
-    if (v === 'foreign') $('installSubtitle').textContent = 'This folder holds unknown files — install into an empty folder, or wipe it first.'
+    if (v === "foreign")
+      $("installSubtitle").textContent =
+        "This folder holds unknown files — install into an empty folder, or wipe it first.";
   }
-  return t
+  return t;
 }
 
 // Pinokio reuse: point OUR model folders at the Pinokio library (no re-downloads,
 // Pinokio keeps working untouched), then let the user pick an empty install folder.
 // NOTE: writes desktop-config only — wgp_config.json here belongs to Pinokio.
 async function usePinokioModels(t) {
-  const repo = (t && t.repo) || ''
-  const sep = '\\'
+  const repo = (t && t.repo) || "";
+  const sep = "\\";
   const pick = async (type, sub) => {
-    const p = repo.replace(/\\+$/, '') + sep + sub
-    setModelPath(type, p)
+    const p = repo.replace(/\\+$/, "") + sep + sub;
+    setModelPath(type, p);
     try {
-      const cfg = await window.w2gp.configLoad()
-      if (type === 'ckpts') cfg.modelCkptsPath = p
-      else if (type === 'loras') cfg.modelLorasPath = p
-      else cfg.modelOutputPath = p
-      await window.w2gp.configSave(cfg)
+      const cfg = await window.w2gp.configLoad();
+      if (type === "ckpts") cfg.modelCkptsPath = p;
+      else if (type === "loras") cfg.modelLorasPath = p;
+      else cfg.modelOutputPath = p;
+      await window.w2gp.configSave(cfg);
     } catch {}
-  }
-  const dirs = (t && t.modelDirs) || []
+  };
+  const dirs = (t && t.modelDirs) || [];
   // Map upstream subdir names to our folder types.
   for (const d of dirs) {
-    const low = d.toLowerCase()
-    if (low === 'ckpts' || low === 'checkpoints') await pick('ckpts', d)
-    else if (low === 'loras') await pick('loras', d)
-    else if (low === 'outputs' || low === 'output') await pick('output', d)
+    const low = d.toLowerCase();
+    if (low === "ckpts" || low === "checkpoints") await pick("ckpts", d);
+    else if (low === "loras") await pick("loras", d);
+    else if (low === "outputs" || low === "output") await pick("output", d);
   }
-  appendLog('[*] Model folders now point at the Pinokio library — its install stays untouched.')
-  showToast('✓ Reusing Pinokio models — now pick an empty install folder')
-  try { await refreshModelDiskGates() } catch {}
-  $('browseAppDataPath')?.click()
+  appendLog(
+    "[*] Model folders now point at the Pinokio library — its install stays untouched.",
+  );
+  showToast("✓ Reusing Pinokio models — now pick an empty install folder");
+  try {
+    await refreshModelDiskGates();
+  } catch {}
+  $("browseAppDataPath")?.click();
 }
 
 // (Re)open the installer screen in a fresh state — used by Manage → Run Setup
 // again and after uninstall. Never lands on the dashboard without an install.
 async function openInstallerFresh(subtitle) {
-  resetTasks()
-  installProgressReset()
-  show('installer')
-  $('installSubtitle').textContent = subtitle || 'Select environment type, then click Install'
-  const sb = $('installStartBtn')
-  if (sb) { sb.classList.remove('hidden'); sb.disabled = false; sb.textContent = 'Install' }
-  $('envTypeSelect')?.classList.remove('disabled')
-  document.querySelectorAll('.env-type-btn').forEach(b => b.disabled = false)
-  await loadPaths().catch(() => null)
-  try { await refreshTargetVerdict().catch(() => null) } catch {}
-  try { await refreshModelDiskGates().catch(() => null) } catch {}
+  resetTasks();
+  installProgressReset();
+  show("installer");
+  $("installSubtitle").textContent =
+    subtitle || "Select environment type, then click Install";
+  const sb = $("installStartBtn");
+  if (sb) {
+    sb.classList.remove("hidden");
+    sb.disabled = false;
+    sb.textContent = "Install";
+  }
+  $("envTypeSelect")?.classList.remove("disabled");
+  document
+    .querySelectorAll(".env-type-btn")
+    .forEach((b) => (b.disabled = false));
+  await loadPaths().catch(() => null);
+  try {
+    await refreshTargetVerdict().catch(() => null);
+  } catch {}
+  try {
+    await refreshModelDiskGates().catch(() => null);
+  } catch {}
 }
 
-$('manageRunSetupBtn')?.addEventListener('click', async () => {
-  closeSettings()
-  appendLog('[*] Opening Setup — pick fresh install, repair, reuse or migrate.')
-  await openInstallerFresh()
-})
+$("manageRunSetupBtn")?.addEventListener("click", async () => {
+  closeSettings();
+  appendLog(
+    "[*] Opening Setup — pick fresh install, repair, reuse or migrate.",
+  );
+  await openInstallerFresh();
+});
 
-$('settingsOverlay').addEventListener('click', closeSettings)
+$("settingsOverlay").addEventListener("click", closeSettings);
 
 // ── Dashboard ──
-let _dashRefreshing = false, _dashPending = false
-async function refreshDashboard(){
-  if (_dashRefreshing) { _dashPending = true; return }
-  _dashRefreshing = true
-  const dash = $('dashboard')
+let _dashRefreshing = false,
+  _dashPending = false;
+async function refreshDashboard() {
+  if (_dashRefreshing) {
+    _dashPending = true;
+    return;
+  }
+  _dashRefreshing = true;
+  const dash = $("dashboard");
   try {
-  // status / checkInstalled / manageList are independent — run them in one
-  // batch instead of 3 sequential IPC round-trips (~2-6ms saved each, more
-  // when the machine is under load from a running install).
-  const [status, instRes, envs] = await Promise.all([
-    window.w2gp.getStatus(),
-    window.w2gp.checkInstalled().catch(() => null),
-    window.w2gp.manageList().catch(() => [])
-  ])
-  // Dashboard renderer switch: reflect the saved embedMode (same source as
-  // Manage → Launch and the topbar quick-switch).
-  try {
-    const _cfg = await window.w2gp.configLoad().catch(() => ({}))
-    const _et = $('embedModeTop')
-    if (_et) _et.value = (_cfg && _cfg.embedMode === 'iframe') ? 'iframe' : 'native'
-  } catch {}
-  // Launch buttons only make sense when Wan2GP is actually installed
-  try {
-    // Launch buttons need a repo AND an active env — repo alone (failed
-    // install, wiped env) used to launch system `python` into a torch traceback.
-    setLaunchButtonsInstalled(!!(instRes && instRes.repo && status.env && !status.error))
-  } catch {}
-  // Show a visible error note if the status call failed (so the panel is never
-  // silently blank — this is exactly the blank-dashboard bug we hit before).
-  const errNote = $('envDetailError')
-  if (errNote) errNote.style.display = (status.error) ? '' : 'none'
-  if(status.error||!status.env){
-    if (errNote) errNote.textContent = 'Could not read environment status: ' + (status.error || 'no active environment')
-    $('envName').textContent='No active environment'
-    window._activeEnvName = ''
-    window._activeEnvType = ''
-    window._hasActiveEnv = false
-    $('envNameHint')?.classList.remove('hidden')
-    document.querySelectorAll('.pkg-install-btn, .spec-latest, .spec-update-btn').forEach(function(el) { el.remove() })
-    ;['specPython','specTorch','specCuda','specTriton','specSage','specFlash','specDiffusers','specTransformers','specGradio','specAccelerate','specOnnx','specOpencv','specPeft','specHfhub','specBits','specNumpy','specTokenizers','specSparge'].forEach(id=>{ const el=$(id); if(el) el.textContent='—' })
-    ;['dotPython','dotTorch','dotCuda','dotTriton','dotSage','dotFlash','dotDiffusers','dotTransformers','dotGradio','dotAccelerate','dotOnnx','dotOpencv','dotPeft','dotHfhub','dotBits','dotNumpy','dotTokenizers'].forEach(id=>{ const el=$(id); if(el) el.classList.remove('installed') })
-    // Kernel wheels section is independent — keep it rendered from whatever we got.
-    renderKernelWheels(status.kernelWheels, status.kernelProfile, status.osKey)
-    const spargeEl = $('specSparge'); if (spargeEl) spargeEl.textContent = '—'
-  } else {
-    $('envName').textContent=status.env.name; $('envType').textContent=status.env.type
-    window._activeEnvName = status.env.name || ''
-    window._activeEnvType = status.env.type || 'uv'
-    window._hasActiveEnv = true
-    $('envNameHint')?.classList.add('hidden')
-    // Clear old update/install buttons before re-creating
-    document.querySelectorAll('.spec-latest, .spec-update-btn, .pkg-install-btn').forEach(function(el) { el.remove() })
+    // status / checkInstalled / manageList are independent — run them in one
+    // batch instead of 3 sequential IPC round-trips (~2-6ms saved each, more
+    // when the machine is under load from a running install).
+    const [status, instRes, envs] = await Promise.all([
+      window.w2gp.getStatus(),
+      window.w2gp.checkInstalled().catch(() => null),
+      window.w2gp.manageList().catch(() => []),
+    ]);
+    // Dashboard renderer switch: reflect the saved embedMode (same source as
+    // Manage → Launch and the topbar quick-switch).
+    try {
+      const _cfg = await window.w2gp.configLoad().catch(() => ({}));
+      const _et = $("embedModeTop");
+      if (_et)
+        _et.value = _cfg && _cfg.embedMode === "iframe" ? "iframe" : "native";
+    } catch {}
+    // Launch buttons only make sense when Wan2GP is actually installed
+    try {
+      // Launch buttons need a repo AND an active env — repo alone (failed
+      // install, wiped env) used to launch system `python` into a torch traceback.
+      setLaunchButtonsInstalled(
+        !!(instRes && instRes.repo && status.env && !status.error),
+      );
+    } catch {}
+    // Show a visible error note if the status call failed (so the panel is never
+    // silently blank — this is exactly the blank-dashboard bug we hit before).
+    const errNote = $("envDetailError");
+    if (errNote) errNote.style.display = status.error ? "" : "none";
+    if (status.error || !status.env) {
+      if (errNote)
+        errNote.textContent =
+          "Could not read environment status: " +
+          (status.error || "no active environment");
+      $("envName").textContent = "No active environment";
+      window._activeEnvName = "";
+      window._activeEnvType = "";
+      window._hasActiveEnv = false;
+      $("envNameHint")?.classList.remove("hidden");
+      document
+        .querySelectorAll(".pkg-install-btn, .spec-latest, .spec-update-btn")
+        .forEach((el) => {
+          el.remove();
+        });
+      [
+        "specPython",
+        "specTorch",
+        "specCuda",
+        "specTriton",
+        "specSage",
+        "specFlash",
+        "specDiffusers",
+        "specTransformers",
+        "specGradio",
+        "specAccelerate",
+        "specOnnx",
+        "specOpencv",
+        "specPeft",
+        "specHfhub",
+        "specBits",
+        "specNumpy",
+        "specTokenizers",
+        "specSparge",
+      ].forEach((id) => {
+        const el = $(id);
+        if (el) el.textContent = "—";
+      });
+      [
+        "dotPython",
+        "dotTorch",
+        "dotCuda",
+        "dotTriton",
+        "dotSage",
+        "dotFlash",
+        "dotDiffusers",
+        "dotTransformers",
+        "dotGradio",
+        "dotAccelerate",
+        "dotOnnx",
+        "dotOpencv",
+        "dotPeft",
+        "dotHfhub",
+        "dotBits",
+        "dotNumpy",
+        "dotTokenizers",
+      ].forEach((id) => {
+        const el = $(id);
+        if (el) el.classList.remove("installed");
+      });
+      // Kernel wheels section is independent — keep it rendered from whatever we got.
+      renderKernelWheels(
+        status.kernelWheels,
+        status.kernelProfile,
+        status.osKey,
+      );
+      const spargeEl = $("specSparge");
+      if (spargeEl) spargeEl.textContent = "—";
+    } else {
+      $("envName").textContent = status.env.name;
+      $("envType").textContent = status.env.type;
+      window._activeEnvName = status.env.name || "";
+      window._activeEnvType = status.env.type || "uv";
+      window._hasActiveEnv = true;
+      $("envNameHint")?.classList.add("hidden");
+      // Clear old update/install buttons before re-creating
+      document
+        .querySelectorAll(".spec-latest, .spec-update-btn, .pkg-install-btn")
+        .forEach((el) => {
+          el.remove();
+        });
 
-    function setSpec(specId, dotId, val, pkgName) {
-      const el=$(specId); if(el) el.textContent=val||'—'
-      const dot=$(dotId); if(dot){ if(val) { dot.classList.remove('has-update','error','installing'); dot.classList.add('installed') } else dot.classList.remove('installed') }
-      // Show install button if package is missing and we know its pip name
-      if (!val && pkgName && el) {
-        var parent = el.closest('.spec-row')
-        if (parent) {
-          var oldBtn = parent.querySelector('.pkg-install-btn')
-          if (oldBtn) oldBtn.remove()
-          var btn = document.createElement('button')
-          btn.className = 'pkg-install-btn'
-          btn.textContent = '+'
-          btn.title = 'Install ' + pkgName
-          btn.addEventListener('click', async function(ev) {
-            ev.stopPropagation()
-            this.disabled = true; this.textContent = '...'
-            var res = await window.w2gp.installPackage(pkgName)
-            if (res && res.success) {
-              this.textContent = '✓'; this.classList.add('done')
-              setTimeout(refreshDashboard, 2000)
-            } else {
-              this.textContent = '+'; this.disabled = false
-              showToast('✗ Install failed: ' + (res && res.error ? res.error : 'unknown'))
-            }
-          })
-          el.after(btn)
+      function setSpec(specId, dotId, val, pkgName) {
+        const el = $(specId);
+        if (el) el.textContent = val || "—";
+        const dot = $(dotId);
+        if (dot) {
+          if (val) {
+            dot.classList.remove("has-update", "error", "installing");
+            dot.classList.add("installed");
+          } else dot.classList.remove("installed");
+        }
+        // Show install button if package is missing and we know its pip name
+        if (!val && pkgName && el) {
+          var parent = el.closest(".spec-row");
+          if (parent) {
+            var oldBtn = parent.querySelector(".pkg-install-btn");
+            if (oldBtn) oldBtn.remove();
+            var btn = document.createElement("button");
+            btn.className = "pkg-install-btn";
+            btn.textContent = "+";
+            btn.title = "Install " + pkgName;
+            btn.addEventListener("click", async function (ev) {
+              ev.stopPropagation();
+              this.disabled = true;
+              this.textContent = "...";
+              var res = await window.w2gp.installPackage(pkgName);
+              if (res && res.success) {
+                this.textContent = "✓";
+                this.classList.add("done");
+                setTimeout(refreshDashboard, 2000);
+              } else {
+                this.textContent = "+";
+                this.disabled = false;
+                showToast(
+                  "✗ Install failed: " +
+                    (res && res.error ? res.error : "unknown"),
+                );
+              }
+            });
+            el.after(btn);
+          }
         }
       }
-    }
-    // If the version query itself failed, show the reason in the note but keep
-    // the wheels/paths sections alive (they're independent of the version scan).
-    if (status.versions && status.versions.error) {
-      const errNote = $('envDetailError')
-      if (errNote) { errNote.style.display = ''; errNote.textContent = 'Package scan failed: ' + status.versions.error }
-    }
-    setSpec('specPython','dotPython', status.versions?.python)
-    setSpec('specTorch','dotTorch', status.versions?.torch)
-    const m=(status.versions?.torch||'').match(/cu(\d+)/)
-    setSpec('specCuda','dotCuda', m ? `CUDA ${m[1]}` : null)
-    setSpec('specTriton','dotTriton', status.versions?.triton, 'triton')
-    setSpec('specSage','dotSage', status.versions?.sageattention||status.versions?.spas_sage_attn, 'spas_sage_attn')
-    setSpec('specFlash','dotFlash', status.versions?.flash_attn, 'flash-attn')
-    setSpec('specDiffusers','dotDiffusers', status.versions?.diffusers)
-    setSpec('specTransformers','dotTransformers', status.versions?.transformers)
-    setSpec('specGradio','dotGradio', status.versions?.gradio)
-    setSpec('specAccelerate','dotAccelerate', status.versions?.accelerate)
-    setSpec('specOnnx','dotOnnx', status.versions?.onnxruntime)
-    setSpec('specOpencv','dotOpencv', status.versions?.['opencv-python'])
-    setSpec('specPeft','dotPeft', status.versions?.peft)
-    setSpec('specHfhub','dotHfhub', status.versions?.huggingface_hub)
-    setSpec('specBits','dotBits', status.versions?.bitsandbytes, 'bitsandbytes')
-    setSpec('specNumpy','dotNumpy', status.versions?.numpy)
-    setSpec('specTokenizers','dotTokenizers', status.versions?.tokenizers)
+      // If the version query itself failed, show the reason in the note but keep
+      // the wheels/paths sections alive (they're independent of the version scan).
+      if (status.versions && status.versions.error) {
+        const errNote = $("envDetailError");
+        if (errNote) {
+          errNote.style.display = "";
+          errNote.textContent = "Package scan failed: " + status.versions.error;
+        }
+      }
+      setSpec("specPython", "dotPython", status.versions?.python);
+      setSpec("specTorch", "dotTorch", status.versions?.torch);
+      const m = (status.versions?.torch || "").match(/cu(\d+)/);
+      setSpec("specCuda", "dotCuda", m ? `CUDA ${m[1]}` : null);
+      setSpec("specTriton", "dotTriton", status.versions?.triton, "triton");
+      setSpec(
+        "specSage",
+        "dotSage",
+        status.versions?.sageattention || status.versions?.spas_sage_attn,
+        "spas_sage_attn",
+      );
+      setSpec(
+        "specFlash",
+        "dotFlash",
+        status.versions?.flash_attn,
+        "flash-attn",
+      );
+      setSpec("specDiffusers", "dotDiffusers", status.versions?.diffusers);
+      setSpec(
+        "specTransformers",
+        "dotTransformers",
+        status.versions?.transformers,
+      );
+      setSpec("specGradio", "dotGradio", status.versions?.gradio);
+      setSpec("specAccelerate", "dotAccelerate", status.versions?.accelerate);
+      setSpec("specOnnx", "dotOnnx", status.versions?.onnxruntime);
+      setSpec("specOpencv", "dotOpencv", status.versions?.["opencv-python"]);
+      setSpec("specPeft", "dotPeft", status.versions?.peft);
+      setSpec("specHfhub", "dotHfhub", status.versions?.huggingface_hub);
+      setSpec(
+        "specBits",
+        "dotBits",
+        status.versions?.bitsandbytes,
+        "bitsandbytes",
+      );
+      setSpec("specNumpy", "dotNumpy", status.versions?.numpy);
+      setSpec("specTokenizers", "dotTokenizers", status.versions?.tokenizers);
 
-    // ── GPU Kernel Wheels (profile-driven) ──
-    renderKernelWheels(status.kernelWheels, status.kernelProfile, status.osKey)
-    // Sparge Attn comes from the expected GPU profile (not a detected version),
-    // so it's surfaced here to avoid a separate duplicate "GPU Profile Overview".
-    const spargeEl = $('specSparge')
-    // ponytail: show installed 0.1.0 if present, else expected v010_cu13 profile tag
-    if (spargeEl) spargeEl.textContent = status.versions?.spas_sage_attn || status.versions?.sparge || (status.profile && status.profile.sparge) || status.kernelProfile || '—'
-  }
-  // ponytail: batch DOM swap to avoid flicker — build fragment then single replace
-  const list=$('envList');
-  const frag=document.createDocumentFragment()
-  envs.forEach(e=>{
-    const div=document.createElement('div')
-    div.className='env-list-item'+(e.active?' active':'')
-    div.innerHTML=`<span class="env-dot"></span><span class="env-list-name">${escHtml(e.name)}</span><span style="font-size:0.65rem;color:#666;flex-shrink:0">${escHtml(e.type)}</span>`
-    if(!e.active) {
-      div.setAttribute('role','button')
-      div.tabIndex = 0
-      const activate = async()=>{ await window.w2gp.manageSetActive(e.name); refreshDashboard() }
-      div.addEventListener('click', activate)
-      div.addEventListener('keydown', ev => {
-        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); activate() }
-      })
+      // ── GPU Kernel Wheels (profile-driven) ──
+      renderKernelWheels(
+        status.kernelWheels,
+        status.kernelProfile,
+        status.osKey,
+      );
+      // Sparge Attn comes from the expected GPU profile (not a detected version),
+      // so it's surfaced here to avoid a separate duplicate "GPU Profile Overview".
+      const spargeEl = $("specSparge");
+      // ponytail: show installed 0.1.0 if present, else expected v010_cu13 profile tag
+      if (spargeEl)
+        spargeEl.textContent =
+          status.versions?.spas_sage_attn ||
+          status.versions?.sparge ||
+          (status.profile && status.profile.sparge) ||
+          status.kernelProfile ||
+          "—";
     }
-    frag.appendChild(div)
-  })
-  list.innerHTML=''; list.appendChild(frag)
-  loadWangpChangelog()
-  loadPaths()
-  loadModelPaths()
-  document.querySelectorAll('.env-detail .spec-row').forEach(function(r) { r.classList.remove('has-update','up-to-date') })
-  $('checkPkgUpdatesBtn').textContent = '↻ Check Updates'
-  $('checkPkgUpdatesBtn').disabled = false
-  refreshEnvUnlink(!!(instRes && instRes.repo))
-  // Warn if model checkpoints/LoRAs still live in a roaming AppData profile.
-  checkModelsPathWarning()
-  // Warn RTX 40/50 users still on the broken fp8 SageAttention wheel to sync.
-  checkSageSyncBanner(status)
-  // Refresh the guided LLM engine cards (Deepy Prime setup).
-  refreshLLMEngines().catch(() => {})
-  // Refresh the Deepy Prime activation panel.
-  refreshDeepy().catch(() => {})
-  // Refresh the DLSS5 optional-runtime status.
-  refreshDlss5().catch(() => {})
-  // Enable/disable no-GPU button based on Chrome availability. A single
-  // negative is never trusted for failure UI: a cold first spawn (AV hooks,
-  // process-creation stalls) can fail once and would flash "not installed"
-  // for a second. Re-probe immediately — probes are synchronous file checks
-  // plus `where`, so this costs milliseconds. Only a repeated negative
-  // disables the button and shows the hint. IPC errors leave UI untouched.
-  ;(async () => {
-    const probe = async () => { try { return await window.w2gp.chromeAvailable() } catch { return null } }
-    let available = await probe()
-    if (available === false) available = await probe()
-    if (available === null) return
-    // Flake guard: a single negative probe (common at cold start) must not
-    // flash "Chrome not installed" — show only after 2 consecutive misses.
-    window._chromeMissCount = (available === false) ? (window._chromeMissCount || 0) + 1 : 0
-    const noChrome = (available === false) && window._chromeMissCount >= 2
-    if (noChrome) appendLog('[!] Chrome probe: not found twice (Launch in Chrome disabled)')
-    else if (available === true && window._chromeWasMissing) appendLog('[*] Chrome probe: found on re-probe (first probe flaked)')
-    window._chromeWasMissing = (available === false)
-    const btn = $('browserNoGpuBtn')
-    const hint = $('noGpuHint')
-    if (btn) btn.disabled = noChrome
-    if (hint) hint.style.display = noChrome ? 'block' : 'none'
-  })()
+    // ponytail: batch DOM swap to avoid flicker — build fragment then single replace
+    const list = $("envList");
+    const frag = document.createDocumentFragment();
+    envs.forEach((e) => {
+      const div = document.createElement("div");
+      div.className = "env-list-item" + (e.active ? " active" : "");
+      div.innerHTML = `<span class="env-dot"></span><span class="env-list-name">${escHtml(e.name)}</span><span style="font-size:0.65rem;color:#666;flex-shrink:0">${escHtml(e.type)}</span>`;
+      if (!e.active) {
+        div.setAttribute("role", "button");
+        div.tabIndex = 0;
+        const activate = async () => {
+          await window.w2gp.manageSetActive(e.name);
+          refreshDashboard();
+        };
+        div.addEventListener("click", activate);
+        div.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            activate();
+          }
+        });
+      }
+      frag.appendChild(div);
+    });
+    list.innerHTML = "";
+    list.appendChild(frag);
+    loadWangpChangelog();
+    loadPaths();
+    loadModelPaths();
+    document.querySelectorAll(".env-detail .spec-row").forEach((r) => {
+      r.classList.remove("has-update", "up-to-date");
+    });
+    $("checkPkgUpdatesBtn").textContent = "↻ Check Updates";
+    $("checkPkgUpdatesBtn").disabled = false;
+    refreshEnvUnlink(!!(instRes && instRes.repo));
+    // Warn if model checkpoints/LoRAs still live in a roaming AppData profile.
+    checkModelsPathWarning();
+    // Warn RTX 40/50 users still on the broken fp8 SageAttention wheel to sync.
+    checkSageSyncBanner(status);
+    // Refresh the guided LLM engine cards (Deepy Prime setup).
+    refreshLLMEngines().catch(() => {});
+    // Refresh the Deepy Prime activation panel.
+    refreshDeepy().catch(() => {});
+    // Refresh the DLSS5 optional-runtime status.
+    refreshDlss5().catch(() => {});
+    // Enable/disable no-GPU button based on Chrome availability. A single
+    // negative is never trusted for failure UI: a cold first spawn (AV hooks,
+    // process-creation stalls) can fail once and would flash "not installed"
+    // for a second. Re-probe immediately — probes are synchronous file checks
+    // plus `where`, so this costs milliseconds. Only a repeated negative
+    // disables the button and shows the hint. IPC errors leave UI untouched.
+    (async () => {
+      const probe = async () => {
+        try {
+          return await window.w2gp.chromeAvailable();
+        } catch {
+          return null;
+        }
+      };
+      let available = await probe();
+      if (available === false) available = await probe();
+      if (available === null) return;
+      // Flake guard: a single negative probe (common at cold start) must not
+      // flash "Chrome not installed" — show only after 2 consecutive misses.
+      window._chromeMissCount =
+        available === false ? (window._chromeMissCount || 0) + 1 : 0;
+      const noChrome = available === false && window._chromeMissCount >= 2;
+      if (noChrome)
+        appendLog(
+          "[!] Chrome probe: not found twice (Launch in Chrome disabled)",
+        );
+      else if (available === true && window._chromeWasMissing)
+        appendLog("[*] Chrome probe: found on re-probe (first probe flaked)");
+      window._chromeWasMissing = available === false;
+      const btn = $("browserNoGpuBtn");
+      const hint = $("noGpuHint");
+      if (btn) btn.disabled = noChrome;
+      if (hint) hint.style.display = noChrome ? "block" : "none";
+    })();
   } finally {
-    _dashRefreshing = false
-    if (_dashPending) { _dashPending = false; setTimeout(refreshDashboard, 80) }
+    _dashRefreshing = false;
+    if (_dashPending) {
+      _dashPending = false;
+      setTimeout(refreshDashboard, 80);
+    }
   }
 }
 
@@ -2155,30 +3450,56 @@ async function refreshDashboard(){
 // Shows a dashboard banner when the configured checkpoints/LoRAs/output paths
 // resolve under the roaming AppData profile (a bad place for huge model files).
 async function checkModelsPathWarning() {
-  const banner = $('modelsWarnBanner')
-  if (!banner) return
+  const banner = $("modelsWarnBanner");
+  if (!banner) return;
   // ponytail: Tauri uses isolated C:\Wan2GP — hide roaming warning (05cbdb3)
-  if (window.__TAURI__) { banner.classList.add('hidden'); return; }
-  if (banner.dataset.dismissed === '1') { banner.classList.add('hidden'); return }
+  if (window.__TAURI__) {
+    banner.classList.add("hidden");
+    return;
+  }
+  if (banner.dataset.dismissed === "1") {
+    banner.classList.add("hidden");
+    return;
+  }
   try {
-    const [paths, ip] = await Promise.all([window.w2gp.getModelPaths(), window.w2gp.getInstallPaths()])
-    if (!paths || !ip) { banner.classList.add('hidden'); return }
-    const appDataRoot = (ip.appDataRoot || '').toLowerCase().replace(/\\/g, '/')
-    const bad = appDataRoot && [paths.checkpoints, paths.loras, paths.output]
-      .filter(Boolean)
-      .some(p => (p || '').toLowerCase().replace(/\\/g, '/').startsWith(appDataRoot))
-    banner.classList.toggle('hidden', !bad)
+    const [paths, ip] = await Promise.all([
+      window.w2gp.getModelPaths(),
+      window.w2gp.getInstallPaths(),
+    ]);
+    if (!paths || !ip) {
+      banner.classList.add("hidden");
+      return;
+    }
+    const appDataRoot = (ip.appDataRoot || "")
+      .toLowerCase()
+      .replace(/\\/g, "/");
+    const bad =
+      appDataRoot &&
+      [paths.checkpoints, paths.loras, paths.output]
+        .filter(Boolean)
+        .some((p) =>
+          (p || "").toLowerCase().replace(/\\/g, "/").startsWith(appDataRoot),
+        );
+    banner.classList.toggle("hidden", !bad);
     // Top warning banner: show its "Migrate to new location" button when a legacy
     // roaming data dir exists — this is the in-launcher entry point the user wants.
-    const migrateBtn = $('modelsWarnMigrateBtn')
-    if (migrateBtn) migrateBtn.classList.toggle('hidden', !ip.legacyRoamingFound)
-  } catch { banner.classList.add('hidden') }
+    const migrateBtn = $("modelsWarnMigrateBtn");
+    if (migrateBtn)
+      migrateBtn.classList.toggle("hidden", !ip.legacyRoamingFound);
+  } catch {
+    banner.classList.add("hidden");
+  }
 }
-$('modelsWarnMigrateBtn')?.addEventListener('click', () => openMigrationModal())
-$('modelsWarnDismissBtn')?.addEventListener('click', () => {
-  const b = $('modelsWarnBanner')
-  if (b) { b.classList.add('hidden'); b.dataset.dismissed = '1' }
-})
+$("modelsWarnMigrateBtn")?.addEventListener("click", () =>
+  openMigrationModal(),
+);
+$("modelsWarnDismissBtn")?.addEventListener("click", () => {
+  const b = $("modelsWarnBanner");
+  if (b) {
+    b.classList.add("hidden");
+    b.dataset.dismissed = "1";
+  }
+});
 
 // ── SageAttention broken-wheel banner ──
 // RTX 40/50 users who updated the launcher but haven't yet run Kernel sync are
@@ -2188,41 +3509,60 @@ $('modelsWarnDismissBtn')?.addEventListener('click', () => {
 // install / update / Kernel sync. Until they sync, show a top banner telling
 // them to click Sync Kernels. Only RTX 40/50 are affected (RTX 30 routes to the
 // safe Triton fp16 kernel, RTX 20/older use Sage v1 — neither needs this).
-const SAGE_BROKEN = /cu130torch2\.9\.0andhigher/
+const SAGE_BROKEN = /cu130torch2\.9\.0andhigher/;
 function checkSageSyncBanner(status) {
-  const banner = $('sageSyncBanner')
-  if (!banner) return
-  if (banner.dataset.dismissed === '1') { banner.classList.add('hidden'); return }
+  const banner = $("sageSyncBanner");
+  if (!banner) return;
+  if (banner.dataset.dismissed === "1") {
+    banner.classList.add("hidden");
+    return;
+  }
   try {
-    const profile = status?.kernelProfile
-    const sage = status?.versions?.sageattention || status?.versions?.spas_sage_attn || ''
-    const affected = (profile === 'RTX_40' || profile === 'RTX_50')
-    const brokenWheel = SAGE_BROKEN.test(sage)
-    const show = !!(affected && brokenWheel)
-    banner.classList.toggle('hidden', !show)
-  } catch { banner.classList.add('hidden') }
+    const profile = status?.kernelProfile;
+    const sage =
+      status?.versions?.sageattention || status?.versions?.spas_sage_attn || "";
+    const affected = profile === "RTX_40" || profile === "RTX_50";
+    const brokenWheel = SAGE_BROKEN.test(sage);
+    const show = !!(affected && brokenWheel);
+    banner.classList.toggle("hidden", !show);
+  } catch {
+    banner.classList.add("hidden");
+  }
 }
-$('sageSyncBtn')?.addEventListener('click', async () => {
-  const banner = $('sageSyncBanner')
-  const btn = $('sageSyncBtn')
-  if (btn) { btn.disabled = true; btn.textContent = 'Syncing…' }
+$("sageSyncBtn")?.addEventListener("click", async () => {
+  const banner = $("sageSyncBanner");
+  const btn = $("sageSyncBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Syncing…";
+  }
   try {
-    const r = await window.w2gp.syncKernels()
+    const r = await window.w2gp.syncKernels();
     if (r && r.success) {
-      if (banner) { banner.classList.add('hidden'); banner.dataset.dismissed = '1' }
-      refreshDashboard()
-    } else {
-      if (btn) { btn.disabled = false; btn.textContent = 'Sync Kernels' }
+      if (banner) {
+        banner.classList.add("hidden");
+        banner.dataset.dismissed = "1";
+      }
+      refreshDashboard();
+    } else if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Sync Kernels";
     }
   } catch (e) {
-    if (btn) { btn.disabled = false; btn.textContent = 'Sync Kernels' }
-    alert('Kernel sync failed: ' + (e?.message || e))
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Sync Kernels";
+    }
+    alert("Kernel sync failed: " + (e?.message || e));
   }
-})
-$('sageSyncDismissBtn')?.addEventListener('click', () => {
-  const b = $('sageSyncBanner')
-  if (b) { b.classList.add('hidden'); b.dataset.dismissed = '1' }
-})
+});
+$("sageSyncDismissBtn")?.addEventListener("click", () => {
+  const b = $("sageSyncBanner");
+  if (b) {
+    b.classList.add("hidden");
+    b.dataset.dismissed = "1";
+  }
+});
 
 // ── GPU Kernel Wheels (profile-driven, subsection of Active Environment) ──
 // Renders the wheels resolved from setup_config.json for the active GPU:
@@ -2231,56 +3571,72 @@ $('sageSyncDismissBtn')?.addEventListener('click', () => {
 // available" hint when the installed wheel is older than the profile declares.
 // GTX 10/16, AMD, Apple profiles carry no kernels → the subsection hides.
 function renderKernelWheels(wheels, kernelProfile, osKey) {
-  const card = $('kernelWheelsSubsection')
-  const box = $('kernelWheels')
-  const tag = $('kernelProfileTag')
-  if (!card || !box) return
-  const list = Array.isArray(wheels) ? wheels : []
+  const card = $("kernelWheelsSubsection");
+  const box = $("kernelWheels");
+  const tag = $("kernelProfileTag");
+  if (!card || !box) return;
+  const list = Array.isArray(wheels) ? wheels : [];
   if (!list.length) {
     // Distinguish "no GPU profile" (genuinely nothing to show) from a data
     // error so the user isn't left staring at a blank section.
-    if (kernelProfile === null || kernelProfile === undefined || kernelProfile === 'unknown') {
-      box.innerHTML = '<div class="kw-empty">No GPU kernel profile detected — wheels are managed automatically for this GPU.</div>'
+    if (
+      kernelProfile === null ||
+      kernelProfile === undefined ||
+      kernelProfile === "unknown"
+    ) {
+      box.innerHTML =
+        '<div class="kw-empty">No GPU kernel profile detected — wheels are managed automatically for this GPU.</div>';
     } else {
-      box.innerHTML = '<div class="kw-empty">This GPU profile has no dedicated kernel wheels.</div>'
+      box.innerHTML =
+        '<div class="kw-empty">This GPU profile has no dedicated kernel wheels.</div>';
     }
-    card.style.display = ''   // keep the card; show the friendly note
-    if (tag) tag.textContent = kernelProfile || '—'
-    return
+    card.style.display = ""; // keep the card; show the friendly note
+    if (tag) tag.textContent = kernelProfile || "—";
+    return;
   }
-  card.style.display = ''
-  if (tag && kernelProfile) tag.textContent = kernelProfile
-  box.innerHTML = ''
-  list.forEach(w => {
+  card.style.display = "";
+  if (tag && kernelProfile) tag.textContent = kernelProfile;
+  box.innerHTML = "";
+  list.forEach((w) => {
     // ponytail: Tauri spike returns string array; Electron returns objects — handle both
-    if (typeof w === 'string') w = { key: w, label: w, pipName: w, state: 'missing' }
-    const row = document.createElement('div')
-    row.className = 'spec-row'
-    const dot = document.createElement('span')
-    dot.className = 'spec-dot'
-    const state = w.state || (w.installed ? (w.installed === w.configured ? 'ok' : 'mismatch') : 'missing')
-    const cls = state === 'ok' ? 'installed' : (state === 'mismatch' ? 'error' : '')
-    if (cls) dot.classList.add(cls)
-    const label = document.createElement('span')
-    label.className = 'spec-label'
-    label.textContent = w.label
-    const val = document.createElement('span')
-    val.className = 'spec-value'
-    if (state === 'ok') {
-      val.textContent = w.installed
-    } else if (state === 'mismatch') {
-      val.textContent = w.installed
+    if (typeof w === "string")
+      w = { key: w, label: w, pipName: w, state: "missing" };
+    const row = document.createElement("div");
+    row.className = "spec-row";
+    const dot = document.createElement("span");
+    dot.className = "spec-dot";
+    const state =
+      w.state ||
+      (w.installed
+        ? w.installed === w.configured
+          ? "ok"
+          : "mismatch"
+        : "missing");
+    const cls =
+      state === "ok" ? "installed" : state === "mismatch" ? "error" : "";
+    if (cls) dot.classList.add(cls);
+    const label = document.createElement("span");
+    label.className = "spec-label";
+    label.textContent = w.label;
+    const val = document.createElement("span");
+    val.className = "spec-value";
+    if (state === "ok") {
+      val.textContent = w.installed;
+    } else if (state === "mismatch") {
+      val.textContent = w.installed;
       // "update available": installed wheel is older than the profile declares.
-      const badge = document.createElement('span')
-      badge.className = 'kw-update'
-      badge.textContent = ` ↑ ${w.configured}`
-      val.appendChild(badge)
+      const badge = document.createElement("span");
+      badge.className = "kw-update";
+      badge.textContent = ` ↑ ${w.configured}`;
+      val.appendChild(badge);
     } else {
-      val.textContent = `not installed (want ${w.configured || '?'})`
+      val.textContent = `not installed (want ${w.configured || "?"})`;
     }
-    row.appendChild(label); row.appendChild(dot); row.appendChild(val)
-    box.appendChild(row)
-  })
+    row.appendChild(label);
+    row.appendChild(dot);
+    row.appendChild(val);
+    box.appendChild(row);
+  });
 }
 
 // ── GPU Profile Overview (mirrors setup_config.json gpu_profiles) ──
@@ -2288,19 +3644,31 @@ function renderKernelWheels(wheels, kernelProfile, osKey) {
 // the installer and the dashboard from a single `detail` object, so the two
 // views can never disagree. `ids` maps each field to a DOM element id.
 function renderProfileOverview(detail, ids) {
-  const box = $(ids.box)
-  if (!box) return
-  if (!detail) { box.style.display = 'none'; return }
-  box.style.display = ''
-  if (ids.profile) { const t = $(ids.profile); if (t) t.textContent = (detail.profile || '').replace(/_/g, ' ') }
-  const set = (id, val) => { const el = $(id); if (el) el.textContent = val || '—' }
-  set(ids.python, detail.python)
-  set(ids.torch, detail.torch)
-  set(ids.triton, detail.triton)
-  set(ids.sage, detail.sage)
-  set(ids.sparge, detail.sparge)
-  set(ids.flash, detail.flash)
-  set(ids.kernels, (detail.kernels && detail.kernels.length) ? detail.kernels.join(', ') : '—')
+  const box = $(ids.box);
+  if (!box) return;
+  if (!detail) {
+    box.style.display = "none";
+    return;
+  }
+  box.style.display = "";
+  if (ids.profile) {
+    const t = $(ids.profile);
+    if (t) t.textContent = (detail.profile || "").replace(/_/g, " ");
+  }
+  const set = (id, val) => {
+    const el = $(id);
+    if (el) el.textContent = val || "—";
+  };
+  set(ids.python, detail.python);
+  set(ids.torch, detail.torch);
+  set(ids.triton, detail.triton);
+  set(ids.sage, detail.sage);
+  set(ids.sparge, detail.sparge);
+  set(ids.flash, detail.flash);
+  set(
+    ids.kernels,
+    detail.kernels && detail.kernels.length ? detail.kernels.join(", ") : "—",
+  );
 }
 
 // ── Env unlink button visibility ──
@@ -2308,294 +3676,453 @@ function renderProfileOverview(detail, ids) {
 // install the buttons used to stay clickable and fail (or "clean" a stale
 // registry entry with no context).
 function refreshEnvUnlink(hasRepo) {
-  var btn = $('envUnlinkBtn')
-  var restoreBtn = $('envRestoreBtn')
-  var reinstallBtn = $('envReinstallBtn')
-  var setupBtn = $('envSetupBtn')
-  var hideAll = function() { if (btn) btn.style.display = 'none'; if (restoreBtn) restoreBtn.style.display = 'none'; if (reinstallBtn) reinstallBtn.style.display = 'none'; if (setupBtn) setupBtn.style.display = 'none' }
-  if (hasRepo === false) { hideAll(); return }
+  var btn = $("envUnlinkBtn");
+  var restoreBtn = $("envRestoreBtn");
+  var reinstallBtn = $("envReinstallBtn");
+  var setupBtn = $("envSetupBtn");
+  var hideAll = () => {
+    if (btn) btn.style.display = "none";
+    if (restoreBtn) restoreBtn.style.display = "none";
+    if (reinstallBtn) reinstallBtn.style.display = "none";
+    if (setupBtn) setupBtn.style.display = "none";
+  };
+  if (hasRepo === false) {
+    hideAll();
+    return;
+  }
   // State-driven: shown whenever an env is known-active, hidden otherwise.
-  var hasEnv = window._hasActiveEnv === true
-  var name = (hasEnv && window._activeEnvName) || ''
+  var hasEnv = window._hasActiveEnv === true;
+  var name = (hasEnv && window._activeEnvName) || "";
   if (btn) {
-    if (name && name !== '—' && name !== 'No active environment') {
-      if (setupBtn) setupBtn.style.display = 'none'
-      btn.style.display = ''; if (restoreBtn) restoreBtn.style.display = ''; if (reinstallBtn) reinstallBtn.style.display = ''
+    if (name && name !== "—" && name !== "No active environment") {
+      if (setupBtn) setupBtn.style.display = "none";
+      btn.style.display = "";
+      if (restoreBtn) restoreBtn.style.display = "";
+      if (reinstallBtn) reinstallBtn.style.display = "";
       btn.onclick = async () => {
-          if (!confirm('Uninstall environment "' + name + '"?')) return
-          btn.disabled = true; btn.textContent = '...'
-          appendLog('[*] Uninstalling environment ' + name + '...')
-          try {
-            var r = await window.w2gp.uninstallEnv(name)
-            if (r && r.success) {
-              appendLog('[*] Environment ' + name + ' uninstalled.')
-              await refreshDashboard()
-              if (window._hasActiveEnv === false) appendLog('[*] No environments remaining — click "🧭 Run Setup" in the Active Environment card to install a fresh one.')
-            }
-            else showToast((r && r.error) || 'Failed')
-          } catch (e) { showToast(errText(e)) }
-          btn.disabled = false; btn.textContent = 'unlink'
-        }
-      } else {
-        hideAll()
-        // No active env (e.g. just unlinked the last one): offer the
-        // installer directly — same destination as Manage → Run Setup.
-        if (setupBtn) { setupBtn.style.display = ''; setupBtn.onclick = function() { openInstallerFresh() } }
-      }
-    }
-    // Restore button handler
-    if (restoreBtn) {
-      restoreBtn.onclick = async () => {
-        if (!confirm('Reinstall all packages from requirements.txt? This will restore pinned versions.')) return
-        restoreBtn.disabled = true; restoreBtn.textContent = '...'
-        appendLog('[*] Restoring packages from requirements.txt...')
+        if (!confirm('Uninstall environment "' + name + '"?')) return;
+        btn.disabled = true;
+        btn.textContent = "...";
+        appendLog("[*] Uninstalling environment " + name + "...");
         try {
-          var r = await window.w2gp.restoreRequirements()
-          if (r && r.success) { appendLog('[*] Requirements restored.'); setTimeout(refreshDashboard, 2000) }
-          else showToast((r && r.error) || 'Failed')
-        } catch (e) { showToast(errText(e)) }
-        restoreBtn.disabled = false; restoreBtn.textContent = 'restore'
-      }
-    }
-    // Full reinstall: delete the env and run the whole setup again (fresh
-    // venv, pinned Python, PyTorch+CUDA, requirements, kernels, smoke test).
-    // Restore only re-pips requirements into the existing venv — this fixes
-    // broken interpreters, wrong torch builds and corrupt venvs. Models,
-    // plugins and settings are untouched (they live outside the env folder).
-    if (reinstallBtn) {
-      reinstallBtn.onclick = async () => {
-        const envType = window._activeEnvType || 'uv'
-        if (!window.confirm('Recreate the "' + name + '" environment from scratch?\n\nFresh venv, Python, PyTorch + CUDA, packages and kernels (takes a while — watch the console). Models, plugins and settings are kept.')) return
-        reinstallBtn.disabled = true; reinstallBtn.textContent = 'working…'
-        appendLog('[*] Reinstalling environment ' + name + ' from scratch (' + envType + ') — progress below…')
-        try {
-          const u = await window.w2gp.uninstallEnv(name)
-          if (!u || !u.success) throw new Error((u && u.error) || 'env removal failed')
-          appendLog('[*] Old env removed — running full setup…')
-          const r = await window.w2gp.install(envType)
-          if (r && (r.success || r.ok)) { appendLog('[*] Environment reinstalled.'); showToast('✓ Environment reinstalled') }
-          else showToast('✗ ' + ((r && r.error) || 'reinstall failed — see console'))
-        } catch (e) { appendLog('[!] Reinstall failed: ' + errText(e)); showToast('✗ ' + errText(e)) }
-        reinstallBtn.disabled = false; reinstallBtn.textContent = 'reinstall'
-        refreshDashboard()
-      }
-    }
-  }
-
-const _labelToKey = {'Python':'python','Torch':'torch','CUDA':'cuda','Triton':'triton','Sage Attn':'sageattention','Flash Attn':'flash_attn','Diffusers':'diffusers','Transformers':'transformers','Gradio':'gradio','Accelerate':'accelerate','onnxruntime':'onnxruntime','OpenCV':'opencv-python','PEFT':'peft','hf_hub':'huggingface_hub','bitsandbytes':'bitsandbytes','NumPy':'numpy','Tokenizers':'tokenizers'}
-
-$('checkPkgUpdatesBtn').addEventListener('click', async function() {
-  this.textContent = 'Checking...'
-  this.classList.add('check-updates-loading')
-  this.disabled = true
-  const versions = {}
-  document.querySelectorAll('.env-detail .spec-row').forEach(function(row) {
-    const labelEl = row.querySelector('.spec-label')
-    const valEl = row.querySelector('.spec-value')
-    if (!labelEl || !valEl) return
-    const label = labelEl.textContent.trim()
-    const key = _labelToKey[label]
-    if (!key) return
-    const val = valEl.textContent.trim()
-    if (val && val !== '—') versions[key] = val
-  })
-  if (Object.keys(versions).length === 0) {
-    this.textContent = '↻ Check Updates'
-    this.classList.remove('check-updates-loading')
-    this.disabled = false
-    return
-  }
-  var results = await window.w2gp.checkPackageUpdates(versions)
-  this.textContent = '↻ Check Updates'
-  this.classList.remove('check-updates-loading')
-  this.disabled = false
-  if (!results || !results.length) { showToast('No update info available'); return }
-  let updateCount = 0
-  results.forEach(function(r) {
-    let row = document.querySelector('.env-detail .spec-row[data-pkg="' + r.name + '"]')
-    if (!row) {
-      const revMap = {}
-      for (const k in _labelToKey) revMap[_labelToKey[k]] = k
-      const label = revMap[r.name]
-      if (!label) return
-      const rows = document.querySelectorAll('.env-detail .spec-row')
-      for (let i = 0; i < rows.length; i++) {
-        if (rows[i].querySelector('.spec-label') && rows[i].querySelector('.spec-label').textContent.trim() === label) {
-          row = rows[i]
-          row.setAttribute('data-pkg', r.name)
-          break
+          var r = await window.w2gp.uninstallEnv(name);
+          if (r && r.success) {
+            appendLog("[*] Environment " + name + " uninstalled.");
+            await refreshDashboard();
+            if (window._hasActiveEnv === false)
+              appendLog(
+                '[*] No environments remaining — click "🧭 Run Setup" in the Active Environment card to install a fresh one.',
+              );
+          } else showToast((r && r.error) || "Failed");
+        } catch (e) {
+          showToast(errText(e));
         }
-      }
-    }
-    if (!row) return
-    const valEl = row.querySelector('.spec-value')
-    if (!valEl) return
-    const oldLatest = row.querySelector('.spec-latest')
-    if (oldLatest) oldLatest.remove()
-    const oldBtn = row.querySelector('.spec-update-btn')
-    if (oldBtn) oldBtn.remove()
-    if (!r.latest) return
-    const latestSpan = document.createElement('span')
-    latestSpan.className = 'spec-latest'
-    latestSpan.textContent = '→ ' + r.latest
-    valEl.after(latestSpan)
-    if (r.installed && r.installed !== r.latest) {
-      row.classList.add('has-update')
-      row.classList.remove('up-to-date')
-      updateCount++
-      const dot = row.querySelector('.spec-dot')
-      if (dot) { dot.classList.remove('installed','error','installing'); dot.classList.add('has-update') }
-      const upBtn = document.createElement('button')
-      upBtn.className = 'spec-update-btn'
-      upBtn.textContent = '↑'
-      upBtn.title = 'Upgrade ' + r.name + ' to ' + r.latest
-      upBtn.addEventListener('click', async function(ev) {
-        ev.stopPropagation()
-        this.disabled = true; this.textContent = '...'
-        if (dot) { dot.classList.remove('has-update','installed','error'); dot.classList.add('installing') }
-        var res = await window.w2gp.upgradePackage(r.dist || r.name)
-        if (res && res.success) {
-          this.textContent = '✓'; this.classList.add('done')
-          if (dot) { dot.classList.remove('installing','has-update','error'); dot.classList.add('installed') }
-          showToast('✓ ' + r.name + ' upgraded to ' + r.latest)
-        } else {
-          this.textContent = '↑'; this.disabled = false
-          if (dot) { dot.classList.remove('installing','has-update','installed'); dot.classList.add('error') }
-          showToast('✗ Upgrade failed: ' + (res && res.error ? res.error : 'unknown error'))
-        }
-      })
-      latestSpan.after(upBtn)
+        btn.disabled = false;
+        btn.textContent = "unlink";
+      };
     } else {
-      row.classList.add('up-to-date')
-      row.classList.remove('has-update')
+      hideAll();
+      // No active env (e.g. just unlinked the last one): offer the
+      // installer directly — same destination as Manage → Run Setup.
+      if (setupBtn) {
+        setupBtn.style.display = "";
+        setupBtn.onclick = () => {
+          openInstallerFresh();
+        };
+      }
+    }
+  }
+  // Restore button handler
+  if (restoreBtn) {
+    restoreBtn.onclick = async () => {
+      if (
+        !confirm(
+          "Reinstall all packages from requirements.txt? This will restore pinned versions.",
+        )
+      )
+        return;
+      restoreBtn.disabled = true;
+      restoreBtn.textContent = "...";
+      appendLog("[*] Restoring packages from requirements.txt...");
+      try {
+        var r = await window.w2gp.restoreRequirements();
+        if (r && r.success) {
+          appendLog("[*] Requirements restored.");
+          setTimeout(refreshDashboard, 2000);
+        } else showToast((r && r.error) || "Failed");
+      } catch (e) {
+        showToast(errText(e));
+      }
+      restoreBtn.disabled = false;
+      restoreBtn.textContent = "restore";
+    };
+  }
+  // Full reinstall: delete the env and run the whole setup again (fresh
+  // venv, pinned Python, PyTorch+CUDA, requirements, kernels, smoke test).
+  // Restore only re-pips requirements into the existing venv — this fixes
+  // broken interpreters, wrong torch builds and corrupt venvs. Models,
+  // plugins and settings are untouched (they live outside the env folder).
+  if (reinstallBtn) {
+    reinstallBtn.onclick = async () => {
+      const envType = window._activeEnvType || "uv";
+      if (
+        !window.confirm(
+          'Recreate the "' +
+            name +
+            '" environment from scratch?\n\nFresh venv, Python, PyTorch + CUDA, packages and kernels (takes a while — watch the console). Models, plugins and settings are kept.',
+        )
+      )
+        return;
+      reinstallBtn.disabled = true;
+      reinstallBtn.textContent = "working…";
+      appendLog(
+        "[*] Reinstalling environment " +
+          name +
+          " from scratch (" +
+          envType +
+          ") — progress below…",
+      );
+      try {
+        const u = await window.w2gp.uninstallEnv(name);
+        if (!u || !u.success)
+          throw new Error((u && u.error) || "env removal failed");
+        appendLog("[*] Old env removed — running full setup…");
+        const r = await window.w2gp.install(envType);
+        if (r && (r.success || r.ok)) {
+          appendLog("[*] Environment reinstalled.");
+          showToast("✓ Environment reinstalled");
+        } else
+          showToast(
+            "✗ " + ((r && r.error) || "reinstall failed — see console"),
+          );
+      } catch (e) {
+        appendLog("[!] Reinstall failed: " + errText(e));
+        showToast("✗ " + errText(e));
+      }
+      reinstallBtn.disabled = false;
+      reinstallBtn.textContent = "reinstall";
+      refreshDashboard();
+    };
+  }
+}
+
+const _labelToKey = {
+  Python: "python",
+  Torch: "torch",
+  CUDA: "cuda",
+  Triton: "triton",
+  "Sage Attn": "sageattention",
+  "Flash Attn": "flash_attn",
+  Diffusers: "diffusers",
+  Transformers: "transformers",
+  Gradio: "gradio",
+  Accelerate: "accelerate",
+  onnxruntime: "onnxruntime",
+  OpenCV: "opencv-python",
+  PEFT: "peft",
+  hf_hub: "huggingface_hub",
+  bitsandbytes: "bitsandbytes",
+  NumPy: "numpy",
+  Tokenizers: "tokenizers",
+};
+
+$("checkPkgUpdatesBtn").addEventListener("click", async function () {
+  this.textContent = "Checking...";
+  this.classList.add("check-updates-loading");
+  this.disabled = true;
+  const versions = {};
+  document.querySelectorAll(".env-detail .spec-row").forEach((row) => {
+    const labelEl = row.querySelector(".spec-label");
+    const valEl = row.querySelector(".spec-value");
+    if (!labelEl || !valEl) return;
+    const label = labelEl.textContent.trim();
+    const key = _labelToKey[label];
+    if (!key) return;
+    const val = valEl.textContent.trim();
+    if (val && val !== "—") versions[key] = val;
+  });
+  if (Object.keys(versions).length === 0) {
+    this.textContent = "↻ Check Updates";
+    this.classList.remove("check-updates-loading");
+    this.disabled = false;
+    return;
+  }
+  var results = await window.w2gp.checkPackageUpdates(versions);
+  this.textContent = "↻ Check Updates";
+  this.classList.remove("check-updates-loading");
+  this.disabled = false;
+  if (!results || !results.length) {
+    showToast("No update info available");
+    return;
+  }
+  let updateCount = 0;
+  results.forEach((r) => {
+    let row = document.querySelector(
+      '.env-detail .spec-row[data-pkg="' + r.name + '"]',
+    );
+    if (!row) {
+      const revMap = {};
+      for (const k in _labelToKey) revMap[_labelToKey[k]] = k;
+      const label = revMap[r.name];
+      if (!label) return;
+      const rows = document.querySelectorAll(".env-detail .spec-row");
+      for (let i = 0; i < rows.length; i++) {
+        if (
+          rows[i].querySelector(".spec-label") &&
+          rows[i].querySelector(".spec-label").textContent.trim() === label
+        ) {
+          row = rows[i];
+          row.setAttribute("data-pkg", r.name);
+          break;
+        }
+      }
+    }
+    if (!row) return;
+    const valEl = row.querySelector(".spec-value");
+    if (!valEl) return;
+    const oldLatest = row.querySelector(".spec-latest");
+    if (oldLatest) oldLatest.remove();
+    const oldBtn = row.querySelector(".spec-update-btn");
+    if (oldBtn) oldBtn.remove();
+    if (!r.latest) return;
+    const latestSpan = document.createElement("span");
+    latestSpan.className = "spec-latest";
+    latestSpan.textContent = "→ " + r.latest;
+    valEl.after(latestSpan);
+    if (r.installed && r.installed !== r.latest) {
+      row.classList.add("has-update");
+      row.classList.remove("up-to-date");
+      updateCount++;
+      const dot = row.querySelector(".spec-dot");
+      if (dot) {
+        dot.classList.remove("installed", "error", "installing");
+        dot.classList.add("has-update");
+      }
+      const upBtn = document.createElement("button");
+      upBtn.className = "spec-update-btn";
+      upBtn.textContent = "↑";
+      upBtn.title = "Upgrade " + r.name + " to " + r.latest;
+      upBtn.addEventListener("click", async function (ev) {
+        ev.stopPropagation();
+        this.disabled = true;
+        this.textContent = "...";
+        if (dot) {
+          dot.classList.remove("has-update", "installed", "error");
+          dot.classList.add("installing");
+        }
+        var res = await window.w2gp.upgradePackage(r.dist || r.name);
+        if (res && res.success) {
+          this.textContent = "✓";
+          this.classList.add("done");
+          if (dot) {
+            dot.classList.remove("installing", "has-update", "error");
+            dot.classList.add("installed");
+          }
+          showToast("✓ " + r.name + " upgraded to " + r.latest);
+        } else {
+          this.textContent = "↑";
+          this.disabled = false;
+          if (dot) {
+            dot.classList.remove("installing", "has-update", "installed");
+            dot.classList.add("error");
+          }
+          showToast(
+            "✗ Upgrade failed: " +
+              (res && res.error ? res.error : "unknown error"),
+          );
+        }
+      });
+      latestSpan.after(upBtn);
+    } else {
+      row.classList.add("up-to-date");
+      row.classList.remove("has-update");
       // Clear stale dot state (e.g. 'error' from a failed upgrade) when the
       // check now reports the package is installed & current.
-      const dot = row.querySelector('.spec-dot')
-      if (dot) { dot.classList.remove('installing','has-update','error'); dot.classList.add('installed') }
+      const dot = row.querySelector(".spec-dot");
+      if (dot) {
+        dot.classList.remove("installing", "has-update", "error");
+        dot.classList.add("installed");
+      }
     }
-  })
-  showToast(updateCount > 0 ? updateCount + ' updates available' : 'All packages up to date')
-})
+  });
+  showToast(
+    updateCount > 0
+      ? updateCount + " updates available"
+      : "All packages up to date",
+  );
+});
 
 // ── GPU Kernel Wheels: Sync button ──
 // Reinstalls every kernel wheel the active GPU's profile declares. Streams to
 // the Console; refreshes the dashboard when done so versions update live.
-$('syncKernelsBtn')?.addEventListener('click', async function() {
-  if (this.disabled) return
-  this.disabled = true
-  this.textContent = 'Syncing...'
+$("syncKernelsBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  this.disabled = true;
+  this.textContent = "Syncing...";
   try {
-    const r = await window.w2gp.syncKernels()
-    if (r && r.success) showToast('✓ Kernel wheels synced')
-    else showToast('✗ Sync failed: ' + (r && r.error ? r.error : 'unknown'))
+    const r = await window.w2gp.syncKernels();
+    if (r && r.success) showToast("✓ Kernel wheels synced");
+    else showToast("✗ Sync failed: " + (r && r.error ? r.error : "unknown"));
   } catch (e) {
-    showToast('✗ Sync failed: ' + e.message)
+    showToast("✗ Sync failed: " + e.message);
   } finally {
-    this.disabled = false
-    this.textContent = '↻ Sync'
-    setTimeout(refreshDashboard, 1500)
+    this.disabled = false;
+    this.textContent = "↻ Sync";
+    setTimeout(refreshDashboard, 1500);
   }
-})
+});
 
 async function loadModelPaths() {
-  const paths = await window.w2gp.getModelPaths()
-  $('dashCkptPath').textContent = breakPath(paths?.checkpoints) || '(default)'; $('dashCkptPath').title = paths?.checkpoints || ''
-  $('dashLoraPath').textContent = breakPath(paths?.loras) || '(default)'; $('dashLoraPath').title = paths?.loras || ''
-  $('dashOutputPath').textContent = breakPath(paths?.output) || '(default)'; $('dashOutputPath').title = paths?.output || ''
+  const paths = await window.w2gp.getModelPaths();
+  $("dashCkptPath").textContent = breakPath(paths?.checkpoints) || "(default)";
+  $("dashCkptPath").title = paths?.checkpoints || "";
+  $("dashLoraPath").textContent = breakPath(paths?.loras) || "(default)";
+  $("dashLoraPath").title = paths?.loras || "";
+  $("dashOutputPath").textContent = breakPath(paths?.output) || "(default)";
+  $("dashOutputPath").title = paths?.output || "";
 }
 
 // When changing a model folder via the pencil, ask whether to physically MOVE
 // the existing files (so nothing is re-downloaded) or just point Wan2GP at the
 // new (empty) location. Then write wgp_config.json accordingly.
 async function changeModelFolder(type, key, cfgKey, singular) {
-  const dir = await window.w2gp.selectFolder()
-  if (!dir) return
+  const dir = await window.w2gp.selectFolder();
+  if (!dir) return;
   // ponytail: reject file-as-folder (orca-paste Temp png)
-  if (isFilePickedAsFolder(dir)) { alert('Please select a folder, not a file:\n' + dir); return }
-  const cur = await window.w2gp.getModelPaths().then(p => ({ ckpts: p?.checkpoints, loras: p?.loras, output: p?.output })[type])
-  if (cur && cur.toLowerCase() === dir.toLowerCase()) { window.w2gp.openFolder(dir); return }
+  if (isFilePickedAsFolder(dir)) {
+    alert("Please select a folder, not a file:\n" + dir);
+    return;
+  }
+  const cur = await window.w2gp
+    .getModelPaths()
+    .then(
+      (p) =>
+        ({ ckpts: p?.checkpoints, loras: p?.loras, output: p?.output })[type],
+    );
+  if (cur && cur.toLowerCase() === dir.toLowerCase()) {
+    window.w2gp.openFolder(dir);
+    return;
+  }
   const choice = await window.w2gp.confirmDialog({
-    title: 'Move ' + singular + '?',
-    message: 'Change ' + singular + ' folder to:\n  ' + dir,
+    title: "Move " + singular + "?",
+    message: "Change " + singular + " folder to:\n  " + dir,
     detail: cur
-      ? 'Do you want to MOVE the existing files from the old location into the new folder, or just point Wan2GP at the new (empty) folder?\n\nOld: ' + cur
-      : 'Point Wan2GP at the new folder?',
-    buttons: cur ? ['Move existing files', 'Just point (no move)', 'Cancel'] : ['OK', 'Cancel'],
+      ? "Do you want to MOVE the existing files from the old location into the new folder, or just point Wan2GP at the new (empty) folder?\n\nOld: " +
+        cur
+      : "Point Wan2GP at the new folder?",
+    buttons: cur
+      ? ["Move existing files", "Just point (no move)", "Cancel"]
+      : ["OK", "Cancel"],
     defaultId: cur ? 0 : 0,
-    cancelId: cur ? 2 : 1
-  })
-  if (choice === 'cancel') { window.w2gp.openFolder(dir); return }
-  if (choice === 'move' && cur) {
-    const r = await window.w2gp.moveFolder(cur, dir)
-    if (!r || !r.ok) { alert('Could not move files:\n' + (r && r.error || 'unknown')) }
+    cancelId: cur ? 2 : 1,
+  });
+  if (choice === "cancel") {
+    window.w2gp.openFolder(dir);
+    return;
+  }
+  if (choice === "move" && cur) {
+    const r = await window.w2gp.moveFolder(cur, dir);
+    if (!r || !r.ok) {
+      alert("Could not move files:\n" + ((r && r.error) || "unknown"));
+    }
   }
   // Write the real config (what Wan2GP reads) so the change takes effect next launch.
-  const patch = {}
-  patch[key] = (type === 'ckpts') ? [dir, '.'] : dir
-  await window.w2gp.writeWgpConfig(patch)
-  const cfg = await window.w2gp.configLoad()
-  if (type === 'ckpts') cfg.modelCkptsPath = dir
-  else if (type === 'loras') cfg.modelLorasPath = dir
-  else cfg.modelOutputPath = dir
-  await window.w2gp.configSave(cfg)
-  await loadModelPaths()
-  showToast('✓ ' + singular + ' folder updated — restart Wan2GP to apply')
+  const patch = {};
+  patch[key] = type === "ckpts" ? [dir, "."] : dir;
+  await window.w2gp.writeWgpConfig(patch);
+  const cfg = await window.w2gp.configLoad();
+  if (type === "ckpts") cfg.modelCkptsPath = dir;
+  else if (type === "loras") cfg.modelLorasPath = dir;
+  else cfg.modelOutputPath = dir;
+  await window.w2gp.configSave(cfg);
+  await loadModelPaths();
+  showToast("✓ " + singular + " folder updated — restart Wan2GP to apply");
 }
 
-$('dashBrowseCkpt').addEventListener('click', () => changeModelFolder('ckpts', 'checkpointsPaths', 'checkpoints', 'Checkpoints'))
-$('dashBrowseLora').addEventListener('click', () => changeModelFolder('loras', 'lorasRoot', 'loras', 'LoRAs'))
-$('dashBrowseOutput').addEventListener('click', () => changeModelFolder('output', 'savePath', 'output', 'Output'))
+$("dashBrowseCkpt").addEventListener("click", () =>
+  changeModelFolder("ckpts", "checkpointsPaths", "checkpoints", "Checkpoints"),
+);
+$("dashBrowseLora").addEventListener("click", () =>
+  changeModelFolder("loras", "lorasRoot", "loras", "LoRAs"),
+);
+$("dashBrowseOutput").addEventListener("click", () =>
+  changeModelFolder("output", "savePath", "output", "Output"),
+);
 
-$('desktopRepoLink').addEventListener('click', (e) => {
-  e.preventDefault()
-  window.w2gp.openExternal('https://github.com/GKartist75/Wan2GP-Desktop-Tauri')
-})
-$('discussionsLink').addEventListener('click', (e) => {
-  e.preventDefault()
-  window.w2gp.openExternal('https://github.com/GKartist75/Wan2GP-Desktop-Tauri/discussions')
-})
-$('ytLink').addEventListener('click', (e) => {
-  e.preventDefault()
-  window.w2gp.openExternal('https://www.youtube.com/@GK-Artist')
-})
+$("desktopRepoLink").addEventListener("click", (e) => {
+  e.preventDefault();
+  window.w2gp.openExternal(
+    "https://github.com/GKartist75/Wan2GP-Desktop-Tauri",
+  );
+});
+$("discussionsLink").addEventListener("click", (e) => {
+  e.preventDefault();
+  window.w2gp.openExternal(
+    "https://github.com/GKartist75/Wan2GP-Desktop-Tauri/discussions",
+  );
+});
+$("ytLink").addEventListener("click", (e) => {
+  e.preventDefault();
+  window.w2gp.openExternal("https://www.youtube.com/@GK-Artist");
+});
 
 async function loadPaths(skipModelPaths) {
-  const p = await window.w2gp.getInstallPaths()
-  if (!p) return
-  const set = (id, val) => { const e = $(id); if (e) { e.textContent = breakPath(val) || '—'; e.title = val || '' } }
-  set('pathAppData', p.repo)
-  set('installAppDataPath', p.appData)
+  const p = await window.w2gp.getInstallPaths();
+  if (!p) return;
+  const set = (id, val) => {
+    const e = $(id);
+    if (e) {
+      e.textContent = breakPath(val) || "—";
+      e.title = val || "";
+    }
+  };
+  set("pathAppData", p.repo);
+  set("installAppDataPath", p.appData);
   // Guard: if the chosen install location is a bare drive root (e.g. D:\),
   // the install is invalid — disable the Install button and warn the user.
-  const rootBad = isDriveRoot(p.appData)
-  const startBtn = $('installStartBtn')
-  const rootWarn = $('installRootWarn')
+  const rootBad = isDriveRoot(p.appData);
+  const startBtn = $("installStartBtn");
+  const rootWarn = $("installRootWarn");
   if (rootBad) {
-    if (startBtn) { startBtn.disabled = true; startBtn.title = 'Choose a folder, not a drive root.' }
-    if (rootWarn) { rootWarn.textContent = '⚠ Install location is a drive root (' + p.appData + '). Pick a folder using Browse.'; rootWarn.classList.remove('hidden') }
+    if (startBtn) {
+      startBtn.disabled = true;
+      startBtn.title = "Choose a folder, not a drive root.";
+    }
+    if (rootWarn) {
+      rootWarn.textContent =
+        "⚠ Install location is a drive root (" +
+        p.appData +
+        "). Pick a folder using Browse.";
+      rootWarn.classList.remove("hidden");
+    }
   } else {
-    if (startBtn) { startBtn.disabled = false; startBtn.title = '' }
-    if (rootWarn) rootWarn.classList.add('hidden')
+    if (startBtn) {
+      startBtn.disabled = false;
+      startBtn.title = "";
+    }
+    if (rootWarn) rootWarn.classList.add("hidden");
   }
   // The top warning banner already owns the in-launcher "Migrate to new location"
   // button (shown when legacyRoamingFound), so keep this dashboard card button
   // hidden in that case to avoid two migration buttons. It only appears as a
   // manual re-trigger when there is no legacy roaming dir to migrate.
-  const wrap = $('moveToPreferredWrap')
+  const wrap = $("moveToPreferredWrap");
   if (wrap) {
     // ponytail: Tauri isolated — never show roaming migrate-warn
-    if (window.__TAURI__) { wrap.classList.add('hidden') } else if (!p.legacyRoamingFound) {
-      wrap.classList.remove('hidden')
-      const cp = $('currentDataDirPath')
-      if (cp) cp.textContent = p.appData
+    if (window.__TAURI__) {
+      wrap.classList.add("hidden");
+    } else if (p.legacyRoamingFound) {
+      wrap.classList.add("hidden");
     } else {
-      wrap.classList.add('hidden')
+      wrap.classList.remove("hidden");
+      const cp = $("currentDataDirPath");
+      if (cp) cp.textContent = p.appData;
     }
   }
-  window.w2gp.getDiskSpace().then(function(d) {
+  window.w2gp.getDiskSpace().then((d) => {
     if (!d) return;
     var freeGb = (d.free / 1073741824).toFixed(1);
-    $('pathFreeSpace').textContent = freeGb + ' GB free';
+    $("pathFreeSpace").textContent = freeGb + " GB free";
   });
   if (!skipModelPaths) {
     // Show the model folders the user actually chose. Precedence: a previously
@@ -2603,279 +4130,414 @@ async function loadPaths(skipModelPaths) {
     // the dedicated default (C:\\Wan2GP-Models). We used to ALWAYS overwrite with
     // the default here, which is why any custom path silently reverted to
     // C:\\Wan2GP-Models on every refresh (issue #74).
-    const md = p.modelsDefault || p.appData
-    let saved = {}
-    try { saved = (await window.w2gp.configLoad()) || {} } catch {}
-    const savedCkpts = saved.modelCkptsPath
-    const savedLoras = saved.modelLorasPath
-    const savedOutput = saved.modelOutputPath
-    if (_modelCkpts || savedCkpts) setModelPath('ckpts', _modelCkpts || savedCkpts)
-    else setModelPath('ckpts', pathJoin(md, 'ckpts'))
-    if (_modelLoras || savedLoras) setModelPath('loras', _modelLoras || savedLoras)
-    else setModelPath('loras', pathJoin(md, 'loras'))
-    if (_modelOutput || savedOutput) setModelPath('output', _modelOutput || savedOutput)
-    else setModelPath('output', pathJoin(md, 'outputs'))
+    const md = p.modelsDefault || p.appData;
+    let saved = {};
+    try {
+      saved = (await window.w2gp.configLoad()) || {};
+    } catch {}
+    const savedCkpts = saved.modelCkptsPath;
+    const savedLoras = saved.modelLorasPath;
+    const savedOutput = saved.modelOutputPath;
+    if (_modelCkpts || savedCkpts)
+      setModelPath("ckpts", _modelCkpts || savedCkpts);
+    else setModelPath("ckpts", pathJoin(md, "ckpts"));
+    if (_modelLoras || savedLoras)
+      setModelPath("loras", _modelLoras || savedLoras);
+    else setModelPath("loras", pathJoin(md, "loras"));
+    if (_modelOutput || savedOutput)
+      setModelPath("output", _modelOutput || savedOutput);
+    else setModelPath("output", pathJoin(md, "outputs"));
   }
   // Re-triage the target folder when the installer screen is showing
   // (Browse / reset changes the location — verdict must follow).
-  try { if ($('installer') && $('installer').classList.contains('active')) { refreshTargetVerdict().catch(function() {}); refreshModelDiskGates().catch(function() {}) } } catch {}
+  try {
+    if ($("installer") && $("installer").classList.contains("active")) {
+      refreshTargetVerdict().catch(() => {});
+      refreshModelDiskGates().catch(() => {});
+    }
+  } catch {}
 }
 // Tiny path join that tolerates both separators in the renderer (no node path).
-function pathJoin(a, b) { return (a || '').replace(/[\\/]+$/, '') + '\\' + b }
+function pathJoin(a, b) {
+  return (a || "").replace(/[\\/]+$/, "") + "\\" + b;
+}
 // True when the path is a bare drive root, e.g. "D:" or "D:\" (but not "D:\Wan2GP").
 function isDriveRoot(p) {
-  if (!p) return false
-  const norm = (p || '').replace(/[\\/]+$/, '')
-  return /^[A-Za-z]:$/.test(norm)
+  if (!p) return false;
+  const norm = (p || "").replace(/[\\/]+$/, "");
+  return /^[A-Za-z]:$/.test(norm);
 }
 
-$('openAppDataBtn')?.addEventListener('click', () => {
-  window.w2gp.getInstallPaths().then(function(p) { if (p) window.w2gp.openFolder(p.repo) })
-})
+$("openAppDataBtn")?.addEventListener("click", () => {
+  window.w2gp.getInstallPaths().then((p) => {
+    if (p) window.w2gp.openFolder(p.repo);
+  });
+});
 // Move the entire Wan2GP install (no reinstall) — reuse the migration modal
 // pre-filled with the current location as the source.
-$('changeAppDataBtn')?.addEventListener('click', () => openMigrationModal())
+$("changeAppDataBtn")?.addEventListener("click", () => openMigrationModal());
 
 // Per-folder "open" buttons (folder icon) for the three model paths.
-$('openCkptBtn')?.addEventListener('click', () => window.w2gp.getModelPaths().then(p => p?.checkpoints && window.w2gp.openFolder(p.checkpoints)))
-$('openLoraBtn')?.addEventListener('click', () => window.w2gp.getModelPaths().then(p => p?.loras && window.w2gp.openFolder(p.loras)))
-$('openOutputBtn')?.addEventListener('click', () => window.w2gp.getModelPaths().then(p => p?.output && window.w2gp.openFolder(p.output)))
+$("openCkptBtn")?.addEventListener("click", () =>
+  window.w2gp
+    .getModelPaths()
+    .then((p) => p?.checkpoints && window.w2gp.openFolder(p.checkpoints)),
+);
+$("openLoraBtn")?.addEventListener("click", () =>
+  window.w2gp
+    .getModelPaths()
+    .then((p) => p?.loras && window.w2gp.openFolder(p.loras)),
+);
+$("openOutputBtn")?.addEventListener("click", () =>
+  window.w2gp
+    .getModelPaths()
+    .then((p) => p?.output && window.w2gp.openFolder(p.output)),
+);
 
-$('moveToPreferredBtn')?.addEventListener('click', () => openMigrationModal())
+$("moveToPreferredBtn")?.addEventListener("click", () => openMigrationModal());
 
 // ── Migration folder-chooser modal ──
 // Opens a dialog pre-filled with our recommended targets (data dir + checkpoints
 // + LoRAs + output). The user can override any of them, then "Move & restart"
 // calls migrate-to-preferred with the chosen paths. After the move, main rewrites
 // wgp_config.json model paths and relaunches.
-let _migBusy = false
+let _migBusy = false;
 async function openMigrationModal() {
-  if (_migBusy) return
-  let prefs
-  try { prefs = await window.w2gp.migrateChoose() } catch { prefs = null }
-  if (!prefs) { alert('Could not determine migration targets.'); return }
-  window._migPrefs = prefs
-  $('migDataDir').value = prefs.dataDir || ''
-  $('migDataDir').title = prefs.dataDir || ''
-  $('migCkpts').value = prefs.ckpts || ''
-  $('migCkpts').title = prefs.ckpts || ''
-  $('migLoras').value = prefs.loras || ''
-  $('migLoras').title = prefs.loras || ''
-  $('migOutput').value = prefs.output || ''
-  $('migOutput').title = prefs.output || ''
+  if (_migBusy) return;
+  let prefs;
+  try {
+    prefs = await window.w2gp.migrateChoose();
+  } catch {
+    prefs = null;
+  }
+  if (!prefs) {
+    alert("Could not determine migration targets.");
+    return;
+  }
+  window._migPrefs = prefs;
+  $("migDataDir").value = prefs.dataDir || "";
+  $("migDataDir").title = prefs.dataDir || "";
+  $("migCkpts").value = prefs.ckpts || "";
+  $("migCkpts").title = prefs.ckpts || "";
+  $("migLoras").value = prefs.loras || "";
+  $("migLoras").title = prefs.loras || "";
+  $("migOutput").value = prefs.output || "";
+  $("migOutput").title = prefs.output || "";
   // Context-aware copy: the modal is reused both for the first migration out of
   // a roaming AppData profile AND for later re-location of an already-migrated
   // install (e.g. C:\Wan2GP → D:\Wan2GP). Don't claim "AppData" when it isn't.
-  const roaming = !!prefs.fromRoaming
-  const cur = prefs.legacy || ''
-  const title = $('migrationTitle')
-  const sub = $('migrationSub')
-  if (title) title.textContent = roaming
-    ? 'Move Wan2GP out of AppData'
-    : 'Move Wan2GP to a new location'
+  const roaming = !!prefs.fromRoaming;
+  const cur = prefs.legacy || "";
+  const title = $("migrationTitle");
+  const sub = $("migrationSub");
+  if (title)
+    title.textContent = roaming
+      ? "Move Wan2GP out of AppData"
+      : "Move Wan2GP to a new location";
   if (sub) {
     sub.textContent = roaming
-      ? 'Your Wan2GP data currently lives in your roaming AppData profile. Move it to a dedicated, fast drive — AppData is meant for small settings, not multi-GB model checkpoints (it can slow logins, trigger antivirus locks, and bloat your profile). Our recommended locations are pre-filled — change any of them if you like.'
-      : 'Your Wan2GP is currently at ' + cur + '. Move it to a different drive or folder — your repo, venv, settings, and model folders travel with it. The recommended location is pre-filled — change it if you like.'
+      ? "Your Wan2GP data currently lives in your roaming AppData profile. Move it to a dedicated, fast drive — AppData is meant for small settings, not multi-GB model checkpoints (it can slow logins, trigger antivirus locks, and bloat your profile). Our recommended locations are pre-filled — change any of them if you like."
+      : "Your Wan2GP is currently at " +
+        cur +
+        ". Move it to a different drive or folder — your repo, venv, settings, and model folders travel with it. The recommended location is pre-filled — change it if you like.";
   }
   // Reset to idle state (in case a previous attempt left the progress UI showing).
-  _migBusy = false
-  const btn = $('migrationMoveBtn')
-  if (btn) { btn.disabled = false; btn.textContent = 'Move & restart' }
-  const prog = $('migrationProgress')
-  if (prog) { prog.classList.add('hidden'); const f = $('migrationProgressFill'); if (f) f.style.width = '0%' }
-  $('migrationModal').classList.remove('hidden')
+  _migBusy = false;
+  const btn = $("migrationMoveBtn");
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "Move & restart";
+  }
+  const prog = $("migrationProgress");
+  if (prog) {
+    prog.classList.add("hidden");
+    const f = $("migrationProgressFill");
+    if (f) f.style.width = "0%";
+  }
+  $("migrationModal").classList.remove("hidden");
 }
-$('migrationCloseBtn')?.addEventListener('click', () => $('migrationModal').classList.add('hidden'))
-$('migrationCancelBtn')?.addEventListener('click', () => $('migrationModal').classList.add('hidden'))
+$("migrationCloseBtn")?.addEventListener("click", () =>
+  $("migrationModal").classList.add("hidden"),
+);
+$("migrationCancelBtn")?.addEventListener("click", () =>
+  $("migrationModal").classList.add("hidden"),
+);
 // Browse buttons inside the modal pick a folder for the matching field.
-document.querySelectorAll('#migrationModal [data-browse]').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const key = btn.getAttribute('data-browse')
-    const field = { dataDir: 'migDataDir', ckpts: 'migCkpts', loras: 'migLoras', output: 'migOutput' }[key]
+document.querySelectorAll("#migrationModal [data-browse]").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const key = btn.getAttribute("data-browse");
+    const field = {
+      dataDir: "migDataDir",
+      ckpts: "migCkpts",
+      loras: "migLoras",
+      output: "migOutput",
+    }[key];
     try {
-      const picked = await window.w2gp.selectFolder()
-      if (picked) { $(field).value = picked; $(field).title = picked }
+      const picked = await window.w2gp.selectFolder();
+      if (picked) {
+        $(field).value = picked;
+        $(field).title = picked;
+      }
     } catch {}
-  })
-})
+  });
+});
 async function runMigration(doMove) {
-  if (_migBusy) return
+  if (_migBusy) return;
   // The two modal buttons own the choice now (Move vs Just-switch) — no
   // second popup. Same folder ⇒ nothing to move regardless of button.
-  const newDataDir = $('migDataDir').value.trim()
+  const newDataDir = $("migDataDir").value.trim();
   // ponytail: reject file-as-folder
-  if (isFilePickedAsFolder(newDataDir)) { alert('Please select a folder, not a file:\n' + newDataDir); resetMigrationUI(); return }
-  const oldDataDir = (window._migPrefs && (window._migPrefs.dataDir || window._migPrefs.legacy)) || (await window.w2gp.getInstallPaths().catch(()=>null))?.dataDir || ''
-  if (newDataDir && oldDataDir && newDataDir.toLowerCase() === oldDataDir.toLowerCase()) doMove = false
-  _migBusy = true
-  const moveBtn = $('migrationMoveBtn'), pointBtn = $('migrationPointBtn')
-  if (moveBtn) moveBtn.disabled = true
-  if (pointBtn) pointBtn.disabled = true
-  const btn = (doMove ? moveBtn : pointBtn) || moveBtn
-  btn.textContent = doMove ? 'Moving…' : 'Switching…'
-  const prog = $('migrationProgress')
-  if (prog) { prog.classList.remove('hidden'); setMigrationProgress(0) }
+  if (isFilePickedAsFolder(newDataDir)) {
+    alert("Please select a folder, not a file:\n" + newDataDir);
+    resetMigrationUI();
+    return;
+  }
+  const oldDataDir =
+    (window._migPrefs &&
+      (window._migPrefs.dataDir || window._migPrefs.legacy)) ||
+    (await window.w2gp.getInstallPaths().catch(() => null))?.dataDir ||
+    "";
+  if (
+    newDataDir &&
+    oldDataDir &&
+    newDataDir.toLowerCase() === oldDataDir.toLowerCase()
+  )
+    doMove = false;
+  _migBusy = true;
+  const moveBtn = $("migrationMoveBtn"),
+    pointBtn = $("migrationPointBtn");
+  if (moveBtn) moveBtn.disabled = true;
+  if (pointBtn) pointBtn.disabled = true;
+  const btn = (doMove ? moveBtn : pointBtn) || moveBtn;
+  btn.textContent = doMove ? "Moving…" : "Switching…";
+  const prog = $("migrationProgress");
+  if (prog) {
+    prog.classList.remove("hidden");
+    setMigrationProgress(0);
+  }
   const choices = {
     dataDir: newDataDir,
-    ckpts: $('migCkpts').value,
-    loras: $('migLoras').value,
-    output: $('migOutput').value
+    ckpts: $("migCkpts").value,
+    loras: $("migLoras").value,
+    output: $("migOutput").value,
+  };
+  if (!choices.dataDir) {
+    alert("Choose a Wan2GP data folder.");
+    resetMigrationUI();
+    return;
   }
-  if (!choices.dataDir) { alert('Choose a Wan2GP data folder.'); resetMigrationUI(); return }
   // Bare drive root ⇒ resolve to <root>\Wan2GP like the installer Browse does.
   if (isDriveRoot(choices.dataDir)) {
-    choices.dataDir = pathJoin(choices.dataDir, 'Wan2GP')
-    $('migDataDir').value = choices.dataDir
-    appendLog('[*] Drive root selected — using ' + choices.dataDir + ' instead.')
+    choices.dataDir = pathJoin(choices.dataDir, "Wan2GP");
+    $("migDataDir").value = choices.dataDir;
+    appendLog(
+      "[*] Drive root selected — using " + choices.dataDir + " instead.",
+    );
   }
   try {
     // ponytail: 4 modes for Wan2GP folder — existing/new × Move vs Just point
-    if (doMove && oldDataDir && newDataDir.toLowerCase() !== oldDataDir.toLowerCase()) {
-      const r = await window.w2gp.moveFolder(oldDataDir, newDataDir)
-      if (!r || (!r.ok && !r.success)) { alert('Could not move files:\n' + ((r && r.error) || 'unknown') + '\n\nClose any Wan2GP windows/terminals and try again.'); resetMigrationUI(); return }
+    if (
+      doMove &&
+      oldDataDir &&
+      newDataDir.toLowerCase() !== oldDataDir.toLowerCase()
+    ) {
+      const r = await window.w2gp.moveFolder(oldDataDir, newDataDir);
+      if (!r || (!r.ok && !r.success)) {
+        alert(
+          "Could not move files:\n" +
+            ((r && r.error) || "unknown") +
+            "\n\nClose any Wan2GP windows/terminals and try again.",
+        );
+        resetMigrationUI();
+        return;
+      }
     }
-    const r2 = await window.w2gp.setDataDir(newDataDir)
-    if (!r2 || (!r2.ok && !r2.success)) { alert('Could not switch data folder:\n' + ((r2 && r2.error) || 'unknown')); resetMigrationUI(); return }
+    const r2 = await window.w2gp.setDataDir(newDataDir);
+    if (!r2 || (!r2.ok && !r2.success)) {
+      alert(
+        "Could not switch data folder:\n" + ((r2 && r2.error) || "unknown"),
+      );
+      resetMigrationUI();
+      return;
+    }
     // persist model folder overrides if changed (no move, just point — like changeModelFolder "Just point")
-    const ck = $('migCkpts').value.trim(), lo = $('migLoras').value.trim(), out = $('migOutput').value.trim()
-    const patch={}
-    if (ck && ck !== (window._migPrefs?.ckpts||'')) patch.checkpointsPaths=[ck,'.']
-    if (lo && lo !== (window._migPrefs?.loras||'')) patch.lorasRoot=lo
-    if (out && out !== (window._migPrefs?.output||'')) patch.savePath=out
-    if (Object.keys(patch).length) await window.w2gp.writeWgpConfig(patch)
-    btn.textContent = 'Restarting…'
-    setTimeout(()=> location.reload(), 900)
+    const ck = $("migCkpts").value.trim(),
+      lo = $("migLoras").value.trim(),
+      out = $("migOutput").value.trim();
+    const patch = {};
+    if (ck && ck !== (window._migPrefs?.ckpts || ""))
+      patch.checkpointsPaths = [ck, "."];
+    if (lo && lo !== (window._migPrefs?.loras || "")) patch.lorasRoot = lo;
+    if (out && out !== (window._migPrefs?.output || "")) patch.savePath = out;
+    if (Object.keys(patch).length) await window.w2gp.writeWgpConfig(patch);
+    btn.textContent = "Restarting…";
+    setTimeout(() => location.reload(), 900);
   } catch (e) {
-    alert('Migration failed: ' + errText(e))
-    resetMigrationUI()
+    alert("Migration failed: " + errText(e));
+    resetMigrationUI();
   }
 }
-$('migrationMoveBtn')?.addEventListener('click', () => runMigration(true))
-$('migrationPointBtn')?.addEventListener('click', () => runMigration(false))
+$("migrationMoveBtn")?.addEventListener("click", () => runMigration(true));
+$("migrationPointBtn")?.addEventListener("click", () => runMigration(false));
 // Show live copy progress (only the slow cross-volume/copy-fallback path emits
 // this — the common instant rename path finishes before any paint).
 function setMigrationProgress(pct) {
-  const fill = $('migrationProgressFill'); if (fill) fill.style.width = pct + '%'
-  const txt = $('migrationProgressText'); if (txt) txt.textContent = 'Moving… ' + pct + '%'
+  const fill = $("migrationProgressFill");
+  if (fill) fill.style.width = pct + "%";
+  const txt = $("migrationProgressText");
+  if (txt) txt.textContent = "Moving… " + pct + "%";
 }
-window.w2gp.onMigrationProgress?.(setMigrationProgress)
+window.w2gp.onMigrationProgress?.(setMigrationProgress);
 // Restore the modal to its idle state (re-enable button, hide progress).
 function resetMigrationUI() {
-  _migBusy = false
-  const btn = $('migrationMoveBtn')
-  if (btn) { btn.disabled = false; btn.textContent = 'Move & restart' }
-  const pt = $('migrationPointBtn')
-  if (pt) { pt.disabled = false; pt.textContent = 'Just switch to it' }
-  const prog = $('migrationProgress')
-  if (prog) { prog.classList.add('hidden'); setMigrationProgress(0) }
+  _migBusy = false;
+  const btn = $("migrationMoveBtn");
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "Move & restart";
+  }
+  const pt = $("migrationPointBtn");
+  if (pt) {
+    pt.disabled = false;
+    pt.textContent = "Just switch to it";
+  }
+  const prog = $("migrationProgress");
+  if (prog) {
+    prog.classList.add("hidden");
+    setMigrationProgress(0);
+  }
 }
 // Startup prompt (main process) asks the renderer to open this modal.
 window.w2gp.onOpenMigration?.(() => openMigrationModal());
 
 // Re-entrancy guard: periodic + manual checks share one flight; a slow GitHub
 // response can't stack overlapping fetches.
-let _wangpCheckBusy = false
+let _wangpCheckBusy = false;
 // ponytail: upstream fetch spawns curl/powershell to GitHub (~1-5s) — cache 5 min
 // instead of re-hitting the network on every refreshDashboard.
-let _upstreamAt = 0, _upstreamData = null
+let _upstreamAt = 0,
+  _upstreamData = null;
 // ponytail: llmEnginesList spawns 3x where + a cold venv python per call, and
 // refreshLLMEngines + refreshDeepy each called it per refresh — one shared flight.
-let _llmEnginesPromise = null
+let _llmEnginesPromise = null;
 function getLLMEngines() {
-  if (!_llmEnginesPromise) _llmEnginesPromise = window.w2gp.llmEnginesList().catch(() => ({ engines: [] }))
-  return _llmEnginesPromise
+  if (!_llmEnginesPromise)
+    _llmEnginesPromise = window.w2gp
+      .llmEnginesList()
+      .catch(() => ({ engines: [] }));
+  return _llmEnginesPromise;
 }
 async function loadWangpChangelog(showLoading) {
-  const localEl = $('localCommit')
-  const listEl = $('updatesList')
-  const verEl = $('wangpVersion')
-  if (!listEl) return
-  if (_wangpCheckBusy) return
-  _wangpCheckBusy = true
+  const localEl = $("localCommit");
+  const listEl = $("updatesList");
+  const verEl = $("wangpVersion");
+  if (!listEl) return;
+  if (_wangpCheckBusy) return;
+  _wangpCheckBusy = true;
   try {
-    if (showLoading) listEl.innerHTML = '<div class="changelog-loading">Checking for updates...</div>'
+    if (showLoading)
+      listEl.innerHTML =
+        '<div class="changelog-loading">Checking for updates...</div>';
 
-    const local = await window.w2gp.getWangpLocalVersion()
-    if (local && localEl) localEl.textContent = local.hash ? local.hash.substring(0, 7) : ''
+    const local = await window.w2gp.getWangpLocalVersion();
+    if (local && localEl)
+      localEl.textContent = local.hash ? local.hash.substring(0, 7) : "";
 
-    window.w2gp.getWangpVersion().then(v => { if (v && verEl) verEl.textContent = v })
+    window.w2gp.getWangpVersion().then((v) => {
+      if (v && verEl) verEl.textContent = v;
+    });
 
-    const upstream = (Date.now() - _upstreamAt < 5 * 60 * 1000 && _upstreamData)
-      ? _upstreamData
-      : await window.w2gp.getWangpUpstreamInfo().then(u => { if (u && u.commits) { _upstreamAt = Date.now(); _upstreamData = u } return u })
+    const upstream =
+      Date.now() - _upstreamAt < 5 * 60 * 1000 && _upstreamData
+        ? _upstreamData
+        : await window.w2gp.getWangpUpstreamInfo().then((u) => {
+            if (u && u.commits) {
+              _upstreamAt = Date.now();
+              _upstreamData = u;
+            }
+            return u;
+          });
     if (!upstream || !upstream.commits) {
       // A transient upstream failure on the silent periodic poll must not
       // clobber a previously rendered changelog — show the error only on an
       // explicit user check.
-      if (showLoading) listEl.innerHTML = '<div class="changelog-error">Could not fetch updates</div>'
+      if (showLoading)
+        listEl.innerHTML =
+          '<div class="changelog-error">Could not fetch updates</div>';
       // Clear any stale green dot from a previous check — don't leave it dangling
-      const updateBtn = $('updateBtn')
+      const updateBtn = $("updateBtn");
       if (updateBtn) {
-        updateBtn.classList.remove('has-update')
-        updateBtn.querySelector('.update-dot')?.remove()
+        updateBtn.classList.remove("has-update");
+        updateBtn.querySelector(".update-dot")?.remove();
       }
-      return
+      return;
     }
 
-    const updateBtn = $('updateBtn')
-    const hasUpdate = local && upstream.commits[0]?.hash !== local.hash
+    const updateBtn = $("updateBtn");
+    const hasUpdate = local && upstream.commits[0]?.hash !== local.hash;
     if (hasUpdate) {
-      updateBtn?.classList.add('has-update')
-      if (!updateBtn?.querySelector('.update-dot')) {
-        const dot = document.createElement('span')
-        dot.className = 'update-dot'
-        updateBtn.appendChild(dot)
+      updateBtn?.classList.add("has-update");
+      if (!updateBtn?.querySelector(".update-dot")) {
+        const dot = document.createElement("span");
+        dot.className = "update-dot";
+        updateBtn.appendChild(dot);
       }
     } else {
-      updateBtn?.classList.remove('has-update')
-      updateBtn?.querySelector('.update-dot')?.remove()
+      updateBtn?.classList.remove("has-update");
+      updateBtn?.querySelector(".update-dot")?.remove();
     }
 
-    listEl.innerHTML = upstream.commits.map(c =>
-      `<div class="cl-item">
+    listEl.innerHTML = upstream.commits
+      .map(
+        (c) =>
+          `<div class="cl-item">
         <span class="cl-date">${fmtDate(c.date)}</span>
         <span class="cl-msg">${escHtml(c.message)}</span>
         <span class="cl-author">${escHtml(c.author)}</span>
-      </div>`
-    ).join('')
+      </div>`,
+      )
+      .join("");
   } finally {
-    _wangpCheckBusy = false
+    _wangpCheckBusy = false;
   }
 }
 
 function fmtDate(s) {
-  if (!s) return ''
-  const d = new Date(s)
-  const days = (Date.now() - d) / 864e5
-  if (days < 1) return 'today'
-  if (days < 2) return 'yesterday'
-  return days < 7 ? `${Math.floor(days)}d ago` : d.toLocaleDateString('en-US', {month:'short',day:'numeric'})
+  if (!s) return "";
+  const d = new Date(s);
+  const days = (Date.now() - d) / 864e5;
+  if (days < 1) return "today";
+  if (days < 2) return "yesterday";
+  return days < 7
+    ? `${Math.floor(days)}d ago`
+    : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  $('wangpCheckLink')?.addEventListener('click', (e) => {
-    e.preventDefault()
-    loadWangpChangelog(true)
-  })
-  $('changelogLink')?.addEventListener('click', (e) => {
-    e.preventDefault()
-    window.w2gp.openExternal('https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/CHANGELOG.md')
-  })
-  $('hfModelsLink')?.addEventListener('click', (e) => {
-    e.preventDefault()
-    window.w2gp.openExternal('https://huggingface.co/DeepBeepMeep')
-  })
-})
+document.addEventListener("DOMContentLoaded", () => {
+  $("wangpCheckLink")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    loadWangpChangelog(true);
+  });
+  $("changelogLink")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    window.w2gp.openExternal(
+      "https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/CHANGELOG.md",
+    );
+  });
+  $("hfModelsLink")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    window.w2gp.openExternal("https://huggingface.co/DeepBeepMeep");
+  });
+});
 
 // ── Launch buttons: disabled + hint when Wan2GP is not installed ──
 function setLaunchButtonsInstalled(installed) {
-  ;['browserBtn', 'browserNoGpuBtn', 'termBtn', 'appBtn'].forEach(id => {
-    const b = $(id)
-    if (b) b.disabled = !installed
-  })
-  const hint = $('notInstalledHint')
-  if (hint) hint.style.display = installed ? 'none' : 'block'
+  ["browserBtn", "browserNoGpuBtn", "termBtn", "appBtn"].forEach((id) => {
+    const b = $(id);
+    if (b) b.disabled = !installed;
+  });
+  const hint = $("notInstalledHint");
+  if (hint) hint.style.display = installed ? "none" : "block";
 }
 
 // ── Launch in Browser (uses the user's chosen default browser) ──
@@ -2883,302 +4545,388 @@ function setLaunchButtonsInstalled(installed) {
 // otherwise when the backend reports ready — never a dead URL first).
 async function openBrowserView(url, noGpu) {
   if (noGpu) {
-    const r = await window.w2gp.launchBrowserNoGpu(url)
-    if (!r || !r.success) throw new Error((r && r.error) || 'no-GPU launch failed')
-    appendLog(`[*] Launched in browser with GPU disabled.`)
+    const r = await window.w2gp.launchBrowserNoGpu(url);
+    if (!r || !r.success)
+      throw new Error((r && r.error) || "no-GPU launch failed");
+    appendLog(`[*] Launched in browser with GPU disabled.`);
   } else {
-    await window.w2gp.launchBrowser(url)
+    await window.w2gp.launchBrowser(url);
   }
-  browserRunning = true
-  serverMode = 'browser'
-  window.w2gp.uiModeSet('browser')   // crash recovery: remember browser mode
-  showBrowserRunningUI()
-  $('browserBtn').textContent = 'Open Wan2GP in Browser'
+  browserRunning = true;
+  serverMode = "browser";
+  window.w2gp.uiModeSet("browser"); // crash recovery: remember browser mode
+  showBrowserRunningUI();
+  $("browserBtn").textContent = "Open Wan2GP in Browser";
   if (noGpu) {
-    $('browserNoGpuBtn').textContent = 'Open in Chrome (no GPU)'
-    $('browserBtn').style.display = 'none'
+    $("browserNoGpuBtn").textContent = "Open in Chrome (no GPU)";
+    $("browserBtn").style.display = "none";
   } else {
-    $('browserNoGpuBtn').style.display = 'none'
+    $("browserNoGpuBtn").style.display = "none";
   }
-  $('launchInfo').classList.add('hidden')
+  $("launchInfo").classList.add("hidden");
 }
-$('browserBtn').addEventListener('click', async () => {
+$("browserBtn").addEventListener("click", async () => {
   // Already running in browser mode → just re-open the URL (don't re-spawn the server).
-  if (browserRunning && currentUrl) { await window.w2gp.launchBrowser(currentUrl); return }
-  const btn = $('browserBtn')
-  btn.disabled = true; btn.textContent = 'Starting...'
-  $('launchInfo').classList.remove('hidden')
-  appendLog('[*] Starting Wan2GP — watch the console below…\n')
-  try {
-    const result = await window.w2gp.launch()
-    currentUrl = result.url
-    if (!result.fresh) { await openBrowserView(result.url, false); return }
-    _pendingOpen = { kind: 'browser', url: result.url, noGpu: false }
-    btn.textContent = 'Starting… (see console)'
-    armPendingTimeout()
-  } catch(e){
-    appendLog(`[LAUNCH ERROR] ${errText(e)}`)
-    $('launchInfo').classList.add('hidden')
-    btn.disabled = false
-    if (!browserRunning) btn.textContent = 'Launch Wan2GP in Browser'
+  if (browserRunning && currentUrl) {
+    await window.w2gp.launchBrowser(currentUrl);
+    return;
   }
-})
+  const btn = $("browserBtn");
+  btn.disabled = true;
+  btn.textContent = "Starting...";
+  $("launchInfo").classList.remove("hidden");
+  appendLog("[*] Starting Wan2GP — watch the console below…\n");
+  try {
+    const result = await window.w2gp.launch();
+    currentUrl = result.url;
+    if (!result.fresh) {
+      await openBrowserView(result.url, false);
+      return;
+    }
+    _pendingOpen = { kind: "browser", url: result.url, noGpu: false };
+    btn.textContent = "Starting… (see console)";
+    armPendingTimeout();
+  } catch (e) {
+    appendLog(`[LAUNCH ERROR] ${errText(e)}`);
+    $("launchInfo").classList.add("hidden");
+    btn.disabled = false;
+    if (!browserRunning) btn.textContent = "Launch Wan2GP in Browser";
+  }
+});
 
 // ── Launch in Browser with GPU disabled (start-chrome-no-gpu script) ──
-$('browserNoGpuBtn').addEventListener('click', async () => {
+$("browserNoGpuBtn").addEventListener("click", async () => {
   // Already running → re-open with the SAME no-GPU path (previously this
   // fell back to launchBrowser, silently re-enabling GPU acceleration).
-  if (browserRunning && currentUrl) { await window.w2gp.launchBrowserNoGpu(currentUrl); return }
-  const btn = $('browserNoGpuBtn')
-  btn.disabled = true; btn.textContent = 'Starting...'
-  $('launchInfo').classList.remove('hidden')
-  try {
-    const result = await window.w2gp.launch()
-    currentUrl = result.url
-    if (!result.fresh) { await openBrowserView(result.url, true); return }
-    _pendingOpen = { kind: 'browser', url: result.url, noGpu: true }
-    btn.textContent = 'Starting… (see console)'
-    armPendingTimeout()
-  } catch(e){
-    appendLog(`[LAUNCH ERROR] ${errText(e)}`)
-    $('launchInfo').classList.add('hidden')
-    btn.disabled = false
-    if (!browserRunning) btn.textContent = 'Launch in Chrome (no GPU script)'
+  if (browserRunning && currentUrl) {
+    await window.w2gp.launchBrowserNoGpu(currentUrl);
+    return;
   }
-})
+  const btn = $("browserNoGpuBtn");
+  btn.disabled = true;
+  btn.textContent = "Starting...";
+  $("launchInfo").classList.remove("hidden");
+  try {
+    const result = await window.w2gp.launch();
+    currentUrl = result.url;
+    if (!result.fresh) {
+      await openBrowserView(result.url, true);
+      return;
+    }
+    _pendingOpen = { kind: "browser", url: result.url, noGpu: true };
+    btn.textContent = "Starting… (see console)";
+    armPendingTimeout();
+  } catch (e) {
+    appendLog(`[LAUNCH ERROR] ${errText(e)}`);
+    $("launchInfo").classList.add("hidden");
+    btn.disabled = false;
+    if (!browserRunning) btn.textContent = "Launch in Chrome (no GPU script)";
+  }
+});
 
 // ── Launch in a real terminal (run.bat style: server runs in a cmd window) ──
-$('termBtn').addEventListener('click', async () => {
-  if (browserRunning && currentUrl) { await window.w2gp.launchBrowser(currentUrl); return }
-  const btn = $('termBtn')
-  btn.disabled = true; btn.textContent = 'Starting...'
-  $('launchInfo').classList.remove('hidden')
-  try {
-    const result = await window.w2gp.launch('terminal')
-    currentUrl = result.url
-    // The generated .bat opens localhost itself (mirrors the desktop shortcut), so we don't double-open.
-    browserRunning = true
-    serverMode = 'browser'   // UI treatment identical to browser mode (running + Stop + re-open)
-    window.w2gp.uiModeSet('browser')   // crash recovery: remember browser mode
-    showBrowserRunningUI()
-    btn.textContent = 'Open Wan2GP in Browser'
-    $('browserBtn').style.display = 'none'
-    $('browserNoGpuBtn').style.display = 'none'
-    $('launchInfo').classList.add('hidden')
-  } catch(e){
-    appendLog(`[LAUNCH ERROR] ${errText(e)}`)
-    $('launchInfo').classList.add('hidden')
-  } finally {
-    $('termBtn').disabled = false
-    if (!browserRunning) $('termBtn').textContent = 'Launch in External Terminal'
+$("termBtn").addEventListener("click", async () => {
+  if (browserRunning && currentUrl) {
+    await window.w2gp.launchBrowser(currentUrl);
+    return;
   }
-})
+  const btn = $("termBtn");
+  btn.disabled = true;
+  btn.textContent = "Starting...";
+  $("launchInfo").classList.remove("hidden");
+  try {
+    const result = await window.w2gp.launch("terminal");
+    currentUrl = result.url;
+    // The generated .bat opens localhost itself (mirrors the desktop shortcut), so we don't double-open.
+    browserRunning = true;
+    serverMode = "browser"; // UI treatment identical to browser mode (running + Stop + re-open)
+    window.w2gp.uiModeSet("browser"); // crash recovery: remember browser mode
+    showBrowserRunningUI();
+    btn.textContent = "Open Wan2GP in Browser";
+    $("browserBtn").style.display = "none";
+    $("browserNoGpuBtn").style.display = "none";
+    $("launchInfo").classList.add("hidden");
+  } catch (e) {
+    appendLog(`[LAUNCH ERROR] ${errText(e)}`);
+    $("launchInfo").classList.add("hidden");
+  } finally {
+    $("termBtn").disabled = false;
+    if (!browserRunning)
+      $("termBtn").textContent = "Launch in External Terminal";
+  }
+});
 
-let currentUrl = null
+let currentUrl = null;
 // Tracks which launcher path started the server so we can reset the right UI on exit.
-let serverMode = null      // 'app' | 'browser' | null
-let browserRunning = false // browser-mode server currently up (button acts as re-open)
-let appRunning = false     // desktop-mode (BrowserView) server currently up (button acts as "Back to…")
+let serverMode = null; // 'app' | 'browser' | null
+let browserRunning = false; // browser-mode server currently up (button acts as re-open)
+let appRunning = false; // desktop-mode (BrowserView) server currently up (button acts as "Back to…")
 
 // ── Launch in App (BrowserView — renders Gradio reliably on Electron 40; intercepts
 //     /manifest.json to dodge gradio#11553 blank-page bug) ──
 // Opens the Desktop embed for an already-running server (called immediately
 // when the server was already up, or when the backend reports ready).
-let _pendingOpen = null
+let _pendingOpen = null;
 // Safety: if ready never arrives (crashed silencer), un-wedge after 3 min.
 function armPendingTimeout() {
   setTimeout(() => {
     if (_pendingOpen) {
-      _pendingOpen = null
-      appendLog('[!] Wan2GP did not report ready — check the console above for errors.')
-      $('appBtn').disabled = false; setAppLaunchLabel()
-      ;['browserBtn', 'browserNoGpuBtn'].forEach(id => { const b = $(id); if (b) b.disabled = false })
-      if (!browserRunning) $('browserBtn').textContent = 'Launch Wan2GP in Browser'
+      _pendingOpen = null;
+      appendLog(
+        "[!] Wan2GP did not report ready — check the console above for errors.",
+      );
+      $("appBtn").disabled = false;
+      setAppLaunchLabel();
+      ["browserBtn", "browserNoGpuBtn"].forEach((id) => {
+        const b = $(id);
+        if (b) b.disabled = false;
+      });
+      if (!browserRunning)
+        $("browserBtn").textContent = "Launch Wan2GP in Browser";
     }
-  }, 180000)
+  }, 180000);
 }
 async function openDesktopView(url, fresh) {
   // Transition mutex with closeWebview: double-clicks / fast Back-and-forth
   // used to interleave the two async flows and strand mixed states
   // (dashboard visible WITH Desktop topbar controls).
-  if (window.__viewBusy) { appendLog('[i] View transition in progress — ignored'); return }
-  window.__viewBusy = true
-  $('appBtn').disabled = true; $('appBtn').textContent = 'Opening...'
+  if (window.__viewBusy) {
+    appendLog("[i] View transition in progress — ignored");
+    return;
+  }
+  window.__viewBusy = true;
+  $("appBtn").disabled = true;
+  $("appBtn").textContent = "Opening...";
   try {
     // Stale-renderer guard: the mode was switched while the view sat
     // hidden-but-alive → destroy it and fall through to a fresh create below.
     // (Just re-showing would keep the OLD renderer forever.)
     try {
-      const _cfg = await window.w2gp.configLoad().catch(() => ({}))
-      const _want = (_cfg && _cfg.embedMode === 'iframe') ? 'iframe' : 'native'
-      const _have = (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) ? 'native'
-        : (document.getElementById('tauri-browser-view') ? 'iframe' : null)
+      const _cfg = await window.w2gp.configLoad().catch(() => ({}));
+      const _want = _cfg && _cfg.embedMode === "iframe" ? "iframe" : "native";
+      const _have =
+        window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()
+          ? "native"
+          : document.getElementById("tauri-browser-view")
+            ? "iframe"
+            : null;
       if (!fresh && _have && _have !== _want) {
-        appendLog(`[*] Embed mode changed (${_have} → ${_want}) — recreating Desktop view…`)
-        try { await window.w2gp.destroyBrowserView() } catch {}
-        fresh = true
+        appendLog(
+          `[*] Embed mode changed (${_have} → ${_want}) — recreating Desktop view…`,
+        );
+        try {
+          await window.w2gp.destroyBrowserView();
+        } catch {}
+        fresh = true;
       }
     } catch {}
     // Hidden-but-alive view (Back to Dashboard keeps it) → just re-show it.
     // No relaunch, no port traffic, Gradio session untouched. Native child:
     // re-show the (still-alive) child instead of recreating it.
-    const _nativeAlive = !fresh && window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()
-    if ((!fresh && document.getElementById('tauri-browser-view')) || _nativeAlive) {
-      const _iv = document.getElementById('tauri-browser-view')
-      if (_iv) _iv.style.display = 'flex'
-      if (_nativeAlive) reshowNativeView()
-      $('dashBody').style.display = 'none'
-      $('webviewContainer').classList.remove('hidden')
-      $('launchInfo').classList.add('hidden')
-      showWebviewUI()
-      updateLed('running')
-      updateFtStatus('running')
-      serverMode = 'app'
-      appRunning = true
-      setAppLaunchLabel()
-      window.w2gp.uiModeSet('app')
-      if (browserRunning) resetBrowserLaunchUI()
-      return
+    const _nativeAlive =
+      !fresh && window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed();
+    if (
+      (!fresh && document.getElementById("tauri-browser-view")) ||
+      _nativeAlive
+    ) {
+      const _iv = document.getElementById("tauri-browser-view");
+      if (_iv) _iv.style.display = "flex";
+      if (_nativeAlive) reshowNativeView();
+      $("dashBody").style.display = "none";
+      $("webviewContainer").classList.remove("hidden");
+      $("launchInfo").classList.add("hidden");
+      showWebviewUI();
+      updateLed("running");
+      updateFtStatus("running");
+      serverMode = "app";
+      appRunning = true;
+      setAppLaunchLabel();
+      window.w2gp.uiModeSet("app");
+      if (browserRunning) resetBrowserLaunchUI();
+      return;
     }
-    const created = await window.w2gp.createBrowserView(url, { reload: !!fresh })
-    if (!created || (created.error && !created.fallback)) throw new Error(created && created.error ? created.error : 'failed to create embed')
-    noteEmbedFallback(created)
-    appendLog(`[*] Desktop view: ${((created && created.mode) || 'iframe')} renderer — ${url}`)
-    $('dashBody').style.display = 'none'
-    $('webviewContainer').classList.remove('hidden')
-    $('launchInfo').classList.add('hidden')
-    showWebviewUI()
-    updateLed('running')
-    updateFtStatus('running')
-    serverMode = 'app'
-    appRunning = true
-    setAppLaunchLabel()
-    window.w2gp.uiModeSet('app')   // crash recovery: remember we are in Desktop mode
-    if (browserRunning) resetBrowserLaunchUI()
+    const created = await window.w2gp.createBrowserView(url, {
+      reload: !!fresh,
+    });
+    if (!created || (created.error && !created.fallback))
+      throw new Error(
+        created && created.error ? created.error : "failed to create embed",
+      );
+    noteEmbedFallback(created);
+    appendLog(
+      `[*] Desktop view: ${(created && created.mode) || "iframe"} renderer — ${url}`,
+    );
+    $("dashBody").style.display = "none";
+    $("webviewContainer").classList.remove("hidden");
+    $("launchInfo").classList.add("hidden");
+    showWebviewUI();
+    updateLed("running");
+    updateFtStatus("running");
+    serverMode = "app";
+    appRunning = true;
+    setAppLaunchLabel();
+    window.w2gp.uiModeSet("app"); // crash recovery: remember we are in Desktop mode
+    if (browserRunning) resetBrowserLaunchUI();
     // Open the floating terminal per the saved default dock (or stay minimised)
     // ponytail: Tauri desktop embed is iframe, not native BrowserView — don't auto-cover it with the console
-    const cfg = await window.w2gp.configLoad()
-    const dock = window.__TAURI__ ? 'minimised' : (cfg.termDockDefault || 'bottom')
-    if (dock === 'minimised') {
-      if (!$('floatingTerminal').classList.contains('hidden')) closeFloatingTerm()
+    const cfg = await window.w2gp.configLoad();
+    const dock = window.__TAURI__
+      ? "minimised"
+      : cfg.termDockDefault || "bottom";
+    if (dock === "minimised") {
+      if (!$("floatingTerminal").classList.contains("hidden"))
+        closeFloatingTerm();
     } else {
-      if ($('floatingTerminal').classList.contains('hidden')) toggleFloatingTerm()
-      setFtDock(dock)
+      if ($("floatingTerminal").classList.contains("hidden"))
+        toggleFloatingTerm();
+      setFtDock(dock);
     }
-  } catch(e){
+  } catch (e) {
     // Never leave the dashboard hidden behind a blank embed
-    $('dashBody').style.display = ''
-    $('webviewContainer').classList.add('hidden')
-    hideWebviewUI()
-    appendLog(`[LAUNCH ERROR] ${errText(e)}`)
+    $("dashBody").style.display = "";
+    $("webviewContainer").classList.add("hidden");
+    hideWebviewUI();
+    appendLog(`[LAUNCH ERROR] ${errText(e)}`);
   } finally {
-    $('appBtn').disabled = false; setAppLaunchLabel()
-    window.__viewBusy = false
+    $("appBtn").disabled = false;
+    setAppLaunchLabel();
+    window.__viewBusy = false;
   }
 }
-$('appBtn').addEventListener('click', async () => {
+$("appBtn").addEventListener("click", async () => {
   // Server already up behind the dashboard → just open the view.
-  if (appRunning && currentUrl) { openDesktopView(currentUrl, false); return }
-  $('appBtn').disabled = true; $('appBtn').textContent = 'Starting...'
-  $('launchInfo').classList.remove('hidden')
-  appendLog('[*] Starting Wan2GP — watch the console below…\n')
-  try {
-    const result = await window.w2gp.launchWebview()
-    currentUrl = result.url
-    if (!result.fresh) { openDesktopView(result.url, false); return }
-    // Fresh boot: stay on the dashboard console until the backend reports ready.
-    _pendingOpen = { kind: 'desktop', url: result.url }
-    $('appBtn').textContent = 'Starting… (see console)'
-    armPendingTimeout()
-  } catch(e){
-    $('launchInfo').classList.add('hidden')
-    appendLog(`[LAUNCH ERROR] ${errText(e)}`)
-    $('appBtn').disabled = false; setAppLaunchLabel()
+  if (appRunning && currentUrl) {
+    openDesktopView(currentUrl, false);
+    return;
   }
-})
+  $("appBtn").disabled = true;
+  $("appBtn").textContent = "Starting...";
+  $("launchInfo").classList.remove("hidden");
+  appendLog("[*] Starting Wan2GP — watch the console below…\n");
+  try {
+    const result = await window.w2gp.launchWebview();
+    currentUrl = result.url;
+    if (!result.fresh) {
+      openDesktopView(result.url, false);
+      return;
+    }
+    // Fresh boot: stay on the dashboard console until the backend reports ready.
+    _pendingOpen = { kind: "desktop", url: result.url };
+    $("appBtn").textContent = "Starting… (see console)";
+    armPendingTimeout();
+  } catch (e) {
+    $("launchInfo").classList.add("hidden");
+    appendLog(`[LAUNCH ERROR] ${errText(e)}`);
+    $("appBtn").disabled = false;
+    setAppLaunchLabel();
+  }
+});
 
 // Native was requested but the backend couldn't stand up the child webview
 // (it fell back to iframe) — say so loudly instead of silently running old.
 function noteEmbedFallback(created) {
   if (created && created.fallback) {
-    const why = created.error ? ' — ' + created.error : ''
-    appendLog('[!] Native embed failed, fell back to iframe' + why + ' (see console / F12)')
-    showToast('✗ Native embed failed — running iframe' + why)
+    const why = created.error ? " — " + created.error : "";
+    appendLog(
+      "[!] Native embed failed, fell back to iframe" +
+        why +
+        " (see console / F12)",
+    );
+    showToast("✗ Native embed failed — running iframe" + why);
   }
 }
 // Destroy + recreate the Desktop view (picks up a new embedMode).
 // The Gradio session restarts — that's the point: a live renderer can't
 // change modes, and Back-to-Dashboard only hides it (keeps it alive).
 async function relaunchDesktopView() {
-  if (!currentUrl) { showToast('Nothing to relaunch — launch Wan2GP in Desktop first'); return }
-  appendLog('[*] Relaunching Desktop view…')
-  try { await window.w2gp.destroyBrowserView() } catch {}
-  appRunning = false
-  await openDesktopView(currentUrl, true)
+  if (!currentUrl) {
+    showToast("Nothing to relaunch — launch Wan2GP in Desktop first");
+    return;
+  }
+  appendLog("[*] Relaunching Desktop view…");
+  try {
+    await window.w2gp.destroyBrowserView();
+  } catch {}
+  appRunning = false;
+  await openDesktopView(currentUrl, true);
 }
 // Reflect whether the Wan2GP desktop (BrowserView) server is still up behind the
 // dashboard: while it is, the launch button reads "Back to Wan2GP in Desktop".
 function setAppLaunchLabel() {
-  $('appBtn').textContent = appRunning ? 'Back to Wan2GP in Desktop' : 'Launch Wan2GP in Desktop'
-  syncEmbedSwitchLocks()
+  $("appBtn").textContent = appRunning
+    ? "Back to Wan2GP in Desktop"
+    : "Launch Wan2GP in Desktop";
+  syncEmbedSwitchLocks();
 }
 // Renderer switches are usable only while NO Desktop session is active: while
 // one runs, every switch shows the active viewer locked (stop the server +
 // back to dashboard to change it). One hook — setAppLaunchLabel runs on
 // every open/close/stop/exit transition.
 function syncEmbedSwitchLocks() {
-  const locked = !!appRunning
+  const locked = !!appRunning;
   const tip = locked
-    ? 'Active renderer (locked — stop the Wan2GP server to switch)'
-    : 'Desktop renderer — applies on launch'
-  for (const id of ['embedModeSelect', 'embedModeTop']) {
-    const el = $(id)
-    if (!el) continue
-    el.disabled = locked
-    el.title = tip
+    ? "Active renderer (locked — stop the Wan2GP server to switch)"
+    : "Desktop renderer — applies on launch";
+  for (const id of ["embedModeSelect", "embedModeTop"]) {
+    const el = $(id);
+    if (!el) continue;
+    el.disabled = locked;
+    el.title = tip;
   }
 }
 
 function showWebviewUI() {
-  $('wvControls').style.display = 'flex'
-  $('runningLed').style.display = 'inline-flex'
+  $("wvControls").style.display = "flex";
+  $("runningLed").style.display = "inline-flex";
   // Topbar renderer switch (permanent, always visible): shows the active
   // renderer (gray iframe / green native). Locked while a session runs.
   try {
-    const native = window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()
-    const q = $('embedModeTop')
-    if (q) { q.value = native ? 'native' : 'iframe'; q.classList.toggle('native', !!native) }
+    const native = window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed();
+    const q = $("embedModeTop");
+    if (q) {
+      q.value = native ? "native" : "iframe";
+      q.classList.toggle("native", !!native);
+    }
   } catch {}
 }
 
 function hideWebviewUI() {
-  $('wvControls').style.display = 'none'
-  $('runningLed').style.display = 'none'
+  $("wvControls").style.display = "none";
+  $("runningLed").style.display = "none";
 }
 
 async function closeWebview(silent) {
-  if (window.__viewBusy) { appendLog('[i] View transition in progress — ignored'); return }
-  window.__viewBusy = true
+  if (window.__viewBusy) {
+    appendLog("[i] View transition in progress — ignored");
+    return;
+  }
+  window.__viewBusy = true;
   try {
-  // Like Electron's BrowserView hide: the iframe STAYS ALIVE but hidden, so
-  // flipping back is instant (no relaunch, no port conflict, Gradio state kept).
-  // Only a real server stop destroys it (see onWangpExit).
-  if (!$('floatingTerminal').classList.contains('hidden')) closeFloatingTerm()
-  await window.w2gp.hideBrowserView()
-  $('webviewContainer').classList.add('hidden')
-  $('dashBody').style.display = ''
-  hideWebviewUI()
-  serverMode = null   // webview UI is gone; a later server exit must not re-close it
-  window.w2gp.uiModeSet(null)
-  // Server is still running behind the dashboard → the launch button becomes "Back to…"
-  setAppLaunchLabel()
-  // Silent when invoked from the server-exit path (no server behind us —
-  // claiming otherwise is exactly the stale "still running" confusion).
-  if (!silent) appendLog('[*] Back on dashboard. Server still running — flip back anytime.')
-  } finally { window.__viewBusy = false }
+    // Like Electron's BrowserView hide: the iframe STAYS ALIVE but hidden, so
+    // flipping back is instant (no relaunch, no port conflict, Gradio state kept).
+    // Only a real server stop destroys it (see onWangpExit).
+    if (!$("floatingTerminal").classList.contains("hidden"))
+      closeFloatingTerm();
+    await window.w2gp.hideBrowserView();
+    $("webviewContainer").classList.add("hidden");
+    $("dashBody").style.display = "";
+    hideWebviewUI();
+    serverMode = null; // webview UI is gone; a later server exit must not re-close it
+    window.w2gp.uiModeSet(null);
+    // Server is still running behind the dashboard → the launch button becomes "Back to…"
+    setAppLaunchLabel();
+    // Silent when invoked from the server-exit path (no server behind us —
+    // claiming otherwise is exactly the stale "still running" confusion).
+    if (!silent)
+      appendLog(
+        "[*] Back on dashboard. Server still running — flip back anytime.",
+      );
+  } finally {
+    window.__viewBusy = false;
+  }
 }
 
-$('backToDashboardBtn').addEventListener('click', () => closeWebview())
+$("backToDashboardBtn").addEventListener("click", () => closeWebview());
 
 // ── Crash recovery: put the UI back where it was after a renderer crash ──
 // The main process auto-reloads the launcher renderer when it dies (usually a
@@ -3187,58 +4935,81 @@ $('backToDashboardBtn').addEventListener('click', () => closeWebview())
 // re-open the embedded view (Desktop mode) or re-arm the browser-mode UI
 // instead of stranding the user on the bare dashboard.
 async function checkCrashRecovery() {
-  let info = null
-  try { info = await window.w2gp.getCrashRecoveryInfo() } catch { return }
-  if (!info || !info.pending) return
-  appendLog(info.serverRunning
-    ? `[i] Launcher UI recovered after a crash (${info.gpuProcessDied ? 'GPU/display-driver hiccup' : 'renderer crash'}). The Wan2GP server is still running.`
-    : '[i] Launcher UI recovered after a crash. The Wan2GP server is not running.')
-  if (info.serverRunning && info.mode === 'app' && info.url) {
+  let info = null;
+  try {
+    info = await window.w2gp.getCrashRecoveryInfo();
+  } catch {
+    return;
+  }
+  if (!info || !info.pending) return;
+  appendLog(
+    info.serverRunning
+      ? `[i] Launcher UI recovered after a crash (${info.gpuProcessDied ? "GPU/display-driver hiccup" : "renderer crash"}). The Wan2GP server is still running.`
+      : "[i] Launcher UI recovered after a crash. The Wan2GP server is not running.",
+  );
+  if (info.serverRunning && info.mode === "app" && info.url) {
     try {
       // Force a reload: after a renderer crash the embedded Gradio page may be in a
       // bad state, so re-open from a fresh load rather than re-attaching a live session.
-      const created = await window.w2gp.createBrowserView(info.url, { reload: true })
-      if (!created || (created.error && !created.fallback)) throw new Error(created && created.error ? created.error : 'failed to re-create embed')
-      noteEmbedFallback(created)
-      appendLog(`[*] Desktop view recovered: ${((created && created.mode) || 'iframe')} renderer — ${info.url}`)
-      $('dashBody').style.display = 'none'
-      $('webviewContainer').classList.remove('hidden')
-      showWebviewUI()
-      updateLed('running')
-      updateFtStatus('running')
-      serverMode = 'app'
-      appRunning = true
-      setAppLaunchLabel()
-      window.w2gp.uiModeSet('app')
+      const created = await window.w2gp.createBrowserView(info.url, {
+        reload: true,
+      });
+      if (!created || (created.error && !created.fallback))
+        throw new Error(
+          created && created.error
+            ? created.error
+            : "failed to re-create embed",
+        );
+      noteEmbedFallback(created);
+      appendLog(
+        `[*] Desktop view recovered: ${(created && created.mode) || "iframe"} renderer — ${info.url}`,
+      );
+      $("dashBody").style.display = "none";
+      $("webviewContainer").classList.remove("hidden");
+      showWebviewUI();
+      updateLed("running");
+      updateFtStatus("running");
+      serverMode = "app";
+      appRunning = true;
+      setAppLaunchLabel();
+      window.w2gp.uiModeSet("app");
       // Restore the floating console per the saved default dock, exactly like
       // the normal Desktop launch does.
-      const cfg = await window.w2gp.configLoad()
-      const dock = cfg.termDockDefault || 'bottom'
-      if (dock === 'minimised') {
-        if (!$('floatingTerminal').classList.contains('hidden')) closeFloatingTerm()
+      const cfg = await window.w2gp.configLoad();
+      const dock = cfg.termDockDefault || "bottom";
+      if (dock === "minimised") {
+        if (!$("floatingTerminal").classList.contains("hidden"))
+          closeFloatingTerm();
       } else {
-        if ($('floatingTerminal').classList.contains('hidden')) toggleFloatingTerm()
-        setFtDock(dock)
+        if ($("floatingTerminal").classList.contains("hidden"))
+          toggleFloatingTerm();
+        setFtDock(dock);
       }
-      showToast('Launcher UI recovered — Wan2GP re-opened')
+      showToast("Launcher UI recovered — Wan2GP re-opened");
     } catch (e) {
-      appendLog('[!] Could not re-open the embedded view after the crash: ' + e.message)
-      $('dashBody').style.display = ''
-      $('webviewContainer').classList.add('hidden')
-      hideWebviewUI()
-      serverMode = null
-      try { await window.w2gp.destroyBrowserView() } catch {}
+      appendLog(
+        "[!] Could not re-open the embedded view after the crash: " + e.message,
+      );
+      $("dashBody").style.display = "";
+      $("webviewContainer").classList.add("hidden");
+      hideWebviewUI();
+      serverMode = null;
+      try {
+        await window.w2gp.destroyBrowserView();
+      } catch {}
     }
-  } else if (info.serverRunning && info.mode === 'browser') {
-    browserRunning = true
-    serverMode = 'browser'
-    showBrowserRunningUI()
-    $('browserBtn').textContent = 'Open Wan2GP in Browser'
-    appendLog('[i] Browser-mode launch restored — server running.')
+  } else if (info.serverRunning && info.mode === "browser") {
+    browserRunning = true;
+    serverMode = "browser";
+    showBrowserRunningUI();
+    $("browserBtn").textContent = "Open Wan2GP in Browser";
+    appendLog("[i] Browser-mode launch restored — server running.");
   } else {
     // Dashboard (or no server): detach any leftover BrowserView so it can't
     // composite above the dashboard after the crash.
-    try { await window.w2gp.destroyBrowserView() } catch {}
+    try {
+      await window.w2gp.destroyBrowserView();
+    } catch {}
   }
 }
 
@@ -3246,22 +5017,28 @@ async function checkCrashRecovery() {
 // Back/Forward can't work on a cross-origin iframe (Gradio history is
 // unreachable) — only Reload is offered. Zoom is real: CSS zoom on the iframe
 // embed, compositor zoom (bv_set_zoom) on the native child embed.
-$('wvReloadBtn').addEventListener('click', () => {
-  if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) { window.w2gp.bvNavigate('reload'); return }
-  const f = document.querySelector('#tauri-browser-view iframe')
-  if (f) f.src = f.src
-})
-let _zoomDebounce = null
-$('zoomSlider').addEventListener('input', () => {
-  const pct = parseInt($('zoomSlider').value)
-  $('zoomLabel').textContent = pct + '%'
-  clearTimeout(_zoomDebounce)
+$("wvReloadBtn").addEventListener("click", () => {
+  if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) {
+    window.w2gp.bvNavigate("reload");
+    return;
+  }
+  const f = document.querySelector("#tauri-browser-view iframe");
+  if (f) f.src = f.src;
+});
+let _zoomDebounce = null;
+$("zoomSlider").addEventListener("input", () => {
+  const pct = parseInt($("zoomSlider").value);
+  $("zoomLabel").textContent = pct + "%";
+  clearTimeout(_zoomDebounce);
   _zoomDebounce = setTimeout(() => {
-    if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) { window.w2gp.bvSetZoom(pct / 100); return }
-    const f = document.querySelector('#tauri-browser-view iframe')
-    if (f) f.style.zoom = (pct / 100)
-  }, 120)
-})
+    if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) {
+      window.w2gp.bvSetZoom(pct / 100);
+      return;
+    }
+    const f = document.querySelector("#tauri-browser-view iframe");
+    if (f) f.style.zoom = pct / 100;
+  }, 120);
+});
 
 // ── Download Save / Save-As prompt ──
 // WebView2 completes iframe downloads with zero UI (no shelf, toast or
@@ -3274,74 +5051,98 @@ $('zoomSlider').addEventListener('input', () => {
 // the same anchor-download path. Other apps' files never prompt (shape
 // gate mirrors the backend). Baseline resets whenever the view is
 // hidden so old files never announce themselves.
-let _dlWatchTimer = null
-const _dlWatchSeen = new Set()
-let _dlWatchBaseline = 0
+let _dlWatchTimer = null;
+const _dlWatchSeen = new Set();
+let _dlWatchBaseline = 0;
 // Wan2GP shapes only: bundles (.zip/.json/.lset) always prompt, media must
 // carry Wan2GP's timestamp (-YYYY-MM-DD-HHhMMmSSs) or _seed marker.
 // Skip in-progress/partial artifacts and OS noise.
-const DL_BUNDLE_RE = /\.(zip|json|lset)$/i
-const DL_STAMP_RE = /[-_]\d{4}-\d{2}-\d{2}-\d{2}h\d{2}m\d{2}s/i
-const DL_SEED_RE = /_seed\d/i
-const DL_SKIP_RE = /\.(tmp|temp|crdownload|part|partial|download|opdownload|lock|bak|lnk)$/i
+const DL_BUNDLE_RE = /\.(zip|json|lset)$/i;
+const DL_STAMP_RE = /[-_]\d{4}-\d{2}-\d{2}-\d{2}h\d{2}m\d{2}s/i;
+const DL_SEED_RE = /_seed\d/i;
+const DL_SKIP_RE =
+  /\.(tmp|temp|crdownload|part|partial|download|opdownload|lock|bak|lnk)$/i;
 function isWangpDownload(name) {
-  if (!name || name.startsWith('.') || name.startsWith('~$') || DL_SKIP_RE.test(name)) return false
-  if (DL_BUNDLE_RE.test(name)) return true
-  const stem = name.replace(/ \(\d+\)(?=\.[^.]+$)/, '')
-  return DL_STAMP_RE.test(stem) || DL_SEED_RE.test(stem)
+  if (
+    !name ||
+    name.startsWith(".") ||
+    name.startsWith("~$") ||
+    DL_SKIP_RE.test(name)
+  )
+    return false;
+  if (DL_BUNDLE_RE.test(name)) return true;
+  const stem = name.replace(/ \(\d+\)(?=\.[^.]+$)/, "");
+  return DL_STAMP_RE.test(stem) || DL_SEED_RE.test(stem);
 }
 function dlWatchViewOpen() {
-  const host = $('webviewContainer')
-  return !!(host && !host.classList.contains('hidden') && document.getElementById('tauri-browser-view'))
+  const host = $("webviewContainer");
+  return !!(
+    host &&
+    !host.classList.contains("hidden") &&
+    document.getElementById("tauri-browser-view")
+  );
 }
 function startDownloadsWatch() {
-  if (_dlWatchTimer) return
-  _dlWatchSeen.clear(); _dlWatchBaseline = Date.now()
+  if (_dlWatchTimer) return;
+  _dlWatchSeen.clear();
+  _dlWatchBaseline = Date.now();
   // Native child embed: downloads arrive as exact `download-finished` events
   // (no polling, no shape-gate — every event IS a Wan2GP download). Register once.
   if (!startDownloadsWatch._nativeWired) {
-    startDownloadsWatch._nativeWired = true
+    startDownloadsWatch._nativeWired = true;
     // Native child, browser-with-ask flow: toast while bytes land in staging,
     // then the native Save-As dialog pops on finish (cancel keeps Downloads).
     try {
       window.w2gp.onDownloadStarted((p) => {
-        if (p && p.name) showToast('⬇ Downloading: ' + p.name)
-      })
+        if (p && p.name) showToast("⬇ Downloading: " + p.name);
+      });
     } catch {}
     try {
       window.w2gp.onDownloadFinished((p) => {
-        if (!p || !p.path) return
-        if (p.success === false) { showToast('✗ Download failed: ' + (p.name || p.url || 'unknown')); return }
-        const key = 'staged|' + p.path
-        if (_dlWatchSeen.has(key)) return
-        _dlWatchSeen.add(key)
-        appendLog('[*] Download finished: ' + (p.name || p.path))
-        finishNativeDownload(p)
-      })
+        if (!p || !p.path) return;
+        if (p.success === false) {
+          showToast("✗ Download failed: " + (p.name || p.url || "unknown"));
+          return;
+        }
+        const key = "staged|" + p.path;
+        if (_dlWatchSeen.has(key)) return;
+        _dlWatchSeen.add(key);
+        appendLog("[*] Download finished: " + (p.name || p.path));
+        finishNativeDownload(p);
+      });
     } catch {}
     try {
       window.w2gp.onGradioPageLoad((p) => {
-        if (!p) return
-        appendLog(`[embed] Gradio page ${p.started ? 'started' : 'finished'}: ${p.url || ''}`)
-      })
+        if (!p) return;
+        appendLog(
+          `[embed] Gradio page ${p.started ? "started" : "finished"}: ${p.url || ""}`,
+        );
+      });
     } catch {}
   }
   _dlWatchTimer = setInterval(async () => {
     try {
       // Native mode is event-driven — keep the iframe baseline fresh so
       // switching back to iframe never replays old files.
-      if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) { _dlWatchBaseline = Date.now(); return }
-      if (!dlWatchViewOpen()) { _dlWatchSeen.clear(); _dlWatchBaseline = Date.now(); return }
-      const files = await window.w2gp.downloadsSince(_dlWatchBaseline)
+      if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) {
+        _dlWatchBaseline = Date.now();
+        return;
+      }
+      if (!dlWatchViewOpen()) {
+        _dlWatchSeen.clear();
+        _dlWatchBaseline = Date.now();
+        return;
+      }
+      const files = await window.w2gp.downloadsSince(_dlWatchBaseline);
       for (const f of files || []) {
-        const key = (f.name || '') + '|' + (f.ms || 0)
-        if (!f.name || _dlWatchSeen.has(key)) continue
-        _dlWatchSeen.add(key)
-        if (!isWangpDownload(f.name)) continue
-        showDownloadPrompt(f.name)
+        const key = (f.name || "") + "|" + (f.ms || 0);
+        if (!f.name || _dlWatchSeen.has(key)) continue;
+        _dlWatchSeen.add(key);
+        if (!isWangpDownload(f.name)) continue;
+        showDownloadPrompt(f.name);
       }
     } catch {}
-  }, 4000)
+  }, 4000);
 }
 
 // Browser-with-ask finish for native downloads: staged file → native Save-As
@@ -3349,319 +5150,432 @@ function startDownloadsWatch() {
 // path keeps using showDownloadPrompt (name-only poll).
 async function finishNativeDownload(p) {
   try {
-    let lastDir = null
-    try { lastDir = localStorage.getItem('w2gp.saveAsDir') } catch {}
-    const r = await window.w2gp.saveStagedDownload(p.path, lastDir)
+    let lastDir = null;
+    try {
+      lastDir = localStorage.getItem("w2gp.saveAsDir");
+    } catch {}
+    const r = await window.w2gp.saveStagedDownload(p.path, lastDir);
     if (r && (r.ok || r.success) && r.path) {
       try {
-        const slash = Math.max(r.path.lastIndexOf('/'), r.path.lastIndexOf('\\'))
-        if (slash > 0) localStorage.setItem('w2gp.saveAsDir', r.path.slice(0, slash))
+        const slash = Math.max(
+          r.path.lastIndexOf("/"),
+          r.path.lastIndexOf("\\"),
+        );
+        if (slash > 0)
+          localStorage.setItem("w2gp.saveAsDir", r.path.slice(0, slash));
       } catch {}
-      if (r.cancelled) showToast('Kept in Downloads: ' + (r.name || ''))
-      else { showToast('✓ Saved to: ' + r.path); appendLog('[*] Saved to: ' + r.path) }
-    }
-    else showToast('✗ Save failed: ' + ((r && r.error) || 'unknown'))
-  } catch (e) { showToast('✗ ' + errText(e)) }
+      if (r.cancelled) showToast("Kept in Downloads: " + (r.name || ""));
+      else {
+        showToast("✓ Saved to: " + r.path);
+        appendLog("[*] Saved to: " + r.path);
+      }
+    } else showToast("✗ Save failed: " + ((r && r.error) || "unknown"));
+  } catch (e) {
+    showToast("✗ " + errText(e));
+  }
 }
 // Browser-like arrival prompt: Save (keep in Downloads) vs Save As… (move
 // via native dialog). Remembers the last Save-As folder for the session.
 function showDownloadPrompt(fname) {
-  const t = document.createElement('div')
-  t.setAttribute('role', 'status')
-  t.setAttribute('aria-live', 'polite')
-  t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#333;color:#e8e6e1;padding:8px 12px;border-radius:6px;font-size:13px;z-index:9999;font-family:Geist Mono,monospace;display:flex;gap:8px;align-items:center;max-width:90vw'
-  const label = document.createElement('span')
-  label.textContent = '⬇ ' + fname
-  label.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:46vw'
+  const t = document.createElement("div");
+  t.setAttribute("role", "status");
+  t.setAttribute("aria-live", "polite");
+  t.style.cssText =
+    "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#333;color:#e8e6e1;padding:8px 12px;border-radius:6px;font-size:13px;z-index:9999;font-family:Geist Mono,monospace;display:flex;gap:8px;align-items:center;max-width:90vw";
+  const label = document.createElement("span");
+  label.textContent = "⬇ " + fname;
+  label.style.cssText =
+    "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:46vw";
   const mkBtn = (text, title) => {
-    const b = document.createElement('button')
-    b.textContent = text
-    b.title = title
-    b.style.cssText = 'background:#4a4a4a;color:#fff;border:1px solid #666;border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;font-family:inherit'
-    return b
-  }
-  const saveBtn = mkBtn('Save', 'Keep it in your Downloads folder')
-  const saveAsBtn = mkBtn('Save As…', 'Choose where to save it')
-  t.append(label, saveBtn, saveAsBtn)
-  document.body.appendChild(t)
-  let gone = false
-  const dismiss = () => { if (gone) return; gone = true; t.style.opacity = '0'; t.style.transition = 'opacity 0.3s'; setTimeout(() => t.remove(), 400) }
-  saveBtn.addEventListener('click', () => { dismiss(); showToast('✓ Saved to Downloads: ' + fname) })
-  saveAsBtn.addEventListener('click', async () => {
-    dismiss()
+    const b = document.createElement("button");
+    b.textContent = text;
+    b.title = title;
+    b.style.cssText =
+      "background:#4a4a4a;color:#fff;border:1px solid #666;border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;font-family:inherit";
+    return b;
+  };
+  const saveBtn = mkBtn("Save", "Keep it in your Downloads folder");
+  const saveAsBtn = mkBtn("Save As…", "Choose where to save it");
+  t.append(label, saveBtn, saveAsBtn);
+  document.body.appendChild(t);
+  let gone = false;
+  const dismiss = () => {
+    if (gone) return;
+    gone = true;
+    t.style.opacity = "0";
+    t.style.transition = "opacity 0.3s";
+    setTimeout(() => t.remove(), 400);
+  };
+  saveBtn.addEventListener("click", () => {
+    dismiss();
+    showToast("✓ Saved to Downloads: " + fname);
+  });
+  saveAsBtn.addEventListener("click", async () => {
+    dismiss();
     try {
-      let lastDir = null
-      try { lastDir = localStorage.getItem('w2gp.saveAsDir') } catch {}
-      const r = await window.w2gp.saveDownloadedFile(fname, lastDir)
-      if (r && r.cancelled) { showToast('Kept in Downloads: ' + fname); return }
+      let lastDir = null;
+      try {
+        lastDir = localStorage.getItem("w2gp.saveAsDir");
+      } catch {}
+      const r = await window.w2gp.saveDownloadedFile(fname, lastDir);
+      if (r && r.cancelled) {
+        showToast("Kept in Downloads: " + fname);
+        return;
+      }
       if (r && (r.ok || r.success) && r.path) {
         try {
-          const slash = Math.max(r.path.lastIndexOf('/'), r.path.lastIndexOf('\\'))
-          if (slash > 0) localStorage.setItem('w2gp.saveAsDir', r.path.slice(0, slash))
+          const slash = Math.max(
+            r.path.lastIndexOf("/"),
+            r.path.lastIndexOf("\\"),
+          );
+          if (slash > 0)
+            localStorage.setItem("w2gp.saveAsDir", r.path.slice(0, slash));
         } catch {}
-        showToast('✓ Saved to: ' + r.path)
-      }
-      else showToast('✗ Save failed: ' + ((r && r.error) || 'unknown'))
-    } catch (e) { showToast('✗ ' + errText(e)) }
-  })
-  setTimeout(dismiss, 30000)
+        showToast("✓ Saved to: " + r.path);
+      } else showToast("✗ Save failed: " + ((r && r.error) || "unknown"));
+    } catch (e) {
+      showToast("✗ " + errText(e));
+    }
+  });
+  setTimeout(dismiss, 30000);
 }
 
 // ── Running LED ──
 function updateLed(state) {
-  const led = $('runningLed')
-  const dot = $('ledDot')
-  const txt = $('ledText')
-  if (!led || !dot || !txt) return
-  led.style.display = 'inline-flex'
-  if (state === 'running') {
-    dot.className = 'led-dot led-running'
-    txt.textContent = 'Running'
+  const led = $("runningLed");
+  const dot = $("ledDot");
+  const txt = $("ledText");
+  if (!led || !dot || !txt) return;
+  led.style.display = "inline-flex";
+  if (state === "running") {
+    dot.className = "led-dot led-running";
+    txt.textContent = "Running";
   } else {
-    dot.className = 'led-dot led-stopped'
-    txt.textContent = 'Stopped'
+    dot.className = "led-dot led-stopped";
+    txt.textContent = "Stopped";
   }
 }
 
 // ── Browser-mode running UI (server runs in user's browser; dashboard stays visible) ──
 function showBrowserRunningUI() {
-  updateLed('running')
+  updateLed("running");
 }
 function hideBrowserRunningUI() {
-  $('runningLed').style.display = 'none'
+  $("runningLed").style.display = "none";
 }
 // Restore the dashboard launch buttons to their default (pre-launch) state.
 function resetBrowserLaunchUI() {
-  browserRunning = false
-  serverMode = null
-  window.w2gp.uiModeSet(null)
-  $('browserBtn').textContent = 'Launch Wan2GP in Browser'
-  $('browserBtn').style.display = ''
-  $('browserBtn').disabled = false
-  $('browserNoGpuBtn').textContent = 'Launch in Chrome (no GPU script)'
-  $('browserNoGpuBtn').style.display = ''
-  $('browserNoGpuBtn').disabled = false
-  $('termBtn').textContent = 'Launch in External Terminal'
-  $('termBtn').style.display = ''
-  $('termBtn').disabled = false
+  browserRunning = false;
+  serverMode = null;
+  window.w2gp.uiModeSet(null);
+  $("browserBtn").textContent = "Launch Wan2GP in Browser";
+  $("browserBtn").style.display = "";
+  $("browserBtn").disabled = false;
+  $("browserNoGpuBtn").textContent = "Launch in Chrome (no GPU script)";
+  $("browserNoGpuBtn").style.display = "";
+  $("browserNoGpuBtn").disabled = false;
+  $("termBtn").textContent = "Launch in External Terminal";
+  $("termBtn").style.display = "";
+  $("termBtn").disabled = false;
 }
 
 // ── Stop Wan2GP button ──
 // _expectServerExit marks the exit event our own Stop is about to cause: a
 // taskkill victim exits with code 1, which must read as "stopped by user",
 // not as a crash (and must never trigger KeyError-crash recovery).
-let _expectServerExit = false
-let _expectServerExitTimer = null
+let _expectServerExit = false;
+let _expectServerExitTimer = null;
 // Shared stop-result handling (single + stop-all buttons): loud on survivors,
 // honest counts otherwise. `r` is either stop_wangp's or stop_all_servers'
 // {wangp} payload. Returns true when fully stopped.
 function noteStopResult(r) {
-  const w = (r && r.wangp) || r || {}
-  const alive = w.alive || []
+  const w = (r && r.wangp) || r || {};
+  const alive = w.alive || [];
   if (alive.length) {
     // Backend killed what it could but processes survived — stay loud instead
     // of showing a dead-stopped UI over a live server.
-    appendLog(`[!] ${alive.length} Wan2GP process(es) survived Stop (PID ${alive.join(', ')}). Kill them in Task Manager or restart the PC, then press Stop again.`)
-    showToast(`✗ Server still running (PID ${alive.join(', ')}) — see console`)
-    return false
+    appendLog(
+      `[!] ${alive.length} Wan2GP process(es) survived Stop (PID ${alive.join(", ")}). Kill them in Task Manager or restart the PC, then press Stop again.`,
+    );
+    showToast(`✗ Server still running (PID ${alive.join(", ")}) — see console`);
+    return false;
   }
-  const killed = w.killed || []
-  if (killed.length) appendLog(`[*] Stopped (${killed.length} process(es)).`)
-  else appendLog('[*] Stop requested — no Wan2GP processes were running.')
-  return true
+  const killed = w.killed || [];
+  if (killed.length) appendLog(`[*] Stopped (${killed.length} process(es)).`);
+  else appendLog("[*] Stop requested — no Wan2GP processes were running.");
+  return true;
 }
 // (Retired: the single always-visible #stopAllBtn below replaces the old
 // contextual per-view stop button — one button, no show/hide churn.)
 // ── Stop ALL servers (always-visible dashboard button) ──
 // Wan2GP (+children, verified) and the OpenCode server in one click.
 // Never hidden — stopping an already-quiet machine is a harmless no-op.
-$('stopAllBtn').addEventListener('click', async () => {
-  const btn = $('stopAllBtn')
-  appendLog('[*] Stopping all servers (Wan2GP + OpenCode)...')
+$("stopAllBtn").addEventListener("click", async () => {
+  const btn = $("stopAllBtn");
+  appendLog("[*] Stopping all servers (Wan2GP + OpenCode)...");
   // Disabled + label while the multi-second sweep runs (async backend keeps
   // the rest of the UI live; this just prevents double-Stop).
-  if (btn) { btn.disabled = true; btn.title = 'Stopping…' }
-  _expectServerExit = true
-  if (_expectServerExitTimer) clearTimeout(_expectServerExitTimer)
-  _expectServerExitTimer = setTimeout(() => { _expectServerExit = false; _expectServerExitTimer = null }, 10000)
-  let clean = false
+  if (btn) {
+    btn.disabled = true;
+    btn.title = "Stopping…";
+  }
+  _expectServerExit = true;
+  if (_expectServerExitTimer) clearTimeout(_expectServerExitTimer);
+  _expectServerExitTimer = setTimeout(() => {
+    _expectServerExit = false;
+    _expectServerExitTimer = null;
+  }, 10000);
+  let clean = false;
   try {
-    const r = await window.w2gp.stopAllServers()
-    if (r && r.opencode_stopped) appendLog('[*] OpenCode server stopped.')
-    clean = noteStopResult(r)
-    showToast(clean ? '✓ All servers stopped' : '✗ Wan2GP still running — see console')
-  } catch (e) { appendLog('[!] Stop-all failed: ' + errText(e)); showToast('✗ ' + errText(e)) }
-  updateLed('stopped')
-  updateFtStatus('stopped')
-  if (btn) { btn.disabled = false; btn.title = 'Stop all servers (Wan2GP + OpenCode)' }
+    const r = await window.w2gp.stopAllServers();
+    if (r && r.opencode_stopped) appendLog("[*] OpenCode server stopped.");
+    clean = noteStopResult(r);
+    showToast(
+      clean ? "✓ All servers stopped" : "✗ Wan2GP still running — see console",
+    );
+  } catch (e) {
+    appendLog("[!] Stop-all failed: " + errText(e));
+    showToast("✗ " + errText(e));
+  }
+  updateLed("stopped");
+  updateFtStatus("stopped");
+  if (btn) {
+    btn.disabled = false;
+    btn.title = "Stop all servers (Wan2GP + OpenCode)";
+  }
   // Server is gone: tear down the Desktop view state NOW (don't wait for the
   // exit event) so "Back to Wan2GP in Desktop" can never point at a dead
   // server and no dead page lingers. Survivors (clean=false) keep their view.
   if (clean) {
-    appRunning = false
-    _termWinOpen = false
-    try { await window.w2gp.destroyBrowserView() } catch {}
-    if (serverMode === 'app') {
-      serverMode = null
-      try { $('webviewContainer').classList.add('hidden'); $('dashBody').style.display = '' } catch {}
-      hideWebviewUI()
-      hideNativeHiddenNote()
-      try { window.w2gp.uiModeSet(null) } catch {}
+    appRunning = false;
+    _termWinOpen = false;
+    try {
+      await window.w2gp.destroyBrowserView();
+    } catch {}
+    if (serverMode === "app") {
+      serverMode = null;
+      try {
+        $("webviewContainer").classList.add("hidden");
+        $("dashBody").style.display = "";
+      } catch {}
+      hideWebviewUI();
+      hideNativeHiddenNote();
+      try {
+        window.w2gp.uiModeSet(null);
+      } catch {}
     }
-    setAppLaunchLabel()
-    appendLog('[*] Desktop view closed (server stopped).')
+    setAppLaunchLabel();
+    appendLog("[*] Desktop view closed (server stopped).");
   }
-})
+});
 
 // ── Reset UI when server exits (manual stop or crash) ──
 // Separate term-window wiring (native floating): X-close sync + dock routing.
 try {
   window.w2gp.onTermClosed(() => {
-    _termWinOpen = false
-    try { if (currentDock() === 'floating') _ftVisible = false } catch {}
-  })
+    _termWinOpen = false;
+    try {
+      if (currentDock() === "floating") _ftVisible = false;
+    } catch {}
+  });
 } catch {}
-try { window.w2gp.onTermSetDock((d) => { try { window.__dockTerminal(d) } catch {} }) } catch {}
-window.w2gp.onWangpExit(c => {
+try {
+  window.w2gp.onTermSetDock((d) => {
+    try {
+      window.__dockTerminal(d);
+    } catch {}
+  });
+} catch {}
+window.w2gp.onWangpExit((c) => {
   // Payload shapes: {code: n|null} on process end, {stopped:true} on manual stop.
   // (Was interpolating the whole object → "exited (code [object Object])".)
-  const code = (c && typeof c === 'object') ? (c.code ?? (c.stopped ? 0 : '?')) : c
-  const manualStop = _expectServerExit
-  _expectServerExit = false
-  if (_expectServerExitTimer) { clearTimeout(_expectServerExitTimer); _expectServerExitTimer = null }
-  if (manualStop && code !== 0) appendLog('[*] Wan2GP server stopped.')
-  else appendLog(`${code === 0 ? '[*]' : '[!]'} Wan2GP process exited (code ${code})`)
-  const exitMode = serverMode // capture before teardown below nulls it
-  _pendingOpen = null   // boot failed/went away — don't open anything later
+  const code =
+    c && typeof c === "object" ? (c.code ?? (c.stopped ? 0 : "?")) : c;
+  const manualStop = _expectServerExit;
+  _expectServerExit = false;
+  if (_expectServerExitTimer) {
+    clearTimeout(_expectServerExitTimer);
+    _expectServerExitTimer = null;
+  }
+  if (manualStop && code !== 0) appendLog("[*] Wan2GP server stopped.");
+  else
+    appendLog(
+      `${code === 0 ? "[*]" : "[!]"} Wan2GP process exited (code ${code})`,
+    );
+  const exitMode = serverMode; // capture before teardown below nulls it
+  _pendingOpen = null; // boot failed/went away — don't open anything later
   // Server is really gone: drop the (now stale) embed entirely so the next
   // open rebuilds it instead of showing a dead page.
-  window.w2gp.destroyBrowserView().catch(() => {})
-  if (serverMode === 'app') {
-    if (!$('webviewContainer').classList.contains('hidden')) closeWebview(true)
-  } else if (serverMode === 'browser') {
-    hideBrowserRunningUI()
-    resetBrowserLaunchUI()
+  window.w2gp.destroyBrowserView().catch(() => {});
+  if (serverMode === "app") {
+    if (!$("webviewContainer").classList.contains("hidden")) closeWebview(true);
+  } else if (serverMode === "browser") {
+    hideBrowserRunningUI();
+    resetBrowserLaunchUI();
   }
-  appRunning = false
-  setAppLaunchLabel()
-  updateLed('stopped')
-  updateFtStatus('stopped')
+  appRunning = false;
+  setAppLaunchLabel();
+  updateLed("stopped");
+  updateFtStatus("stopped");
   // Config-skew recovery: wgp.py died with KeyError on a settings key
   // (partial write after a failed install, or an ancient config after an
   // update). Crashes only — never for a manual Stop, which also exits
   // non-zero when taskkill does the killing.
-  if (!manualStop && code !== 0 && code !== '?' && !window._configCrashOffered) {
+  if (
+    !manualStop &&
+    code !== 0 &&
+    code !== "?" &&
+    !window._configCrashOffered
+  ) {
     try {
-      const tail = (typeof window._getLogTail === 'function') ? window._getLogTail() : ''
-      const m = tail.match(/KeyError:\s*'([^']+)'/)
+      const tail =
+        typeof window._getLogTail === "function" ? window._getLogTail() : "";
+      const m = tail.match(/KeyError:\s*'([^']+)'/);
       if (m && /wgp\.py/.test(tail)) {
-        window._configCrashOffered = true
-        offerConfigReset(m[1], exitMode)
+        window._configCrashOffered = true;
+        offerConfigReset(m[1], exitMode);
       }
     } catch {}
   }
-})
+});
 
 async function offerConfigReset(missingKey, mode) {
-  appendLog(`[!] Wan2GP crashed: settings file is missing '${missingKey}' (outdated or partial wgp_config.json).`)
-  showToast(`✗ Settings missing '${missingKey}' — reset offered`)
+  appendLog(
+    `[!] Wan2GP crashed: settings file is missing '${missingKey}' (outdated or partial wgp_config.json).`,
+  );
+  showToast(`✗ Settings missing '${missingKey}' — reset offered`);
   const choice = await window.w2gp.confirmDialog({
-    title: 'Settings file outdated?',
+    title: "Settings file outdated?",
     message: `Wan2GP crashed because wgp_config.json is missing '${missingKey}'.`,
-    detail: 'Back it up and reset to defaults? Wan2GP regenerates the full file on next launch (models stay where they are).'
-  })
-  window._configCrashOffered = false
-  if (choice !== 'ok') return
+    detail:
+      "Back it up and reset to defaults? Wan2GP regenerates the full file on next launch (models stay where they are).",
+  });
+  window._configCrashOffered = false;
+  if (choice !== "ok") return;
   try {
-    const r = await window.w2gp.resetWgpConfig()
+    const r = await window.w2gp.resetWgpConfig();
     if (r && (r.success || r.ok)) {
-      appendLog('[*] Settings backed up to ' + (r.backup || 'wgp_config.bak-*.json') + ' — relaunching with fresh defaults…')
-      showToast('✓ Settings reset — relaunching')
-      setTimeout(function() {
+      appendLog(
+        "[*] Settings backed up to " +
+          (r.backup || "wgp_config.bak-*.json") +
+          " — relaunching with fresh defaults…",
+      );
+      showToast("✓ Settings reset — relaunching");
+      setTimeout(() => {
         // Reuse the dashboard buttons' full logic (validation, boot flow).
-        const b = (mode === 'browser') ? $('browserBtn') : $('appBtn')
-        if (b && !b.disabled) b.click()
-        else showToast('Press Launch to start Wan2GP with fresh settings')
-      }, 800)
-    } else showToast('✗ Reset failed: ' + ((r && r.error) || 'unknown'))
-  } catch (e) { showToast('✗ ' + errText(e)) }
+        const b = mode === "browser" ? $("browserBtn") : $("appBtn");
+        if (b && !b.disabled) b.click();
+        else showToast("Press Launch to start Wan2GP with fresh settings");
+      }, 800);
+    } else showToast("✗ Reset failed: " + ((r && r.error) || "unknown"));
+  } catch (e) {
+    showToast("✗ " + errText(e));
+  }
 }
 
 // ── Floating Terminal (Desktop/webview mode only) ──
 function updateFtStatus(state) {
-  const st = $('ftServerStatus')
-  const dot = $('ftStatusDot')
-  const txt = $('ftStatusText')
-  if (!st || !dot || !txt) return
-  st.style.display = ''
-  if (state === 'running') {
-    dot.className = 'ft-status-dot running'
-    txt.textContent = 'Running'
+  const st = $("ftServerStatus");
+  const dot = $("ftStatusDot");
+  const txt = $("ftStatusText");
+  if (!st || !dot || !txt) return;
+  st.style.display = "";
+  if (state === "running") {
+    dot.className = "ft-status-dot running";
+    txt.textContent = "Running";
   } else {
-    dot.className = 'ft-status-dot stopped'
-    txt.textContent = 'Stopped'
+    dot.className = "ft-status-dot stopped";
+    txt.textContent = "Stopped";
   }
 }
 
 // ── Event Wiring: Dashboard ──
-$('updateBtn').addEventListener('click',async()=>{
-  $('updateBtn').disabled=true; $('updateBtn').textContent='Working...'
-  try{ await window.w2gp.update(); appendLog('[*] Wan2GP update complete'); refreshDashboard() }catch(e){ appendLog('[!] Update failed: '+e.message); alert('Update: '+e.message) }
-  $('updateBtn').disabled=false; $('updateBtn').textContent='↻ Update Wan2GP (DeepBeepMeep)'
-})
-document.querySelectorAll('.theme-toggle').forEach(btn => btn.addEventListener('click', toggleTheme))
+$("updateBtn").addEventListener("click", async () => {
+  $("updateBtn").disabled = true;
+  $("updateBtn").textContent = "Working...";
+  try {
+    await window.w2gp.update();
+    appendLog("[*] Wan2GP update complete");
+    refreshDashboard();
+  } catch (e) {
+    appendLog("[!] Update failed: " + e.message);
+    alert("Update: " + e.message);
+  }
+  $("updateBtn").disabled = false;
+  $("updateBtn").textContent = "↻ Update Wan2GP (DeepBeepMeep)";
+});
+document
+  .querySelectorAll(".theme-toggle")
+  .forEach((btn) => btn.addEventListener("click", toggleTheme));
 
 function switchSettingsTab(tabName) {
-  document.querySelectorAll('.settings-tab').forEach(function(t) { t.classList.remove('active') })
-  document.querySelectorAll('.settings-tab-content').forEach(function(c) { c.classList.remove('active') })
-  var tab = document.querySelector('.settings-tab[data-tab="' + tabName + '"]')
-  if (tab) tab.classList.add('active')
-  var tabContent = document.querySelector('.settings-tab-content[data-tab="' + tabName + '"]')
-  if (tabContent) tabContent.classList.add('active')
+  document.querySelectorAll(".settings-tab").forEach((t) => {
+    t.classList.remove("active");
+  });
+  document.querySelectorAll(".settings-tab-content").forEach((c) => {
+    c.classList.remove("active");
+  });
+  var tab = document.querySelector('.settings-tab[data-tab="' + tabName + '"]');
+  if (tab) tab.classList.add("active");
+  var tabContent = document.querySelector(
+    '.settings-tab-content[data-tab="' + tabName + '"]',
+  );
+  if (tabContent) tabContent.classList.add("active");
 
   // Auto-Tune: check if Wan2GP is installed — disable if not
-  if (tabName === 'autotune') {
-    checkAutoTuneInstalled()
+  if (tabName === "autotune") {
+    checkAutoTuneInstalled();
     // Saved tags + dropdown seeding — runs on EVERY entry (tab click or
     // dashboard shortcut), not just physical clicks.
-    setTimeout(() => { try { memProfileLoad() } catch {} }, 120)
+    setTimeout(() => {
+      try {
+        memProfileLoad();
+      } catch {}
+    }, 120);
   }
 }
 
 async function checkAutoTuneInstalled() {
-  const installed = await window.w2gp.checkInstalled()
-  const notInstalledEl = $('autotuneNotInstalled')
-  const contentEl = $('autotuneContent')
-  if (!notInstalledEl || !contentEl) return
-  if (!installed.repo) {
-    notInstalledEl.classList.remove('hidden')
-    contentEl.classList.add('hidden')
-  } else {
-    notInstalledEl.classList.add('hidden')
-    contentEl.classList.remove('hidden')
+  const installed = await window.w2gp.checkInstalled();
+  const notInstalledEl = $("autotuneNotInstalled");
+  const contentEl = $("autotuneContent");
+  if (!notInstalledEl || !contentEl) return;
+  if (installed.repo) {
+    notInstalledEl.classList.add("hidden");
+    contentEl.classList.remove("hidden");
     // D3: first visit to the tab — auto-run detection so the panel shows a live
     // recommendation instead of an empty "Run detection first" state. Only once
     // per session; a failed detect leaves the button enabled for a manual retry.
     if (!_autotuneHardware && !_autotuneAutoDetectDone) {
-      _autotuneAutoDetectDone = true
-      setTimeout(() => $('autotuneDetectBtn')?.click(), 150)
+      _autotuneAutoDetectDone = true;
+      setTimeout(() => $("autotuneDetectBtn")?.click(), 150);
     }
+  } else {
+    notInstalledEl.classList.remove("hidden");
+    contentEl.classList.add("hidden");
   }
 }
 
-document.querySelectorAll('.settings-tab').forEach(function(tab) {
-  tab.addEventListener('click', function() {
-    switchSettingsTab(tab.dataset.tab)
-  })
-})
-$('settingsBtn').addEventListener('click',()=>{ openSettings() })
-$('autoTuneDashBtn').addEventListener('click',()=>{ openSettings(); switchSettingsTab('autotune') })
+document.querySelectorAll(".settings-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    switchSettingsTab(tab.dataset.tab);
+  });
+});
+$("settingsBtn").addEventListener("click", () => {
+  openSettings();
+});
+$("autoTuneDashBtn").addEventListener("click", () => {
+  openSettings();
+  switchSettingsTab("autotune");
+});
 // Windows-only UI: hide the Task Manager button on other platforms.
-if (window.w2gp && window.w2gp.platform !== 'win32') {
-  const taskMgrBtn = $('taskMgrBtn')
-  if (taskMgrBtn) taskMgrBtn.style.display = 'none'
+if (window.w2gp && window.w2gp.platform !== "win32") {
+  const taskMgrBtn = $("taskMgrBtn");
+  if (taskMgrBtn) taskMgrBtn.style.display = "none";
 }
-$('taskMgrBtn').addEventListener('click',()=>{ window.w2gp.openTaskManager() })
+$("taskMgrBtn").addEventListener("click", () => {
+  window.w2gp.openTaskManager();
+});
 
 // ── Quick pip install ──
 // Accept either a bare spec (claude-agent-sdk==0.1.40) or a full command
@@ -3670,59 +5584,88 @@ $('taskMgrBtn').addEventListener('click',()=>{ window.w2gp.openTaskManager() })
 // (Renderer is a plain browser script — no require — so this is inlined; the
 // Node-side mirror lives in services/normalize-pip-spec.js for unit tests.)
 function normalizePipSpec(raw) {
-  let s = (raw || '').trim()
-  const m = s.match(/^(?:py(?:thon)?\s+-m\s+)?pip3?\s+install\s+/i)
-  if (m) s = s.slice(m[0].length).trim()
+  let s = (raw || "").trim();
+  const m = s.match(/^(?:py(?:thon)?\s+-m\s+)?pip3?\s+install\s+/i);
+  if (m) s = s.slice(m[0].length).trim();
   // Strip pip flags (`pip install foo --upgrade` → `foo`). UX only — the
   // backend re-validates. Must match services/normalize-pip-spec.js.
-  s = s.split(/\s+/).filter((t) => !t.startsWith('-')).join(' ')
-  return s
+  s = s
+    .split(/\s+/)
+    .filter((t) => !t.startsWith("-"))
+    .join(" ");
+  return s;
 }
-$('pipInstallBtn').addEventListener('click', async () => {
-  const input = $('pipInput')
-  const pkg = normalizePipSpec(input?.value)
-  if (!pkg) return
-  input.disabled = true; $('pipInstallBtn').disabled = true; $('pipInstallBtn').textContent = 'installing...'
-  const r = await window.w2gp.installPackage(pkg)
-  input.disabled = false; $('pipInstallBtn').disabled = false; $('pipInstallBtn').textContent = 'pip install'
+$("pipInstallBtn").addEventListener("click", async () => {
+  const input = $("pipInput");
+  const pkg = normalizePipSpec(input?.value);
+  if (!pkg) return;
+  input.disabled = true;
+  $("pipInstallBtn").disabled = true;
+  $("pipInstallBtn").textContent = "installing...";
+  const r = await window.w2gp.installPackage(pkg);
+  input.disabled = false;
+  $("pipInstallBtn").disabled = false;
+  $("pipInstallBtn").textContent = "pip install";
   if (r && r.success) {
-    input.value = ''
-    showToast('✓ ' + pkg + ' installed')
-    refreshDashboard()
+    input.value = "";
+    showToast("✓ " + pkg + " installed");
+    refreshDashboard();
   } else {
-    showToast('✗ ' + (r && r.error ? r.error : 'install failed'))
+    showToast("✗ " + (r && r.error ? r.error : "install failed"));
   }
-})
-$('pipInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('pipInstallBtn').click() })
+});
+$("pipInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("pipInstallBtn").click();
+});
 
 // Live, copyable preview of the exact command the Advanced box will run.
 // Mirrors the launcher's guard: a valid spec shows `pip install <spec>`; an
 // invalid one shows the reason it would be blocked (no misleading command).
 function updatePipCmdPreview() {
-  const input = $('pipInput'); const preview = $('pipCmdPreview'); const text = $('pipCmdText')
-  if (!input || !preview || !text) return
-  const spec = normalizePipSpec(input.value)
-  if (!spec) { preview.style.display = 'none'; return }
+  const input = $("pipInput");
+  const preview = $("pipCmdPreview");
+  const text = $("pipCmdText");
+  if (!input || !preview || !text) return;
+  const spec = normalizePipSpec(input.value);
+  if (!spec) {
+    preview.style.display = "none";
+    return;
+  }
   // Single source of truth: the same validator the backend enforces
   // (services/pip-spec.js, exposed as window.PipSpec by the script tag in
   // index.html). No inline copy — the old one wrongly blocked `<>` (valid
   // PEP 440 operators), so `foo>=1.0` previewed as blocked but installed fine.
   const check = window.PipSpec
     ? window.PipSpec.assertSafePipSpec(spec)
-    : { ok: false, reason: 'validator missing' }
-  if (!check.ok) { preview.style.display = 'flex'; preview.classList.add('pip-cmd-bad'); text.textContent = '✗ Blocked: ' + (check.reason || 'invalid spec') }
-  else { preview.style.display = 'flex'; preview.classList.remove('pip-cmd-bad'); text.textContent = 'pip install ' + spec + '   (runs in the active env)' }
+    : { ok: false, reason: "validator missing" };
+  if (check.ok) {
+    preview.style.display = "flex";
+    preview.classList.remove("pip-cmd-bad");
+    text.textContent = "pip install " + spec + "   (runs in the active env)";
+  } else {
+    preview.style.display = "flex";
+    preview.classList.add("pip-cmd-bad");
+    text.textContent = "✗ Blocked: " + (check.reason || "invalid spec");
+  }
 }
-$('pipInput').addEventListener('input', updatePipCmdPreview)
-$('pipCmdCopy')?.addEventListener('click', async () => {
-  const t = $('pipCmdText')?.textContent || ''
-  if (!t.startsWith('pip install')) return
-  try { await navigator.clipboard.writeText(t.split('   (')[0]); $('pipCmdCopy').textContent = 'copied!'; setTimeout(() => { $('pipCmdCopy').textContent = 'copy' }, 1200) } catch {}
-})
+$("pipInput").addEventListener("input", updatePipCmdPreview);
+$("pipCmdCopy")?.addEventListener("click", async () => {
+  const t = $("pipCmdText")?.textContent || "";
+  if (!t.startsWith("pip install")) return;
+  try {
+    await navigator.clipboard.writeText(t.split("   (")[0]);
+    $("pipCmdCopy").textContent = "copied!";
+    setTimeout(() => {
+      $("pipCmdCopy").textContent = "copy";
+    }, 1200);
+  } catch {}
+});
 // Clear the preview after a successful install so it doesn't linger.
-const _pipInstallOrig = $('pipInstallBtn')
+const _pipInstallOrig = $("pipInstallBtn");
 if (_pipInstallOrig) {
-  _pipInstallOrig.addEventListener('click', () => { setTimeout(updatePipCmdPreview, 50) })
+  _pipInstallOrig.addEventListener("click", () => {
+    setTimeout(updatePipCmdPreview, 50);
+  });
 }
 
 // ── Guided LLM engine setup (Deepy Prime) ──
@@ -3731,120 +5674,153 @@ if (_pipInstallOrig) {
 // installer (pip for Claude Code, npm for Codex/OpenCode) and, for engines with
 // a server (OpenCode), a Start/Stop server toggle. New engines = one data line
 // in services/llm-engines.js — no UI branch.
-function dot(on) { return on ? '<span class="spec-dot dot-ok"></span>' : '<span class="spec-dot dot-bad"></span>' }
+function dot(on) {
+  return on
+    ? '<span class="spec-dot dot-ok"></span>'
+    : '<span class="spec-dot dot-bad"></span>';
+}
 
 async function refreshLLMEngines() {
-  const list = $('llmEnginesList')
-  if (!list) return
-  let data
-  try { data = await getLLMEngines() } catch (e) { data = { engines: [] } }
-  const engines = (data && data.engines) || []
-  if (!engines.length) {
-    list.innerHTML = '<div class="spec-row"><span class="spec-value">No LLM engines available — reload the Dashboard or check the logs.</span></div>'
-    return
+  const list = $("llmEnginesList");
+  if (!list) return;
+  let data;
+  try {
+    data = await getLLMEngines();
+  } catch (e) {
+    data = { engines: [] };
   }
-  list.innerHTML = engines.map(e => {
-    const cliRow = e.cli
-      ? `<div class="spec-row"><span class="spec-label">${e.cli} CLI</span>${dot(e.cliOnPath)}<span class="spec-value">${e.cliOnPath ? 'on PATH' : 'not found'}</span></div>`
-      : ''
-    const pipRow = e.pipPackage
-      ? `<div class="spec-row"><span class="spec-label">${e.pipPackage}</span>${dot(e.pipInstalled)}<span class="spec-value">${e.pipInstalled ? 'installed' : 'missing'}</span></div>`
-      : ''
-    let action = ''
-    if (e.install && e.install.mode === 'pip') {
-      const done = e.pipInstalled
-      action = `<button class="pip-install-btn llm-install-btn" data-engine="${e.id}">${done ? 'Reinstall ' + e.install.spec : 'Install ' + e.install.spec}</button>${done ? `<button class="pip-install-btn llm-remove-btn" data-engine="${e.id}">Remove</button>` : ''}`
-    } else if (e.install && e.install.mode === 'npm') {
-      const done = e.cliOnPath
-      // ponytail: label used the codex spec for every npm engine (opencode card lied) — use this engine's own spec
-      action = `<button class="pip-install-btn llm-install-btn" data-engine="${e.id}">${done ? 'Reinstall via npm (' + e.install.spec + ')' : 'Install via npm (' + e.install.spec + ')'}</button>${done ? `<button class="pip-install-btn llm-remove-btn" data-engine="${e.id}">Remove</button>` : ''}`
-    } else if (e.external) {
-      action = `<span class="spec-value llm-external-hint">External — install via terminal, then it auto-detects.</span>`
-    }
-    let serveBtn = ''
-    if (e.serve) {
-      serveBtn = `<button class="pip-install-btn llm-serve-btn" data-engine="${e.id}">${e.serverRunning ? 'Stop server' : 'Start server'}</button>`
-    }
-    let authBtn = ''
-    if (e.auth) {
-      // Open the official Claude Code authentication guide (the user asked for a
-      // how-to page, not a silent terminal launch that blocks on Max/Pro).
-      authBtn = `<button class="pip-install-btn llm-auth-btn" data-engine="${e.id}" data-auth-docs="${e.auth.docsUrl || ''}">How to sign in</button>`
-    }
-    const serverRow = e.serverUrl
-      ? `<div class="spec-row"><span class="spec-label">Server</span><span class="spec-value">${e.serverUrl}</span></div>`
-      : ''
-    const notes = e.notes ? `<div class="pip-advanced-hint">${e.notes}</div>` : ''
-    const auth = e.auth
-      ? `<div class="pip-advanced-hint">${e.auth.help}</div>`
-      : ''
-    const keyNote = e.claudeApiKeySet
-      ? `<div class="pip-advanced-hint" style="color:#4ADE80">✓ Anthropic API key active — Claude Code will use it instead of a Max/Pro login (needs API credits in the Console; billed per use).</div>`
-      : ''
-    return `<div class="llm-engine-card">
+  const engines = (data && data.engines) || [];
+  if (!engines.length) {
+    list.innerHTML =
+      '<div class="spec-row"><span class="spec-value">No LLM engines available — reload the Dashboard or check the logs.</span></div>';
+    return;
+  }
+  list.innerHTML = engines
+    .map((e) => {
+      const cliRow = e.cli
+        ? `<div class="spec-row"><span class="spec-label">${e.cli} CLI</span>${dot(e.cliOnPath)}<span class="spec-value">${e.cliOnPath ? "on PATH" : "not found"}</span></div>`
+        : "";
+      const pipRow = e.pipPackage
+        ? `<div class="spec-row"><span class="spec-label">${e.pipPackage}</span>${dot(e.pipInstalled)}<span class="spec-value">${e.pipInstalled ? "installed" : "missing"}</span></div>`
+        : "";
+      let action = "";
+      if (e.install && e.install.mode === "pip") {
+        const done = e.pipInstalled;
+        action = `<button class="pip-install-btn llm-install-btn" data-engine="${e.id}">${done ? "Reinstall " + e.install.spec : "Install " + e.install.spec}</button>${done ? `<button class="pip-install-btn llm-remove-btn" data-engine="${e.id}">Remove</button>` : ""}`;
+      } else if (e.install && e.install.mode === "npm") {
+        const done = e.cliOnPath;
+        // ponytail: label used the codex spec for every npm engine (opencode card lied) — use this engine's own spec
+        action = `<button class="pip-install-btn llm-install-btn" data-engine="${e.id}">${done ? "Reinstall via npm (" + e.install.spec + ")" : "Install via npm (" + e.install.spec + ")"}</button>${done ? `<button class="pip-install-btn llm-remove-btn" data-engine="${e.id}">Remove</button>` : ""}`;
+      } else if (e.external) {
+        action = `<span class="spec-value llm-external-hint">External — install via terminal, then it auto-detects.</span>`;
+      }
+      let serveBtn = "";
+      if (e.serve) {
+        serveBtn = `<button class="pip-install-btn llm-serve-btn" data-engine="${e.id}">${e.serverRunning ? "Stop server" : "Start server"}</button>`;
+      }
+      let authBtn = "";
+      if (e.auth) {
+        // Open the official Claude Code authentication guide (the user asked for a
+        // how-to page, not a silent terminal launch that blocks on Max/Pro).
+        authBtn = `<button class="pip-install-btn llm-auth-btn" data-engine="${e.id}" data-auth-docs="${e.auth.docsUrl || ""}">How to sign in</button>`;
+      }
+      const serverRow = e.serverUrl
+        ? `<div class="spec-row"><span class="spec-label">Server</span><span class="spec-value">${e.serverUrl}</span></div>`
+        : "";
+      const notes = e.notes
+        ? `<div class="pip-advanced-hint">${e.notes}</div>`
+        : "";
+      const auth = e.auth
+        ? `<div class="pip-advanced-hint">${e.auth.help}</div>`
+        : "";
+      const keyNote = e.claudeApiKeySet
+        ? `<div class="pip-advanced-hint" style="color:#4ADE80">✓ Anthropic API key active — Claude Code will use it instead of a Max/Pro login (needs API credits in the Console; billed per use).</div>`
+        : "";
+      return `<div class="llm-engine-card">
       <div class="llm-engine-head"><span class="llm-engine-title">${e.label}</span>${action}</div>
       <div class="env-specs">${cliRow}${pipRow}${serverRow}</div>
-      ${serveBtn ? `<div class="llm-serve-row">${serveBtn}</div>` : ''}
-      ${authBtn ? `<div class="llm-serve-row">${authBtn}</div>` : ''}
+      ${serveBtn ? `<div class="llm-serve-row">${serveBtn}</div>` : ""}
+      ${authBtn ? `<div class="llm-serve-row">${authBtn}</div>` : ""}
       <div class="pip-advanced-hint">${e.desc}</div>${auth}${keyNote}${notes}
-    </div>`
-  }).join('')
-  list.querySelectorAll('.llm-install-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.engine
-      btn.disabled = true; btn.textContent = 'installing...'
-      const r = await window.w2gp.llmEngineInstall(id)
-      if (r && r.success) { _llmEnginesPromise = null; showToast('✓ engine installed'); refreshLLMEngines() }
-      else { btn.disabled = false; showToast('✗ ' + (r && r.error ? r.error : 'install failed')) }
+    </div>`;
     })
-  })
-  list.querySelectorAll('.llm-remove-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.engine
-      if (!confirm('Remove ' + id + ' from this machine?')) return
-      btn.disabled = true; btn.textContent = 'removing...'
-      const r = await window.w2gp.llmEngineUninstall(id)
-      if (r && r.success) { _llmEnginesPromise = null; showToast('✓ engine removed'); refreshLLMEngines() }
-      else { btn.disabled = false; btn.textContent = 'Remove'; showToast('✗ ' + (r && r.error ? r.error : 'remove failed')) }
-    })
-  })
-  list.querySelectorAll('.llm-serve-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.engine
-      const starting = btn.textContent.trim().startsWith('Start')
-      btn.disabled = true
-      const r = await window.w2gp.llmEngineServe(id, starting ? 'start' : 'stop')
-      btn.disabled = false
+    .join("");
+  list.querySelectorAll(".llm-install-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.engine;
+      btn.disabled = true;
+      btn.textContent = "installing...";
+      const r = await window.w2gp.llmEngineInstall(id);
       if (r && r.success) {
-        btn.textContent = starting ? 'Stop server' : 'Start server'
-        showToast(starting ? '✓ ' + id + ' server started' : '✓ server stopped')
+        _llmEnginesPromise = null;
+        showToast("✓ engine installed");
+        refreshLLMEngines();
       } else {
-        showToast('✗ ' + (r && r.error ? r.error : 'server action failed'))
+        btn.disabled = false;
+        showToast("✗ " + (r && r.error ? r.error : "install failed"));
       }
-    })
-  })
-  list.querySelectorAll('.llm-auth-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const url = btn.dataset.authDocs
+    });
+  });
+  list.querySelectorAll(".llm-remove-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.engine;
+      if (!confirm("Remove " + id + " from this machine?")) return;
+      btn.disabled = true;
+      btn.textContent = "removing...";
+      const r = await window.w2gp.llmEngineUninstall(id);
+      if (r && r.success) {
+        _llmEnginesPromise = null;
+        showToast("✓ engine removed");
+        refreshLLMEngines();
+      } else {
+        btn.disabled = false;
+        btn.textContent = "Remove";
+        showToast("✗ " + (r && r.error ? r.error : "remove failed"));
+      }
+    });
+  });
+  list.querySelectorAll(".llm-serve-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.engine;
+      const starting = btn.textContent.trim().startsWith("Start");
+      btn.disabled = true;
+      const r = await window.w2gp.llmEngineServe(
+        id,
+        starting ? "start" : "stop",
+      );
+      btn.disabled = false;
+      if (r && r.success) {
+        btn.textContent = starting ? "Stop server" : "Start server";
+        showToast(
+          starting ? "✓ " + id + " server started" : "✓ server stopped",
+        );
+      } else {
+        showToast("✗ " + (r && r.error ? r.error : "server action failed"));
+      }
+    });
+  });
+  list.querySelectorAll(".llm-auth-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const url = btn.dataset.authDocs;
       if (url) {
-        await window.w2gp.openExternal(url)
-        showToast('Opened Claude Code authentication guide')
+        await window.w2gp.openExternal(url);
+        showToast("Opened Claude Code authentication guide");
       } else {
-        showToast('No sign-in guide configured for this engine')
+        showToast("No sign-in guide configured for this engine");
       }
-    })
-  })
+    });
+  });
 }
 
 // Deepy Prime activation panel: pick a ready engine, write it into
 // wgp_config.json so the next Wan2GP launch boots with Deepy Prime enabled.
 const DEEPY_PANEL_ENGINES = [
-  { id: 'opencode', label: 'OpenCode', paid: false },
-  { id: 'claude-code', label: 'Claude Code', paid: true },
-  { id: 'codex', label: 'OpenAI Codex', paid: true },
+  { id: "opencode", label: "OpenCode", paid: false },
+  { id: "claude-code", label: "Claude Code", paid: true },
+  { id: "codex", label: "OpenAI Codex", paid: true },
   // ponytail: b71026f — local Prime runs on Qwen3.8 VL 27B (needs the 27B model + GGUF 1.0.14; backend auto-raises 32k context + Summarize)
-  { id: 'local-qwen38', label: 'Qwen3.8 VL 27B (local)', paid: false }
-]
+  { id: "local-qwen38", label: "Qwen3.8 VL 27B (local)", paid: false },
+];
 
 // Local-model (Prompt Enhancer) choices shown in the Deepy panel when Deepy is
 // Disabled or Zero. Mirrors services/deepy-config.js DEEPY_ENHANCER_OPTIONS.
@@ -3852,184 +5828,279 @@ const DEEPY_PANEL_ENGINES = [
 // the UI (the non-applicable ones are shown disabled with an annotation), so
 // the user sees the full set of possible local models.
 const DEEPY_PANEL_ENHANCERS = [
-  { id: 1, label: 'Florence 2 + Llama 3.2 3B (local)', modes: ['disabled'] },
-  { id: 2, label: 'Florence 2 + Llama Joy 8B (local)', modes: ['disabled'] },
-  { id: 3, label: 'Qwen3.5 VL Abliterated 4B (local, recommended)', modes: ['zero'] },
-  { id: 4, label: 'Qwen3.5 VL Abliterated 9B (local)', modes: ['zero'] },
-  { id: 5, label: 'Qwen3.8 VL Uncensored 27B (local)', modes: ['zero'] }
-]
+  { id: 1, label: "Florence 2 + Llama 3.2 3B (local)", modes: ["disabled"] },
+  { id: 2, label: "Florence 2 + Llama Joy 8B (local)", modes: ["disabled"] },
+  {
+    id: 3,
+    label: "Qwen3.5 VL Abliterated 4B (local, recommended)",
+    modes: ["zero"],
+  },
+  { id: 4, label: "Qwen3.5 VL Abliterated 9B (local)", modes: ["zero"] },
+  { id: 5, label: "Qwen3.8 VL Uncensored 27B (local)", modes: ["zero"] },
+];
 
 async function refreshDeepy() {
-  const opts = $('deepyEngineOptions')
-  const statusMsg = $('deepyStatusMsg')
-  const applyBtn = $('deepyApplyBtn')
-  const docsLink = $('deepyDocsLink')
-  const primeOnly = $('deepyPrimeOnly')
-  const enhancerWrap = $('deepyEnhancerWrap')
-  const enhancerOpts = $('deepyEnhancerOptions')
-  const enhancerHint = $('deepyEnhancerHint')
-  const modeRadios = document.querySelectorAll('input[name=deepyMode]')
-  if (!applyBtn) return
+  const opts = $("deepyEngineOptions");
+  const statusMsg = $("deepyStatusMsg");
+  const applyBtn = $("deepyApplyBtn");
+  const docsLink = $("deepyDocsLink");
+  const primeOnly = $("deepyPrimeOnly");
+  const enhancerWrap = $("deepyEnhancerWrap");
+  const enhancerOpts = $("deepyEnhancerOptions");
+  const enhancerHint = $("deepyEnhancerHint");
+  const modeRadios = document.querySelectorAll("input[name=deepyMode]");
+  if (!applyBtn) return;
 
-  let status = { available: false }
-  let engines = []
+  let status = { available: false };
+  let engines = [];
   try {
-    const s = await window.w2gp.deepyStatus()
-    if (s && s.ok) status = s
+    const s = await window.w2gp.deepyStatus();
+    if (s && s.ok) status = s;
   } catch (_) {}
   try {
-    const d = await getLLMEngines()
-    engines = (d && d.engines) || []
+    const d = await getLLMEngines();
+    engines = (d && d.engines) || [];
   } catch (_) {}
 
-  const ready = id => {
+  const ready = (id) => {
     // ponytail: local model lives in Wan2GP — it validates the 27B requirement + downloads on first use, nothing for the launcher to probe
-    if (id === 'local-qwen38') return true
-    const e = engines.find(x => x.id === id)
-    if (!e) return false
-    if (id === 'claude-code') return !!(e.cliOnPath || e.claudeApiKeySet)
-    return !!e.cliOnPath
-  }
+    if (id === "local-qwen38") return true;
+    const e = engines.find((x) => x.id === id);
+    if (!e) return false;
+    if (id === "claude-code") return !!(e.cliOnPath || e.claudeApiKeySet);
+    return !!e.cliOnPath;
+  };
 
-  const currentProfile = status.currentEngine
-  const profileToUi = { opencode: 'opencode', claude: 'claude-code', codex: 'codex', qwen38_27b: 'local-qwen38' }
-  const currentUi = profileToUi[currentProfile] || null
-  const currentMode = status.mode || 'disabled'
-  const currentEnhancer = (typeof status.enhancerEnabled === 'number') ? status.enhancerEnabled : null
+  const currentProfile = status.currentEngine;
+  const profileToUi = {
+    opencode: "opencode",
+    claude: "claude-code",
+    codex: "codex",
+    qwen38_27b: "local-qwen38",
+  };
+  const currentUi = profileToUi[currentProfile] || null;
+  const currentMode = status.mode || "disabled";
+  const currentEnhancer =
+    typeof status.enhancerEnabled === "number" ? status.enhancerEnabled : null;
   // Default engine for Prime is OpenCode (universal providers / external, free).
   // Preserve an already-configured engine; otherwise fall back to OpenCode.
-  let selectedEngine = currentUi || 'opencode'
+  const selectedEngine = currentUi || "opencode";
 
   // Pre-select the current Deepy mode (Disabled / Zero / Prime).
-  modeRadios.forEach(r => { r.checked = (r.value === currentMode) })
-  primeOnly.style.display = (currentMode === 'prime') ? 'block' : 'none'
+  modeRadios.forEach((r) => {
+    r.checked = r.value === currentMode;
+  });
+  primeOnly.style.display = currentMode === "prime" ? "block" : "none";
 
   // Local-model (Prompt Enhancer) selector: shown for Disabled/Zero only.
   // Rendered from the SELECTED mode (not just persisted), so switching modes
   // immediately re-renders the local-model choices. Selection is transient —
   // only persisted when Apply is pressed.
   const renderEnhancer = (mode, preselectId) => {
-    const visible = (mode === 'disabled' || mode === 'zero')
-    enhancerWrap.style.display = visible ? 'block' : 'none'
-    if (!visible) return
-    const forThisMode = o => o.modes.includes(mode)
+    const visible = mode === "disabled" || mode === "zero";
+    enhancerWrap.style.display = visible ? "block" : "none";
+    if (!visible) return;
+    const forThisMode = (o) => o.modes.includes(mode);
     // Pre-select: caller-supplied id if valid, else persisted id, else first
     // valid option for this mode.
-    const validForMode = DEEPY_PANEL_ENHANCERS.filter(forThisMode)
-    const chosen = validForMode.find(o => o.id === preselectId)
-      || validForMode.find(o => o.id === currentEnhancer)
-      || validForMode[0]
-    const sub = (mode === 'zero')
-      ? 'Deepy Zero runs locally — pick the Qwen model Wan2GP will use.'
-      : 'Florence 2 + Llama 3.2 3B is the default local model when Deepy is off.'
-    if (enhancerHint) enhancerHint.textContent = sub
-    enhancerOpts.innerHTML = DEEPY_PANEL_ENHANCERS.map(o => {
-      const enabled = forThisMode(o)
-      const checked = (o.id === chosen.id) ? 'checked' : ''
-      const disabled = enabled ? '' : 'disabled'
-      const note = enabled ? '' : `<span class="deepy-enhancer-note"> — only for ${o.modes[0] === 'zero' ? 'Deepy Zero' : 'Disabled'}</span>`
-      const cls = enabled ? 'deepy-enhancer-opt' : 'deepy-enhancer-opt deepy-enhancer-opt-disabled'
-      return `<label class="${cls}">\n` +
+    const validForMode = DEEPY_PANEL_ENHANCERS.filter(forThisMode);
+    const chosen =
+      validForMode.find((o) => o.id === preselectId) ||
+      validForMode.find((o) => o.id === currentEnhancer) ||
+      validForMode[0];
+    const sub =
+      mode === "zero"
+        ? "Deepy Zero runs locally — pick the Qwen model Wan2GP will use."
+        : "Florence 2 + Llama 3.2 3B is the default local model when Deepy is off.";
+    if (enhancerHint) enhancerHint.textContent = sub;
+    enhancerOpts.innerHTML = DEEPY_PANEL_ENHANCERS.map((o) => {
+      const enabled = forThisMode(o);
+      const checked = o.id === chosen.id ? "checked" : "";
+      const disabled = enabled ? "" : "disabled";
+      const note = enabled
+        ? ""
+        : `<span class="deepy-enhancer-note"> — only for ${o.modes[0] === "zero" ? "Deepy Zero" : "Disabled"}</span>`;
+      const cls = enabled
+        ? "deepy-enhancer-opt"
+        : "deepy-enhancer-opt deepy-enhancer-opt-disabled";
+      return (
+        `<label class="${cls}">\n` +
         `  <input type="radio" name="deepyEnhancer" value="${o.id}" ${checked} ${disabled}>\n` +
         `  <span class="deepy-enhancer-label">${o.label}</span>${note}\n` +
         `</label>`
-    }).join('')
-  }
-  renderEnhancer(currentMode, currentEnhancer)
+      );
+    }).join("");
+  };
+  renderEnhancer(currentMode, currentEnhancer);
 
-  opts.innerHTML = DEEPY_PANEL_ENGINES.map(en => {
-    const isReady = ready(en.id)
-    const dotCls = isReady ? 'dot-ok' : 'dot-bad'
-    const dotChar = isReady ? '●' : '○'
-    const cost = en.paid ? '<span class="deepy-cost-paid">paid</span>' : '<span class="deepy-cost-free">free</span>'
+  opts.innerHTML = DEEPY_PANEL_ENGINES.map((en) => {
+    const isReady = ready(en.id);
+    const dotCls = isReady ? "dot-ok" : "dot-bad";
+    const dotChar = isReady ? "●" : "○";
+    const cost = en.paid
+      ? '<span class="deepy-cost-paid">paid</span>'
+      : '<span class="deepy-cost-free">free</span>';
     return `<label class="deepy-engine-opt">
-      <input type="radio" name="deepyEngine" value="${en.id}" ${en.id === selectedEngine ? 'checked' : ''}>
+      <input type="radio" name="deepyEngine" value="${en.id}" ${en.id === selectedEngine ? "checked" : ""}>
       <span class="${dotCls}">${dotChar}</span>
       <span class="deepy-engine-label">${en.label}</span>
       <span class="deepy-engine-cost">${cost}</span>
-    </label>`
-  }).join('')
+    </label>`;
+  }).join("");
 
   if (status.available) {
-    const label = { disabled: 'Disabled', zero: 'Deepy Zero (local model)', prime: 'Deepy Prime' }[currentMode] || currentMode
-    statusMsg.innerHTML = 'Currently: <strong>' + label + '</strong>'
-      + (currentMode === 'prime' && currentProfile ? ' — engine: ' + currentProfile : '')
+    const label =
+      {
+        disabled: "Disabled",
+        zero: "Deepy Zero (local model)",
+        prime: "Deepy Prime",
+      }[currentMode] || currentMode;
+    statusMsg.innerHTML =
+      "Currently: <strong>" +
+      label +
+      "</strong>" +
+      (currentMode === "prime" && currentProfile
+        ? " — engine: " + currentProfile
+        : "");
   } else {
-    statusMsg.innerHTML = '<span style="color:#FBBF24">' + (status.reason || 'Wan2GP config not found — install Wan2GP first.') + '</span>'
+    statusMsg.innerHTML =
+      '<span style="color:#FBBF24">' +
+      (status.reason || "Wan2GP config not found — install Wan2GP first.") +
+      "</span>";
   }
 
   const syncApply = () => {
-    const mode = (document.querySelector('input[name=deepyMode]:checked') || {}).value || 'disabled'
-    primeOnly.style.display = (mode === 'prime') ? 'block' : 'none'
-    enhancerWrap.style.display = (mode === 'disabled' || mode === 'zero') ? 'block' : 'none'
-    let ok = true
-    let title = ''
-    if (mode === 'prime') {
-      const eng = (opts.querySelector('input[name=deepyEngine]:checked') || {}).value
-      if (!eng) { ok = false; title = 'Pick an engine for Deepy Prime' }
-      else if (!ready(eng)) { ok = false; title = 'Install / enable this engine first (see LLM Engines above)' }
-    } else if (mode === 'disabled' || mode === 'zero') {
-      const enh = (enhancerOpts.querySelector('input[name=deepyEnhancer]:checked') || {}).value
+    const mode =
+      (document.querySelector("input[name=deepyMode]:checked") || {}).value ||
+      "disabled";
+    primeOnly.style.display = mode === "prime" ? "block" : "none";
+    enhancerWrap.style.display =
+      mode === "disabled" || mode === "zero" ? "block" : "none";
+    let ok = true;
+    let title = "";
+    if (mode === "prime") {
+      const eng = (opts.querySelector("input[name=deepyEngine]:checked") || {})
+        .value;
+      if (!eng) {
+        ok = false;
+        title = "Pick an engine for Deepy Prime";
+      } else if (!ready(eng)) {
+        ok = false;
+        title = "Install / enable this engine first (see LLM Engines above)";
+      }
+    } else if (mode === "disabled" || mode === "zero") {
+      const enh = (
+        enhancerOpts.querySelector("input[name=deepyEnhancer]:checked") || {}
+      ).value;
       // ponytail: Tauri — don't block Apply if enhancer not yet rendered; Rust defaults to 3 (Qwen 4B) for Zero
-      if (!enh && !window.__TAURI__) { ok = false; title = 'Pick a local model (Prompt Enhancer)' }
+      if (!enh && !window.__TAURI__) {
+        ok = false;
+        title = "Pick a local model (Prompt Enhancer)";
+      }
     }
-    applyBtn.disabled = !ok
-    applyBtn.title = title || ('Set Deepy to ' + mode)
-  }
-  modeRadios.forEach(r => r.addEventListener('change', () => {
-    // Switching the mode immediately re-renders the local-model selector for
-    // the newly-selected mode (transient — not persisted until Apply).
-    const m = (document.querySelector('input[name=deepyMode]:checked') || {}).value || 'disabled'
-    renderEnhancer(m)
-    syncApply()
-  }))
-  opts.querySelectorAll('input[name=deepyEngine]').forEach(r => r.addEventListener('change', syncApply))
-  enhancerOpts.querySelectorAll('input[name=deepyEnhancer]').forEach(r => r.addEventListener('change', syncApply))
-  syncApply()
+    applyBtn.disabled = !ok;
+    applyBtn.title = title || "Set Deepy to " + mode;
+  };
+  modeRadios.forEach((r) =>
+    r.addEventListener("change", () => {
+      // Switching the mode immediately re-renders the local-model selector for
+      // the newly-selected mode (transient — not persisted until Apply).
+      const m =
+        (document.querySelector("input[name=deepyMode]:checked") || {}).value ||
+        "disabled";
+      renderEnhancer(m);
+      syncApply();
+    }),
+  );
+  opts
+    .querySelectorAll("input[name=deepyEngine]")
+    .forEach((r) => r.addEventListener("change", syncApply));
+  enhancerOpts
+    .querySelectorAll("input[name=deepyEnhancer]")
+    .forEach((r) => r.addEventListener("change", syncApply));
+  syncApply();
 
   applyBtn.onclick = async () => {
-    const mode = (document.querySelector('input[name=deepyMode]:checked') || {}).value || 'disabled'
-    const eng = (opts.querySelector('input[name=deepyEngine]:checked') || {}).value
-    const enh = (enhancerOpts.querySelector('input[name=deepyEnhancer]:checked') || {}).value
-    applyBtn.disabled = true; applyBtn.textContent = 'applying...'
-    const r = await window.w2gp.deepySet(mode, eng, enh ? parseInt(enh, 10) : null)
-    applyBtn.textContent = 'Apply'
+    const mode =
+      (document.querySelector("input[name=deepyMode]:checked") || {}).value ||
+      "disabled";
+    const eng = (opts.querySelector("input[name=deepyEngine]:checked") || {})
+      .value;
+    const enh = (
+      enhancerOpts.querySelector("input[name=deepyEnhancer]:checked") || {}
+    ).value;
+    applyBtn.disabled = true;
+    applyBtn.textContent = "applying...";
+    const r = await window.w2gp.deepySet(
+      mode,
+      eng,
+      enh ? parseInt(enh, 10) : null,
+    );
+    applyBtn.textContent = "Apply";
     if (r && r.ok) {
-      statusMsg.innerHTML = '<span style="color:#4ADE80">✓ ' + (r.message || 'Deepy updated') + '</span>'
-      showToast('✓ ' + (r.message || 'Deepy updated'))
-      refreshDeepy()
+      statusMsg.innerHTML =
+        '<span style="color:#4ADE80">✓ ' +
+        (r.message || "Deepy updated") +
+        "</span>";
+      showToast("✓ " + (r.message || "Deepy updated"));
+      refreshDeepy();
     } else {
-      statusMsg.innerHTML = '<span style="color:#F87171">✗ ' + (r && r.error ? r.error : 'update failed') + '</span>'
-      showToast('✗ ' + (r && r.error ? r.error : 'update failed'))
-      applyBtn.disabled = false
+      statusMsg.innerHTML =
+        '<span style="color:#F87171">✗ ' +
+        (r && r.error ? r.error : "update failed") +
+        "</span>";
+      showToast("✗ " + (r && r.error ? r.error : "update failed"));
+      applyBtn.disabled = false;
     }
-  }
-  if (docsLink) docsLink.onclick = async (ev) => {
-    ev.preventDefault()
-    await window.w2gp.openExternal('https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/DEEPY.md')
-  }
+  };
+  if (docsLink)
+    docsLink.onclick = async (ev) => {
+      ev.preventDefault();
+      await window.w2gp.openExternal(
+        "https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/DEEPY.md",
+      );
+    };
 }
 // ── DLSS5 optional runtime (upstream scripts/install_dlss5.ps1) ──
 async function refreshDlss5() {
-  const msg = $('dlss5StatusMsg'), btn = $('dlss5InstallBtn')
-  if (!msg || !btn) return
-  let s = null
-  try { s = await window.w2gp.dlss5Status() } catch (e) { msg.textContent = '✗ ' + e.message; btn.disabled = true; return }
-  if (!s || !s.ok) { msg.textContent = (s && s.error) || 'Wan2GP not installed'; btn.disabled = true; return }
-  btn.disabled = false
-  msg.textContent = s.complete ? `✓ DLSS 5 installed (${s.present}/${s.total} files).`
-    : s.installed ? `Partial DLSS 5 install (${s.present}/${s.total} files) — reinstall, or tick Force to replace.`
-    : 'DLSS 5 not installed — optional NVIDIA upsampler runtime.'
-  _dlss5Rows = Array.isArray(s.files) ? s.files : []
-  _dlss5State = {}
-  renderDlss5Progress()
+  const msg = $("dlss5StatusMsg"),
+    btn = $("dlss5InstallBtn");
+  if (!msg || !btn) return;
+  let s = null;
+  try {
+    s = await window.w2gp.dlss5Status();
+  } catch (e) {
+    msg.textContent = "✗ " + e.message;
+    btn.disabled = true;
+    return;
+  }
+  if (!s || !s.ok) {
+    msg.textContent = (s && s.error) || "Wan2GP not installed";
+    btn.disabled = true;
+    return;
+  }
+  btn.disabled = false;
+  msg.textContent = s.complete
+    ? `✓ DLSS 5 installed (${s.present}/${s.total} files).`
+    : s.installed
+      ? `Partial DLSS 5 install (${s.present}/${s.total} files) — reinstall, or tick Force to replace.`
+      : "DLSS 5 not installed — optional NVIDIA upsampler runtime.";
+  _dlss5Rows = Array.isArray(s.files) ? s.files : [];
+  _dlss5State = {};
+  renderDlss5Progress();
 }
-$('dlss5InstallBtn')?.addEventListener('click', () => {
-  $('dlss5AcceptChk').checked = false; $('dlss5ConfirmBtn').disabled = true
-  $('dlss5Modal').classList.remove('hidden'); $('dlss5AcceptChk').focus()
-})
-$('dlss5AcceptChk')?.addEventListener('change', e => { $('dlss5ConfirmBtn').disabled = !e.target.checked })
-$('dlss5CancelBtn')?.addEventListener('click', () => { $('dlss5Modal').classList.add('hidden') })
+$("dlss5InstallBtn")?.addEventListener("click", () => {
+  $("dlss5AcceptChk").checked = false;
+  $("dlss5ConfirmBtn").disabled = true;
+  $("dlss5Modal").classList.remove("hidden");
+  $("dlss5AcceptChk").focus();
+});
+$("dlss5AcceptChk")?.addEventListener("change", (e) => {
+  $("dlss5ConfirmBtn").disabled = !e.target.checked;
+});
+$("dlss5CancelBtn")?.addEventListener("click", () => {
+  $("dlss5Modal").classList.add("hidden");
+});
 // ── DLSS5 file overview: one always-visible row per installed file (path +
 // version + expected SHA from the backend manifest) with installed /
 // not-installed state. Live install events only override the phase mid-install;
@@ -4037,162 +6108,278 @@ $('dlss5CancelBtn')?.addEventListener('click', () => { $('dlss5Modal').classList
 // ponytail: the script owns integrity — rows mirror its Downloading /
 // verified / Installed lines. True byte-% isn't in the script output, so the
 // downloading state is honest (no fake progress bar).
-let _dlss5Rows = [], _dlss5State = {}, _dlss5LastPkg = null, _dlss5Done = false
+let _dlss5Rows = [],
+  _dlss5State = {},
+  _dlss5LastPkg = null,
+  _dlss5Done = false;
 function renderDlss5Progress() {
-  const box = $('dlss5Progress')
-  if (!box) return
-  if (!_dlss5Rows.length && !_dlss5Done) { box.innerHTML = ''; box.style.display = 'none'; return }
-  box.style.display = 'block'
-  box.innerHTML = _dlss5Rows.map(f => {
-    const ph = _dlss5State[f.id]
-    const sha = String(f.sha || '')
-    if (ph === 'downloading') return `<div class="spec-row"><span class="spec-label"><span>…</span> ${f.id}</span><span class="spec-value">${f.version} · downloading…</span></div>`
-    const ok = ph === 'verified' || (!ph && f.installed)
-    const icon = ok ? '<span class="dot-ok">●</span>' : '<span style="color:#F87171">●</span>'
-    const note = `${f.version} · ` + (ok ? '✓ SHA ' : 'SHA ') + sha.slice(0, 12) + '… ' + (ok ? '' : '— not installed')
-    return `<div class="spec-row"><span class="spec-label">${icon} ${f.id}</span><span class="spec-value">${note}</span></div>`
-  }).join('')
-    + (_dlss5Done ? '<div class="pip-advanced-hint" style="color:#4ADE80">✓ DLSS 5 components installed — restart Wan2GP.</div>' : '')
+  const box = $("dlss5Progress");
+  if (!box) return;
+  if (!_dlss5Rows.length && !_dlss5Done) {
+    box.innerHTML = "";
+    box.style.display = "none";
+    return;
+  }
+  box.style.display = "block";
+  box.innerHTML =
+    _dlss5Rows
+      .map((f) => {
+        const ph = _dlss5State[f.id];
+        const sha = String(f.sha || "");
+        if (ph === "downloading")
+          return `<div class="spec-row"><span class="spec-label"><span>…</span> ${f.id}</span><span class="spec-value">${f.version} · downloading…</span></div>`;
+        const ok = ph === "verified" || (!ph && f.installed);
+        const icon = ok
+          ? '<span class="dot-ok">●</span>'
+          : '<span style="color:#F87171">●</span>';
+        const note =
+          `${f.version} · ` +
+          (ok ? "✓ SHA " : "SHA ") +
+          sha.slice(0, 12) +
+          "… " +
+          (ok ? "" : "— not installed");
+        return `<div class="spec-row"><span class="spec-label">${icon} ${f.id}</span><span class="spec-value">${note}</span></div>`;
+      })
+      .join("") +
+    (_dlss5Done
+      ? '<div class="pip-advanced-hint" style="color:#4ADE80">✓ DLSS 5 components installed — restart Wan2GP.</div>'
+      : "");
 }
 // ── Installer live downloads (per-file rows from uv output) ──
-const _installDl = new Map()
-let _installDlDone = 0, _installDlPaint = 0, _installDlQueued = false
+const _installDl = new Map();
+let _installDlDone = 0,
+  _installDlPaint = 0,
+  _installDlQueued = false;
 function installProgressReset() {
-  _installDl.clear(); _installDlDone = 0; _installDlPaint = 0; _installDlQueued = false
-  const box = $('installProgress'); if (box) box.style.display = 'none'
-  const list = $('installProgressList'); if (list) list.innerHTML = ''
-  const cnt = $('installProgressCount'); if (cnt) cnt.textContent = ''
+  _installDl.clear();
+  _installDlDone = 0;
+  _installDlPaint = 0;
+  _installDlQueued = false;
+  const box = $("installProgress");
+  if (box) box.style.display = "none";
+  const list = $("installProgressList");
+  if (list) list.innerHTML = "";
+  const cnt = $("installProgressCount");
+  if (cnt) cnt.textContent = "";
 }
 function installProgressOnEvent(d) {
-  if (!d || !d.phase) return
-  if (d.phase === 'downloading' && d.pkg) {
-    const r = _installDl.get(d.pkg) || { size: '', state: 'downloading', version: '' }
-    if (!r.size && d.size) r.size = d.size
-    r.state = 'downloading'
-    _installDl.set(d.pkg, r)
-  } else if (d.phase === 'package-installed' && d.pkg) {
-    const r = _installDl.get(d.pkg) || { size: '', state: 'installed', version: '' }
-    r.state = 'installed'
-    if (d.version) r.version = d.version
-    _installDl.set(d.pkg, r)
-    _installDlDone++
-  } else if (d.phase === 'resolved') {
+  if (!d || !d.phase) return;
+  if (d.phase === "downloading" && d.pkg) {
+    const r = _installDl.get(d.pkg) || {
+      size: "",
+      state: "downloading",
+      version: "",
+    };
+    if (!r.size && d.size) r.size = d.size;
+    r.state = "downloading";
+    _installDl.set(d.pkg, r);
+  } else if (d.phase === "package-installed" && d.pkg) {
+    const r = _installDl.get(d.pkg) || {
+      size: "",
+      state: "installed",
+      version: "",
+    };
+    r.state = "installed";
+    if (d.version) r.version = d.version;
+    _installDl.set(d.pkg, r);
+    _installDlDone++;
+  } else if (d.phase === "resolved") {
     // count shown via map size; nothing to store
-  } else return
+  } else return;
   // Throttle paints: full innerHTML re-render restarts the bar animation.
-  const now = Date.now()
+  const now = Date.now();
   if (now - _installDlPaint < 500) {
-    if (!_installDlQueued) { _installDlQueued = true; setTimeout(function() { _installDlQueued = false; installProgressPaint() }, 500) }
-    return
+    if (!_installDlQueued) {
+      _installDlQueued = true;
+      setTimeout(() => {
+        _installDlQueued = false;
+        installProgressPaint();
+      }, 500);
+    }
+    return;
   }
-  installProgressPaint()
+  installProgressPaint();
 }
 function installProgressPaint() {
-  _installDlPaint = Date.now()
-  const box = $('installProgress'), list = $('installProgressList')
-  if (!box || !list || !_installDl.size) return
-  box.style.display = ''
-  const names = [..._installDl.keys()].slice(-40)
-  list.innerHTML = names.map(function(n) {
-    const r = _installDl.get(n)
-    const st = r.state === 'installed'
-      ? '<span class="iprog-state installed">✓ ' + escHtml(r.version || 'done') + '</span>'
-      : '<span class="iprog-state downloading">⬇ ' + escHtml(r.size || '…') + '</span>'
-    return '<div class="iprog-row"><div class="iprog-top"><span class="iprog-name" title="' + escHtml(n) + '">' + escHtml(n) + '</span>' + st + '</div>' +
-      '<div class="iprog-bar' + (r.state === 'installed' ? ' done' : '') + '"><div></div></div></div>'
-  }).join('')
-  const cnt = $('installProgressCount')
-  if (cnt) cnt.textContent = _installDlDone + '/' + _installDl.size + ' installed'
+  _installDlPaint = Date.now();
+  const box = $("installProgress"),
+    list = $("installProgressList");
+  if (!box || !list || !_installDl.size) return;
+  box.style.display = "";
+  const names = [..._installDl.keys()].slice(-40);
+  list.innerHTML = names
+    .map((n) => {
+      const r = _installDl.get(n);
+      const st =
+        r.state === "installed"
+          ? '<span class="iprog-state installed">✓ ' +
+            escHtml(r.version || "done") +
+            "</span>"
+          : '<span class="iprog-state downloading">⬇ ' +
+            escHtml(r.size || "…") +
+            "</span>";
+      return (
+        '<div class="iprog-row"><div class="iprog-top"><span class="iprog-name" title="' +
+        escHtml(n) +
+        '">' +
+        escHtml(n) +
+        "</span>" +
+        st +
+        "</div>" +
+        '<div class="iprog-bar' +
+        (r.state === "installed" ? " done" : "") +
+        '"><div></div></div></div>'
+      );
+    })
+    .join("");
+  const cnt = $("installProgressCount");
+  if (cnt)
+    cnt.textContent = _installDlDone + "/" + _installDl.size + " installed";
 }
 
 function dlss5OnEvent(d) {
-  if (!d || !d.phase) return
-  if (d.phase === 'downloading' && d.pkg && d.pkg !== 'other') { for (const f of _dlss5Rows) if (f.pkg === d.pkg) _dlss5State[f.id] = 'downloading'; _dlss5LastPkg = d.pkg }
-  else if (d.phase === 'verified' && _dlss5LastPkg) { for (const f of _dlss5Rows) if (f.pkg === _dlss5LastPkg) _dlss5State[f.id] = 'verified' }
-  else if ((d.phase === 'installed' || d.phase === 'present') && d.path) { _dlss5State[String(d.path).replace(/\\/g, '/')] = 'verified' }
-  else if (d.phase === 'done') { _dlss5Done = true }
-  else return
-  renderDlss5Progress()
+  if (!d || !d.phase) return;
+  if (d.phase === "downloading" && d.pkg && d.pkg !== "other") {
+    for (const f of _dlss5Rows)
+      if (f.pkg === d.pkg) _dlss5State[f.id] = "downloading";
+    _dlss5LastPkg = d.pkg;
+  } else if (d.phase === "verified" && _dlss5LastPkg) {
+    for (const f of _dlss5Rows)
+      if (f.pkg === _dlss5LastPkg) _dlss5State[f.id] = "verified";
+  } else if ((d.phase === "installed" || d.phase === "present") && d.path) {
+    _dlss5State[String(d.path).replace(/\\/g, "/")] = "verified";
+  } else if (d.phase === "done") {
+    _dlss5Done = true;
+  } else return;
+  renderDlss5Progress();
 }
-$('dlss5ConfirmBtn')?.addEventListener('click', async () => {
-  _dlss5LastPkg = null; _dlss5State = {}; _dlss5Done = false; renderDlss5Progress()
-  $('dlss5Modal').classList.add('hidden')
-  const force = !!$('dlss5ForceChk')?.checked
-  const btn = $('dlss5InstallBtn'); btn.disabled = true
-  const orig = btn.textContent; btn.textContent = 'Installing…'
-  appendLog('[*] Installing DLSS 5 runtime — progress below…')
+$("dlss5ConfirmBtn")?.addEventListener("click", async () => {
+  _dlss5LastPkg = null;
+  _dlss5State = {};
+  _dlss5Done = false;
+  renderDlss5Progress();
+  $("dlss5Modal").classList.add("hidden");
+  const force = !!$("dlss5ForceChk")?.checked;
+  const btn = $("dlss5InstallBtn");
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = "Installing…";
+  appendLog("[*] Installing DLSS 5 runtime — progress below…");
   try {
-    const r = await window.w2gp.installDlss5(force)
-    if (r && r.ok) showToast(r.complete ? '✓ DLSS 5 installed — restart Wan2GP' : '⏳ ' + (r.hint || 'Partial install — see console'))
-    else showToast('✗ ' + ((r && r.error) || 'install failed'))
-  } catch (e) { showToast('✗ ' + e.message) }
-  finally { btn.disabled = false; btn.textContent = orig; refreshDlss5() }
-})
-for (const id of ['dlss5DocsLink', 'dlss5DocsLink2']) {
-  const a = $(id)
-  if (a) a.onclick = async (ev) => { ev.preventDefault(); await window.w2gp.openExternal('https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/DLSS5.md') }
+    const r = await window.w2gp.installDlss5(force);
+    if (r && r.ok)
+      showToast(
+        r.complete
+          ? "✓ DLSS 5 installed — restart Wan2GP"
+          : "⏳ " + (r.hint || "Partial install — see console"),
+      );
+    else showToast("✗ " + ((r && r.error) || "install failed"));
+  } catch (e) {
+    showToast("✗ " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+    refreshDlss5();
+  }
+});
+for (const id of ["dlss5DocsLink", "dlss5DocsLink2"]) {
+  const a = $(id);
+  if (a)
+    a.onclick = async (ev) => {
+      ev.preventDefault();
+      await window.w2gp.openExternal(
+        "https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/DLSS5.md",
+      );
+    };
 }
 
-$('llmEnginesRefresh')?.addEventListener('click', () => { _llmEnginesPromise = null; refreshLLMEngines() })
+$("llmEnginesRefresh")?.addEventListener("click", () => {
+  _llmEnginesPromise = null;
+  refreshLLMEngines();
+});
 
-$('desktopShortcutBtn').addEventListener('click', async function() {
-  this.disabled = true; this.textContent = 'Creating...'
-  const r = await window.w2gp.createDesktopShortcut()
-  this.disabled = false; this.textContent = 'Create Desktop Shortcut'
+$("desktopShortcutBtn").addEventListener("click", async function () {
+  this.disabled = true;
+  this.textContent = "Creating...";
+  const r = await window.w2gp.createDesktopShortcut();
+  this.disabled = false;
+  this.textContent = "Create Desktop Shortcut";
   if (r && r.success) {
-    showToast('✓ Shortcut created on desktop: Launch Wan2GP.bat')
+    showToast("✓ Shortcut created on desktop: Launch Wan2GP.bat");
   } else {
-    showToast('✗ ' + (r && r.error ? r.error : 'Failed to create shortcut'))
+    showToast("✗ " + (r && r.error ? r.error : "Failed to create shortcut"));
   }
-})
+});
 
 // ── Floating Terminal events ──
-$('ftToggleBtn')?.addEventListener('click', toggleFloatingTerm)
-$('ftCloseBtn')?.addEventListener('click', closeFloatingTerm)
+$("ftToggleBtn")?.addEventListener("click", toggleFloatingTerm);
+$("ftCloseBtn")?.addEventListener("click", closeFloatingTerm);
 // Dock buttons (always visible)
-document.querySelectorAll('.dock-btn').forEach(btn => {
-  btn.addEventListener('click', () => setFtDock(btn.dataset.dock))
-})
+document.querySelectorAll(".dock-btn").forEach((btn) => {
+  btn.addEventListener("click", () => setFtDock(btn.dataset.dock));
+});
 // Events coming from the floating-terminal overlay (its own BrowserView, used for 'floating' dock)
-window.w2gp.onTermDockChanged(dock => {
-  const ft = $('floatingTerminal')
-  ft.className = 'floating-term dock-' + dock + (ft.classList.contains('hidden') ? ' hidden' : '')
-  if (dock !== 'floating') ft.style.cssText = ''
-  document.querySelectorAll('.dock-btn').forEach(b => b.classList.toggle('active', b.dataset.dock === dock))
-  window.w2gp.bvSetDock(dock)
-  if (_ftVisible) showTerminal()
-})
+window.w2gp.onTermDockChanged((dock) => {
+  const ft = $("floatingTerminal");
+  ft.className =
+    "floating-term dock-" +
+    dock +
+    (ft.classList.contains("hidden") ? " hidden" : "");
+  if (dock !== "floating") ft.style.cssText = "";
+  document
+    .querySelectorAll(".dock-btn")
+    .forEach((b) => b.classList.toggle("active", b.dataset.dock === dock));
+  window.w2gp.bvSetDock(dock);
+  if (_ftVisible) showTerminal();
+});
 window.w2gp.onTermClosed(() => {
-  _ftVisible = false
-  hideTerminal()
-})
+  _ftVisible = false;
+  hideTerminal();
+});
 // Floating drag for dock-floating mode
-let _fdrag = null
-$('floatingTerminal').addEventListener('mousedown', (e) => {
-  if (!$('floatingTerminal').classList.contains('dock-floating')) return
-  if (e.target.closest('.term-btn-small, .dock-menu')) return
-  const r = $('floatingTerminal').getBoundingClientRect()
-  _fdrag = { dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height }
-  document.addEventListener('mousemove', _fdragMove)
-  document.addEventListener('mouseup', _fdragEnd)
-})
+let _fdrag = null;
+$("floatingTerminal").addEventListener("mousedown", (e) => {
+  if (!$("floatingTerminal").classList.contains("dock-floating")) return;
+  if (e.target.closest(".term-btn-small, .dock-menu")) return;
+  const r = $("floatingTerminal").getBoundingClientRect();
+  _fdrag = {
+    dx: e.clientX - r.left,
+    dy: e.clientY - r.top,
+    w: r.width,
+    h: r.height,
+  };
+  document.addEventListener("mousemove", _fdragMove);
+  document.addEventListener("mouseup", _fdragEnd);
+});
 function _fdragMove(e) {
-  if (!_fdrag) return
-  const p = $('floatingTerminal')
-  let x = e.clientX - _fdrag.dx, y = e.clientY - _fdrag.dy
-  x = Math.max(0, Math.min(x, window.innerWidth - _fdrag.w))
-  y = Math.max(0, Math.min(y, window.innerHeight - 30))
-  p.style.left = x + 'px'; p.style.top = y + 'px'; p.style.right = 'auto'; p.style.bottom = 'auto'
+  if (!_fdrag) return;
+  const p = $("floatingTerminal");
+  let x = e.clientX - _fdrag.dx,
+    y = e.clientY - _fdrag.dy;
+  x = Math.max(0, Math.min(x, window.innerWidth - _fdrag.w));
+  y = Math.max(0, Math.min(y, window.innerHeight - 30));
+  p.style.left = x + "px";
+  p.style.top = y + "px";
+  p.style.right = "auto";
+  p.style.bottom = "auto";
 }
-function _fdragEnd() { _fdrag = null; document.removeEventListener('mousemove', _fdragMove); document.removeEventListener('mouseup', _fdragEnd) }
+function _fdragEnd() {
+  _fdrag = null;
+  document.removeEventListener("mousemove", _fdragMove);
+  document.removeEventListener("mouseup", _fdragEnd);
+}
 // Follow toggle
-$('ftFollowBtn').addEventListener('click', () => {
-  termFollow.ftTermBody = !termFollow.ftTermBody
-  const b = $('ftFollowBtn'); b.classList.toggle('active')
-  const ft = b.querySelector('.follow-text')
-  if (ft) ft.textContent = termFollow.ftTermBody ? 'Follow' : 'Paused'
-  if (termFollow.ftTermBody) { const e = $('ftTermBody'); if (e) setTimeout(() => e.scrollTop = e.scrollHeight, 10) }
-})
+$("ftFollowBtn").addEventListener("click", () => {
+  termFollow.ftTermBody = !termFollow.ftTermBody;
+  const b = $("ftFollowBtn");
+  b.classList.toggle("active");
+  const ft = b.querySelector(".follow-text");
+  if (ft) ft.textContent = termFollow.ftTermBody ? "Follow" : "Paused";
+  if (termFollow.ftTermBody) {
+    const e = $("ftTermBody");
+    if (e) setTimeout(() => (e.scrollTop = e.scrollHeight), 10);
+  }
+});
 // Keyboard shortcut: Ctrl+` toggles floating terminal
 // NOTE: the real shortcut lives in the Keyboard-shortcuts handler below
 // (Ctrl+` / Escape / Ctrl+W). This duplicate copy fired on the SAME keypress,
@@ -4200,567 +6387,751 @@ $('ftFollowBtn').addEventListener('click', () => {
 // shortcut looked dead in webview mode. Removed to avoid the double toggle.
 
 // ── Dashboard console follow ──
-$('dashTermFollowBtn').addEventListener('click', () => {
-  termFollow.termBody = !termFollow.termBody
-  const b = $('dashTermFollowBtn'); b.classList.toggle('active')
-  const ft = b.querySelector('.follow-text')
-  if (ft) ft.textContent = termFollow.termBody ? 'Follow' : 'Paused'
-  if (termFollow.termBody) { const e = $('termBody'); if (e) setTimeout(() => e.scrollTop = e.scrollHeight, 10) }
-})
-$('installFollowBtn').addEventListener('click',()=>{
-  termFollow.installTermBody=!termFollow.installTermBody
-  const b=$('installFollowBtn'); b.classList.toggle('active')
-  const ft=b.querySelector('.follow-text')
-  if(ft) ft.textContent=termFollow.installTermBody?'Follow':'Paused'
-  if(termFollow.installTermBody){ const e=$('installTermBody'); if(e) setTimeout(()=>e.scrollTop=e.scrollHeight,10) }
-})
+$("dashTermFollowBtn").addEventListener("click", () => {
+  termFollow.termBody = !termFollow.termBody;
+  const b = $("dashTermFollowBtn");
+  b.classList.toggle("active");
+  const ft = b.querySelector(".follow-text");
+  if (ft) ft.textContent = termFollow.termBody ? "Follow" : "Paused";
+  if (termFollow.termBody) {
+    const e = $("termBody");
+    if (e) setTimeout(() => (e.scrollTop = e.scrollHeight), 10);
+  }
+});
+$("installFollowBtn").addEventListener("click", () => {
+  termFollow.installTermBody = !termFollow.installTermBody;
+  const b = $("installFollowBtn");
+  b.classList.toggle("active");
+  const ft = b.querySelector(".follow-text");
+  if (ft) ft.textContent = termFollow.installTermBody ? "Follow" : "Paused";
+  if (termFollow.installTermBody) {
+    const e = $("installTermBody");
+    if (e) setTimeout(() => (e.scrollTop = e.scrollHeight), 10);
+  }
+});
 
 // ── Floating terminal: search, export, resize ──
-let _lastFilter = ''
-$('logSearch')?.addEventListener('input', () => {
-  const q = ($('logSearch')?.value || '').toLowerCase()
-  if (q === _lastFilter) return; _lastFilter = q
-  const ft = $('ftTermBody')
-  if (ft) ft.textContent = (q ? logBuffer.filter(l => l.toLowerCase().includes(q)) : logBuffer).join('\n')
-})
-$('logExportBtn')?.addEventListener('click', () => {
-  const blob = new Blob([logBuffer.join('\n')], { type: 'text/plain' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob); a.download = 'wan2gp-console.log'; a.click()
-  URL.revokeObjectURL(a.href)
-})
+let _lastFilter = "";
+$("logSearch")?.addEventListener("input", () => {
+  const q = ($("logSearch")?.value || "").toLowerCase();
+  if (q === _lastFilter) return;
+  _lastFilter = q;
+  const ft = $("ftTermBody");
+  if (ft)
+    ft.textContent = (
+      q ? logBuffer.filter((l) => l.toLowerCase().includes(q)) : logBuffer
+    ).join("\n");
+});
+$("logExportBtn")?.addEventListener("click", () => {
+  const blob = new Blob([logBuffer.join("\n")], { type: "text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "wan2gp-console.log";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
 // Resize handle
-let _resize = null
-$('ftResize').addEventListener('mousedown', (e) => {
-  e.preventDefault()
-  const ft = $('floatingTerminal')
-  if (!ft.classList.contains('dock-bottom') && !ft.classList.contains('dock-top')) return
-  _resize = { startY: e.clientY, startH: ft.offsetHeight, dock: ft.classList.contains('dock-top') ? 'top' : 'bottom' }
-  document.addEventListener('mousemove', _resizeMove)
-  document.addEventListener('mouseup', _resizeEnd)
-})
+let _resize = null;
+$("ftResize").addEventListener("mousedown", (e) => {
+  e.preventDefault();
+  const ft = $("floatingTerminal");
+  if (
+    !ft.classList.contains("dock-bottom") &&
+    !ft.classList.contains("dock-top")
+  )
+    return;
+  _resize = {
+    startY: e.clientY,
+    startH: ft.offsetHeight,
+    dock: ft.classList.contains("dock-top") ? "top" : "bottom",
+  };
+  document.addEventListener("mousemove", _resizeMove);
+  document.addEventListener("mouseup", _resizeEnd);
+});
 function _resizeMove(e) {
-  if (!_resize) return
-  const dh = e.clientY - _resize.startY
-  let h = _resize.dock === 'top' ? _resize.startH + dh : _resize.startH - dh
-  h = Math.max(80, Math.min(h, window.innerHeight * 0.6))
-  $('floatingTerminal').style.height = h + 'px'
-  syncTermEmbedPadding()
+  if (!_resize) return;
+  const dh = e.clientY - _resize.startY;
+  let h = _resize.dock === "top" ? _resize.startH + dh : _resize.startH - dh;
+  h = Math.max(80, Math.min(h, window.innerHeight * 0.6));
+  $("floatingTerminal").style.height = h + "px";
+  syncTermEmbedPadding();
 }
-function _resizeEnd() { _resize = null; document.removeEventListener('mousemove', _resizeMove); document.removeEventListener('mouseup', _resizeEnd) }
+function _resizeEnd() {
+  _resize = null;
+  document.removeEventListener("mousemove", _resizeMove);
+  document.removeEventListener("mouseup", _resizeEnd);
+}
 
 // ── Keyboard shortcuts ──
-document.addEventListener('keydown', (e) => {
-  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return
+document.addEventListener("keydown", (e) => {
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
   // Escape closes the Manage panel first — it can be open in webview mode too,
   // where the webview Escape branch below would otherwise fire instead.
-  if (e.key === 'Escape' && $('settingsPanel').classList.contains('open')) { closeSettings(); return }
+  if (e.key === "Escape" && $("settingsPanel").classList.contains("open")) {
+    closeSettings();
+    return;
+  }
   // Ctrl+` toggles floating terminal
-  if (e.ctrlKey && e.key === '`') { e.preventDefault(); toggleFloatingTerm(); return }
+  if (e.ctrlKey && e.key === "`") {
+    e.preventDefault();
+    toggleFloatingTerm();
+    return;
+  }
   // Escape closes the webview/BrowserView
-  if (e.key === 'Escape' && $('dashBody').style.display === 'none') { closeWebview(); return }
+  if (e.key === "Escape" && $("dashBody").style.display === "none") {
+    closeWebview();
+    return;
+  }
   // Ctrl+W closes the webview/BrowserView
-  if (e.ctrlKey && (e.key === 'w' || e.key === 'W') && $('dashBody').style.display === 'none') { e.preventDefault(); closeWebview() }
-})
+  if (
+    e.ctrlKey &&
+    (e.key === "w" || e.key === "W") &&
+    $("dashBody").style.display === "none"
+  ) {
+    e.preventDefault();
+    closeWebview();
+  }
+});
 
 function showToast(msg, onClick) {
-  const t = document.createElement('div')
-  t.textContent = msg
-  t.setAttribute('role', 'status')
-  t.setAttribute('aria-live', 'polite')
-  t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#333;color:#e8e6e1;padding:8px 16px;border-radius:6px;font-size:13px;z-index:9999;font-family:Geist Mono,monospace;transition:opacity 0.3s;max-width:90vw;text-align:center'
-  document.body.appendChild(t)
-  let gone = false
-  const dismiss = () => { if (gone) return; gone = true; t.style.opacity = '0'; setTimeout(() => t.remove(), 400) }
-  if (typeof onClick === 'function') {
-    t.style.cursor = 'pointer'
-    t.title = 'Click to choose where to save it'
-    t.addEventListener('click', () => { const f = onClick; dismiss(); try { f() } catch {} })
-    setTimeout(dismiss, 12000)
+  const t = document.createElement("div");
+  t.textContent = msg;
+  t.setAttribute("role", "status");
+  t.setAttribute("aria-live", "polite");
+  t.style.cssText =
+    "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#333;color:#e8e6e1;padding:8px 16px;border-radius:6px;font-size:13px;z-index:9999;font-family:Geist Mono,monospace;transition:opacity 0.3s;max-width:90vw;text-align:center";
+  document.body.appendChild(t);
+  let gone = false;
+  const dismiss = () => {
+    if (gone) return;
+    gone = true;
+    t.style.opacity = "0";
+    setTimeout(() => t.remove(), 400);
+  };
+  if (typeof onClick === "function") {
+    t.style.cursor = "pointer";
+    t.title = "Click to choose where to save it";
+    t.addEventListener("click", () => {
+      const f = onClick;
+      dismiss();
+      try {
+        f();
+      } catch {}
+    });
+    setTimeout(dismiss, 12000);
   } else {
-    setTimeout(dismiss, 2500)
+    setTimeout(dismiss, 2500);
   }
 }
 
-$('updateCheckBtn').addEventListener('click', (e) => {
-  window.w2gp.checkUpdate(e.shiftKey ? { local: true } : undefined)
-})
-$('updateDownloadBtn').addEventListener('click', () => {
-  window.w2gp.downloadUpdate()
-})
-$('updateInstallBtn').addEventListener('click', () => {
-  window.w2gp.installUpdate()
-})
-$('updateDismissBtn').addEventListener('click', () => {
-  $('updateBanner').classList.add('hidden')
+$("updateCheckBtn").addEventListener("click", (e) => {
+  window.w2gp.checkUpdate(e.shiftKey ? { local: true } : undefined);
+});
+$("updateDownloadBtn").addEventListener("click", () => {
+  window.w2gp.downloadUpdate();
+});
+$("updateInstallBtn").addEventListener("click", () => {
+  window.w2gp.installUpdate();
+});
+$("updateDismissBtn").addEventListener("click", () => {
+  $("updateBanner").classList.add("hidden");
   // Keep the persistent button indicator — the user dismissed the banner, not
   // the fact that an update is still available. It clears on Download/Install.
-})
+});
 
 // ── Settings ──
-$('settingsBackBtn').addEventListener('click',closeSettings)
-$('browserRefreshBtn')?.addEventListener('click', loadBrowserList)
-document.querySelectorAll('input[name="termDock"]').forEach(r => {
-  r.addEventListener('change', async () => {
-    if (!r.checked) return
-    const cfg = await window.w2gp.configLoad()
-    cfg.termDockDefault = r.value
-    await window.w2gp.configSave(cfg)
-    appendLog(`[*] Floating terminal default set to: ${r.value}`)
-  })
-})
+$("settingsBackBtn").addEventListener("click", closeSettings);
+$("browserRefreshBtn")?.addEventListener("click", loadBrowserList);
+document.querySelectorAll('input[name="termDock"]').forEach((r) => {
+  r.addEventListener("change", async () => {
+    if (!r.checked) return;
+    const cfg = await window.w2gp.configLoad();
+    cfg.termDockDefault = r.value;
+    await window.w2gp.configSave(cfg);
+    appendLog(`[*] Floating terminal default set to: ${r.value}`);
+  });
+});
 
 // F12 is built-in DevTools shortcut. The IPC handler in main.js is kept
 // (it opens the BrowserView DevTools when embedded), just no UI button needed.
 
-$('tokenSaveBtn')?.addEventListener('click', async () => {
-  const token = $('githubTokenInput')?.value
-  if (!token) return
-  const cfg = await window.w2gp.configLoad()
-  cfg.githubToken = token
-  await window.w2gp.configSave(cfg)
-  showToast('GitHub token saved')
-})
-$('tokenClearBtn')?.addEventListener('click', async () => {
-  const cfg = await window.w2gp.configLoad()
-  cfg.githubToken = null
-  await window.w2gp.configSave(cfg)
-  if ($('githubTokenInput')) $('githubTokenInput').value = ''
-  showToast('GitHub token cleared')
-})
-$('tokenDocsLink')?.addEventListener('click', (e) => {
-  e.preventDefault()
-  window.w2gp.openExternal('https://github.com/settings/tokens')
-})
-$('hfTokenSaveBtn')?.addEventListener('click', async () => {
-  const token = $('hfTokenInput')?.value
-  if (!token) return
-  const cfg = await window.w2gp.configLoad()
-  cfg.hfToken = token
-  await window.w2gp.configSave(cfg)
-  showToast('HuggingFace token saved')
-})
-$('hfTokenClearBtn')?.addEventListener('click', async () => {
-  const cfg = await window.w2gp.configLoad()
-  cfg.hfToken = null
-  await window.w2gp.configSave(cfg)
-  if ($('hfTokenInput')) $('hfTokenInput').value = ''
-  showToast('HuggingFace token cleared')
-})
-$('claudeApiKeySaveBtn')?.addEventListener('click', async () => {
-  const token = $('claudeApiKeyInput')?.value
-  if (!token) return
-  const cfg = await window.w2gp.configLoad()
-  cfg.claudeApiKey = token
-  await window.w2gp.configSave(cfg)
-  showToast('Claude API key saved — it will be used for Claude Code on next launch')
-  if (typeof refreshLLMEngines === 'function') refreshLLMEngines()
-})
-$('claudeApiKeyClearBtn')?.addEventListener('click', async () => {
-  const cfg = await window.w2gp.configLoad()
-  cfg.claudeApiKey = null
-  await window.w2gp.configSave(cfg)
-  if ($('claudeApiKeyInput')) $('claudeApiKeyInput').value = ''
-  showToast('Claude API key cleared')
-  if (typeof refreshLLMEngines === 'function') refreshLLMEngines()
-})
-$('launchArgsSaveBtn')?.addEventListener('click', async () => {
-  const args = $('launchArgsInput')?.value || ''
-  const cfg = await window.w2gp.configLoad()
-  cfg.launchArgs = args.trim()
-  await window.w2gp.configSave(cfg)
-  showToast('Extra launch args saved')
-})
-$('ggufSaveBtn')?.addEventListener('click', async () => {
-  const cfg = await window.w2gp.configLoad()
+$("tokenSaveBtn")?.addEventListener("click", async () => {
+  const token = $("githubTokenInput")?.value;
+  if (!token) return;
+  const cfg = await window.w2gp.configLoad();
+  cfg.githubToken = token;
+  await window.w2gp.configSave(cfg);
+  showToast("GitHub token saved");
+});
+$("tokenClearBtn")?.addEventListener("click", async () => {
+  const cfg = await window.w2gp.configLoad();
+  cfg.githubToken = null;
+  await window.w2gp.configSave(cfg);
+  if ($("githubTokenInput")) $("githubTokenInput").value = "";
+  showToast("GitHub token cleared");
+});
+$("tokenDocsLink")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  window.w2gp.openExternal("https://github.com/settings/tokens");
+});
+$("hfTokenSaveBtn")?.addEventListener("click", async () => {
+  const token = $("hfTokenInput")?.value;
+  if (!token) return;
+  const cfg = await window.w2gp.configLoad();
+  cfg.hfToken = token;
+  await window.w2gp.configSave(cfg);
+  showToast("HuggingFace token saved");
+});
+$("hfTokenClearBtn")?.addEventListener("click", async () => {
+  const cfg = await window.w2gp.configLoad();
+  cfg.hfToken = null;
+  await window.w2gp.configSave(cfg);
+  if ($("hfTokenInput")) $("hfTokenInput").value = "";
+  showToast("HuggingFace token cleared");
+});
+$("claudeApiKeySaveBtn")?.addEventListener("click", async () => {
+  const token = $("claudeApiKeyInput")?.value;
+  if (!token) return;
+  const cfg = await window.w2gp.configLoad();
+  cfg.claudeApiKey = token;
+  await window.w2gp.configSave(cfg);
+  showToast(
+    "Claude API key saved — it will be used for Claude Code on next launch",
+  );
+  if (typeof refreshLLMEngines === "function") refreshLLMEngines();
+});
+$("claudeApiKeyClearBtn")?.addEventListener("click", async () => {
+  const cfg = await window.w2gp.configLoad();
+  cfg.claudeApiKey = null;
+  await window.w2gp.configSave(cfg);
+  if ($("claudeApiKeyInput")) $("claudeApiKeyInput").value = "";
+  showToast("Claude API key cleared");
+  if (typeof refreshLLMEngines === "function") refreshLLMEngines();
+});
+$("launchArgsSaveBtn")?.addEventListener("click", async () => {
+  const args = $("launchArgsInput")?.value || "";
+  const cfg = await window.w2gp.configLoad();
+  cfg.launchArgs = args.trim();
+  await window.w2gp.configSave(cfg);
+  showToast("Extra launch args saved");
+});
+$("ggufSaveBtn")?.addEventListener("click", async () => {
+  const cfg = await window.w2gp.configLoad();
   cfg.ggufEnv = {
-    enabled: $('ggufEnabled')?.checked !== false,
-    matmulMode: $('ggufMatmulMode')?.value || 'auto',
-    streamK: $('ggufStreamK')?.checked !== false,
-    bf16Fp16: $('ggufBf16Fp16')?.checked === true,
+    enabled: $("ggufEnabled")?.checked !== false,
+    matmulMode: $("ggufMatmulMode")?.value || "auto",
+    streamK: $("ggufStreamK")?.checked !== false,
+    bf16Fp16: $("ggufBf16Fp16")?.checked === true,
+  };
+  await window.w2gp.configSave(cfg);
+  showToast("GGUF CUDA kernel settings saved — applies on next launch");
+});
+$("portSaveBtn")?.addEventListener("click", async () => {
+  const val = parseInt($("portInput")?.value) || 7860;
+  if (val < 1024 || val > 65535) {
+    showToast("Port must be between 1024 and 65535");
+    return;
   }
-  await window.w2gp.configSave(cfg)
-  showToast('GGUF CUDA kernel settings saved — applies on next launch')
-})
-$('portSaveBtn')?.addEventListener('click', async () => {
-  const val = parseInt($('portInput')?.value) || 7860
-  if (val < 1024 || val > 65535) { showToast('Port must be between 1024 and 65535'); return }
-  const cfg = await window.w2gp.configLoad()
-  cfg.serverPort = val
-  await window.w2gp.configSave(cfg)
-  showToast('Server port set to ' + val)
-})
+  const cfg = await window.w2gp.configLoad();
+  cfg.serverPort = val;
+  await window.w2gp.configSave(cfg);
+  showToast("Server port set to " + val);
+});
 // GPU device picker (multi-GPU machines) — populate dropdown + save selection
 async function loadGpuDeviceOptions(current) {
-  const sel = $('gpuDeviceSelect')
-  if (!sel) return
+  const sel = $("gpuDeviceSelect");
+  if (!sel) return;
   try {
-    const gpus = await window.w2gp.detectGpus()
+    const gpus = await window.w2gp.detectGpus();
     // Keep "Auto" first, then one option per detected GPU
-    const existing = Array.from(sel.options).map(o => o.value)
-    gpus.forEach(g => {
-      const v = 'cuda:' + g.index
+    const existing = Array.from(sel.options).map((o) => o.value);
+    gpus.forEach((g) => {
+      const v = "cuda:" + g.index;
       if (!existing.includes(v)) {
-        const opt = document.createElement('option')
-        opt.value = v
-        opt.textContent = g.name + ' (' + (g.vramMB ? (g.vramMB + ' MB') : 'VRAM n/a') + ') — ' + v
-        sel.appendChild(opt)
+        const opt = document.createElement("option");
+        opt.value = v;
+        opt.textContent =
+          g.name +
+          " (" +
+          (g.vramMB ? g.vramMB + " MB" : "VRAM n/a") +
+          ") — " +
+          v;
+        sel.appendChild(opt);
       }
-    })
-    sel.value = (current && /^cuda:\d+$/.test(current)) ? current : 'auto'
+    });
+    sel.value = current && /^cuda:\d+$/.test(current) ? current : "auto";
   } catch (e) {
-    sel.value = 'auto'
+    sel.value = "auto";
   }
 }
-$('gpuDeviceSaveBtn')?.addEventListener('click', async () => {
-  const val = $('gpuDeviceSelect')?.value || 'auto'
-  const cfg = await window.w2gp.configLoad()
-  cfg.gpuDevice = val
-  await window.w2gp.configSave(cfg)
-  showToast(val === 'auto' ? 'GPU device set to Auto' : 'GPU device set to ' + val + ' (applies on next launch)')
-})
-$('launcherGpuSaveBtn')?.addEventListener('click', async () => {
-  const val = $('launcherGpuSelect')?.value || 'auto'
-  const cfg = await window.w2gp.configLoad()
-  cfg.launcherGpu = val
-  cfg.electronGpu = (val !== 'disabled')
-  await window.w2gp.configSave(cfg)
-  showToast(val === 'auto' ? 'Launcher GPU set to Auto (restart to apply)' : 'Launcher GPU set to ' + val + ' (restart to apply)')
-})
-$('sageSafeSaveBtn')?.addEventListener('click', async () => {
-  const val = $('sageSafeSelect')?.value || 'safe'
-  const cfg = await window.w2gp.configLoad()
-  cfg.sageSafe = (val !== 'upstream')
-  await window.w2gp.configSave(cfg)
-  showToast(val === 'safe' ? 'Sage: Safe post6 (applies on next sync/install)' : 'Sage: Upstream post4 (100% original, applies on next sync/install)')
-})
+$("gpuDeviceSaveBtn")?.addEventListener("click", async () => {
+  const val = $("gpuDeviceSelect")?.value || "auto";
+  const cfg = await window.w2gp.configLoad();
+  cfg.gpuDevice = val;
+  await window.w2gp.configSave(cfg);
+  showToast(
+    val === "auto"
+      ? "GPU device set to Auto"
+      : "GPU device set to " + val + " (applies on next launch)",
+  );
+});
+$("launcherGpuSaveBtn")?.addEventListener("click", async () => {
+  const val = $("launcherGpuSelect")?.value || "auto";
+  const cfg = await window.w2gp.configLoad();
+  cfg.launcherGpu = val;
+  cfg.electronGpu = val !== "disabled";
+  await window.w2gp.configSave(cfg);
+  showToast(
+    val === "auto"
+      ? "Launcher GPU set to Auto (restart to apply)"
+      : "Launcher GPU set to " + val + " (restart to apply)",
+  );
+});
+$("sageSafeSaveBtn")?.addEventListener("click", async () => {
+  const val = $("sageSafeSelect")?.value || "safe";
+  const cfg = await window.w2gp.configLoad();
+  cfg.sageSafe = val !== "upstream";
+  await window.w2gp.configSave(cfg);
+  showToast(
+    val === "safe"
+      ? "Sage: Safe post6 (applies on next sync/install)"
+      : "Sage: Upstream post4 (100% original, applies on next sync/install)",
+  );
+});
 // Bind Address picker — mirror of gpuDevice picker
-$('serverNameSaveBtn')?.addEventListener('click', async () => {
-  const val = $('serverNameSelect')?.value || 'localhost'
-  const cfg = await window.w2gp.configLoad()
-  cfg.serverName = val
-  await window.w2gp.configSave(cfg)
-  showToast('Bind address set to ' + val + ' (applies on next launch)')
-})
+$("serverNameSaveBtn")?.addEventListener("click", async () => {
+  const val = $("serverNameSelect")?.value || "localhost";
+  const cfg = await window.w2gp.configLoad();
+  cfg.serverName = val;
+  await window.w2gp.configSave(cfg);
+  showToast("Bind address set to " + val + " (applies on next launch)");
+});
 // (Dashboard row switch retired — single permanent topbar switch + Manage.)
 // Permanent topbar switch: usable while stopped (save + applies on launch).
 // Locked while a Desktop session runs (also enforced via disabled).
-$('embedModeTop')?.addEventListener('change', async () => {
+$("embedModeTop")?.addEventListener("change", async () => {
   // Locked while a Desktop session runs (also enforced via disabled).
-  if (appRunning) { showToast('Stop the Wan2GP server to switch renderer'); syncEmbedSwitchLocks(); return }
-  const val = $('embedModeTop')?.value === 'iframe' ? 'iframe' : 'native'
+  if (appRunning) {
+    showToast("Stop the Wan2GP server to switch renderer");
+    syncEmbedSwitchLocks();
+    return;
+  }
+  const val = $("embedModeTop")?.value === "iframe" ? "iframe" : "native";
   try {
-    const cfg = await window.w2gp.configLoad()
-    const prev = cfg.embedMode === 'iframe' ? 'iframe' : 'native'
-    if (val === prev) return
-    cfg.embedMode = val
-    await window.w2gp.configSave(cfg)
-    const mg = $('embedModeSelect')
-    if (mg) mg.value = val
-    appendLog(`[*] Renderer set to ${val} (was ${prev}) — applies on Desktop launch`)
-    showToast('Renderer: ' + val + ' (applies on Desktop launch)')
-  } catch (e) { showToast('✗ ' + errText(e)) }
-})
+    const cfg = await window.w2gp.configLoad();
+    const prev = cfg.embedMode === "iframe" ? "iframe" : "native";
+    if (val === prev) return;
+    cfg.embedMode = val;
+    await window.w2gp.configSave(cfg);
+    const mg = $("embedModeSelect");
+    if (mg) mg.value = val;
+    appendLog(
+      `[*] Renderer set to ${val} (was ${prev}) — applies on Desktop launch`,
+    );
+    showToast("Renderer: " + val + " (applies on Desktop launch)");
+  } catch (e) {
+    showToast("✗ " + errText(e));
+  }
+});
 // A hidden-but-alive view keeps the OLD renderer, so saving a change while
 // the Desktop view (or its server) is up offers a one-click relaunch.
-$('embedModeSaveBtn')?.addEventListener('click', async () => {
-  if (appRunning) { showToast('Stop the Wan2GP server to switch renderer'); syncEmbedSwitchLocks(); return }
-  const val = $('embedModeSelect')?.value === 'native' ? 'native' : 'iframe'
-  const cfg = await window.w2gp.configLoad()
-  const prev = cfg.embedMode === 'iframe' ? 'iframe' : 'native'
-  cfg.embedMode = val
-  await window.w2gp.configSave(cfg)
-  if (val === prev) { showToast('Desktop embed already ' + val); return }
-  appendLog(`[*] Renderer set to ${val} (was ${prev})`)
-  if ((serverMode === 'app' && currentUrl) || appRunning) {
+$("embedModeSaveBtn")?.addEventListener("click", async () => {
+  if (appRunning) {
+    showToast("Stop the Wan2GP server to switch renderer");
+    syncEmbedSwitchLocks();
+    return;
+  }
+  const val = $("embedModeSelect")?.value === "native" ? "native" : "iframe";
+  const cfg = await window.w2gp.configLoad();
+  const prev = cfg.embedMode === "iframe" ? "iframe" : "native";
+  cfg.embedMode = val;
+  await window.w2gp.configSave(cfg);
+  if (val === prev) {
+    showToast("Desktop embed already " + val);
+    return;
+  }
+  appendLog(`[*] Renderer set to ${val} (was ${prev})`);
+  if ((serverMode === "app" && currentUrl) || appRunning) {
     const choice = await window.w2gp.confirmDialog({
-      title: 'Relaunch Desktop view?',
+      title: "Relaunch Desktop view?",
       message: `Embed mode saved: ${val}. The Desktop view still runs on the old (${prev}) renderer.`,
-      detail: 'OK = destroy + reopen the Desktop view now (Gradio session restarts). Cancel = keep the old view; the new mode applies on your next manual launch.'
-    })
-    if (choice === 'ok') { relaunchDesktopView(); return }
+      detail:
+        "OK = destroy + reopen the Desktop view now (Gradio session restarts). Cancel = keep the old view; the new mode applies on your next manual launch.",
+    });
+    if (choice === "ok") {
+      relaunchDesktopView();
+      return;
+    }
   }
-  showToast('Desktop embed: ' + val + ' (applies on next Desktop launch)')
-})
+  showToast("Desktop embed: " + val + " (applies on next Desktop launch)");
+});
 // One-shot WebView2/RAM footprint — run once per embed mode to compare.
-$('webviewMemBtn')?.addEventListener('click', async () => {
-  const st = $('webviewMemStatus')
-  if (st) st.textContent = 'Measuring…'
+$("webviewMemBtn")?.addEventListener("click", async () => {
+  const st = $("webviewMemStatus");
+  if (st) st.textContent = "Measuring…";
   try {
-    const r = await window.w2gp.webviewMemory()
-    const line = (r && r.ok)
-      ? `WebView2: ${r.webviewMb} MB across ${r.webviewProcs} processes · Launcher: ${r.launcherMb} MB`
-      : 'Measurement failed'
-    if (st) st.textContent = line + ((r && r.top && r.top.length) ? ' — biggest: ' + r.top.slice(0, 3).map(t => 'PID ' + t.pid + ' ' + t.mb + 'MB').join(', ') : '')
-    appendLog('[mem] ' + line)
-    if (r && r.top) for (const t of r.top) appendLog(`[mem]   PID ${t.pid}: ${t.mb} MB`)
+    const r = await window.w2gp.webviewMemory();
+    const line =
+      r && r.ok
+        ? `WebView2: ${r.webviewMb} MB across ${r.webviewProcs} processes · Launcher: ${r.launcherMb} MB`
+        : "Measurement failed";
+    if (st)
+      st.textContent =
+        line +
+        (r && r.top && r.top.length
+          ? " — biggest: " +
+            r.top
+              .slice(0, 3)
+              .map((t) => "PID " + t.pid + " " + t.mb + "MB")
+              .join(", ")
+          : "");
+    appendLog("[mem] " + line);
+    if (r && r.top)
+      for (const t of r.top) appendLog(`[mem]   PID ${t.pid}: ${t.mb} MB`);
   } catch (e) {
-    if (st) st.textContent = '✗ ' + errText(e)
+    if (st) st.textContent = "✗ " + errText(e);
   }
-})
-$('cliDocsLink')?.addEventListener('click', (e) => {
-  e.preventDefault()
-  window.w2gp.openExternal('https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/CLI.md')
-})
+});
+$("cliDocsLink")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  window.w2gp.openExternal(
+    "https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/CLI.md",
+  );
+});
 
 // ── Auto-Update ──
-let updateState = null
+let updateState = null;
 
 // Reflect Desktop-Launcher update availability on the dashboard "Check Desktop
 // Updates" action button itself (persistent dot + green border), so users who
 // turned off launch-time checking still see there is an update available — not
 // only in the transient top banner.
 function setDesktopUpdateIndicator(on) {
-  for (const id of ['updateCheckBtn','manageUpdateDesktopBtn']) {
-    const btn = $(id)
-    if (!btn) continue
+  for (const id of ["updateCheckBtn", "manageUpdateDesktopBtn"]) {
+    const btn = $(id);
+    if (!btn) continue;
     if (on) {
-      btn.classList.add('has-update')
-      if (!btn.querySelector('.update-dot')) {
-        const dot = document.createElement('span')
-        dot.className = 'update-dot'
-        btn.appendChild(dot)
+      btn.classList.add("has-update");
+      if (!btn.querySelector(".update-dot")) {
+        const dot = document.createElement("span");
+        dot.className = "update-dot";
+        btn.appendChild(dot);
       }
     } else {
-      btn.classList.remove('has-update')
-      btn.querySelector('.update-dot')?.remove()
+      btn.classList.remove("has-update");
+      btn.querySelector(".update-dot")?.remove();
     }
   }
 }
 
 window.w2gp.onUpdateStatus((status) => {
   // Mirror to Manage → Updates tab if present
-  const mS=$('manageUpdateDesktopStatus'); const mBtn=$('manageUpdateDesktopBtn');
+  const mS = $("manageUpdateDesktopStatus");
+  const mBtn = $("manageUpdateDesktopBtn");
   if (mS && mBtn) {
-    if (status.status==='checking') mS.textContent='Checking...';
-    else if (status.status==='available') mS.textContent='v'+status.version+' available — click Full Download or Quick Update on Dashboard banner';
-    else if (status.status==='downloading') mS.textContent='Downloading '+ (status.percent||0)+'%';
-    else if (status.status==='downloaded') mS.textContent='v'+status.version+' downloaded — Install & Restart on Dashboard banner';
-    else if (status.status==='up-to-date') mS.textContent='Up to date ✓';
-    else if (status.status==='error') mS.textContent='Error: '+(status.message||'');
+    if (status.status === "checking") mS.textContent = "Checking...";
+    else if (status.status === "available")
+      mS.textContent =
+        "v" +
+        status.version +
+        " available — click Full Download or Quick Update on Dashboard banner";
+    else if (status.status === "downloading")
+      mS.textContent = "Downloading " + (status.percent || 0) + "%";
+    else if (status.status === "downloaded")
+      mS.textContent =
+        "v" +
+        status.version +
+        " downloaded — Install & Restart on Dashboard banner";
+    else if (status.status === "up-to-date") mS.textContent = "Up to date ✓";
+    else if (status.status === "error")
+      mS.textContent = "Error: " + (status.message || "");
   }
   switch (status.status) {
-    case 'checking':
-      setDesktopUpdateIndicator(false)
-      $('updateText').textContent = 'Checking for updates...'
-      $('updateBanner').classList.remove('hidden')
-      $('updateDownloadBtn').classList.add('hidden')
-      $('updateInstallBtn').classList.add('hidden')
-      $('updateActions').classList.remove('hidden')
-      $('updateProgress').classList.add('hidden')
-      $('updateDismissBtn').classList.add('hidden')
-      break
-    case 'available':
-      setDesktopUpdateIndicator(true)
-      updateState = status
+    case "checking":
+      setDesktopUpdateIndicator(false);
+      $("updateText").textContent = "Checking for updates...";
+      $("updateBanner").classList.remove("hidden");
+      $("updateDownloadBtn").classList.add("hidden");
+      $("updateInstallBtn").classList.add("hidden");
+      $("updateActions").classList.remove("hidden");
+      $("updateProgress").classList.add("hidden");
+      $("updateDismissBtn").classList.add("hidden");
+      break;
+    case "available":
+      setDesktopUpdateIndicator(true);
+      updateState = status;
       if (status.autoDownload === false) {
         // Auto-updates disabled: don't auto-download — offer the manual
         // Download button instead.
-        $('updateText').textContent = `v${status.version} available`
-        $('updateDownloadBtn').classList.remove('hidden')
-        $('updateInstallBtn').classList.add('hidden')
-        $('updateActions').classList.remove('hidden')
-        $('updateProgress').classList.add('hidden')
-        $('updateBanner').classList.remove('hidden')
-        $('updateDismissBtn').classList.add('hidden')
+        $("updateText").textContent = `v${status.version} available`;
+        $("updateDownloadBtn").classList.remove("hidden");
+        $("updateInstallBtn").classList.add("hidden");
+        $("updateActions").classList.remove("hidden");
+        $("updateProgress").classList.add("hidden");
+        $("updateBanner").classList.remove("hidden");
+        $("updateDismissBtn").classList.add("hidden");
       } else {
-        $('updateText').textContent = `v${status.version} — downloading...`
-        $('updateDownloadBtn').classList.add('hidden')
-        $('updateInstallBtn').classList.add('hidden')
-        $('updateActions').classList.add('hidden')
-        $('updateProgress').classList.remove('hidden')
-        $('progressFill').style.width = '0%'
-        $('progressText').textContent = '0%'
-        $('updateBanner').classList.remove('hidden')
-        $('updateDismissBtn').classList.add('hidden')
+        $("updateText").textContent = `v${status.version} — downloading...`;
+        $("updateDownloadBtn").classList.add("hidden");
+        $("updateInstallBtn").classList.add("hidden");
+        $("updateActions").classList.add("hidden");
+        $("updateProgress").classList.remove("hidden");
+        $("progressFill").style.width = "0%";
+        $("progressText").textContent = "0%";
+        $("updateBanner").classList.remove("hidden");
+        $("updateDismissBtn").classList.add("hidden");
       }
-      break
-    case 'up-to-date':
-      setDesktopUpdateIndicator(false)
-      $('updateText').textContent = 'Up to date ✓'
-      $('updateDownloadBtn').classList.add('hidden')
-      $('updateActions').classList.remove('hidden')
-      $('updateProgress').classList.add('hidden')
-      $('updateBanner').classList.remove('hidden')
-      $('updateDismissBtn').classList.remove('hidden')
-      setTimeout(() => $('updateBanner').classList.add('hidden'), 3000)
-      break
-    case 'downloading':
-      $('updateText').textContent = 'Downloading...'
-      $('updateDownloadBtn').classList.add('hidden')
-      $('updateInstallBtn').classList.add('hidden')
-      $('updateActions').classList.add('hidden')
-      $('updateProgress').classList.remove('hidden')
-      $('progressFill').style.width = status.percent + '%'
-      $('progressText').textContent = status.percent + '%'
-      $('updateBanner').classList.remove('hidden')
-      $('updateDismissBtn').classList.add('hidden')
-      break
-    case 'downloaded':
-      setDesktopUpdateIndicator(false)
-      $('updateText').textContent = `v${status.version} downloaded — ready to install`
-      $('updateDownloadBtn').classList.add('hidden')
-      $('updateInstallBtn').classList.remove('hidden')
-      $('updateActions').classList.remove('hidden')
-      $('updateProgress').classList.add('hidden')
-      $('updateBanner').classList.remove('hidden')
-      $('updateDismissBtn').classList.remove('hidden')
-      break
-    case 'error':
-      setDesktopUpdateIndicator(false)
-      $('updateText').textContent = (status.message || '').includes('401') || (status.message || '').includes('403') || (status.message || '').includes('authentication')
-        ? 'GitHub rate limited — add token in Manage settings'
-        : `Update error: ${status.message}`
-      $('updateDownloadBtn').classList.add('hidden')
-      $('updateInstallBtn').classList.add('hidden')
-      $('updateActions').classList.add('hidden')
-      $('updateProgress').classList.add('hidden')
-      $('updateBanner').classList.remove('hidden')
-      $('updateDismissBtn').classList.remove('hidden')
-      setTimeout(() => $('updateBanner').classList.add('hidden'), 8000)
-      break
+      break;
+    case "up-to-date":
+      setDesktopUpdateIndicator(false);
+      $("updateText").textContent = "Up to date ✓";
+      $("updateDownloadBtn").classList.add("hidden");
+      $("updateActions").classList.remove("hidden");
+      $("updateProgress").classList.add("hidden");
+      $("updateBanner").classList.remove("hidden");
+      $("updateDismissBtn").classList.remove("hidden");
+      setTimeout(() => $("updateBanner").classList.add("hidden"), 3000);
+      break;
+    case "downloading":
+      $("updateText").textContent = "Downloading...";
+      $("updateDownloadBtn").classList.add("hidden");
+      $("updateInstallBtn").classList.add("hidden");
+      $("updateActions").classList.add("hidden");
+      $("updateProgress").classList.remove("hidden");
+      $("progressFill").style.width = status.percent + "%";
+      $("progressText").textContent = status.percent + "%";
+      $("updateBanner").classList.remove("hidden");
+      $("updateDismissBtn").classList.add("hidden");
+      break;
+    case "downloaded":
+      setDesktopUpdateIndicator(false);
+      $("updateText").textContent =
+        `v${status.version} downloaded — ready to install`;
+      $("updateDownloadBtn").classList.add("hidden");
+      $("updateInstallBtn").classList.remove("hidden");
+      $("updateActions").classList.remove("hidden");
+      $("updateProgress").classList.add("hidden");
+      $("updateBanner").classList.remove("hidden");
+      $("updateDismissBtn").classList.remove("hidden");
+      break;
+    case "error":
+      setDesktopUpdateIndicator(false);
+      $("updateText").textContent =
+        (status.message || "").includes("401") ||
+        (status.message || "").includes("403") ||
+        (status.message || "").includes("authentication")
+          ? "GitHub rate limited — add token in Manage settings"
+          : `Update error: ${status.message}`;
+      $("updateDownloadBtn").classList.add("hidden");
+      $("updateInstallBtn").classList.add("hidden");
+      $("updateActions").classList.add("hidden");
+      $("updateProgress").classList.add("hidden");
+      $("updateBanner").classList.remove("hidden");
+      $("updateDismissBtn").classList.remove("hidden");
+      setTimeout(() => $("updateBanner").classList.add("hidden"), 8000);
+      break;
   }
-})
+});
 
 // ════════════════════════════════════════════
 //  Auto-Tune
 // ════════════════════════════════════════════
 
-let _autotuneHardware = null
-let _autotuneRecommendation = null
-let _autotuneAutoDetectDone = false  // D3: auto-run Detect once per session on first tab open
+let _autotuneHardware = null;
+let _autotuneRecommendation = null;
+let _autotuneAutoDetectDone = false; // D3: auto-run Detect once per session on first tab open
 
 /** Render hardware info into the card. */
 function renderAutoTuneHardware(hw) {
-  const el = $('autotuneHardwareInfo')
+  const el = $("autotuneHardwareInfo");
   if (!hw) {
-    el.innerHTML = '<p class="token-hint" style="margin:0">Click <strong>Detect</strong> to scan your system.</p>'
-    return
+    el.innerHTML =
+      '<p class="token-hint" style="margin:0">Click <strong>Detect</strong> to scan your system.</p>';
+    return;
   }
   if (!hw.cuda_available) {
-    el.innerHTML = '<p class="token-hint" style="margin:0;color:var(--text-secondary)">No NVIDIA GPU detected.</p>'
-    return
+    el.innerHTML =
+      '<p class="token-hint" style="margin:0;color:var(--text-secondary)">No NVIDIA GPU detected.</p>';
+    return;
   }
 
-  const badges = []
-  if (hw.supports_fp8) badges.push('<span class="env-type-tag" style="background:#2D4A2E;color:#8BC48B">FP8</span>')
-  if (hw.supports_nvfp4) badges.push('<span class="env-type-tag" style="background:#2D3A5E;color:#8AB4F8">NVFP4</span>')
-  if (hw.supports_flash) badges.push('<span class="env-type-tag" style="background:#3A2D4E;color:#C58AF8">Flash</span>')
-  if (hw.supports_sage) badges.push('<span class="env-type-tag" style="background:#2D4A3E;color:#8AF8C5">Sage</span>')
-  if (hw.supports_triton) badges.push('<span class="env-type-tag" style="background:#4A3D2E;color:#F8C58A">Triton</span>')
+  const badges = [];
+  if (hw.supports_fp8)
+    badges.push(
+      '<span class="env-type-tag" style="background:#2D4A2E;color:#8BC48B">FP8</span>',
+    );
+  if (hw.supports_nvfp4)
+    badges.push(
+      '<span class="env-type-tag" style="background:#2D3A5E;color:#8AB4F8">NVFP4</span>',
+    );
+  if (hw.supports_flash)
+    badges.push(
+      '<span class="env-type-tag" style="background:#3A2D4E;color:#C58AF8">Flash</span>',
+    );
+  if (hw.supports_sage)
+    badges.push(
+      '<span class="env-type-tag" style="background:#2D4A3E;color:#8AF8C5">Sage</span>',
+    );
+  if (hw.supports_triton)
+    badges.push(
+      '<span class="env-type-tag" style="background:#4A3D2E;color:#F8C58A">Triton</span>',
+    );
 
-  el.innerHTML = '\
+  el.innerHTML =
+    '\
     <div class="hw-compact">\
-      <span class="hw-chip"><span class="hw-chip-label">GPU</span>' + escHtml(hw.gpu_name) + '</span>\
-      <span class="hw-chip"><span class="hw-chip-label">VRAM</span>' + hw.gpu_vram_gb + ' GB</span>\
-      <span class="hw-chip"><span class="hw-chip-label">RAM</span>' + hw.ram_gb + ' GB</span>\
-      <span class="hw-chip"><span class="hw-chip-label">CUDA</span>' + (hw.cuda_version || '—') + '</span>\
-      <span class="hw-chip"><span class="hw-chip-label">Cap</span>' + (hw.gpu_capability || '—') + '</span>\
+      <span class="hw-chip"><span class="hw-chip-label">GPU</span>' +
+    escHtml(hw.gpu_name) +
+    '</span>\
+      <span class="hw-chip"><span class="hw-chip-label">VRAM</span>' +
+    hw.gpu_vram_gb +
+    ' GB</span>\
+      <span class="hw-chip"><span class="hw-chip-label">RAM</span>' +
+    hw.ram_gb +
+    ' GB</span>\
+      <span class="hw-chip"><span class="hw-chip-label">CUDA</span>' +
+    (hw.cuda_version || "—") +
+    '</span>\
+      <span class="hw-chip"><span class="hw-chip-label">Cap</span>' +
+    (hw.gpu_capability || "—") +
+    '</span>\
     </div>\
-    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">' + badges.join('') + '</div>'
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">' +
+    badges.join("") +
+    "</div>";
 }
-
 
 // escHtml now comes from services/escape.js (loaded before app.js) so the
 // module's escaping logic is shared with the node --test suite.
 
 // ── Auto-Tune: Detect ──
-$('autotuneDetectBtn').addEventListener('click', async () => {
-  const btn = $('autotuneDetectBtn')
-  const status = $('autotuneStatus')
-  btn.disabled = true
-  btn.textContent = '\u27b3 Scanning\u2026'
-  status.classList.add('hidden')
+$("autotuneDetectBtn").addEventListener("click", async () => {
+  const btn = $("autotuneDetectBtn");
+  const status = $("autotuneStatus");
+  btn.disabled = true;
+  btn.textContent = "\u27b3 Scanning\u2026";
+  status.classList.add("hidden");
 
   try {
     // Detect + recommend only — nothing is written until Apply is clicked.
-    const hw = await window.w2gp.autoTuneDetect()
-    _autotuneHardware = hw
-    const rec = await window.w2gp.autoTuneRecommend(hw, { failsafe: $('autotuneFailsafeChk').checked })
-    _autotuneRecommendation = rec
+    const hw = await window.w2gp.autoTuneDetect();
+    _autotuneHardware = hw;
+    const rec = await window.w2gp.autoTuneRecommend(hw, {
+      failsafe: $("autotuneFailsafeChk").checked,
+    });
+    _autotuneRecommendation = rec;
     // Feed the manual VRAM/RAM Adjuster so the user can review/edit before Apply.
-    memProfileFromRecommendation(rec)
+    memProfileFromRecommendation(rec);
 
-    renderAutoTuneHardware(_autotuneHardware)
+    renderAutoTuneHardware(_autotuneHardware);
 
-    status.className = ''
-    status.style.background = 'var(--bg-tertiary)'
-    status.style.fontSize = '0.7rem'
-    status.style.color = 'var(--text-secondary)'
-    status.innerHTML = '\u2139\ufe0f Detection complete. Review the recommendation below, then <strong>Apply</strong> to write settings (Wan2GP must be restarted for them to take effect).'
+    status.className = "";
+    status.style.background = "var(--bg-tertiary)";
+    status.style.fontSize = "0.7rem";
+    status.style.color = "var(--text-secondary)";
+    status.innerHTML =
+      "\u2139\ufe0f Detection complete. Review the recommendation below, then <strong>Apply</strong> to write settings (Wan2GP must be restarted for them to take effect).";
   } catch (e) {
-    status.className = ''
-    status.style.background = '#3A1E1E'
-    status.innerHTML = '\u274c Detection failed: ' + escHtml(e.message)
+    status.className = "";
+    status.style.background = "#3A1E1E";
+    status.innerHTML = "\u274c Detection failed: " + escHtml(e.message);
   } finally {
-    btn.disabled = false
-    btn.textContent = '\u27b3 Detect'
+    btn.disabled = false;
+    btn.textContent = "\u27b3 Detect";
   }
-})
+});
 
 // ── Performance Settings (unified: Detect seeds dropdowns + rec tags; user overrides; saved tags from disk) ──
 function memProfileCollect() {
   // Only include fields the user actually set (non-empty) — unset = leave existing config.
-  const s = {}
-  const vp = $('memVideoProfile').value
-  const ip = $('memImageProfile').value
-  const ap = $('memAudioProfile').value
-  const co = $('memCoeff').value
-  const ve = $('memVae').value
-  const q = $('memQuant').value
-  const i8 = $('memInt8') ? $('memInt8').value : ''
-  if (i8 !== '') s.enable_int8_kernels = Number(i8)
-  if (vp) s.video_profile = Number(vp)
-  if (ip) s.image_profile = Number(ip)
-  if (ap) s.audio_profile = Number(ap)
+  const s = {};
+  const vp = $("memVideoProfile").value;
+  const ip = $("memImageProfile").value;
+  const ap = $("memAudioProfile").value;
+  const co = $("memCoeff").value;
+  const ve = $("memVae").value;
+  const q = $("memQuant").value;
+  const i8 = $("memInt8") ? $("memInt8").value : "";
+  if (i8 !== "") s.enable_int8_kernels = Number(i8);
+  if (vp) s.video_profile = Number(vp);
+  if (ip) s.image_profile = Number(ip);
+  if (ap) s.audio_profile = Number(ap);
   if (co) {
-    const n = Number(co)
-    if (!(n > 0 && n <= 1)) { setMemStatus('VRAM Safety Coeff must be between 0.1 and 1', true); return null }
-    s.vram_safety_coefficient = n
+    const n = Number(co);
+    if (!(n > 0 && n <= 1)) {
+      setMemStatus("VRAM Safety Coeff must be between 0.1 and 1", true);
+      return null;
+    }
+    s.vram_safety_coefficient = n;
   }
-  if (ve !== '') s.vae_config = Number(ve)
-  if (q) s.transformer_quantization = q
-  return s
+  if (ve !== "") s.vae_config = Number(ve);
+  if (q) s.transformer_quantization = q;
+  return s;
 }
 
 function setMemStatus(msg, isError) {
-  const el = $('memProfileStatus')
-  if (!el) return
-  el.textContent = msg || ''
-  el.style.color = isError ? 'var(--signal-red)' : 'var(--text-secondary)'
+  const el = $("memProfileStatus");
+  if (!el) return;
+  el.textContent = msg || "";
+  el.style.color = isError ? "var(--signal-red)" : "var(--text-secondary)";
 }
 
 // Field metadata: maps the dropdown id to its rec/saved tag ids and a formatter.
 const MEM_FIELDS = {
-  video_profile: { sel: 'memVideoProfile', rec: 'recVideoProfile', saved: 'savedVideoProfile' },
-  image_profile: { sel: 'memImageProfile', rec: 'recImageProfile', saved: 'savedImageProfile' },
-  audio_profile: { sel: 'memAudioProfile', rec: 'recAudioProfile', saved: 'savedAudioProfile' },
-  vram_safety_coefficient: { sel: 'memCoeff', rec: 'recCoeff', saved: 'savedCoeff' },
-  vae_config: { sel: 'memVae', rec: 'recVae', saved: 'savedVae' },
-  transformer_quantization: { sel: 'memQuant', rec: 'recQuant', saved: 'savedQuant' },
-  enable_int8_kernels: { sel: 'memInt8', rec: 'recInt8', saved: 'savedInt8' }
-}
+  video_profile: {
+    sel: "memVideoProfile",
+    rec: "recVideoProfile",
+    saved: "savedVideoProfile",
+  },
+  image_profile: {
+    sel: "memImageProfile",
+    rec: "recImageProfile",
+    saved: "savedImageProfile",
+  },
+  audio_profile: {
+    sel: "memAudioProfile",
+    rec: "recAudioProfile",
+    saved: "savedAudioProfile",
+  },
+  vram_safety_coefficient: {
+    sel: "memCoeff",
+    rec: "recCoeff",
+    saved: "savedCoeff",
+  },
+  vae_config: { sel: "memVae", rec: "recVae", saved: "savedVae" },
+  transformer_quantization: {
+    sel: "memQuant",
+    rec: "recQuant",
+    saved: "savedQuant",
+  },
+  enable_int8_kernels: { sel: "memInt8", rec: "recInt8", saved: "savedInt8" },
+};
 function fmtVal(key, v) {
-  if (v == null || v === '') return '—'
-  if (key === 'vae_config') return v + (Number(v) === 0 ? ' (AUTO)' : '')
-  if (key === 'enable_int8_kernels') return Number(v) === 1 ? 'Enabled (if Triton)' : 'Disabled'
-  return String(v)
+  if (v == null || v === "") return "—";
+  if (key === "vae_config") return v + (Number(v) === 0 ? " (AUTO)" : "");
+  if (key === "enable_int8_kernels")
+    return Number(v) === 1 ? "Enabled (if Triton)" : "Disabled";
+  return String(v);
 }
 
 function memProfilePopulate(settings, opts = {}) {
-  if (!settings) return
+  if (!settings) return;
   // opts.mode: 'recommend' fills the dropdown + rec tags; 'saved' fills rec tags from detect AND saved tags from disk.
   for (const key of Object.keys(MEM_FIELDS)) {
-    const f = MEM_FIELDS[key]
-    const v = settings[key]
-    if (opts.mode === 'recommend') {
+    const f = MEM_FIELDS[key];
+    const v = settings[key];
+    if (opts.mode === "recommend") {
       // Seed the dropdown with the recommended value (user can override).
-      const sel = $(f.sel)
-      if (sel) sel.value = (v != null && v !== '') ? String(v) : (key === 'vae_config' ? '0' : '')
-      const rec = $(f.rec); if (rec) rec.textContent = 'rec: ' + fmtVal(key, v)
-    } else if (opts.mode === 'saved') {
+      const sel = $(f.sel);
+      if (sel)
+        sel.value =
+          v != null && v !== "" ? String(v) : key === "vae_config" ? "0" : "";
+      const rec = $(f.rec);
+      if (rec) rec.textContent = "rec: " + fmtVal(key, v);
+    } else if (opts.mode === "saved") {
       // Show what's currently written to disk (preferred/saved).
-      const saved = $(f.saved); if (saved) saved.textContent = 'saved: ' + fmtVal(key, v)
+      const saved = $(f.saved);
+      if (saved) saved.textContent = "saved: " + fmtVal(key, v);
     }
   }
 }
@@ -4769,143 +7140,191 @@ function memProfilePopulate(settings, opts = {}) {
 // defaults to the recommended values AND show the rec tags. The user can then
 // override any dropdown before pressing Apply.
 function memProfileFromRecommendation(rec) {
-  if (!rec) return
-  memProfilePopulate({
-    video_profile: rec.video_profile,
-    image_profile: rec.image_profile,
-    audio_profile: rec.audio_profile,
-    vram_safety_coefficient: rec.vram_safety_coefficient,
-    vae_config: rec.vae_config != null ? rec.vae_config : 0, // AUTO unless Detect set a fixed value
-    transformer_quantization: rec.transformer_quantization,
-    enable_int8_kernels: rec.enable_int8_kernels != null ? rec.enable_int8_kernels : 1
-  }, { mode: 'recommend' })
+  if (!rec) return;
+  memProfilePopulate(
+    {
+      video_profile: rec.video_profile,
+      image_profile: rec.image_profile,
+      audio_profile: rec.audio_profile,
+      vram_safety_coefficient: rec.vram_safety_coefficient,
+      vae_config: rec.vae_config == null ? 0 : rec.vae_config, // AUTO unless Detect set a fixed value
+      transformer_quantization: rec.transformer_quantization,
+      enable_int8_kernels:
+        rec.enable_int8_kernels == null ? 1 : rec.enable_int8_kernels,
+    },
+    { mode: "recommend" },
+  );
 }
 
 async function memProfileLoad() {
   try {
-    const res = await window.w2gp.memoryProfileRead()
+    const res = await window.w2gp.memoryProfileRead();
     if (res && res.ok) {
       // Show the currently-saved (preferred) values from disk.
-      memProfilePopulate(res.settings, { mode: 'saved' })
+      memProfilePopulate(res.settings, { mode: "saved" });
       // If a detection already populated the dropdowns, leave them; otherwise
       // seed the dropdowns from the saved config too so the panel isn't empty.
-      const first = $('memVideoProfile')
-      if (first && first.value === '') memProfilePopulate(res.settings, { mode: 'recommend' })
-    } else setMemStatus((res && res.error) || 'Failed to read memory settings', true)
-  } catch (e) { setMemStatus(e.message, true) }
+      const first = $("memVideoProfile");
+      if (first && first.value === "")
+        memProfilePopulate(res.settings, { mode: "recommend" });
+    } else
+      setMemStatus(
+        (res && res.error) || "Failed to read memory settings",
+        true,
+      );
+  } catch (e) {
+    setMemStatus(e.message, true);
+  }
 }
 
-$('memProfileApplyBtn')?.addEventListener('click', async () => {
-  const btn = $('memProfileApplyBtn')
-  const s = memProfileCollect()
-  if (!s) return
-  if (Object.keys(s).length === 0) { setMemStatus('Set at least one field before applying.', true); return }
-  btn.disabled = true; btn.textContent = 'Applying…'; setMemStatus('')
+$("memProfileApplyBtn")?.addEventListener("click", async () => {
+  const btn = $("memProfileApplyBtn");
+  const s = memProfileCollect();
+  if (!s) return;
+  if (Object.keys(s).length === 0) {
+    setMemStatus("Set at least one field before applying.", true);
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "Applying…";
+  setMemStatus("");
   try {
-    const res = await window.w2gp.memoryProfileApply(s)
-    if (res && res.ok) setMemStatus('✓ Applied: ' + res.applied.join(', ') + ' — restart Wan2GP to take effect.', false)
-    else setMemStatus('✗ ' + ((res && res.error) || 'apply failed'), true)
-  } catch (e) { setMemStatus('✗ ' + e.message, true) }
-  finally { btn.disabled = false; btn.textContent = 'Apply Overrides' }
-})
+    const res = await window.w2gp.memoryProfileApply(s);
+    if (res && res.ok)
+      setMemStatus(
+        "✓ Applied: " +
+          res.applied.join(", ") +
+          " — restart Wan2GP to take effect.",
+        false,
+      );
+    else setMemStatus("✗ " + ((res && res.error) || "apply failed"), true);
+  } catch (e) {
+    setMemStatus("✗ " + e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Apply Overrides";
+  }
+});
 
 // (memProfileLoad is called from switchSettingsTab — every entry path.)
 
-  // ── Auto-Tune: failsafe toggle → re-render recommendation live ──
-  $('autotuneFailsafeChk').addEventListener('change', async () => {
-  const status = $('autotuneStatus')
+// ── Auto-Tune: failsafe toggle → re-render recommendation live ──
+$("autotuneFailsafeChk").addEventListener("change", async () => {
+  const status = $("autotuneStatus");
   if (!_autotuneHardware) {
     // Nothing detected yet — tell the user Detect will honor it.
-    status.className = ''
-    status.style.background = 'var(--bg-tertiary)'
-    status.innerHTML = $('autotuneFailsafeChk').checked
-      ? '⚠️ Failsafe enabled — run <strong>Detect</strong> to see the P5 recommendation.'
-      : 'Failsafe off — run <strong>Detect</strong> when ready.'
-    return
+    status.className = "";
+    status.style.background = "var(--bg-tertiary)";
+    status.innerHTML = $("autotuneFailsafeChk").checked
+      ? "⚠️ Failsafe enabled — run <strong>Detect</strong> to see the P5 recommendation."
+      : "Failsafe off — run <strong>Detect</strong> when ready.";
+    return;
   }
   try {
-    const rec = await window.w2gp.autoTuneRecommend(_autotuneHardware, { failsafe: $('autotuneFailsafeChk').checked })
-    _autotuneRecommendation = rec
+    const rec = await window.w2gp.autoTuneRecommend(_autotuneHardware, {
+      failsafe: $("autotuneFailsafeChk").checked,
+    });
+    _autotuneRecommendation = rec;
     // Re-seed the editable Adjuster fields with the (P5) recommendation.
-    memProfileFromRecommendation(rec)
-    status.className = ''
-    status.style.background = 'var(--bg-tertiary)'
-    status.innerHTML = $('autotuneFailsafeChk').checked
-      ? '⚠️ Failsafe mode active — P5 (maximum compatibility) selected. Apply to write it.'
-      : 'ℹ️ Failsafe mode off — standard matrix recommendation restored.'
+    memProfileFromRecommendation(rec);
+    status.className = "";
+    status.style.background = "var(--bg-tertiary)";
+    status.innerHTML = $("autotuneFailsafeChk").checked
+      ? "⚠️ Failsafe mode active — P5 (maximum compatibility) selected. Apply to write it."
+      : "ℹ️ Failsafe mode off — standard matrix recommendation restored.";
   } catch (e) {
-    status.className = ''
-    status.style.background = '#3A1E1E'
-    status.innerHTML = '❌ Failsafe toggle failed: ' + escHtml(e.message)
+    status.className = "";
+    status.style.background = "#3A1E1E";
+    status.innerHTML = "❌ Failsafe toggle failed: " + escHtml(e.message);
   }
-})
+});
 
 // ── Xet Storage (hf_xet) ──
 async function updateXetStatus() {
-  const btn = $('xetInstallBtn')
-  const status = $('xetStatus')
-  if (!btn || !status) return
+  const btn = $("xetInstallBtn");
+  const status = $("xetStatus");
+  if (!btn || !status) return;
   try {
-    const r = await window.w2gp.checkPackage('hf_xet')
+    const r = await window.w2gp.checkPackage("hf_xet");
     if (r && r.installed) {
-      status.textContent = 'installed'
-      status.style.color = 'var(--signal-green)'
-      btn.textContent = 'Uninstall hf_xet'
+      status.textContent = "installed";
+      status.style.color = "var(--signal-green)";
+      btn.textContent = "Uninstall hf_xet";
     } else {
-      status.textContent = 'not installed'
-      status.style.color = 'var(--text-tertiary)'
-      btn.textContent = 'Install hf_xet'
+      status.textContent = "not installed";
+      status.style.color = "var(--text-tertiary)";
+      btn.textContent = "Install hf_xet";
     }
   } catch {
-    status.textContent = 'error checking'
-    status.style.color = 'var(--signal-red)'
+    status.textContent = "error checking";
+    status.style.color = "var(--signal-red)";
   }
 }
 
-$('xetInstallBtn')?.addEventListener('click', async function() {
-  this.disabled = true
-  const status = $('xetStatus')
-  if (status) status.textContent = 'working...'
+$("xetInstallBtn")?.addEventListener("click", async function () {
+  this.disabled = true;
+  const status = $("xetStatus");
+  if (status) status.textContent = "working...";
   try {
-    let r
-    if (this.textContent.startsWith('Uninstall')) {
-      r = await window.w2gp.uninstallPackage('hf_xet')
+    let r;
+    if (this.textContent.startsWith("Uninstall")) {
+      r = await window.w2gp.uninstallPackage("hf_xet");
     } else {
-      r = await window.w2gp.installPackage('hf_xet')
+      r = await window.w2gp.installPackage("hf_xet");
     }
     if (r && r.success) {
-      updateXetStatus()
-      showToast(r.success ? 'hf_xet ' + (this.textContent.startsWith('Uninstall') ? 'uninstalled' : 'installed') : 'Failed')
+      updateXetStatus();
+      showToast(
+        r.success
+          ? "hf_xet " +
+              (this.textContent.startsWith("Uninstall")
+                ? "uninstalled"
+                : "installed")
+          : "Failed",
+      );
     } else {
-      if (status) { status.textContent = 'failed'; status.style.color = 'var(--signal-red)' }
-      showToast('✗ ' + (r && r.error ? r.error : 'Failed'))
+      if (status) {
+        status.textContent = "failed";
+        status.style.color = "var(--signal-red)";
+      }
+      showToast("✗ " + (r && r.error ? r.error : "Failed"));
     }
   } catch (e) {
-    if (status) { status.textContent = 'error'; status.style.color = 'var(--signal-red)' }
-    showToast('✗ ' + e.message)
+    if (status) {
+      status.textContent = "error";
+      status.style.color = "var(--signal-red)";
+    }
+    showToast("✗ " + e.message);
   } finally {
-    this.disabled = false
+    this.disabled = false;
   }
-})
+});
 
 // ── Silent settings auto-scan (D1) — runs once at dashboard load ──
 async function silentSettingsRepair() {
   try {
-    const r = await window.w2gp.repairSettings()
+    const r = await window.w2gp.repairSettings();
     if (!r || !r.success) {
-      if (r && r.error) appendLog('[i] Settings auto-scan skipped: ' + r.error)
-      return
+      if (r && r.error) appendLog("[i] Settings auto-scan skipped: " + r.error);
+      return;
     }
-    const modelFixed = r.modelPaths && r.modelPaths.fixed && r.modelPaths.replacements.length
+    const modelFixed =
+      r.modelPaths && r.modelPaths.fixed && r.modelPaths.replacements.length;
     if (r.fixed > 0 || modelFixed) {
       if (r.fixed > 0) {
-        appendLog(`[✓] Auto-repaired ${r.fixed} out-of-range setting value(s) (${r.scanned} file(s) scanned).`)
-        showToast('✓ Auto-repaired ' + r.fixed + ' setting value(s)')
+        appendLog(
+          `[✓] Auto-repaired ${r.fixed} out-of-range setting value(s) (${r.scanned} file(s) scanned).`,
+        );
+        showToast("✓ Auto-repaired " + r.fixed + " setting value(s)");
       }
       if (modelFixed) {
-        appendLog(`[✓] Fixed ${r.modelPaths.replacements.length} nested model path(s) in wgp_config.json (issue #18 class).`)
-        r.modelPaths.replacements.forEach(x => appendLog('[✓]   ' + x.key + ': ' + x.from + ' → ' + x.to))
-        if (r.fixed === 0) showToast('✓ Fixed nested model paths')
+        appendLog(
+          `[✓] Fixed ${r.modelPaths.replacements.length} nested model path(s) in wgp_config.json (issue #18 class).`,
+        );
+        r.modelPaths.replacements.forEach((x) =>
+          appendLog("[✓]   " + x.key + ": " + x.from + " → " + x.to),
+        );
+        if (r.fixed === 0) showToast("✓ Fixed nested model paths");
       }
     }
     // Quiet when nothing was wrong — auto-scan must never nag.
@@ -4914,357 +7333,636 @@ async function silentSettingsRepair() {
 
 // ── uv Wheel Cache (Manage → General) ──
 function fmtBytes(n) {
-  if (!n && n !== 0) return '—'
-  if (!n) return '0 B'
-  const u = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(n) / Math.log(1024))
-  return (n / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + u[i]
+  if (!n && n !== 0) return "—";
+  if (!n) return "0 B";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(n) / Math.log(1024));
+  return (n / 1024 ** i).toFixed(i ? 1 : 0) + " " + u[i];
 }
 // Cheap: only reports presence on Manage-panel open (no directory walk).
 async function refreshUvCacheInfo() {
-  const statusEl = $('uvCacheStatus')
-  if (!statusEl) return
+  const statusEl = $("uvCacheStatus");
+  if (!statusEl) return;
   try {
-    const info = await window.w2gp.uvCacheInfo()
+    const info = await window.w2gp.uvCacheInfo();
     if (info && info.exists) {
-      statusEl.textContent = `Cache present at ${info.cacheDir} — size on demand.`
+      statusEl.textContent = `Cache present at ${info.cacheDir} — size on demand.`;
     } else {
-      statusEl.textContent = 'No cache folder present (fresh install or already removed).'
+      statusEl.textContent =
+        "No cache folder present (fresh install or already removed).";
     }
-  } catch { statusEl.textContent = 'Could not read cache info.' }
+  } catch {
+    statusEl.textContent = "Could not read cache info.";
+  }
 }
 // On-demand: computes the byte count only when the user asks.
 async function showUvCacheSize() {
-  const statusEl = $('uvCacheStatus')
-  if (!statusEl) return
-  statusEl.textContent = 'Calculating size…'
+  const statusEl = $("uvCacheStatus");
+  if (!statusEl) return;
+  statusEl.textContent = "Calculating size…";
   try {
-    const info = await window.w2gp.uvCacheSize()
+    const info = await window.w2gp.uvCacheSize();
     if (info && info.exists) {
-      statusEl.textContent = `Cache size: ${fmtBytes(info.sizeBytes)} at ${info.cacheDir}`
+      statusEl.textContent = `Cache size: ${fmtBytes(info.sizeBytes)} at ${info.cacheDir}`;
     } else {
-      statusEl.textContent = 'No cache folder present.'
+      statusEl.textContent = "No cache folder present.";
     }
-  } catch { statusEl.textContent = 'Could not read cache size.' }
+  } catch {
+    statusEl.textContent = "Could not read cache size.";
+  }
 }
-$('uvCacheSizeBtn')?.addEventListener('click', showUvCacheSize)
-$('uvCachePurgeBtn')?.addEventListener('click', async function() {
-  this.disabled = true
-  const resEl = $('uvCacheResult')
-  if (resEl) resEl.textContent = 'Purging unused wheels…'
+$("uvCacheSizeBtn")?.addEventListener("click", showUvCacheSize);
+$("uvCachePurgeBtn")?.addEventListener("click", async function () {
+  this.disabled = true;
+  const resEl = $("uvCacheResult");
+  if (resEl) resEl.textContent = "Purging unused wheels…";
   try {
-    const r = await window.w2gp.uvCacheClean('prune')
-    if (resEl) resEl.textContent = (r && r.success) ? 'Purge done — see log for details.' : 'Purge skipped — ' + ((r && r.error) || 'unknown error')
-  } catch (e) { if (resEl) resEl.textContent = 'Error: ' + e }
-  this.disabled = false
-  refreshUvCacheInfo()
-})
-$('uvCacheRemoveBtn')?.addEventListener('click', async function() {
-  if (!confirm('Remove the entire uv wheel cache? Next Wan2GP update will re-download everything (one-time).')) return
-  this.disabled = true
-  const resEl = $('uvCacheResult')
-  if (resEl) resEl.textContent = 'Removing cache…'
+    const r = await window.w2gp.uvCacheClean("prune");
+    if (resEl)
+      resEl.textContent =
+        r && r.success
+          ? "Purge done — see log for details."
+          : "Purge skipped — " + ((r && r.error) || "unknown error");
+  } catch (e) {
+    if (resEl) resEl.textContent = "Error: " + e;
+  }
+  this.disabled = false;
+  refreshUvCacheInfo();
+});
+$("uvCacheRemoveBtn")?.addEventListener("click", async function () {
+  if (
+    !confirm(
+      "Remove the entire uv wheel cache? Next Wan2GP update will re-download everything (one-time).",
+    )
+  )
+    return;
+  this.disabled = true;
+  const resEl = $("uvCacheResult");
+  if (resEl) resEl.textContent = "Removing cache…";
   try {
-    const r = await window.w2gp.uvCacheClean('remove')
-    if (resEl) resEl.textContent = (r && r.success) ? (r.removed ? 'Cache removed.' : 'No cache to remove.') : 'Remove failed — ' + ((r && r.error) || 'unknown error')
-  } catch (e) { if (resEl) resEl.textContent = 'Error: ' + e }
-  this.disabled = false
-  refreshUvCacheInfo()
-})
+    const r = await window.w2gp.uvCacheClean("remove");
+    if (resEl)
+      resEl.textContent =
+        r && r.success
+          ? r.removed
+            ? "Cache removed."
+            : "No cache to remove."
+          : "Remove failed — " + ((r && r.error) || "unknown error");
+  } catch (e) {
+    if (resEl) resEl.textContent = "Error: " + e;
+  }
+  this.disabled = false;
+  refreshUvCacheInfo();
+});
 
 // ── Repair Settings (Manage → General) — fixes "Value: N is not in the list of choices" ──
 
-$('repairSettingsBtn')?.addEventListener('click', async function() {
-  this.disabled = true
-  this.textContent = 'Scanning...'
-  appendLog('[*] Scanning settings files for out-of-range values...')
+$("repairSettingsBtn")?.addEventListener("click", async function () {
+  this.disabled = true;
+  this.textContent = "Scanning...";
+  appendLog("[*] Scanning settings files for out-of-range values...");
   try {
-    const r = await window.w2gp.repairSettings()
+    const r = await window.w2gp.repairSettings();
     if (r && r.success) {
       if (r.fixed > 0) {
-        appendLog(`[✓] Repaired ${r.fixed} out-of-range value(s) across ${r.scanned} settings file(s).`)
-        r.results.filter(x => x.fixed).forEach(x => appendLog('[✓]   ' + x.file + ' — ' + x.fixed + ' fixed (backup: ' + x.backup + ')'))
-        showToast('✓ Settings repaired (' + r.fixed + ' values)')
+        appendLog(
+          `[✓] Repaired ${r.fixed} out-of-range value(s) across ${r.scanned} settings file(s).`,
+        );
+        r.results
+          .filter((x) => x.fixed)
+          .forEach((x) =>
+            appendLog(
+              "[✓]   " +
+                x.file +
+                " — " +
+                x.fixed +
+                " fixed (backup: " +
+                x.backup +
+                ")",
+            ),
+          );
+        showToast("✓ Settings repaired (" + r.fixed + " values)");
       } else {
-        appendLog(`[i] No problems found — scanned ${r.scanned} settings file(s).`)
-        showToast('✓ Settings OK — nothing to repair')
+        appendLog(
+          `[i] No problems found — scanned ${r.scanned} settings file(s).`,
+        );
+        showToast("✓ Settings OK — nothing to repair");
       }
       if (r.problems && r.problems.length) {
-        appendLog('[!] Could not read some files (skipped):')
-        r.problems.forEach(p => appendLog('[!]   ' + p.file + ' — ' + p.error))
+        appendLog("[!] Could not read some files (skipped):");
+        r.problems.forEach((p) =>
+          appendLog("[!]   " + p.file + " — " + p.error),
+        );
       }
-      if (r.modelPaths && r.modelPaths.fixed && r.modelPaths.replacements.length) {
-        appendLog(`[✓] Fixed ${r.modelPaths.replacements.length} nested model path(s) in wgp_config.json:`)
-        r.modelPaths.replacements.forEach(x => appendLog('[✓]   ' + x.key + ': ' + x.from + ' → ' + x.to))
-        showToast('✓ Model paths repaired')
+      if (
+        r.modelPaths &&
+        r.modelPaths.fixed &&
+        r.modelPaths.replacements.length
+      ) {
+        appendLog(
+          `[✓] Fixed ${r.modelPaths.replacements.length} nested model path(s) in wgp_config.json:`,
+        );
+        r.modelPaths.replacements.forEach((x) =>
+          appendLog("[✓]   " + x.key + ": " + x.from + " → " + x.to),
+        );
+        showToast("✓ Model paths repaired");
       }
     } else {
-      appendLog('[!] ' + ((r && r.error) || 'Repair failed'))
-      showToast('✗ ' + ((r && r.error) || 'Repair failed'))
+      appendLog("[!] " + ((r && r.error) || "Repair failed"));
+      showToast("✗ " + ((r && r.error) || "Repair failed"));
     }
   } catch (e) {
-    appendLog('[!] Repair error: ' + e.message)
-    showToast('✗ ' + e.message)
+    appendLog("[!] Repair error: " + e.message);
+    showToast("✗ " + e.message);
   } finally {
-    this.disabled = false
-    this.textContent = 'Scan & Repair Settings'
+    this.disabled = false;
+    this.textContent = "Scan & Repair Settings";
   }
-})
+});
 
 // ── Report an issue (Manage → About) — bundles diagnostics + prefills GitHub issue ──
-$('reportIssueBtn')?.addEventListener('click', async function() {
-  this.disabled = true
-  this.textContent = 'Bundling diagnostics...'
-  appendLog('[*] Gathering diagnostics...')
+$("reportIssueBtn")?.addEventListener("click", async function () {
+  this.disabled = true;
+  this.textContent = "Bundling diagnostics...";
+  appendLog("[*] Gathering diagnostics...");
   try {
-    const r = await window.w2gp.reportIssue()
+    const r = await window.w2gp.reportIssue();
     if (r && r.success) {
-      appendLog('[✓] Diagnostic bundle created (' + r.logLines + ' log lines' + (r.hadErrorQueue ? ', crash diagnostics included' : '') + ').')
-      appendLog('[✓] Bundle: ' + (r.zipPath || r.bundleDir))
-      appendLog('[i] A GitHub issue has been opened pre-filled with your system info — attach the bundle zip to it.')
-      showToast('✓ Diagnostics bundled — issue opened')
+      appendLog(
+        "[✓] Diagnostic bundle created (" +
+          r.logLines +
+          " log lines" +
+          (r.hadErrorQueue ? ", crash diagnostics included" : "") +
+          ").",
+      );
+      appendLog("[✓] Bundle: " + (r.zipPath || r.bundleDir));
+      appendLog(
+        "[i] A GitHub issue has been opened pre-filled with your system info — attach the bundle zip to it.",
+      );
+      showToast("✓ Diagnostics bundled — issue opened");
     } else {
-      appendLog('[!] ' + ((r && r.error) || 'Failed to create diagnostics'))
-      showToast('✗ ' + ((r && r.error) || 'Failed to create diagnostics'))
+      appendLog("[!] " + ((r && r.error) || "Failed to create diagnostics"));
+      showToast("✗ " + ((r && r.error) || "Failed to create diagnostics"));
     }
   } catch (e) {
-    appendLog('[!] Report-issue error: ' + e.message)
-    showToast('✗ ' + e.message)
+    appendLog("[!] Report-issue error: " + e.message);
+    showToast("✗ " + e.message);
   } finally {
-    this.disabled = false
-    this.textContent = '🐞 Report an issue…'
+    this.disabled = false;
+    this.textContent = "🐞 Report an issue…";
   }
-})
+});
 
 // ── Manage → Updates tab — proxies to same IPCs as Dashboard ──
-$('manageUpdateWan2gpBtn')?.addEventListener('click', async function() {
-  const s=$('manageUpdateWan2gpStatus'); this.disabled=true; this.textContent='Updating...'; if(s) s.textContent='Updating Wan2GP (this can take a few minutes)...';
-  try { const r=await window.w2gp.update(); if(s) s.textContent=r ? '✓ Update finished — check Dashboard log' : '✗ Update failed'; } catch(e){ if(s) s.textContent='✗ '+(e.message||e); } finally{ this.disabled=false; this.textContent='↻ Update Wan2GP'; }
+$("manageUpdateWan2gpBtn")?.addEventListener("click", async function () {
+  const s = $("manageUpdateWan2gpStatus");
+  this.disabled = true;
+  this.textContent = "Updating...";
+  if (s) s.textContent = "Updating Wan2GP (this can take a few minutes)...";
+  try {
+    const r = await window.w2gp.update();
+    if (s)
+      s.textContent = r
+        ? "✓ Update finished — check Dashboard log"
+        : "✗ Update failed";
+  } catch (e) {
+    if (s) s.textContent = "✗ " + (e.message || e);
+  } finally {
+    this.disabled = false;
+    this.textContent = "↻ Update Wan2GP";
+  }
 });
-$('manageUpdateDesktopBtn')?.addEventListener('click', function(e) {
-  const s=$('manageUpdateDesktopStatus'); if(s) s.textContent='Checking...';
+$("manageUpdateDesktopBtn")?.addEventListener("click", (e) => {
+  const s = $("manageUpdateDesktopStatus");
+  if (s) s.textContent = "Checking...";
   window.w2gp.checkUpdate(e.shiftKey ? { local: true } : undefined);
-  setTimeout(()=>{ if(s && !s.textContent.includes('✓')) s.textContent='Check sent — see banner on Dashboard'; }, 1500);
+  setTimeout(() => {
+    if (s && !s.textContent.includes("✓"))
+      s.textContent = "Check sent — see banner on Dashboard";
+  }, 1500);
 });
 
 // ── Uninstall Wan2GP (Manage → General → danger section) ──
 // Uninstall via explicit 3-choice modal (the old native OK/Cancel confused:
 // Cancel sounded like abort but meant "delete everything").
 async function openUninstallModal() {
-  const modal = $('uninstallModal')
-  if (!modal) return null
-  const rows = $('uninstallModelsRows')
-  rows.innerHTML = '<span class="istack-hint">checking model folders…</span>'
-  modal.classList.remove('hidden')
+  const modal = $("uninstallModal");
+  if (!modal) return null;
+  const rows = $("uninstallModelsRows");
+  rows.innerHTML = '<span class="istack-hint">checking model folders…</span>';
+  modal.classList.remove("hidden");
   // Fill model folders + sizes so the choice is informed.
   try {
-    const mp = await window.w2gp.getModelPaths().catch(() => null)
-    const items = [['Checkpoints', mp && mp.checkpoints], ['LoRAs', mp && mp.loras], ['Output', mp && mp.output]]
-      .filter(([, p]) => p && p !== '.')
-    if (!items.length) {
-      rows.innerHTML = '<span class="istack-hint">No separate model folders configured.</span>'
-    } else {
-      rows.innerHTML = ''
+    const mp = await window.w2gp.getModelPaths().catch(() => null);
+    const items = [
+      ["Checkpoints", mp && mp.checkpoints],
+      ["LoRAs", mp && mp.loras],
+      ["Output", mp && mp.output],
+    ].filter(([, p]) => p && p !== ".");
+    if (items.length) {
+      rows.innerHTML = "";
       for (const [label, p] of items) {
-        let sizeTxt = ''
+        let sizeTxt = "";
         try {
-          const sz = await window.w2gp.folderSize(p).catch(() => null)
-          if (sz && sz.bytes != null) sizeTxt = ' (' + fmtBytes(sz.bytes) + ')'
+          const sz = await window.w2gp.folderSize(p).catch(() => null);
+          if (sz && sz.bytes != null) sizeTxt = " (" + fmtBytes(sz.bytes) + ")";
         } catch {}
-        const div = document.createElement('div')
-        div.className = 'istack-row'
-        div.innerHTML = '<span class="istack-k">' + escHtml(label) + '</span><span class="istack-v">' + escHtml(p + sizeTxt) + '</span>'
-        rows.appendChild(div)
+        const div = document.createElement("div");
+        div.className = "istack-row";
+        div.innerHTML =
+          '<span class="istack-k">' +
+          escHtml(label) +
+          '</span><span class="istack-v">' +
+          escHtml(p + sizeTxt) +
+          "</span>";
+        rows.appendChild(div);
       }
+    } else {
+      rows.innerHTML =
+        '<span class="istack-hint">No separate model folders configured.</span>';
     }
   } catch {}
   return new Promise((resolve) => {
-    const done = (v) => { modal.classList.add('hidden'); resolve(v) }
-    const agreeRow = $('uninstallAgreeRow'), agreeInput = $('uninstallAgreeInput'), delBtn = $('uninstallDeleteBtn')
+    const done = (v) => {
+      modal.classList.add("hidden");
+      resolve(v);
+    };
+    const agreeRow = $("uninstallAgreeRow"),
+      agreeInput = $("uninstallAgreeInput"),
+      delBtn = $("uninstallDeleteBtn");
     // Reset the AGREE gate on every open.
-    if (agreeRow) agreeRow.style.display = 'none'
-    if (agreeInput) agreeInput.value = ''
-    if (delBtn) { delBtn.disabled = false; delBtn.textContent = 'Delete everything' }
-    $('uninstallCloseBtn').onclick = () => done(null)
-    $('uninstallCancelBtn').onclick = () => done(null)
-    $('uninstallKeepBtn').onclick = () => done({ keepModels: true })
+    if (agreeRow) agreeRow.style.display = "none";
+    if (agreeInput) agreeInput.value = "";
+    if (delBtn) {
+      delBtn.disabled = false;
+      delBtn.textContent = "Delete everything";
+    }
+    $("uninstallCloseBtn").onclick = () => done(null);
+    $("uninstallCancelBtn").onclick = () => done(null);
+    $("uninstallKeepBtn").onclick = () => done({ keepModels: true });
     delBtn.onclick = () => {
       // Two-step: first click reveals the gate, second (with AGREE) deletes.
-      if (agreeRow && agreeRow.style.display === 'none') {
-        agreeRow.style.display = ''
-        delBtn.disabled = true
-        delBtn.textContent = 'Type AGREE above'
-        agreeInput?.focus()
-        return
+      if (agreeRow && agreeRow.style.display === "none") {
+        agreeRow.style.display = "";
+        delBtn.disabled = true;
+        delBtn.textContent = "Type AGREE above";
+        agreeInput?.focus();
+        return;
       }
-      if ((agreeInput?.value || '').trim() === 'AGREE') done({ keepModels: false })
-    }
-    if (agreeInput) agreeInput.oninput = () => {
-      const ok = agreeInput.value.trim() === 'AGREE'
-      delBtn.disabled = !ok
-      delBtn.textContent = ok ? 'Confirm delete' : 'Type AGREE above'
-    }
-  })
+      if ((agreeInput?.value || "").trim() === "AGREE")
+        done({ keepModels: false });
+    };
+    if (agreeInput)
+      agreeInput.oninput = () => {
+        const ok = agreeInput.value.trim() === "AGREE";
+        delBtn.disabled = !ok;
+        delBtn.textContent = ok ? "Confirm delete" : "Type AGREE above";
+      };
+  });
 }
 
-$('uninstallBtn')?.addEventListener('click', async function() {
-  const choice = await openUninstallModal().catch(() => null)
-  if (!choice) { appendLog('[*] Uninstall cancelled.') ; return }
-  this.disabled = true
-  this.textContent = 'Uninstalling...'
-  appendLog('[*] Uninstalling Wan2GP' + (choice.keepModels ? ' (keeping models)…' : ' (deleting everything)…'))
+$("uninstallBtn")?.addEventListener("click", async function () {
+  const choice = await openUninstallModal().catch(() => null);
+  if (!choice) {
+    appendLog("[*] Uninstall cancelled.");
+    return;
+  }
+  this.disabled = true;
+  this.textContent = "Uninstalling...";
+  appendLog(
+    "[*] Uninstalling Wan2GP" +
+      (choice.keepModels ? " (keeping models)…" : " (deleting everything)…"),
+  );
   try {
-    const r = await window.w2gp.uninstall(choice)
+    const r = await window.w2gp.uninstall(choice);
     if (r && r.cancelled) {
-      appendLog('[*] Uninstall cancelled.')
+      appendLog("[*] Uninstall cancelled.");
     } else if (r && r.success) {
-      appendLog('[✓] Wan2GP uninstalled.')
+      appendLog("[✓] Wan2GP uninstalled.");
       if (r.keptFiles && r.keptPaths && r.keptPaths.length) {
-        appendLog('[i] Kept your files (checkpoints, LoRAs, output):')
-        r.keptPaths.forEach(p => appendLog('[i]   ' + p))
-        appendLog('[i] Reinstalling will reuse them automatically.')
+        appendLog("[i] Kept your files (checkpoints, LoRAs, output):");
+        r.keptPaths.forEach((p) => appendLog("[i]   " + p));
+        appendLog("[i] Reinstalling will reuse them automatically.");
       }
       if (r.leftoverFolder) {
-        appendLog('[i] The empty folder could not be deleted (locked by a process open in it):')
-        appendLog('[i]   ' + r.leftoverFolder)
-        appendLog('[i] Close any terminal/Explorer window open in it and delete it manually.')
+        appendLog(
+          "[i] The empty folder could not be deleted (locked by a process open in it):",
+        );
+        appendLog("[i]   " + r.leftoverFolder);
+        appendLog(
+          "[i] Close any terminal/Explorer window open in it and delete it manually.",
+        );
       }
-      showToast('✓ Wan2GP uninstalled' + (r.keptFiles ? ' (files kept)' : '') + (r.leftoverFolder ? ' (empty folder left)' : ''))
-      setLaunchButtonsInstalled(false)
+      showToast(
+        "✓ Wan2GP uninstalled" +
+          (r.keptFiles ? " (files kept)" : "") +
+          (r.leftoverFolder ? " (empty folder left)" : ""),
+      );
+      setLaunchButtonsInstalled(false);
       // Nothing installed → back to the installer, not the dashboard.
-      await openInstallerFresh('Wan2GP removed — install fresh below.')
+      await openInstallerFresh("Wan2GP removed — install fresh below.");
     } else {
-      appendLog('[!] Uninstall failed: ' + ((r && r.error) || 'unknown'))
-      showToast('✗ ' + ((r && r.error) || 'Uninstall failed'))
+      appendLog("[!] Uninstall failed: " + ((r && r.error) || "unknown"));
+      showToast("✗ " + ((r && r.error) || "Uninstall failed"));
     }
   } catch (e) {
-    appendLog('[!] Uninstall error: ' + errText(e))
-    showToast('✗ ' + errText(e))
+    appendLog("[!] Uninstall error: " + errText(e));
+    showToast("✗ " + errText(e));
   } finally {
-    this.disabled = false
-    this.textContent = 'Uninstall Wan2GP…'
+    this.disabled = false;
+    this.textContent = "Uninstall Wan2GP…";
   }
-})
+});
 
 // ── 🛟 Troubleshooting (P0 — upstream TROUBLESHOOTING.md) ──
-function tsStatus(id, html) { const el = $(id); if (el) el.innerHTML = html }
+function tsStatus(id, html) {
+  const el = $(id);
+  if (el) el.innerHTML = html;
+}
 async function tsRefreshLaunchArgs() {
   try {
-    const cfg = await window.w2gp.configLoad()
-    if ($('launchArgsInput')) $('launchArgsInput').value = cfg.launchArgs || ''
-    if ($('portInput')) $('portInput').value = cfg.serverPort || 7860
+    const cfg = await window.w2gp.configLoad();
+    if ($("launchArgsInput")) $("launchArgsInput").value = cfg.launchArgs || "";
+    if ($("portInput")) $("portInput").value = cfg.serverPort || 7860;
   } catch {}
 }
-$('tsFailsafeBtn')?.addEventListener('click', async function() {
-  this.disabled = true; tsStatus('tsFailsafeStatus', 'Applying…')
+$("tsFailsafeBtn")?.addEventListener("click", async function () {
+  this.disabled = true;
+  tsStatus("tsFailsafeStatus", "Applying…");
   try {
-    const r = await window.w2gp.tsFailsafeApply()
-    appendLog('[✓] Failsafe applied: ' + (r.launchArgs || '') + (r.backup ? ' (backup: ' + r.backup + ')' : ' (no wgp_config.json yet)'))
-    tsStatus('tsFailsafeStatus', '✓ Failsafe applied — relaunch Wan2GP.')
-    showToast('✓ Failsafe applied — relaunch Wan2GP')
-    tsRefreshLaunchArgs()
-  } catch (e) { tsStatus('tsFailsafeStatus', '✗ ' + escHtml(errText(e))); showToast('✗ ' + errText(e)) }
-  this.disabled = false
-})
-$('tsCudaBtn')?.addEventListener('click', async function() {
-  this.disabled = true; tsStatus('tsFailsafeStatus', 'Probing torch…')
+    const r = await window.w2gp.tsFailsafeApply();
+    appendLog(
+      "[✓] Failsafe applied: " +
+        (r.launchArgs || "") +
+        (r.backup
+          ? " (backup: " + r.backup + ")"
+          : " (no wgp_config.json yet)"),
+    );
+    tsStatus("tsFailsafeStatus", "✓ Failsafe applied — relaunch Wan2GP.");
+    showToast("✓ Failsafe applied — relaunch Wan2GP");
+    tsRefreshLaunchArgs();
+  } catch (e) {
+    tsStatus("tsFailsafeStatus", "✗ " + escHtml(errText(e)));
+    showToast("✗ " + errText(e));
+  }
+  this.disabled = false;
+});
+$("tsCudaBtn")?.addEventListener("click", async function () {
+  this.disabled = true;
+  tsStatus("tsFailsafeStatus", "Probing torch…");
   try {
-    const r = await window.w2gp.tsCudaCheck()
+    const r = await window.w2gp.tsCudaCheck();
     if (r && r.ok) {
-      const msg = 'torch ' + r.torch + ' + CUDA ' + (r.cuda || '?') + ' — cuda_available=' + r.available + ' (' + (r.devices || 0) + ' device(s)' + (r.name ? ': ' + r.name : '') + ')'
-      appendLog('[✓] CUDA check: ' + msg)
-      tsStatus('tsFailsafeStatus', '✓ ' + escHtml(msg))
-    } else { tsStatus('tsFailsafeStatus', '✗ ' + escHtml((r && r.error) || 'probe failed')); appendLog('[!] CUDA check failed: ' + ((r && (r.stderr || r.error)) || 'unknown')) }
-  } catch (e) { tsStatus('tsFailsafeStatus', '✗ ' + escHtml(errText(e))) }
-  this.disabled = false
-})
-$('tsComputeBtn')?.addEventListener('click', async function() {
-  this.disabled = true; tsStatus('tsFailsafeStatus', 'Running GPU compute (import + kernels, ~1 min on cold HIP)…')
-  try {
-    const r = await window.w2gp.tsGpuCompute()
-    const kernelLines = (r, ok) => {
-      const k = (r && r.kernels) || {}
-      return Object.keys(k).filter(d => d !== 'sage2_symbol' && d !== 'quanto_qbytes_mm').map(d => {
-        const e = k[d] || {}; const st = e.import || '?'
-        return (st === 'ok' || st === 'missing' ? '✓ ' : '✗ ') + d + ' ' + (e.version || '') + (st !== 'ok' && st !== 'missing' ? ' — ' + st : '')
-      })
-    }
-    if (r && r.ok) {
-      const msg = 'GPU compute OK: torch ' + (r.torch || '?') + ' on ' + (r.device || '?') + ' (mode ' + (r.mode || '?') + (r.recorded ? ', recorded for launch' : '') + ')'
-      appendLog('[✓] ' + msg)
-      kernelLines(r).forEach(l => appendLog('    ' + l))
-      if (r.kernel_warning) appendLog('[i] ' + r.kernel_warning)
-      tsStatus('tsFailsafeStatus', '✓ ' + escHtml(msg))
-      showToast('✓ GPU compute passed')
+      const msg =
+        "torch " +
+        r.torch +
+        " + CUDA " +
+        (r.cuda || "?") +
+        " — cuda_available=" +
+        r.available +
+        " (" +
+        (r.devices || 0) +
+        " device(s)" +
+        (r.name ? ": " + r.name : "") +
+        ")";
+      appendLog("[✓] CUDA check: " + msg);
+      tsStatus("tsFailsafeStatus", "✓ " + escHtml(msg));
     } else {
-      const det = r && r.detail ? ' ' + JSON.stringify(r.detail) : ''
-      tsStatus('tsFailsafeStatus', '✗ ' + escHtml((r && r.error) || 'probe failed'))
-      const kl = kernelLines(r).filter(l => l.startsWith('✗'))
-      appendLog('[!] GPU compute failed: ' + ((r && r.error) || 'unknown') + det)
-      kl.forEach(l => appendLog('    ' + l))
+      tsStatus(
+        "tsFailsafeStatus",
+        "✗ " + escHtml((r && r.error) || "probe failed"),
+      );
+      appendLog(
+        "[!] CUDA check failed: " + ((r && (r.stderr || r.error)) || "unknown"),
+      );
     }
-  } catch (e) { tsStatus('tsFailsafeStatus', '✗ ' + escHtml(errText(e))) }
-  this.disabled = false
-})
-$('tsPortCheckBtn')?.addEventListener('click', async () => {
-  tsStatus('tsPortStatus', 'Checking…')
+  } catch (e) {
+    tsStatus("tsFailsafeStatus", "✗ " + escHtml(errText(e)));
+  }
+  this.disabled = false;
+});
+$("tsComputeBtn")?.addEventListener("click", async function () {
+  this.disabled = true;
+  tsStatus(
+    "tsFailsafeStatus",
+    "Running GPU compute (import + kernels, ~1 min on cold HIP)…",
+  );
   try {
-    const r = await window.w2gp.tsPortStatus()
-    if (!r.inUse) tsStatus('tsPortStatus', '✓ Port ' + r.port + ' is free.')
-    else if (r.owner && r.owner.pid) tsStatus('tsPortStatus', '⚠ Port ' + r.port + ' busy — ' + escHtml(r.owner.name || 'unknown') + ' (pid ' + r.owner.pid + ')' + (r.owner.ours ? ' — looks like Wan2GP' : ''))
-    else tsStatus('tsPortStatus', '⚠ Port ' + r.port + ' busy — owner unknown.')
-  } catch (e) { tsStatus('tsPortStatus', '✗ ' + escHtml(errText(e))) }
-})
-$('tsPortKillBtn')?.addEventListener('click', async function() {
-  const choice = await window.w2gp.confirmDialog({ title: 'Kill port owner?', message: 'Kill the Python process listening on the server port? Only Python owners are touched — anything else is refused.' })
-  if (choice !== 'ok' && choice !== 0) return
-  this.disabled = true
+    const r = await window.w2gp.tsGpuCompute();
+    const kernelLines = (r, ok) => {
+      const k = (r && r.kernels) || {};
+      return Object.keys(k)
+        .filter((d) => d !== "sage2_symbol" && d !== "quanto_qbytes_mm")
+        .map((d) => {
+          const e = k[d] || {};
+          const st = e.import || "?";
+          return (
+            (st === "ok" || st === "missing" ? "✓ " : "✗ ") +
+            d +
+            " " +
+            (e.version || "") +
+            (st !== "ok" && st !== "missing" ? " — " + st : "")
+          );
+        });
+    };
+    if (r && r.ok) {
+      const msg =
+        "GPU compute OK: torch " +
+        (r.torch || "?") +
+        " on " +
+        (r.device || "?") +
+        " (mode " +
+        (r.mode || "?") +
+        (r.recorded ? ", recorded for launch" : "") +
+        ")";
+      appendLog("[✓] " + msg);
+      kernelLines(r).forEach((l) => appendLog("    " + l));
+      if (r.kernel_warning) appendLog("[i] " + r.kernel_warning);
+      tsStatus("tsFailsafeStatus", "✓ " + escHtml(msg));
+      showToast("✓ GPU compute passed");
+    } else {
+      const det = r && r.detail ? " " + JSON.stringify(r.detail) : "";
+      tsStatus(
+        "tsFailsafeStatus",
+        "✗ " + escHtml((r && r.error) || "probe failed"),
+      );
+      const kl = kernelLines(r).filter((l) => l.startsWith("✗"));
+      appendLog(
+        "[!] GPU compute failed: " + ((r && r.error) || "unknown") + det,
+      );
+      kl.forEach((l) => appendLog("    " + l));
+    }
+  } catch (e) {
+    tsStatus("tsFailsafeStatus", "✗ " + escHtml(errText(e)));
+  }
+  this.disabled = false;
+});
+$("tsPortCheckBtn")?.addEventListener("click", async () => {
+  tsStatus("tsPortStatus", "Checking…");
   try {
-    const r = await window.w2gp.tsPortFix('kill')
-    tsStatus('tsPortStatus', r.freed ? '✓ Port ' + r.port + ' freed (pid ' + r.pid + ').' : '⚠ Kill sent but port ' + r.port + ' still busy — use next free port.')
-    appendLog('[*] Port fix (kill): ' + JSON.stringify(r))
-  } catch (e) { tsStatus('tsPortStatus', '✗ ' + escHtml(errText(e))); showToast('✗ ' + errText(e)) }
-  this.disabled = false
-})
-$('tsPortBumpBtn')?.addEventListener('click', async function() {
-  this.disabled = true
+    const r = await window.w2gp.tsPortStatus();
+    if (!r.inUse) tsStatus("tsPortStatus", "✓ Port " + r.port + " is free.");
+    else if (r.owner && r.owner.pid)
+      tsStatus(
+        "tsPortStatus",
+        "⚠ Port " +
+          r.port +
+          " busy — " +
+          escHtml(r.owner.name || "unknown") +
+          " (pid " +
+          r.owner.pid +
+          ")" +
+          (r.owner.ours ? " — looks like Wan2GP" : ""),
+      );
+    else
+      tsStatus("tsPortStatus", "⚠ Port " + r.port + " busy — owner unknown.");
+  } catch (e) {
+    tsStatus("tsPortStatus", "✗ " + escHtml(errText(e)));
+  }
+});
+$("tsPortKillBtn")?.addEventListener("click", async function () {
+  const choice = await window.w2gp.confirmDialog({
+    title: "Kill port owner?",
+    message:
+      "Kill the Python process listening on the server port? Only Python owners are touched — anything else is refused.",
+  });
+  if (choice !== "ok" && choice !== 0) return;
+  this.disabled = true;
   try {
-    const r = await window.w2gp.tsPortFix('bump')
-    tsStatus('tsPortStatus', '✓ Moved ' + r.from + ' → ' + r.port + ' — relaunch Wan2GP.')
-    showToast('Server port set to ' + r.port)
-    appendLog('[✓] Port bumped ' + r.from + ' → ' + r.port)
-    tsRefreshLaunchArgs()
-  } catch (e) { tsStatus('tsPortStatus', '✗ ' + escHtml(errText(e))); showToast('✗ ' + errText(e)) }
-  this.disabled = false
-})
-$('tsDebugCopyBtn')?.addEventListener('click', async function() {
-  this.disabled = true; tsStatus('tsDebugStatus', 'Gathering…')
+    const r = await window.w2gp.tsPortFix("kill");
+    tsStatus(
+      "tsPortStatus",
+      r.freed
+        ? "✓ Port " + r.port + " freed (pid " + r.pid + ")."
+        : "⚠ Kill sent but port " +
+            r.port +
+            " still busy — use next free port.",
+    );
+    appendLog("[*] Port fix (kill): " + JSON.stringify(r));
+  } catch (e) {
+    tsStatus("tsPortStatus", "✗ " + escHtml(errText(e)));
+    showToast("✗ " + errText(e));
+  }
+  this.disabled = false;
+});
+$("tsPortBumpBtn")?.addEventListener("click", async function () {
+  this.disabled = true;
   try {
-    const r = await window.w2gp.tsDebugBundle()
-    const md = (r && r.markdown) || ''
-    try { await navigator.clipboard.writeText(md) } catch { const ta = document.createElement('textarea'); ta.value = md; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove() }
-    tsStatus('tsDebugStatus', '✓ Copied — paste into Discord / GitHub.')
-    showToast('✓ Debug info copied to clipboard')
-  } catch (e) { tsStatus('tsDebugStatus', '✗ ' + escHtml(errText(e))) }
-  this.disabled = false
-})
-$('tsTritonTestBtn')?.addEventListener('click', async function() {
-  this.disabled = true; tsStatus('tsTritonStatus', 'Testing import…')
+    const r = await window.w2gp.tsPortFix("bump");
+    tsStatus(
+      "tsPortStatus",
+      "✓ Moved " + r.from + " → " + r.port + " — relaunch Wan2GP.",
+    );
+    showToast("Server port set to " + r.port);
+    appendLog("[✓] Port bumped " + r.from + " → " + r.port);
+    tsRefreshLaunchArgs();
+  } catch (e) {
+    tsStatus("tsPortStatus", "✗ " + escHtml(errText(e)));
+    showToast("✗ " + errText(e));
+  }
+  this.disabled = false;
+});
+$("tsLongPathsBtn")?.addEventListener("click", async function () {
+  this.disabled = true;
   try {
-    const r = await window.w2gp.tsTritonTest()
-    tsStatus('tsTritonStatus', r.ok ? '✓ Triton ' + escHtml(r.version || '?') + ' importable.' : '✗ ' + escHtml(r.error || 'import failed'))
-    if (!r.ok) appendLog('[!] Triton test: ' + (r.stderr || r.error || 'failed'))
-  } catch (e) { tsStatus('tsTritonStatus', '✗ ' + escHtml(errText(e))) }
-  this.disabled = false
-})
+    const st = await window.w2gp.tsLongPathsStatus();
+    if (st && st.enabled) {
+      tsStatus("tsLongPathsStatus", "Already enabled.");
+      appendLog("[*] Windows long paths already enabled.");
+      return;
+    }
+    const choice = await window.w2gp.confirmDialog({
+      title: "Enable Windows long paths?",
+      message:
+        "Sets HKLM...LongPathsEnabled=1. Needs admin approval (UAC prompt) and a reboot afterwards. Proceed?",
+    });
+    if (choice !== "ok" && choice !== 0) {
+      tsStatus("tsLongPathsStatus", "Cancelled.");
+      return;
+    }
+    tsStatus("tsLongPathsStatus", "Enabling...");
+    const r = await window.w2gp.tsLongPathsEnable();
+    if (r && r.already) {
+      tsStatus("tsLongPathsStatus", "Already enabled.");
+      appendLog("[*] Windows long paths already enabled.");
+    } else {
+      tsStatus("tsLongPathsStatus", "Enabled - reboot Windows to apply.");
+      showToast("Long paths enabled - reboot Windows to apply");
+      appendLog(
+        "[+] Windows long paths enabled" +
+          (r && r.elevated ? " (elevated)" : "") +
+          " - reboot Windows to apply.",
+      );
+      console.log("[ts] long paths enabled", r);
+    }
+  } catch (e) {
+    tsStatus("tsLongPathsStatus", "Error: " + escHtml(errText(e)));
+    showToast("Error: " + errText(e));
+  } finally {
+    this.disabled = false;
+  }
+});
+$("tsDebugCopyBtn")?.addEventListener("click", async function () {
+  this.disabled = true;
+  tsStatus("tsDebugStatus", "Gathering…");
+  try {
+    const r = await window.w2gp.tsDebugBundle();
+    const md = (r && r.markdown) || "";
+    try {
+      await navigator.clipboard.writeText(md);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = md;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+    tsStatus("tsDebugStatus", "✓ Copied — paste into Discord / GitHub.");
+    showToast("✓ Debug info copied to clipboard");
+  } catch (e) {
+    tsStatus("tsDebugStatus", "✗ " + escHtml(errText(e)));
+  }
+  this.disabled = false;
+});
+$("tsTritonTestBtn")?.addEventListener("click", async function () {
+  this.disabled = true;
+  tsStatus("tsTritonStatus", "Testing import…");
+  try {
+    const r = await window.w2gp.tsTritonTest();
+    tsStatus(
+      "tsTritonStatus",
+      r.ok
+        ? "✓ Triton " + escHtml(r.version || "?") + " importable."
+        : "✗ " + escHtml(r.error || "import failed"),
+    );
+    if (!r.ok)
+      appendLog("[!] Triton test: " + (r.stderr || r.error || "failed"));
+  } catch (e) {
+    tsStatus("tsTritonStatus", "✗ " + escHtml(errText(e)));
+  }
+  this.disabled = false;
+});
 async function tsTritonClear(fallback) {
-  tsStatus('tsTritonStatus', 'Clearing…')
+  tsStatus("tsTritonStatus", "Clearing…");
   try {
-    const r = await window.w2gp.tsTritonClear(fallback)
-    tsStatus('tsTritonStatus', '✓ Cache cleared' + (r.backup ? ' (backup kept)' : ' (was already empty)') + (fallback ? ' — SDPA fallback set, relaunch.' : '.'))
-    appendLog('[✓] Triton cache cleared' + (r.backup ? ' → ' + r.backup : '') + (fallback ? ' + SDPA fallback' : ''))
-    if (fallback) tsRefreshLaunchArgs()
-  } catch (e) { tsStatus('tsTritonStatus', '✗ ' + escHtml(errText(e))); showToast('✗ ' + errText(e)) }
+    const r = await window.w2gp.tsTritonClear(fallback);
+    tsStatus(
+      "tsTritonStatus",
+      "✓ Cache cleared" +
+        (r.backup ? " (backup kept)" : " (was already empty)") +
+        (fallback ? " — SDPA fallback set, relaunch." : "."),
+    );
+    appendLog(
+      "[✓] Triton cache cleared" +
+        (r.backup ? " → " + r.backup : "") +
+        (fallback ? " + SDPA fallback" : ""),
+    );
+    if (fallback) tsRefreshLaunchArgs();
+  } catch (e) {
+    tsStatus("tsTritonStatus", "✗ " + escHtml(errText(e)));
+    showToast("✗ " + errText(e));
+  }
 }
-$('tsTritonClearBtn')?.addEventListener('click', () => tsTritonClear(false))
-$('tsTritonSdpaBtn')?.addEventListener('click', () => tsTritonClear(true))
+$("tsTritonClearBtn")?.addEventListener("click", () => tsTritonClear(false));
+$("tsTritonSdpaBtn")?.addEventListener("click", () => tsTritonClear(true));
