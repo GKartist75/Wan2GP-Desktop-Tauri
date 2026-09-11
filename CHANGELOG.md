@@ -2,6 +2,12 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.6.2] — 2026-09-11
+
+- Windows long paths handled end to end: preflight warns when `LongPathsEnabled` is off, Troubleshooting offers a one-click enable (permission confirm, UAC elevation, reboot reminder), and Install gates on it before any download with an enable-then-reboot choice
+- Gallery no longer wipes every generation: `write_wgp_config` seeds `clear_file_list=5` when absent (missing key used to resolve to 0), so results keep the last generations by default
+- Installer stops asking twice: backup-choice stash reconciled against the live radio pick at dispatch, verdict refresh preserves radio picks on same-mode refreshes, foreign-folder fallthrough asks once via confirm instead of silently bouncing
+
 ## [0.6.1] — 2026-09-11
 
 - Native-view drag & drop fixed: the child webview opts out of Tauri file-drop interception (`disable_drag_drop_handler`) so drops reach Gradio

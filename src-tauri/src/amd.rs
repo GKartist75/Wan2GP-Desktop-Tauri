@@ -70,7 +70,12 @@ pub(crate) fn profile_hsa_version(repo: &Path, profile: &str) -> Option<String> 
         .ok()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|c| {
-            c.get("gpu_profiles")?.get(profile)?.get("env")?.get("HSA_OVERRIDE_GFX_VERSION")?.as_str().map(str::to_string)
+            c.get("gpu_profiles")?
+                .get(profile)?
+                .get("env")?
+                .get("HSA_OVERRIDE_GFX_VERSION")?
+                .as_str()
+                .map(str::to_string)
         })
 }
 
@@ -106,7 +111,10 @@ fn run_compute_probe_inner(py: &Path) -> Result<ComputeProbe, String> {
         if let Some(probe) = parse_probe_json(&stdout) {
             return Ok(probe);
         }
-        return Err(format!("probe exited 0 but printed no result JSON — stdout tail: {}", tail(&stdout, 300)));
+        return Err(format!(
+            "probe exited 0 but printed no result JSON — stdout tail: {}",
+            tail(&stdout, 300)
+        ));
     }
     Err(classify_probe_failure(&stderr_tail))
 }
@@ -114,7 +122,11 @@ fn run_compute_probe_inner(py: &Path) -> Result<ComputeProbe, String> {
 /// Spawn `py -c <script>` with captured output and a hard timeout (see
 /// PROBE_TIMEOUT rationale above). Shared by the compute and kernel
 /// probes so TDR-hang protection can't drift between them.
-fn spawn_bounded(py: &Path, script: &str, timeout: Duration) -> Result<std::process::Output, String> {
+fn spawn_bounded(
+    py: &Path,
+    script: &str,
+    timeout: Duration,
+) -> Result<std::process::Output, String> {
     use std::process::Stdio;
     let mut child = std::process::Command::new(py)
         .args(["-c", script])
@@ -124,7 +136,10 @@ fn spawn_bounded(py: &Path, script: &str, timeout: Duration) -> Result<std::proc
         .map_err(|e| format!("probe spawn failed ({e})"))?;
     let start = Instant::now();
     loop {
-        match child.try_wait().map_err(|e| format!("probe wait failed ({e})"))? {
+        match child
+            .try_wait()
+            .map_err(|e| format!("probe wait failed ({e})"))?
+        {
             Some(_) => break,
             None => {
                 if start.elapsed() > timeout {
@@ -136,12 +151,20 @@ fn spawn_bounded(py: &Path, script: &str, timeout: Duration) -> Result<std::proc
             }
         }
     }
-    child.wait_with_output().map_err(|e| format!("probe output failed ({e})"))
+    child
+        .wait_with_output()
+        .map_err(|e| format!("probe output failed ({e})"))
 }
 
 /// Last `n` chars of s (log-tail helper for bounded error text).
 fn tail(s: &str, n: usize) -> String {
-    s.chars().rev().take(n).collect::<String>().chars().rev().collect()
+    s.chars()
+        .rev()
+        .take(n)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect()
 }
 
 /// Kernel import health (Maestro pattern): a dist can be installed yet
@@ -190,7 +213,9 @@ pub(crate) const KERNEL_PROBE_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Run the kernel import probe. Ok(map) whenever the script itself ran —
 /// per-dist breakage is DATA (import != ok), not a probe failure.
-pub(crate) fn run_kernel_probe(py: &Path) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+pub(crate) fn run_kernel_probe(
+    py: &Path,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let out = spawn_bounded(py, KERNEL_IMPORT_PROBE, KERNEL_PROBE_TIMEOUT)?;
     if !out.status.success() {
         let tail_s = tail(&String::from_utf8_lossy(&out.stderr), 500);
@@ -203,18 +228,27 @@ pub(crate) fn run_kernel_probe(py: &Path) -> Result<serde_json::Map<String, serd
 /// Last `{...}` line → per-dist map. Pure (tested). A dist counts as
 /// broken only when installed AND its primary import failed; "missing"
 /// is neutral (presence is the version scan's job).
-pub(crate) fn parse_kernel_json(stdout: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
-    let line = stdout.lines().rev().find(|l| l.trim_start().starts_with('{'))?;
+pub(crate) fn parse_kernel_json(
+    stdout: &str,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.trim_start().starts_with('{'))?;
     let v: serde_json::Value = serde_json::from_str(line).ok()?;
     v.as_object().cloned()
 }
 
 /// Installed-but-unimportable dists: `dist: detail`. Empty = all healthy
 /// (missing dists ignored). Pure (tested).
-pub(crate) fn kernel_probe_failures(map: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+pub(crate) fn kernel_probe_failures(
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<String> {
     let mut out = Vec::new();
     for (dist, v) in map {
-        if dist == "sage2_symbol" || dist == "quanto_qbytes_mm" { continue; }
+        if dist == "sage2_symbol" || dist == "quanto_qbytes_mm" {
+            continue;
+        }
         let status = v.get("import").and_then(|s| s.as_str()).unwrap_or("");
         if status != "ok" && status != "missing" && !status.is_empty() {
             let ver = v.get("version").and_then(|s| s.as_str()).unwrap_or("?");
@@ -232,7 +266,11 @@ pub(crate) fn kernel_probe_failures(map: &serde_json::Map<String, serde_json::Va
 /// Pure + unit-tested.
 pub(crate) fn kernel_probe_stale(map: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
     let mut out = Vec::new();
-    if let Some(v) = map.get("llamacpp-gguf-cuda").and_then(|d| d.get("version")).and_then(|s| s.as_str()) {
+    if let Some(v) = map
+        .get("llamacpp-gguf-cuda")
+        .and_then(|d| d.get("version"))
+        .and_then(|s| s.as_str())
+    {
         if crate::hw::version_gt(crate::hw::GGUF_FLOOR, v) {
             out.push(format!("llamacpp-gguf-cuda {v} predates the {} SM120 kernels — Deepy decode falls back to slow PyTorch SDPA. Re-run Sync kernels.", crate::hw::GGUF_FLOOR));
         }
@@ -248,10 +286,25 @@ pub(crate) fn kernel_probe_stale(map: &serde_json::Map<String, serde_json::Value
 /// and "RTX 5000 Ada" is Ada — ADA always excludes. Pure + unit-tested.
 pub(crate) fn is_blackwell_gpu(name: &str) -> bool {
     let g = name.to_uppercase();
-    if g.contains("ADA") { return false; }
-    ["5090", "5080", "5070", "5060", "5050", "PRO 6000", "PRO 5000", "PRO 4000",
-     "B100", "B200", "GB100", "BLACKWELL"]
-        .iter().any(|t| g.contains(t))
+    if g.contains("ADA") {
+        return false;
+    }
+    [
+        "5090",
+        "5080",
+        "5070",
+        "5060",
+        "5050",
+        "PRO 6000",
+        "PRO 5000",
+        "PRO 4000",
+        "B100",
+        "B200",
+        "GB100",
+        "BLACKWELL",
+    ]
+    .iter()
+    .any(|t| g.contains(t))
 }
 
 /// Sage3 gate verdict for a kernel-probe map (#2280). Sage3 is never
@@ -262,12 +315,18 @@ pub(crate) fn is_blackwell_gpu(name: &str) -> bool {
 /// - nothing installed + Blackwell → info why sync skipped it;
 /// - nothing installed + older GPU → silent (common case, no noise).
 /// Returns (level, message). Pure + unit-tested.
-pub(crate) fn sage3_note(map: &serde_json::Map<String, serde_json::Value>, blackwell: bool) -> Option<(&'static str, String)> {
+pub(crate) fn sage3_note(
+    map: &serde_json::Map<String, serde_json::Value>,
+    blackwell: bool,
+) -> Option<(&'static str, String)> {
     let (installed, ver, import) = match map.get("sageattn3") {
         Some(v) => {
             let imp = v.get("import").and_then(|s| s.as_str()).unwrap_or("");
-            if imp == "missing" { (false, None, imp) }
-            else { (true, v.get("version").and_then(|s| s.as_str()), imp) }
+            if imp == "missing" {
+                (false, None, imp)
+            } else {
+                (true, v.get("version").and_then(|s| s.as_str()), imp)
+            }
         }
         None => (false, None, "missing"),
     };
@@ -282,24 +341,44 @@ pub(crate) fn sage3_note(map: &serde_json::Map<String, serde_json::Value>, black
 
 /// Last `{...}` line of probe stdout → structured result. Pure (tested).
 pub(crate) fn parse_probe_json(stdout: &str) -> Option<ComputeProbe> {
-    let line = stdout.lines().rev().find(|l| l.trim_start().starts_with('{'))?;
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.trim_start().starts_with('{'))?;
     let v: serde_json::Value = serde_json::from_str(line).ok()?;
     if v.get("cuda_available").and_then(|b| b.as_bool()) != Some(true) {
         return None;
     }
     Some(ComputeProbe {
-        torch: v.get("torch").and_then(|t| t.as_str()).unwrap_or("?").to_string(),
-        device: v.get("device").and_then(|d| d.as_str()).unwrap_or("?").to_string(),
+        torch: v
+            .get("torch")
+            .and_then(|t| t.as_str())
+            .unwrap_or("?")
+            .to_string(),
+        device: v
+            .get("device")
+            .and_then(|d| d.as_str())
+            .unwrap_or("?")
+            .to_string(),
     })
 }
 
 /// Map probe stderr to a human-actionable error. Pure (tested).
 pub(crate) fn classify_probe_failure(stderr_tail: &str) -> String {
     let low = stderr_tail.to_lowercase();
-    if low.contains("modulenotfounderror") && low.contains("torch") || low.contains("no module named torch") {
+    if low.contains("modulenotfounderror") && low.contains("torch")
+        || low.contains("no module named torch")
+    {
         return "torch won't import in the new env (install incomplete?) — rebuild the environment.".into();
     }
-    for sig in ["hiperror", "acceleratorerror", "cuda error", "miopen", "hipblas", "rocblas"] {
+    for sig in [
+        "hiperror",
+        "acceleratorerror",
+        "cuda error",
+        "miopen",
+        "hipblas",
+        "rocblas",
+    ] {
         if low.contains(sig) {
             return format!("GPU kernel failure on this torch build ({sig}): {stderr_tail}");
         }
@@ -312,7 +391,11 @@ pub(crate) fn classify_probe_failure(stderr_tail: &str) -> String {
 
 #[cfg(test)]
 mod probe_tests {
-    use super::{classify_probe_failure, parse_probe_json, read_hsa_choice, write_hsa_choice, HsaChoice, COMPUTE_PROBE, KERNEL_IMPORT_PROBE, parse_kernel_json, kernel_probe_failures, kernel_probe_stale, is_blackwell_gpu, sage3_note};
+    use super::{
+        classify_probe_failure, is_blackwell_gpu, kernel_probe_failures, kernel_probe_stale,
+        parse_kernel_json, parse_probe_json, read_hsa_choice, sage3_note, write_hsa_choice,
+        HsaChoice, COMPUTE_PROBE, KERNEL_IMPORT_PROBE,
+    };
     #[test]
     fn probe_script_is_valid_python() {
         // No torch on CI hosts — syntax-check only (same pattern as the
@@ -321,7 +404,11 @@ mod probe_tests {
         std::fs::write(&tmp, COMPUTE_PROBE).unwrap();
         let arg = tmp.to_string_lossy().to_string();
         let ok = std::process::Command::new("python")
-            .args(["-c", "import ast,sys; ast.parse(open(sys.argv[1]).read())", &arg])
+            .args([
+                "-c",
+                "import ast,sys; ast.parse(open(sys.argv[1]).read())",
+                &arg,
+            ])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(true);
@@ -342,8 +429,14 @@ mod probe_tests {
     fn classifies_failures() {
         let hip = "torch.AcceleratorError: CUDA error: invalid argument (hipErrorInvalidValue)";
         assert!(classify_probe_failure(hip).contains("GPU kernel failure"));
-        assert!(classify_probe_failure("ModuleNotFoundError: No module named 'torch'").contains("won't import"));
-        assert!(classify_probe_failure("torch.cuda.OutOfMemoryError: out of memory").contains("out of GPU memory"));
+        assert!(
+            classify_probe_failure("ModuleNotFoundError: No module named 'torch'")
+                .contains("won't import")
+        );
+        assert!(
+            classify_probe_failure("torch.cuda.OutOfMemoryError: out of memory")
+                .contains("out of GPU memory")
+        );
         assert!(classify_probe_failure("weird new error").contains("compute probe failed"));
     }
     #[test]
@@ -353,7 +446,11 @@ mod probe_tests {
         std::fs::write(&tmp, KERNEL_IMPORT_PROBE).unwrap();
         let arg = tmp.to_string_lossy().to_string();
         let ok = std::process::Command::new("python")
-            .args(["-c", "import ast,sys; ast.parse(open(sys.argv[1]).read())", &arg])
+            .args([
+                "-c",
+                "import ast,sys; ast.parse(open(sys.argv[1]).read())",
+                &arg,
+            ])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(true);
@@ -368,7 +465,10 @@ mod probe_tests {
         let map = parse_kernel_json(raw).expect("should parse");
         let fails = kernel_probe_failures(&map);
         assert_eq!(fails.len(), 1);
-        assert!(fails[0].contains("flash_attn") && fails[0].contains("DLL load failed"), "got {fails:?}");
+        assert!(
+            fails[0].contains("flash_attn") && fails[0].contains("DLL load failed"),
+            "got {fails:?}"
+        );
         // All healthy → empty (symbol/op flags never fail).
         let raw_ok = r#"{"torch": {"version": "x", "import": "ok", "extra": ""}, "sage2_symbol": false, "quanto_qbytes_mm": false}"#;
         assert!(kernel_probe_failures(&parse_kernel_json(raw_ok).unwrap()).is_empty());
@@ -382,7 +482,10 @@ mod probe_tests {
         write_hsa_choice(&repo, &HsaChoice::Native);
         assert_eq!(read_hsa_choice(&repo), Some(HsaChoice::Native));
         write_hsa_choice(&repo, &HsaChoice::Override("12.0.1".into()));
-        assert_eq!(read_hsa_choice(&repo), Some(HsaChoice::Override("12.0.1".into())));
+        assert_eq!(
+            read_hsa_choice(&repo),
+            Some(HsaChoice::Override("12.0.1".into()))
+        );
         std::fs::write(repo.join(super::HSA_CHOICE_FILE), "garbage!!").unwrap();
         assert_eq!(read_hsa_choice(&repo), None);
         let _ = std::fs::remove_dir_all(&repo);
@@ -391,11 +494,16 @@ mod probe_tests {
     fn stale_gguf_flagged_floor_passes() {
         // #2274: 1.0.2 imports fine but silently disables the SM120 async
         // path — Verify must say so instead of reporting healthy.
-        let raw_old = r#"{"llamacpp-gguf-cuda": {"version": "1.0.2", "import": "ok", "extra": ""}}"#;
+        let raw_old =
+            r#"{"llamacpp-gguf-cuda": {"version": "1.0.2", "import": "ok", "extra": ""}}"#;
         let stale = kernel_probe_stale(&parse_kernel_json(raw_old).unwrap());
         assert_eq!(stale.len(), 1);
-        assert!(stale[0].contains("1.0.2") && stale[0].contains("Sync kernels"), "got {stale:?}");
-        let raw_floor = r#"{"llamacpp-gguf-cuda": {"version": "1.0.21", "import": "ok", "extra": ""}}"#;
+        assert!(
+            stale[0].contains("1.0.2") && stale[0].contains("Sync kernels"),
+            "got {stale:?}"
+        );
+        let raw_floor =
+            r#"{"llamacpp-gguf-cuda": {"version": "1.0.21", "import": "ok", "extra": ""}}"#;
         assert!(kernel_probe_stale(&parse_kernel_json(raw_floor).unwrap()).is_empty());
         let raw_missing = r#"{"torch": {"version": "x", "import": "ok", "extra": ""}}"#;
         assert!(kernel_probe_stale(&parse_kernel_json(raw_missing).unwrap()).is_empty());
@@ -403,28 +511,43 @@ mod probe_tests {
     #[test]
     fn blackwell_names() {
         // Proved Blackwell (isolated probe ran on a 3080 → refused).
-        for n in ["NVIDIA GeForce RTX 5090", "NVIDIA GeForce RTX 5070 Laptop GPU",
-                  "NVIDIA RTX PRO 6000 Blackwell", "NVIDIA B200"] {
+        for n in [
+            "NVIDIA GeForce RTX 5090",
+            "NVIDIA GeForce RTX 5070 Laptop GPU",
+            "NVIDIA RTX PRO 6000 Blackwell",
+            "NVIDIA B200",
+        ] {
             assert!(is_blackwell_gpu(n), "{n}");
         }
         // Older / other-arch must stay silent: note the Turing-Quadro
         // and Ada traps (both contain Blackwell-looking tokens).
-        for n in ["NVIDIA GeForce RTX 3080", "NVIDIA GeForce RTX 4090",
-                  "NVIDIA RTX 5000 Ada Generation", "Quadro RTX 5000",
-                  "NVIDIA H100", "AMD Radeon RX 7900 XTX", ""] {
+        for n in [
+            "NVIDIA GeForce RTX 3080",
+            "NVIDIA GeForce RTX 4090",
+            "NVIDIA RTX 5000 Ada Generation",
+            "Quadro RTX 5000",
+            "NVIDIA H100",
+            "AMD Radeon RX 7900 XTX",
+            "",
+        ] {
             assert!(!is_blackwell_gpu(n), "{n}");
         }
     }
     #[test]
     fn sage3_gate_levels() {
         // #2280: explain, never install. Common case stays silent.
-        let missing = parse_kernel_json(r#"{"torch": {"version": "x", "import": "ok", "extra": ""}}"#).unwrap();
+        let missing =
+            parse_kernel_json(r#"{"torch": {"version": "x", "import": "ok", "extra": ""}}"#)
+                .unwrap();
         assert!(sage3_note(&missing, false).is_none());
         let (lvl, msg) = sage3_note(&missing, true).expect("blackwell wants an explanation");
         assert_eq!(lvl, "info");
         assert!(msg.contains("3.12") && msg.contains("2.2.0"), "got {msg}");
         // Stray install on a runnable GPU: info. On an older GPU: warn.
-        let ok = parse_kernel_json(r#"{"sageattn3": {"version": "1.0.0", "import": "ok", "extra": ""}}"#).unwrap();
+        let ok = parse_kernel_json(
+            r#"{"sageattn3": {"version": "1.0.0", "import": "ok", "extra": ""}}"#,
+        )
+        .unwrap();
         assert_eq!(sage3_note(&ok, true).unwrap().0, "info");
         let (lvl, msg) = sage3_note(&ok, false).unwrap();
         assert_eq!(lvl, "warn");

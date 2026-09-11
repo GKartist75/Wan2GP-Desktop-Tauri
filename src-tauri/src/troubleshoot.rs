@@ -2,9 +2,12 @@
 //! Six small read-only-first commands behind Manage → Troubleshooting:
 //! failsafe apply, CUDA smoke test, port status/fix, debug bundle,
 //! Triton import test + cache clear (with optional SDPA fallback).
-use std::path::PathBuf;
 use crate::base::*;
-use crate::{hw::{get_gpu_info_sync, kernel_profile_key}, status::get_active_env};
+use crate::{
+    hw::{get_gpu_info_sync, kernel_profile_key},
+    status::get_active_env,
+};
+use std::path::PathBuf;
 
 /// Resolve the active env's interpreter (same shape as launch.rs).
 fn active_python() -> Option<PathBuf> {
@@ -103,8 +106,9 @@ pub fn troubleshoot_failsafe_apply() -> Result<serde_json::Value, String> {
     let mut backup: Option<String> = None;
     if cfg_path.exists() {
         let raw = std::fs::read_to_string(&cfg_path).map_err(|e| e.to_string())?;
-        let mut v: serde_json::Value =
-            serde_json::from_str(&raw).map_err(|_| "wgp_config.json is not valid JSON — use Reset wgp_config first".to_string())?;
+        let mut v: serde_json::Value = serde_json::from_str(&raw).map_err(|_| {
+            "wgp_config.json is not valid JSON — use Reset wgp_config first".to_string()
+        })?;
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -116,7 +120,10 @@ pub fn troubleshoot_failsafe_apply() -> Result<serde_json::Value, String> {
             for k in ["video_profile", "image_profile", "audio_profile"] {
                 m.insert(k.to_string(), serde_json::json!(5));
             }
-            m.insert("vram_safety_coefficient".to_string(), serde_json::json!(0.6));
+            m.insert(
+                "vram_safety_coefficient".to_string(),
+                serde_json::json!(0.6),
+            );
         }
         let eol = if raw.contains("\r\n") { "\r\n" } else { "\n" };
         let s = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
@@ -124,7 +131,11 @@ pub fn troubleshoot_failsafe_apply() -> Result<serde_json::Value, String> {
     }
     // 2) desktop-config launchArgs → canonical minimal flags (dedupe first).
     let mut dc = load_config_value();
-    let prev = dc.get("launchArgs").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let prev = dc
+        .get("launchArgs")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let merged = merge_launch_flags(
         &prev,
         &[
@@ -165,10 +176,14 @@ pub fn troubleshoot_cuda_check() -> serde_json::Value {
                     v["python"] = serde_json::json!(py.to_string_lossy().to_string());
                     v
                 }
-                Err(_) => serde_json::json!({"ok": false, "error": "torch probe returned unparseable output", "raw": s}),
+                Err(_) => {
+                    serde_json::json!({"ok": false, "error": "torch probe returned unparseable output", "raw": s})
+                }
             }
         }
-        Ok(o) => serde_json::json!({"ok": false, "error": "torch import failed (install incomplete?)", "stderr": String::from_utf8_lossy(&o.stderr).chars().take(500).collect::<String>()}),
+        Ok(o) => {
+            serde_json::json!({"ok": false, "error": "torch import failed (install incomplete?)", "stderr": String::from_utf8_lossy(&o.stderr).chars().take(500).collect::<String>()})
+        }
         Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
     }
 }
@@ -194,18 +209,38 @@ pub fn troubleshoot_gpu_compute() -> serde_json::Value {
     }
     let repo = get_repo_dir();
     let mut modes: Vec<(&str, Option<String>)> = Vec::new();
-    if let Some(v) = crate::amd::profile_hsa_version(&repo, &profile) { modes.push(("override", Some(v))); }
+    if let Some(v) = crate::amd::profile_hsa_version(&repo, &profile) {
+        modes.push(("override", Some(v)));
+    }
     modes.push(("native", None));
     let mut detail = serde_json::Map::new();
     for (label, hsa) in &modes {
         match crate::amd::run_compute_probe(&py, hsa.as_deref()) {
             Ok(p) => {
-                let choice = match hsa { Some(v) => crate::amd::HsaChoice::Override(v.clone()), None => crate::amd::HsaChoice::Native };
+                let choice = match hsa {
+                    Some(v) => crate::amd::HsaChoice::Override(v.clone()),
+                    None => crate::amd::HsaChoice::Native,
+                };
                 crate::amd::write_hsa_choice(&repo, &choice);
-                detail.insert(label.to_string(), serde_json::json!({"ok": true, "torch": p.torch, "device": p.device}));
-                return verify_kernels(&py, p.torch, p.device, label, true, Some(serde_json::Value::Object(detail)));
+                detail.insert(
+                    label.to_string(),
+                    serde_json::json!({"ok": true, "torch": p.torch, "device": p.device}),
+                );
+                return verify_kernels(
+                    &py,
+                    p.torch,
+                    p.device,
+                    label,
+                    true,
+                    Some(serde_json::Value::Object(detail)),
+                );
             }
-            Err(e) => { detail.insert(label.to_string(), serde_json::json!({"ok": false, "error": e})); }
+            Err(e) => {
+                detail.insert(
+                    label.to_string(),
+                    serde_json::json!({"ok": false, "error": e}),
+                );
+            }
         }
     }
     serde_json::json!({"ok": false, "error": "compute probe failed in both HSA modes — attach Copy diagnostics", "detail": detail})
@@ -216,14 +251,25 @@ pub fn troubleshoot_gpu_compute() -> serde_json::Value {
 /// quarantine and wrong-torch ABIs break imports). Installed-but-broken
 /// dists fail the check; missing dists stay neutral (presence is the
 /// version scan's job).
-fn verify_kernels(py: &std::path::Path, torch: String, device: String, mode: &str, recorded: bool, detail: Option<serde_json::Value>) -> serde_json::Value {
-    let mut base = serde_json::json!({"torch": torch, "device": device, "mode": mode, "recorded": recorded});
-    if let Some(d) = detail { base["detail"] = d; }
+fn verify_kernels(
+    py: &std::path::Path,
+    torch: String,
+    device: String,
+    mode: &str,
+    recorded: bool,
+    detail: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let mut base =
+        serde_json::json!({"torch": torch, "device": device, "mode": mode, "recorded": recorded});
+    if let Some(d) = detail {
+        base["detail"] = d;
+    }
     match crate::amd::run_kernel_probe(py) {
         Err(e) => {
             base["ok"] = serde_json::json!(true);
             base["kernels"] = serde_json::Value::Null;
-            base["kernel_warning"] = serde_json::json!(format!("kernel probe did not run ({e}) — compute passed"));
+            base["kernel_warning"] =
+                serde_json::json!(format!("kernel probe did not run ({e}) — compute passed"));
             base
         }
         Ok(map) => {
@@ -269,11 +315,16 @@ pub fn troubleshoot_port_status() -> serde_json::Value {
     #[cfg(windows)]
     {
         let ps = format!("Get-NetTCPConnection -LocalPort {port} -State Listen | Select-Object -First 1 -ExpandProperty OwningProcess");
-        if let Ok(o) = silent_command("powershell").args(["-NoProfile", "-Command", &ps]).output() {
+        if let Ok(o) = silent_command("powershell")
+            .args(["-NoProfile", "-Command", &ps])
+            .output()
+        {
             if o.status.success() {
                 let pid_s = String::from_utf8_lossy(&o.stdout).trim().to_string();
                 if let Ok(pid) = pid_s.parse::<u32>() {
-                    let ps2 = format!("(Get-Process -Id {pid} -ErrorAction SilentlyContinue).ProcessName");
+                    let ps2 = format!(
+                        "(Get-Process -Id {pid} -ErrorAction SilentlyContinue).ProcessName"
+                    );
                     let name = silent_command("powershell")
                         .args(["-NoProfile", "-Command", &ps2])
                         .output()
@@ -289,7 +340,13 @@ pub fn troubleshoot_port_status() -> serde_json::Value {
                         .output()
                         .ok()
                         .filter(|o| o.status.success())
-                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().chars().take(300).collect::<String>())
+                        .map(|o| {
+                            String::from_utf8_lossy(&o.stdout)
+                                .trim()
+                                .chars()
+                                .take(300)
+                                .collect::<String>()
+                        })
                         .unwrap_or_default();
                     let ours = cmd.to_lowercase().contains("wgp.py");
                     owner = serde_json::json!({"pid": pid, "name": name, "cmd": cmd, "ours": ours});
@@ -305,12 +362,27 @@ pub fn troubleshoot_port_status() -> serde_json::Value {
 pub fn troubleshoot_port_fix(action: Option<String>) -> Result<serde_json::Value, String> {
     let a = action.unwrap_or("bump".into());
     let mut dc = load_config_value();
-    let port = dc.get("serverPort").and_then(serde_json::Value::as_u64).unwrap_or(7860);
+    let port = dc
+        .get("serverPort")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(7860);
     if a == "kill" {
         let st = troubleshoot_port_status();
-        let pid = st.get("owner").and_then(|o| o.get("pid")).and_then(serde_json::Value::as_u64);
-        let name = st.get("owner").and_then(|o| o.get("name")).and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-        let ours = st.get("owner").and_then(|o| o.get("ours")).and_then(serde_json::Value::as_bool).unwrap_or(false);
+        let pid = st
+            .get("owner")
+            .and_then(|o| o.get("pid"))
+            .and_then(serde_json::Value::as_u64);
+        let name = st
+            .get("owner")
+            .and_then(|o| o.get("name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let ours = st
+            .get("owner")
+            .and_then(|o| o.get("ours"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         let Some(pid) = pid else {
             return Err("Port owner unknown — use 'next free port' instead".into());
         };
@@ -321,23 +393,132 @@ pub fn troubleshoot_port_fix(action: Option<String>) -> Result<serde_json::Value
             return Err(format!("Port {port} is owned by '{name}' (pid {pid}) — not a Python server. Change the port instead."));
         }
         #[cfg(windows)]
-        let _ = silent_command("taskkill").args(["/pid", &pid.to_string(), "/f", "/t"]).output();
+        let _ = silent_command("taskkill")
+            .args(["/pid", &pid.to_string(), "/f", "/t"])
+            .output();
         #[cfg(not(windows))]
-        let _ = silent_command("kill").arg("-9").arg(pid.to_string()).output();
+        let _ = silent_command("kill")
+            .arg("-9")
+            .arg(pid.to_string())
+            .output();
         std::thread::sleep(std::time::Duration::from_millis(800));
         let free = std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_err();
-        return Ok(serde_json::json!({"ok": true, "action": "kill", "port": port, "pid": pid, "freed": free}));
+        return Ok(
+            serde_json::json!({"ok": true, "action": "kill", "port": port, "pid": pid, "freed": free}),
+        );
     }
     // bump: first free port in +1..=+9
     for p in (port + 1)..=(port + 9) {
         if std::net::TcpStream::connect(format!("127.0.0.1:{p}")).is_err() {
             dc["serverPort"] = serde_json::json!(p);
             let dp = get_config_file();
-            atomic_write(&dp, &serde_json::to_string_pretty(&dc).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            atomic_write(
+                &dp,
+                &serde_json::to_string_pretty(&dc).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
             return Ok(serde_json::json!({"ok": true, "action": "bump", "from": port, "port": p}));
         }
     }
-    Err(format!("No free port in {}–{} — kill the owner instead", port + 1, port + 9))
+    Err(format!(
+        "No free port in {}–{} — kill the owner instead",
+        port + 1,
+        port + 9
+    ))
+}
+
+/// Windows long paths opt-in state (read-only). Used by the one-click fix.
+#[tauri::command]
+pub fn troubleshoot_long_paths_status() -> serde_json::Value {
+    #[cfg(not(windows))]
+    {
+        return serde_json::json!({"enabled": true, "note": "Windows only"});
+    }
+    #[cfg(windows)]
+    {
+        let out = silent_command("reg")
+            .args([
+                "query",
+                "HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem",
+                "/v",
+                "LongPathsEnabled",
+            ])
+            .output();
+        match out {
+            Ok(o) if o.status.success() => {
+                let text = String::from_utf8_lossy(&o.stdout);
+                match crate::install::long_paths_state(&text) {
+                    Some(enabled) => serde_json::json!({"enabled": enabled}),
+                    None => serde_json::json!({"enabled": false}),
+                }
+            }
+            _ => serde_json::json!({"enabled": false}),
+        }
+    }
+}
+
+fn long_paths_currently_enabled() -> bool {
+    #[cfg(not(windows))]
+    {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        silent_command("reg")
+            .args([
+                "query",
+                "HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem",
+                "/v",
+                "LongPathsEnabled",
+            ])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| crate::install::long_paths_state(&String::from_utf8_lossy(&o.stdout)))
+            .unwrap_or(false)
+    }
+}
+
+/// One-click Windows long paths fix. Only ever writes LongPathsEnabled=1.
+#[tauri::command]
+pub fn troubleshoot_long_paths_enable() -> Result<serde_json::Value, String> {
+    #[cfg(not(windows))]
+    {
+        return Err("Windows only".into());
+    }
+    #[cfg(windows)]
+    {
+        if long_paths_currently_enabled() {
+            return Ok(serde_json::json!({"ok": true, "already": true}));
+        }
+        let _ = silent_command("reg")
+            .args([
+                "add",
+                "HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem",
+                "/v",
+                "LongPathsEnabled",
+                "/t",
+                "REG_DWORD",
+                "/d",
+                "1",
+                "/f",
+            ])
+            .output();
+        if long_paths_currently_enabled() {
+            return Ok(serde_json::json!({"ok": true, "elevated": false, "reboot": true}));
+        }
+        let _ = silent_command("powershell")
+.args([
+"-NoProfile",
+"-Command",
+"Start-Process reg -ArgumentList 'add HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem /v LongPathsEnabled /t REG_DWORD /d 1 /f' -Verb RunAs -Wait",
+])
+.output();
+        if long_paths_currently_enabled() {
+            return Ok(serde_json::json!({"ok": true, "elevated": true, "reboot": true}));
+        }
+        Err("Could not enable long paths (admin declined or blocked). Enable manually: Settings > System > For developers > Long paths, or run the reg add command as admin, then reboot.".into())
+    }
 }
 
 /// Debug bundle markdown for Discord/GitHub (upstream "Before asking for help").
@@ -351,7 +532,10 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
     let cuda = troubleshoot_cuda_check();
     let torch = cuda.get("torch").and_then(|v| v.as_str()).unwrap_or("?");
     let cuda_v = cuda.get("cuda").and_then(|v| v.as_str()).unwrap_or("?");
-    let cuda_ok = cuda.get("available").and_then(serde_json::Value::as_bool).unwrap_or(false);
+    let cuda_ok = cuda
+        .get("available")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
     let py_ver = silent_command(
         active_python()
             .map(|p| p.to_string_lossy().to_string())
@@ -360,7 +544,15 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
     .args(["--version"])
     .output()
     .ok()
-    .map(|o| format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)).trim().to_string())
+    .map(|o| {
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        )
+        .trim()
+        .to_string()
+    })
     .filter(|s| !s.is_empty())
     .unwrap_or("?".into());
     // wgp_config relevant keys (tokens never live there — safe to dump).
@@ -378,7 +570,11 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
                 .rev()
                 .filter(|l| {
                     let t = l.to_lowercase();
-                    t.contains("error") || t.contains("traceback") || t.contains("out of memory") || t.contains("keyerror") || t.contains("failed")
+                    t.contains("error")
+                        || t.contains("traceback")
+                        || t.contains("out of memory")
+                        || t.contains("keyerror")
+                        || t.contains("failed")
                 })
                 .take(15)
                 .cloned()
@@ -404,7 +600,9 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
         format!("\n**AMD** hsa_choice={choice} HSA_OVERRIDE={hsa} MIOPEN_FIND_MODE={mio} numpy={numpy} quanto={quanto}",
             hsa = std::env::var("HSA_OVERRIDE_GFX_VERSION").unwrap_or("(unset)".into()),
             mio = std::env::var("MIOPEN_FIND_MODE").unwrap_or("(unset)".into()))
-    } else { String::new() };
+    } else {
+        String::new()
+    };
     let md = format!(
         "**Launcher** v{ver} ({os}/{arch})\n**GPU** {gpu} ({vendor}, {vram} MB VRAM)\n**Python** {py}\n**Torch** {torch} + CUDA {cuda_v} (cuda_available={cuda_ok}){amd}\n**Launch** port={port} server={server} share={share} gpu={gpudev} args=`{args}`\n**Profiles** video={vp} image={ip} audio={ap} quant={q}\n**Log tail**\n```\n{tail}\n```",
         os = std::env::consts::OS,
@@ -434,9 +632,16 @@ pub fn troubleshoot_triton_test() -> serde_json::Value {
     let Some(py) = active_python() else {
         return serde_json::json!({"ok": false, "error": "No Python environment installed — run Install first"});
     };
-    match silent_command(&py).args(["-c", "import triton; print(triton.__version__)"]).output() {
-        Ok(o) if o.status.success() => serde_json::json!({"ok": true, "version": String::from_utf8_lossy(&o.stdout).trim().to_string()}),
-        Ok(o) => serde_json::json!({"ok": false, "error": "triton import failed — attention modes needing Triton (sage/flash/compile/int8 kernels) won't work; fall back to SDPA", "stderr": String::from_utf8_lossy(&o.stderr).chars().take(500).collect::<String>()}),
+    match silent_command(&py)
+        .args(["-c", "import triton; print(triton.__version__)"])
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            serde_json::json!({"ok": true, "version": String::from_utf8_lossy(&o.stdout).trim().to_string()})
+        }
+        Ok(o) => {
+            serde_json::json!({"ok": false, "error": "triton import failed — attention modes needing Triton (sage/flash/compile/int8 kernels) won't work; fall back to SDPA", "stderr": String::from_utf8_lossy(&o.stderr).chars().take(500).collect::<String>()})
+        }
         Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
     }
 }
@@ -475,14 +680,24 @@ pub fn troubleshoot_triton_clear(fallback_sdpa: Option<bool>) -> Result<serde_js
     let mut launch_args: Option<String> = None;
     if fallback_sdpa == Some(true) {
         let mut dc = load_config_value();
-        let prev = dc.get("launchArgs").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let prev = dc
+            .get("launchArgs")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let merged = merge_launch_flags(&prev, &[("--attention", Some("sdpa"))]);
         dc["launchArgs"] = serde_json::json!(merged.clone());
         let dp = get_config_file();
-        atomic_write(&dp, &serde_json::to_string_pretty(&dc).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        atomic_write(
+            &dp,
+            &serde_json::to_string_pretty(&dc).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
         launch_args = Some(merged);
     }
-    Ok(serde_json::json!({"ok": true, "success": true, "cleared": cleared, "backup": backup, "launchArgs": launch_args}))
+    Ok(
+        serde_json::json!({"ok": true, "success": true, "cleared": cleared, "backup": backup, "launchArgs": launch_args}),
+    )
 }
 
 #[cfg(test)]
@@ -490,9 +705,25 @@ mod troubleshoot_tests {
     use super::*;
     #[test]
     fn merge_flags_dedupes() {
-        let m = merge_launch_flags("--profile 3 --attention sage2 --verbose 2", &[("--attention", Some("sdpa")), ("--fp16", None)]);
-        assert!(m.contains("--attention sdpa") && !m.contains("sage2") && m.contains("--verbose 2") && m.contains("--fp16"));
-        let m2 = merge_launch_flags("", &[("--attention", Some("sdpa")), ("--profile", Some("4")), ("--teacache", Some("0")), ("--fp16", None)]);
+        let m = merge_launch_flags(
+            "--profile 3 --attention sage2 --verbose 2",
+            &[("--attention", Some("sdpa")), ("--fp16", None)],
+        );
+        assert!(
+            m.contains("--attention sdpa")
+                && !m.contains("sage2")
+                && m.contains("--verbose 2")
+                && m.contains("--fp16")
+        );
+        let m2 = merge_launch_flags(
+            "",
+            &[
+                ("--attention", Some("sdpa")),
+                ("--profile", Some("4")),
+                ("--teacache", Some("0")),
+                ("--fp16", None),
+            ],
+        );
         assert_eq!(m2, "--attention sdpa --profile 4 --teacache 0 --fp16");
     }
 }

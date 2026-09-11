@@ -1,5 +1,5 @@
-mod base;
 mod amd;
+mod base;
 mod config;
 mod electron;
 mod features;
@@ -24,17 +24,44 @@ pub fn run() {
         if cfg_path.exists() {
             if let Ok(s) = std::fs::read_to_string(&cfg_path) {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
-                    let lg = v.get("launcherGpu")
+                    let lg = v
+                        .get("launcherGpu")
                         .and_then(|x| x.as_str())
-                        .unwrap_or_else(|| if v.get("electronGpu").and_then(serde_json::Value::as_bool) == Some(false) { "disabled" } else { "auto" })
-                        .trim().to_string();
+                        .unwrap_or_else(|| {
+                            if v.get("electronGpu").and_then(serde_json::Value::as_bool)
+                                == Some(false)
+                            {
+                                "disabled"
+                            } else {
+                                "auto"
+                            }
+                        })
+                        .trim()
+                        .to_string();
                     match lg.as_str() {
-                        "disabled" => std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGS", "--disable-gpu"),
-                        "integrated" => std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGS", "--force_low_power_gpu"),
-                        "dedicated" => std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGS", "--force_high_performance_gpu"),
+                        "disabled" => {
+                            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGS", "--disable-gpu")
+                        }
+                        "integrated" => std::env::set_var(
+                            "WEBVIEW2_ADDITIONAL_BROWSER_ARGS",
+                            "--force_low_power_gpu",
+                        ),
+                        "dedicated" => std::env::set_var(
+                            "WEBVIEW2_ADDITIONAL_BROWSER_ARGS",
+                            "--force_high_performance_gpu",
+                        ),
                         _ => {}
                     }
-                    eprintln!("[launcher] GPU preference: {} — {}", lg, match lg.as_str() { "integrated" => "iGPU (power saving, frees VRAM)", "dedicated" => "dGPU (high perf)", "disabled" => "SwiftShader (max VRAM)", _ => "OS decides" });
+                    eprintln!(
+                        "[launcher] GPU preference: {} — {}",
+                        lg,
+                        match lg.as_str() {
+                            "integrated" => "iGPU (power saving, frees VRAM)",
+                            "dedicated" => "dGPU (high perf)",
+                            "disabled" => "SwiftShader (max VRAM)",
+                            _ => "OS decides",
+                        }
+                    );
                 }
             }
         }
@@ -66,36 +93,142 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            system::greet, hw::detect_gpu, hw::detect_gpus, hw::detect_hardware, hw::get_hardware_profile, hw::get_system_metrics,
-            status::get_status, status::check_python, status::check_git, status::check_installed, status::check_command,
-            config::config_load, config::config_save, config::get_install_paths, config::get_disk_space, config::get_model_paths, config::detect_model_folders,
-            config::install_plan, config::validate_install, config::uv_cache_info, config::uv_cache_size, config::manage_list,
-            updates::get_desktop_version, updates::get_wangp_local_version, updates::get_desktop_git_info,
-            launch::launch, launch::stop_wangp, launch::stop_all_servers, system::open_folder, system::select_folder, system::confirm_dialog, system::repair_settings, system::reset_wgp_config,
-            features::check_package, features::check_package_updates, features::deepy_status, features::memory_profile_read,
-            features::auto_tune_detect, features::auto_tune_recommend,
-            install::install, install::reinstall, install::uninstall, install::sync_kernels, install::update, install::dlss5_status, install::install_dlss5, install::classify_target, install::python_preflight, install::restore_backup, config::manage_set_active, config::uninstall_env,
-            launch::open_external, launch::detect_browsers, launch::launch_browser, launch::launch_browser_no_gpu, launch::chrome_available,
-            system::set_data_dir, system::reset_data_dir, system::migrate_to_preferred, system::move_folder, system::folder_size, system::downloads_since, system::save_downloaded_file, system::write_wgp_config, install::install_prerequisite,
-            updates::get_wangp_upstream_info, updates::get_wangp_version, system::report_issue, system::create_desktop_shortcut, electron::detect_electron, electron::uninstall_electron,
-            features::upgrade_package, features::install_package, features::uninstall_package, features::restore_requirements,
-            features::llm_engines_list, features::llm_engine_install, features::llm_engine_uninstall, features::llm_engine_serve, features::llm_engine_auth,
-            features::deepy_activate, features::deepy_set, features::set_auto_start, features::memory_profile_apply,
-            features::notifier_config, features::notifier_set, features::notifier_test,
-            plugins::plugins_list, plugins::plugin_install, plugins::plugin_check_update, plugins::plugin_check_updates, plugins::plugin_update, plugins::plugin_uninstall, plugins::plugin_refresh_catalog,
-            features::set_theme_follow_system, features::set_notifications_enabled,
-            updates::check_update, updates::download_update, updates::install_update,
-            system::create_browser_view, system::destroy_browser_view, system::get_log_history, config::uv_cache_clean,
-            system::webview_memory, system::bv_sync_bounds, system::save_staged_download,
-            system::toggle_term_window, system::term_set_dock, system::export_logs, system::mirror_console,
-            system::open_task_manager, system::get_crash_recovery_info,
-            launch::launch_webview, launch::popout_webview, system::hide_browser_view, system::detach_browser_view, system::reattach_browser_view,
-            system::create_term_view, system::destroy_term_view, system::bv_navigate, system::bv_set_zoom, system::bv_set_dock,
-            system::is_data_dir_roaming, system::migrate_choose, system::notifier_ensure, system::ui_mode_set,
-            troubleshoot::troubleshoot_failsafe_apply, troubleshoot::troubleshoot_cuda_check,
-            troubleshoot::troubleshoot_port_status, troubleshoot::troubleshoot_port_fix,
-            troubleshoot::troubleshoot_debug_bundle, troubleshoot::troubleshoot_triton_test,
-            troubleshoot::troubleshoot_triton_clear, troubleshoot::troubleshoot_gpu_compute,
+            system::greet,
+            hw::detect_gpu,
+            hw::detect_gpus,
+            hw::detect_hardware,
+            hw::get_hardware_profile,
+            hw::get_system_metrics,
+            status::get_status,
+            status::check_python,
+            status::check_git,
+            status::check_installed,
+            status::check_command,
+            config::config_load,
+            config::config_save,
+            config::get_install_paths,
+            config::get_disk_space,
+            config::get_model_paths,
+            config::detect_model_folders,
+            config::install_plan,
+            config::validate_install,
+            config::uv_cache_info,
+            config::uv_cache_size,
+            config::manage_list,
+            updates::get_desktop_version,
+            updates::get_wangp_local_version,
+            updates::get_desktop_git_info,
+            launch::launch,
+            launch::stop_wangp,
+            launch::stop_all_servers,
+            system::open_folder,
+            system::select_folder,
+            system::confirm_dialog,
+            system::repair_settings,
+            system::reset_wgp_config,
+            features::check_package,
+            features::check_package_updates,
+            features::deepy_status,
+            features::memory_profile_read,
+            features::auto_tune_detect,
+            features::auto_tune_recommend,
+            install::install,
+            install::reinstall,
+            install::uninstall,
+            install::sync_kernels,
+            install::update,
+            install::dlss5_status,
+            install::install_dlss5,
+            install::classify_target,
+            install::python_preflight,
+            install::restore_backup,
+            config::manage_set_active,
+            config::uninstall_env,
+            launch::open_external,
+            launch::detect_browsers,
+            launch::launch_browser,
+            launch::launch_browser_no_gpu,
+            launch::chrome_available,
+            system::set_data_dir,
+            system::reset_data_dir,
+            system::migrate_to_preferred,
+            system::move_folder,
+            system::folder_size,
+            system::downloads_since,
+            system::save_downloaded_file,
+            system::write_wgp_config,
+            install::install_prerequisite,
+            updates::get_wangp_upstream_info,
+            updates::get_wangp_version,
+            system::report_issue,
+            system::create_desktop_shortcut,
+            electron::detect_electron,
+            electron::uninstall_electron,
+            features::upgrade_package,
+            features::install_package,
+            features::uninstall_package,
+            features::restore_requirements,
+            features::llm_engines_list,
+            features::llm_engine_install,
+            features::llm_engine_uninstall,
+            features::llm_engine_serve,
+            features::llm_engine_auth,
+            features::deepy_activate,
+            features::deepy_set,
+            features::set_auto_start,
+            features::memory_profile_apply,
+            features::notifier_config,
+            features::notifier_set,
+            features::notifier_test,
+            plugins::plugins_list,
+            plugins::plugin_install,
+            plugins::plugin_check_update,
+            plugins::plugin_check_updates,
+            plugins::plugin_update,
+            plugins::plugin_uninstall,
+            plugins::plugin_refresh_catalog,
+            features::set_theme_follow_system,
+            features::set_notifications_enabled,
+            updates::check_update,
+            updates::download_update,
+            updates::install_update,
+            system::create_browser_view,
+            system::destroy_browser_view,
+            system::get_log_history,
+            config::uv_cache_clean,
+            system::webview_memory,
+            system::bv_sync_bounds,
+            system::save_staged_download,
+            system::toggle_term_window,
+            system::term_set_dock,
+            system::export_logs,
+            system::mirror_console,
+            system::open_task_manager,
+            system::get_crash_recovery_info,
+            launch::launch_webview,
+            launch::popout_webview,
+            system::hide_browser_view,
+            system::detach_browser_view,
+            system::reattach_browser_view,
+            system::create_term_view,
+            system::destroy_term_view,
+            system::bv_navigate,
+            system::bv_set_zoom,
+            system::bv_set_dock,
+            system::is_data_dir_roaming,
+            system::migrate_choose,
+            system::notifier_ensure,
+            system::ui_mode_set,
+            troubleshoot::troubleshoot_failsafe_apply,
+            troubleshoot::troubleshoot_cuda_check,
+            troubleshoot::troubleshoot_port_status,
+            troubleshoot::troubleshoot_port_fix,
+            troubleshoot::troubleshoot_long_paths_status,
+            troubleshoot::troubleshoot_long_paths_enable,
+            troubleshoot::troubleshoot_debug_bundle,
+            troubleshoot::troubleshoot_triton_test,
+            troubleshoot::troubleshoot_triton_clear,
+            troubleshoot::troubleshoot_gpu_compute,
             install::preflight_check
         ])
         .run(tauri::generate_context!())
