@@ -246,7 +246,9 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.6.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.2) *(latest)* — Windows long paths end to end (preflight warn + one-click enable + install gate), gallery keeps last results (seeded `clear_file_list` default), installer no longer asks twice (backup-stash/radio/foreign-folder fixes).
+- [**v0.6.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.3) *(latest)* — AMD easy-mode installer (#15): per-family `/v2/` ROCm torch float with `rocm[devel]`, full ROCm launch env, attention Auto (incl. setup.py `sage`-artifact repair), fixed AMD package buttons + auto `triton-windows`, repair flow survives missing `pyvenv.cfg` (no more exit 106), Intel/AMD pipelines separated. In-app updater fixed (signed artifacts + `latest.json`).
+
+- [**v0.6.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.2) — Windows long paths end to end (preflight warn + one-click enable + install gate), gallery keeps last results (seeded `clear_file_list` default), installer no longer asks twice (backup-stash/radio/foreign-folder fixes).
 
 - [**v0.6.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.1) — native-view drag & drop fixed (drops reach Gradio), closing the launcher now stops servers (no orphans), Stop hardening (OpenCode :4096 + custom-port sweeps, unique terminal scripts + cleanup).
 
