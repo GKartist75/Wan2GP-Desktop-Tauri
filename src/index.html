@@ -139,6 +139,12 @@
           <button class="btn btn-primary small" id="ggufSaveBtn" style="margin-top:8px">Save GGUF settings</button>
         </div>
         <div class="settings-section">
+          <h3>AMD ROCm</h3>
+          <p class="token-hint">AMD-only, applies on next launch. <em>Disable MIOpen</em> leaves <code>MIOPEN_FIND_MODE</code> fully unset (the guide's <code>cudnn.enabled = False</code> alternative) — try it if generation crashes with MIOpen/hip errors while <em>FAST</em> (default) is set.</p>
+          <label class="toggle-row"><input type="checkbox" id="amdMiopenDisabled"> <span>Disable MIOpen (unset MIOPEN_FIND_MODE)</span></label>
+          <button class="btn btn-primary small" id="amdSaveBtn" style="margin-top:8px">Save AMD settings</button>
+        </div>
+        <div class="settings-section">
           <h3>Repair Settings</h3>
           <p class="token-hint">If saving settings in Wan2GP fails with <em>"Value: N is not in the list of choices: [0, 1]"</em>, a saved value is out of range for a dropdown (usually from an older version or imported settings). This scans <code>models/_settings.json</code> and all <code>*_settings.json</code> files and resets out-of-range values to valid ones. Originals are backed up as <code>*.bak-repair</code>.</p>
           <button class="btn btn-primary small" id="repairSettingsBtn" style="margin-top:8px">Scan & Repair Settings</button>

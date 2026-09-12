@@ -676,6 +676,10 @@ function openSettings() {
     if ($("ggufMatmulMode")) $("ggufMatmulMode").value = g.matmulMode || "auto";
     if ($("ggufStreamK")) $("ggufStreamK").checked = g.streamK !== false;
     if ($("ggufBf16Fp16")) $("ggufBf16Fp16").checked = g.bf16Fp16 === true;
+    // AMD ROCm controls (backend: amdEnv.miopenDisabled, default false)
+    const a = cfg.amdEnv || { miopenDisabled: false };
+    if ($("amdMiopenDisabled"))
+      $("amdMiopenDisabled").checked = a.miopenDisabled === true;
     // GPU device picker: fill the dropdown from the main process, keep current choice
     loadGpuDeviceOptions(cfg.gpuDevice || "auto");
     // Launcher GPU picker — auto | integrated | dedicated | disabled
@@ -6651,6 +6655,14 @@ $("ggufSaveBtn")?.addEventListener("click", async () => {
   };
   await window.w2gp.configSave(cfg);
   showToast("GGUF CUDA kernel settings saved — applies on next launch");
+});
+$("amdSaveBtn")?.addEventListener("click", async () => {
+  const cfg = await window.w2gp.configLoad();
+  cfg.amdEnv = {
+    miopenDisabled: $("amdMiopenDisabled")?.checked === true,
+  };
+  await window.w2gp.configSave(cfg);
+  showToast("AMD settings saved — applies on next launch");
 });
 $("portSaveBtn")?.addEventListener("click", async () => {
   const val = parseInt($("portInput")?.value) || 7860;
