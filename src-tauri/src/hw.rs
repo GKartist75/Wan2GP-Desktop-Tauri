@@ -1639,23 +1639,13 @@ mod amd_sim_tests {
             Some("ROCm 7.15 (TheRock)")
         );
 
-        // Exact-pinned 7.15 primary (verified working), staging float fallback.
+        // Doc per-family float primary (rocm[devel] on /v2/), staging float fallback.
         let (primary, staging) =
             crate::install::amd_therock_torch_cmds("AMD_GFX1201", "AMD Radeon AI PRO R9700")
                 .unwrap();
-        assert!(primary.contains("whl-multi-arch"), "got {primary}");
-        assert!(
-            primary.contains("torch==2.12.0+rocm7.15.0a20260728"),
-            "got {primary}"
-        );
-        assert!(
-            primary.contains("amd-torch-device-gfx1201==2.12.0+rocm7.15.0a20260728"),
-            "got {primary}"
-        );
-        assert!(
-            !primary.contains('['),
-            "bracket-free for setup.py splice: {primary}"
-        );
+        assert!(primary.contains("/v2/gfx120X-all/"), "got {primary}");
+        assert!(primary.contains("rocm[devel]"), "got {primary}");
+        assert!(primary.contains("--pre"), "got {primary}");
         assert!(
             staging.contains("/v2-staging/gfx120X-all/"),
             "got {staging}"

@@ -3251,6 +3251,20 @@ async function refreshDashboard() {
           el.remove();
         });
 
+      // AMD guard: CUDA / bitsandbytes / vanilla PyPI triton / vanilla
+      // spas_sage_attn / PyPI sdist flash-attn break the TheRock env —
+      // hide the one-click add button on AMD profiles with a tooltip
+      // pointing at the guide recipe (backend refuses them too).
+      // NVIDIA behavior is identical to before.
+      var isAmdProfile =
+        typeof status.kernelProfile === "string" &&
+        status.kernelProfile.indexOf("AMD") === 0;
+      var amdBlockedPkgs = [
+        "bitsandbytes",
+        "triton",
+        "spas_sage_attn",
+        "flash-attn",
+      ];
       function setSpec(specId, dotId, val, pkgName) {
         const el = $(specId);
         if (el) el.textContent = val || "—";
@@ -3263,6 +3277,18 @@ async function refreshDashboard() {
         }
         // Show install button if package is missing and we know its pip name
         if (!val && pkgName && el) {
+          // AMD: no one-click button for dists that break the TheRock
+          // env (backend refuses them too) — tooltip notes the guide.
+          if (isAmdProfile && amdBlockedPkgs.indexOf(pkgName) !== -1) {
+            var parent0 = el.closest(".spec-row");
+            if (parent0) {
+              var old0 = parent0.querySelector(".pkg-install-btn");
+              if (old0) old0.remove();
+            }
+            el.title =
+              "Not available on AMD — see the docs/AMD-INSTALLATION.md guide recipe";
+            return;
+          }
           var parent = el.closest(".spec-row");
           if (parent) {
             var oldBtn = parent.querySelector(".pkg-install-btn");

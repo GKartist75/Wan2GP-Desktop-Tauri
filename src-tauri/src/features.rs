@@ -1,7 +1,7 @@
 //! Packages, memory profiles, auto-tune, Deepy, LLM engines, notifier, settings.
 use crate::base::*;
 use crate::{
-    hw::get_gpu_info_sync,
+    hw::{get_gpu_info_sync, kernel_profile_key},
     status::{get_active_env, resolve_env_python},
 };
 use std::path::PathBuf;
@@ -255,12 +255,60 @@ pub fn auto_tune_recommend(
 }
 
 // ── Phase 2-5: remaining 65 handlers as thin stubs (real logic behind shell/fs plugins) ──
+/// AMD package gate for the install path: CUDA / bitsandbytes / vanilla
+/// PyPI triton / vanilla spas_sage_attn / PyPI sdist flash-attn break the
+/// TheRock env, so they are refused on AMD profiles with a pointer to
+/// docs/AMD-INSTALLATION.md. Vanilla `triton` maps to `triton-windows`.
+/// Non-AMD profiles pass through untouched (pure + unit-testable core).
+pub(crate) fn amd_package_gate_result(profile: &str, pkg: &str) -> Result<String, String> {
+    const GUIDE: &str = "docs/AMD-INSTALLATION.md";
+    if !profile.starts_with("AMD") {
+        return Ok(pkg.to_string());
+    }
+    let low = pkg.to_lowercase();
+    // Dist name without any version pin.
+    let cut = low.find(|c| "<>=!~; [".contains(c));
+    let name = match cut {
+        Some(i) => low[..i].trim(),
+        None => low.trim(),
+    };
+    // Vanilla PyPI triton → triton-windows (keep any version pin).
+    if name == "triton" {
+        let pin = pkg[name.len()..].to_string();
+        return Ok(format!("triton-windows{pin}"));
+    }
+    let blocked = name == "bitsandbytes"
+        || name == "spas-sage-attn"
+        || name == "spas_sage_attn"
+        || name == "sageattention"
+        || name == "flash-attn"
+        || name == "flash_attn"
+        || name.contains("cuda")
+        || name.contains("nvidia");
+    if blocked {
+        return Err(format!(
+"refused on AMD (ROCm/TheRock env): '{pkg}' would break torch — use the {GUIDE} guide recipe instead"
+));
+    }
+    Ok(pkg.to_string())
+}
+fn amd_package_gate(pkg: &str) -> Result<String, String> {
+    let gpu = get_gpu_info_sync();
+    let profile = kernel_profile_key(
+        gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
+        gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+    );
+    amd_package_gate_result(&profile, pkg)
+}
 #[tauri::command]
 pub async fn upgrade_package(
     app: tauri::AppHandle,
     pkg: String,
 ) -> Result<serde_json::Value, String> {
     pip_spec_ok(&pkg).map_err(|e| format!("blocked: {e}"))?;
+    // AMD guard (same as install_package): refuse ROCm-breaking dists on
+    // AMD profiles; vanilla `triton` maps to `triton-windows`.
+    let pkg = amd_package_gate(&pkg)?;
     let Some(py) = env_python_bin() else {
         return Err("python not found".into());
     };
@@ -287,6 +335,11 @@ pub async fn install_package(
     pkg: String,
 ) -> Result<serde_json::Value, String> {
     pip_spec_ok(&pkg).map_err(|e| format!("blocked: {e}"))?;
+    // AMD guard: CUDA / bitsandbytes / vanilla PyPI triton / vanilla
+    // spas_sage_attn / PyPI sdist flash-attn break the TheRock env — refuse
+    // with a pointer to the guide recipe. Vanilla `triton` maps to
+    // `triton-windows`. NVIDIA/Intel/CPU paths are identical to before.
+    let pkg = amd_package_gate(&pkg)?;
     let Some(py) = env_python_bin() else {
         return Err("python not found".into());
     };
@@ -298,6 +351,50 @@ pub async fn install_package(
         return Err(format!("pip install {pkg} failed — see console output"));
     }
     Ok(serde_json::json!({"ok": true, "success": true}))
+}
+#[cfg(test)]
+mod amd_package_gate_tests {
+    use super::amd_package_gate_result;
+    #[test]
+    fn amd_refuses_cuda_bitsandbytes_vanilla_sage_flash() {
+        // Vanilla `triton` maps to triton-windows instead of refusing.
+        assert_eq!(
+            amd_package_gate_result("AMD_GFX1201", "triton").unwrap(),
+            "triton-windows"
+        );
+        assert_eq!(
+            amd_package_gate_result("AMD_GFX1201", "triton==3.4.0").unwrap(),
+            "triton-windows==3.4.0"
+        );
+        for bad in [
+            "bitsandbytes",
+            "spas_sage_attn",
+            "spas-sage-attn",
+            "sageattention",
+            "flash-attn",
+            "flash_attn",
+            "nvidia-cuda-runtime-cu12",
+        ] {
+            let err = amd_package_gate_result("AMD_GFX1201", bad).unwrap_err();
+            assert!(
+                err.contains("docs/AMD-INSTALLATION.md"),
+                "missing guide pointer: {err}"
+            );
+        }
+        // NVIDIA behavior identical: everything passes through.
+        assert_eq!(
+            amd_package_gate_result("RTX_40", "triton").unwrap(),
+            "triton"
+        );
+        assert_eq!(
+            amd_package_gate_result("RTX_40", "bitsandbytes").unwrap(),
+            "bitsandbytes"
+        );
+        assert_eq!(
+            amd_package_gate_result("INTEL_XPU", "flash-attn").unwrap(),
+            "flash-attn"
+        );
+    }
 }
 #[tauri::command]
 pub async fn uninstall_package(

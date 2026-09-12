@@ -132,7 +132,7 @@ pub fn get_status() -> serde_json::Value {
             let code = r"import sys, importlib.metadata
 try:
     aliases={'triton':'triton-windows','spas_sage_attn':'spas-sage-attn','huggingface_hub':'huggingface-hub'}
-    pkgs=['python','torch','triton','sageattention','spas_sage_attn','flash_attn','nunchaku','llamacpp_gguf_cuda','lightx2v_kernel','diffusers','transformers','gradio','accelerate','onnxruntime','xformers','mmgp','moviepy','opencv-python','insightface','peft','timm','vector_quantize_pytorch','torchcodec','torchaudio','huggingface_hub','bitsandbytes','numpy','sentencepiece','open_clip_torch','imageio','einops','librosa','soundfile','tokenizers','av','claude-agent-sdk']
+    pkgs=['python','torch','triton','sageattention','spas_sage_attn','flash_attn','nunchaku','llamacpp_gguf_cuda','lightx2v_kernel','diffusers','transformers','gradio','accelerate','onnxruntime','onnxruntime-gpu','xformers','mmgp','moviepy','opencv-python','insightface','peft','timm','vector_quantize_pytorch','torchcodec','torchaudio','huggingface_hub','bitsandbytes','numpy','sentencepiece','open_clip_torch','imageio','einops','librosa','soundfile','tokenizers','av','claude-agent-sdk']
     r=[]
     for p in pkgs:
         try:
@@ -158,6 +158,11 @@ except Exception as e:
                                 .insert(k.to_string(), serde_json::Value::String(v.to_string()));
                         }
                     }
+                    // onnxruntime probe mapping (issue #15 follow-up): the AMD
+                    // install log puts down `onnxruntime-gpu`, which must satisfy
+                    // the Manage `onnxruntime` row — show its version there. Never
+                    // swaps the installed package (runtime effect unverified).
+                    apply_onnxruntime_alias(&mut versions);
                 }
             }
         }
@@ -233,6 +238,19 @@ pub fn check_git() -> serde_json::Value {
 }
 
 // ── Phase 1: paths / config / hardware / install checks ──
+/// Map an installed `onnxruntime-gpu` onto the `onnxruntime` version row
+/// (issue #15 follow-up): the probe queries both dist names; when only
+/// the -gpu dist is installed, its version satisfies the row. Never
+/// overwrites a real `onnxruntime` version, and never touches the
+/// installed package. Pure + unit-tested.
+pub(crate) fn apply_onnxruntime_alias(versions: &mut serde_json::Map<String, serde_json::Value>) {
+    if versions.get("onnxruntime").is_none() {
+        if let Some(v) = versions.get("onnxruntime-gpu").cloned() {
+            versions.insert("onnxruntime".into(), v);
+        }
+    }
+}
+
 /// Does the registered env still exist on disk (interpreter present)?
 /// Users sometimes delete the env folder by hand — envs.json then points
 /// at nothing and the dashboard shows a phantom healthy env with a working
@@ -445,5 +463,42 @@ mod env_alive_tests {
         // Absolute raw path form.
         assert!(resolve_env_python(&repo, conda.to_string_lossy().as_ref()).is_some());
         let _ = std::fs::remove_dir_all(&repo);
+    }
+}
+#[cfg(test)]
+mod onnx_alias_tests {
+    use super::apply_onnxruntime_alias;
+    fn map(pairs: &[(&str, &str)]) -> serde_json::Map<String, serde_json::Value> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), serde_json::Value::String(v.to_string())))
+            .collect()
+    }
+    #[test]
+    fn onnxruntime_gpu_satisfies_row() {
+        // Reporter shape: install log put down onnxruntime-gpu, the
+        // Manage `onnxruntime` row showed —. Now it shows the gpu version.
+        let mut v = map(&[("onnxruntime-gpu", "1.22.0")]);
+        apply_onnxruntime_alias(&mut v);
+        assert_eq!(
+            v.get("onnxruntime").and_then(|x| x.as_str()),
+            Some("1.22.0")
+        );
+        // The -gpu key itself is kept (probe transparency).
+        assert_eq!(
+            v.get("onnxruntime-gpu").and_then(|x| x.as_str()),
+            Some("1.22.0")
+        );
+        // A real onnxruntime version is never overwritten.
+        let mut both = map(&[("onnxruntime", "1.20.0"), ("onnxruntime-gpu", "1.22.0")]);
+        apply_onnxruntime_alias(&mut both);
+        assert_eq!(
+            both.get("onnxruntime").and_then(|x| x.as_str()),
+            Some("1.20.0")
+        );
+        // Neither installed → row stays missing.
+        let mut none = map(&[("torch", "2.12.0")]);
+        apply_onnxruntime_alias(&mut none);
+        assert!(none.get("onnxruntime").is_none());
     }
 }

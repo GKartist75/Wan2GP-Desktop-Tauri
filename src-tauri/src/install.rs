@@ -1006,7 +1006,37 @@ fn install_failure_hint(tail: &str) -> String {
     if low.contains("launcher setup hook:") {
         return "The launcher's setup hook refused to run (see the [!] Launcher setup hook line above) — upstream setup.py changed shape. Copy diagnostics (System → Troubleshooting) and report it; do NOT retry blindly.".into();
     }
+    if low.contains("pyvenv.cfg") || low.contains("no pyvenv") {
+        // Exit-106 shape (issue #15 follow-up): a stale env dir without
+        // pyvenv.cfg confuses `uv venv`/pip `--python` inside setup.py.
+        // The launcher removes such dirs before setup.py runs — reaching
+        // here means the dir reappeared mid-install (locked files) or
+        // setup.py created it half-way. Repair, don't blind-retry.
+        return "setup.py hit a stale Python environment (missing pyvenv.cfg — exit 106). Fix: Manage → Repair the environment (the launcher removes the stale env dir first), or delete <repo>/env_uv (env_venv/env_conda) by hand after closing every Python/terminal using it, then retry.".into();
+    }
     "setup.py failed — see the console output above for the failing command.".to_string()
+}
+
+/// Stale-env detector for the exit-106 repair crash (issue #15 follow-up).
+/// True when `env_path` exists as a dir but carries no `pyvenv.cfg` at its
+/// root: `uv venv` refuses to create into it AND pip `--python` on it dies
+/// with `No pyvenv.cfg file`, which setup.py surfaces as exit 106 on the
+/// reinstall/reconfigure flow (fresh installs work — setup.py owns creation
+/// there). Neither our hook (exits 1/2) nor uv (exits 1/2) uses 106, so a
+/// 106 is upstream setup.py failing on exactly this stale shape. Pure +
+/// unit-tested; the caller removes the dir and logs what was done.
+pub(crate) fn env_missing_pyvenv(env_path: &Path) -> bool {
+    env_path.is_dir() && !env_path.join("pyvenv.cfg").is_file()
+}
+
+/// Actionable text for a setup.py exit-106 (stale env, missing pyvenv.cfg).
+/// Takes the code so the call site maps ONLY 106 here — every other code
+/// keeps the generic `install_failure_hint` tail mapping. Pure + unit-tested.
+pub(crate) fn setup_exit_106_hint(code: i32) -> Option<String> {
+    if code != 106 {
+        return None;
+    }
+    Some("setup.py exited with code 106 (stale Python environment: the env dir exists but pyvenv.cfg is missing, so `uv venv`/pip `--python` refuse it). Fix: Manage → Repair the environment (the launcher removes the stale env dir first), or delete <repo>/env_uv (env_venv/env_conda) by hand after closing every Python/terminal using it, then retry.".into())
 }
 
 /// Quick `import torch` probe: Some(version) iff torch imports (no CUDA
@@ -1026,6 +1056,26 @@ fn torch_probe(py: &Path) -> Option<String> {
                 .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
         })
         .filter(|v| !v.is_empty())
+}
+
+/// AMD collect_env probe: torch version + HIP runtime version in one
+/// small python probe (never fails the verify — returns None when the
+/// probe can't run). Pure spawn helper, AMD-gated by the caller.
+pub(crate) fn amd_collect_env(py: &Path, repo: &Path) -> Option<String> {
+    let out = silent_command(py)
+.args(["-c", "import torch; print('torch ' + torch.__version__); print('hip ' + str(getattr(getattr(torch, 'version', None), 'hip', None)))"])
+.current_dir(repo)
+.output()
+.ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.replace('\n', " | "))
+    }
 }
 
 /// Full env verification: torch imports AND (on NVIDIA) the GPU is visible.
@@ -1049,7 +1099,18 @@ fn smoke_verify(py: &Path, repo: &Path) -> Result<String, String> {
         return Err("torch can't see the NVIDIA GPU (cuda=False) — likely a driver/CUDA mismatch. Update to NVIDIA R580+, reboot, then repair the environment.".into());
     }
     if vendor == "AMD" && !line.contains("cuda=True") {
-        return Err("torch can't see the AMD GPU (cuda=False) — update to a recent Adrenalin/Pro driver (>= 24.5), confirm the TheRock index URL matches your GPU family (docs/AMD-INSTALLATION.md), reboot, then repair the environment.".into());
+        let env = amd_collect_env(py, repo).unwrap_or_default();
+        let suffix = if env.is_empty() {
+            String::new()
+        } else {
+            format!(" [collect_env: {env}]")
+        };
+        return Err(format!("torch can't see the AMD GPU (cuda=False) — update to a recent Adrenalin/Pro driver (>= 24.5), confirm the TheRock index URL matches your GPU family (docs/AMD-INSTALLATION.md), reboot, then repair the environment.{suffix}"));
+    }
+    if vendor == "AMD" {
+        if let Some(env) = amd_collect_env(py, repo) {
+            return Ok(format!("{line} [{env}]"));
+        }
     }
     Ok(line)
 }
@@ -1077,57 +1138,104 @@ fn is_network_failure(tail: &str) -> bool {
 /// AMD TheRock torch source. Returns (primary, fallback) full torch-step
 /// commands for setup.py's `{pip} {torch_cmd}` splice.
 ///
-/// Primary is the exact-pinned ROCm 7.15 stack on the legacy multi-arch
-/// aggregate index — verified 2026-09-07: pip resolves every profile to
-/// torch 2.12.0+rocm7.15.0a20260728 (confirmed working on RDNA 4 / R9700),
-/// and pip's own resolver refuses the 10.x builds
-/// there, so the pin can't drift to ROCm 10. The device packs are pinned
-/// explicitly (bracket-free, so setup.py's plain string splice can't mangle
-/// them); they pull the matching rocm-sdk-device packs, torch pulls
-/// rocm[libraries] itself. No `rocm[devel]` (~875MB SDK tools our AMD
-/// profile never invokes — no AMD attention builds) and no [device-*]
-/// extras (same reason: explicit pins, zero brackets).
+/// Primary is the doc recipe (docs/AMD-INSTALLATION.md): per-family
+/// `rocm[devel]` float on `https://rocm.nightlies.amd.com/v2/<fam>/` —
+/// `rocm[devel]` carries the ROCm SDK (llvm/clang) our AMD launch env
+/// expects. Fallback is the community v2-staging float (no rocm[devel]:
+/// per-family staging indexes carry no `rocm` win wheels).
 ///
-/// Fallback is the community staging float (no rocm[devel]: per-family
-/// staging indexes carry no `rocm` win wheels).
+/// Resolver-ordering note (issue #15 follow-up): the upstream
+/// SageAttention author reports ONE plain-pip `... torch trio +
+/// rocm[libraries,devel]` command can loop forever (rocm-first-then-trio
+/// works). Kept as ONE command anyway: the splice is a single `cmd.win`
+/// string appended to setup.py's `{pip} install` argv (no shell — `&&`
+/// chaining is not expressible there), and setup.py drives it via
+/// `uv pip`, whose resolver differs from plain pip. The fallback stays
+/// untouched. `torch_cmds_stay_single_command` pins this shape.
 pub(crate) fn amd_therock_torch_cmds(profile: &str, gpu_name: &str) -> Option<(String, String)> {
-    const MULTI: &str = "https://rocm.nightlies.amd.com/whl-multi-arch/";
+    const V2: &str = "https://rocm.nightlies.amd.com/v2";
     const STAGE: &str = "https://rocm.nightlies.amd.com/v2-staging";
-    const PIN_TORCH: &str = "2.12.0+rocm7.15.0a20260728";
-    const PIN_VISION: &str = "0.27.0+rocm7.15.0a20260728";
-    const PIN_AUDIO: &str = "2.11.0+rocm7.15.0a20260728";
     let g = gpu_name.to_uppercase();
-    // (device targets, staging family) per installer profile. Every target
-    // below was verified to carry 2.12.0+rocm7.15 cp311-win device builds.
-    let (targets, fam): (&[&str], &str) = match profile {
-        "AMD_GFX1201" => (&["gfx1200", "gfx1201"], "gfx120X-all"),
-        "AMD_GFX110X" => (&["gfx1100", "gfx1101", "gfx1102", "gfx1103"], "gfx110X-all"),
+    // Per-family float, per installer profile.
+    let fam: &str = match profile {
+        "AMD_GFX1201" => "gfx120X-all",
+        "AMD_GFX110X" => "gfx110X-all",
         "AMD_GFX1151" if g.contains("890M") || g.contains("PHOENIX") || g.contains("1150") => {
-            (&["gfx1150"], "gfx1150")
+            "gfx1150"
         }
-        "AMD_GFX1151" => (&["gfx1150", "gfx1151"], "gfx1151"),
-        "AMD_GFX103X" => (
-            &[
-                "gfx1030", "gfx1031", "gfx1032", "gfx1033", "gfx1034", "gfx1035", "gfx1036",
-            ],
-            "gfx103X-dgpu",
-        ),
+        "AMD_GFX1151" => "gfx1151",
+        "AMD_GFX103X" => "gfx103X-dgpu",
         _ => return None,
     };
-    let mut primary =
-        format!("--pre torch=={PIN_TORCH} torchvision=={PIN_VISION} torchaudio=={PIN_AUDIO}");
-    for t in targets {
-        primary.push_str(&format!(
-            " amd-torch-device-{t}=={PIN_TORCH} amd-torchvision-device-{t}=={PIN_VISION}"
-        ));
-    }
-    primary.push_str(&format!(" --index-url {MULTI}"));
+    let primary = format!("--pre torch torchaudio torchvision rocm[devel] --index-url {V2}/{fam}/");
     let fallback = format!("--pre torch torchvision torchaudio --index-url {STAGE}/{fam}/");
     Some((primary, fallback))
 }
 
+/// Pure helper: default `attention_mode` to "auto" on AMD when the key is
+/// missing/empty OR holds setup.py's bogus 'sage'/'sage2' default.
+/// Rationale (issue #15): upstream setup.py picks the default with
+/// `if "20" in profile_key`, which matches "AMD_GFX1201" via the "1201"
+/// substring — so every fresh AMD config says 'sage', yet AMD profiles
+/// install NO sage backend (triton/sage/sparge/flash are all null there),
+/// guaranteeing "Attention mode sage -NOT INSTALLED-". Any other value
+/// (sdpa, flash, custom, already auto, ...) is a deliberate user choice
+/// and is never touched. Returns true when the value was set.
+pub(crate) fn apply_attention_mode_auto(cfg: &mut serde_json::Value) -> bool {
+    let needs = match cfg.get("attention_mode") {
+        None => true,
+        Some(serde_json::Value::String(s)) => {
+            let t = s.trim();
+            t.is_empty() || t.eq_ignore_ascii_case("sage") || t.eq_ignore_ascii_case("sage2")
+        }
+        Some(serde_json::Value::Null) => true,
+        _ => false,
+    };
+    if needs {
+        cfg["attention_mode"] = serde_json::Value::String("auto".into());
+        return true;
+    }
+    false
+}
+
+/// Pure helper: pip arg sequence installing triton-windows from the official
+/// PyPI wheel on AMD (`<env python> -m pip install -U triton-windows`).
+/// Float, official wheel only (cp311 wheel confirmed) — no build flags, no git
+/// URLs, no cmake/ninja/setup.py anywhere. If a vanilla `triton` dist is
+/// installed it must be uninstalled first: both own the `triton` import
+/// namespace and overwrite each other (documented upstream conflict).
+/// AMD-gated by the caller; Intel/NVIDIA/CPU flows never call it.
+/// Pure + unit-tested.
+pub(crate) fn triton_windows_pip_args() -> Vec<&'static str> {
+    vec!["-m", "pip", "install", "-U", "triton-windows"]
+}
+
+/// After a successful AMD setup, ensure `<repo>/wgp_config.json` carries
+/// `attention_mode: "auto"` when missing/empty. Missing file is not an
+/// error (setup.py may not have written one yet) — returns false then.
+pub(crate) fn ensure_attention_mode_auto(repo: &std::path::Path) -> bool {
+    let path = repo.join("wgp_config.json");
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let mut cfg: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    if !apply_attention_mode_auto(&mut cfg) {
+        return false;
+    }
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&cfg).unwrap_or_default(),
+    )
+    .is_ok()
+}
+
 /// Patch the CLONED setup_config.json's rocm65.win torch command to our
-/// TheRock command (exact-pinned 7.15 primary, staging float fallback).
+/// TheRock command (per-family /v2/ doc-recipe float primary, staging float
+/// fallback).
 /// Upstream's entry is stale gfx110x-only 6.5-era wheels. setup.py runs
 /// `{pip} {torch_cmd}` where pip already ends in `install`, so the callers
 /// pass a complete flags + packages + index-URL string. Re-applied every
@@ -1163,6 +1271,20 @@ fn patch_therock_torch_cmd(repo: &std::path::Path, torch_cmd: &str) -> Result<()
     Ok(())
 }
 
+/// PIPELINES: the two GPU pipelines stay strictly separated (OFFICIAL WHEELS
+/// ONLY — no cmake, no git source builds, no vendored compilers; anything
+/// without an official wheel stays refused by the AMD package gate with a docs
+/// pointer, never built from source).
+/// AMD = TheRock float (`amd_therock_torch_cmds` per-family /v2/ doc-recipe +
+/// staging fallback) + ROCm launch env (launch.rs AMD block) + triton-windows
+/// PyPI wheel (`triton_windows_pip_args`, warn-only) + package gate
+/// (`amd_package_gate_result` in features.rs) + attention auto
+/// (`ensure_attention_mode_auto`).
+/// Intel INTEL_XPU = CPU torch + legacy direct setup.py spawn (no forced
+/// profile: this function returns None) + zero AMD env (launch reconciles the
+/// ROCm/compiler vars and PATH prepend away on non-AMD launch) + zero kernel
+/// installs. Cross-talk invariants live in `pipeline_separation_tests`.
+///
 /// setup.py profiles the launcher may drive through the setup hook, read from
 /// the CLONED setup_config.json's gpu_profiles keys at runtime (issue #15:
 /// a hardcoded allowlist can't track upstream renames, and forcing an
@@ -1885,8 +2007,21 @@ pub async fn install(
             }
         }
     } else if env_path.exists() {
-        emit("[*] Removing incomplete env from a failed/interrupted install (setup.py can't resume into it)…\n");
+        // Exit-106 guard (issue #15 follow-up): name the stale shape
+        // (dir without pyvenv.cfg) so the log shows WHY it was removed.
+        if env_missing_pyvenv(&env_path) {
+            emit("[*] Removing stale env dir without pyvenv.cfg (would confuse uv venv/pip --python → setup.py exit 106)…\n");
+        } else {
+            emit("[*] Removing incomplete env from a failed/interrupted install (setup.py can't resume into it)…\n");
+        }
         let _ = std::fs::remove_dir_all(&env_path);
+        // Best-effort removal can leave locked residue behind (running
+        // python, open terminal, AV handle) — a surviving dir without
+        // pyvenv.cfg IS the exit-106 crash, so verify instead of hoping.
+        if env_missing_pyvenv(&env_path) {
+            mutating_done();
+            return Err(format!("Stale Python environment at {} (missing pyvenv.cfg — setup.py would exit 106). The launcher could not remove it (locked files: close every Python/terminal using the install folder, exclude it from antivirus, then retry).", env_path.display()));
+        }
     }
     // fix: hardlink warning when cache (C:) and target (D:) differ → move cache to repo/.uv-cache on same drive so hardlink works (fast)
     let uv_cache = repo.join(".uv-cache");
@@ -1965,9 +2100,8 @@ pub async fn install(
         }
     }
     // AMD TheRock torch (doc-leading): patch the cloned setup_config.json so
-    // AMD TheRock torch (exact-pinned ROCm 7.15 primary): patch the cloned
-    // setup_config.json so setup.py's own [2/3] torch step installs the
-    // verified 7.15 stack instead of the stale gfx110x-only wheels.
+    // setup.py's own [2/3] torch step installs the per-family /v2/ doc-recipe
+    // float (torch trio + rocm[devel]) instead of the stale gfx110x-only wheels.
     // NVIDIA path untouched.
     let amd_cmds = if plan["profile"].as_str().unwrap_or("").starts_with("AMD") {
         amd_therock_torch_cmds(
@@ -1979,7 +2113,7 @@ pub async fn install(
     };
     if let Some((primary, _)) = &amd_cmds {
         match patch_therock_torch_cmd(&repo, primary) {
-                Ok(()) => emit(&format!("[*] AMD TheRock torch: exact-pinned ROCm 7.15 (torch 2.12.0+rocm7.15.0a20260728, whl-multi-arch)\n{primary}\n")),
+                Ok(()) => emit(&format!("[*] AMD TheRock torch: per-family /v2/ float (torch trio + rocm[devel])\n{primary}\n")),
                 // Fail-closed (issue #15): without the TheRock entry setup.py
                 // installs its stale gfx110x wheels — never run it unpatched.
                 Err(e) => {
@@ -2469,7 +2603,9 @@ pub async fn install(
                 break;
             }
             // setup.py failed — report honestly, no false "Installation complete!".
-            let hint = install_failure_hint(&tail);
+            // Exit 106 is the stale-env shape (missing pyvenv.cfg): it gets
+            // the actionable repair text instead of the generic tail hint.
+            let hint = setup_exit_106_hint(code).unwrap_or_else(|| install_failure_hint(&tail));
             emit(&format!(
                 "[!] setup.py exited with code {code} (attempt {attempt} of 2).\n[!] {hint}\n"
             ));
@@ -2653,9 +2789,11 @@ pub async fn install(
         }
         // AMD TheRock compat: the staging-float fallback path (community
         // recipe) wants the numpy 1.26.4 pin — requirements.txt may have
-        // pulled numpy 2.x. The exact-pinned 7.15 primary resolves WITH
-        // numpy 2.x (verified pip closure), so downgrading under it risks
-        // breaking torch — skip the pin when torch reports a 7.15 build.
+        // pulled numpy 2.x. The retired exact-pinned 7.15 primary resolved WITH
+        // numpy 2.x (verified pip closure), so downgrading under it risked
+        // breaking torch — the version check below preserves that skip for
+        // any 7.15 build still around, while the per-family /v2/ float
+        // (usually ROCm 10.x) gets the 1.26.4 pin per docs/AMD-INSTALLATION.md.
         // Warn-only: never turn a passing smoke test into a failure.
         if amd_cmds.is_some() {
             let torch_ver = silent_command(&smoke_py)
@@ -2690,6 +2828,117 @@ pub async fn install(
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let _ = std::fs::write(&marker, format!("{env} {stamp}"));
+    }
+    // AMD: default attention_mode to "auto" when missing/empty or holding
+    // setup.py's bogus 'sage'/'sage2' artifact default — never clobbers a
+    // deliberate user value.
+    if amd_cmds.is_some() && ensure_attention_mode_auto(&repo) {
+        emit("[i] attention_mode defaulted to auto (AMD)\n");
+    }
+    // AMD triton-windows from the official PyPI wheel (float — cp311 wheel
+    // confirmed, no build involved). setup.py installs no triton on AMD
+    // profiles, so without this SDPA falls back to slow eager. A vanilla
+    // `triton` dist owns the same `triton` import namespace and the two
+    // overwrite each other (documented upstream conflict), so it is
+    // uninstalled first. Warn-only throughout: never fail the install.
+    // AMD-gated only; Intel/NVIDIA/CPU flows untouched.
+    if amd_cmds.is_some() {
+        if let Some(py) = resolve_env_python(&repo, &env_path.to_string_lossy()) {
+            let vanilla = silent_command(&py)
+                .args(["-m", "pip", "show", "triton"])
+                .current_dir(&repo)
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if vanilla {
+                match silent_command(&py)
+                        .args(["-m", "pip", "uninstall", "-y", "triton"])
+                        .current_dir(&repo)
+                        .output()
+                    {
+                        Ok(o) if o.status.success() => emit("[i] removed vanilla triton dist (namespace conflict with triton-windows)\n"),
+                        _ => emit("[!] vanilla triton uninstall failed — continuing (triton-windows overwrites the namespace).\n"),
+                    }
+            }
+            let args = triton_windows_pip_args();
+            match silent_command(&py).args(&args).current_dir(&repo).output() {
+                    Ok(o) if o.status.success() => {
+                        let ver = silent_command(&py)
+                            .args(["-c", "import triton; print(triton.__version__)"])
+                            .current_dir(&repo)
+                            .output()
+                            .ok()
+                            .and_then(|v| {
+                                v.status.success().then(|| {
+                                    String::from_utf8_lossy(&v.stdout).trim().to_string()
+                                })
+                            })
+                            .filter(|s| !s.is_empty());
+                        match ver {
+                            Some(v) => emit(&format!("[i] triton-windows installed (triton {v})\n")),
+                            None => emit("[i] triton-windows installed (version probe unavailable).\n"),
+                        }
+                    }
+                    _ => emit("[!] triton-windows install failed — SDPA still works; install manually per docs/AMD-INSTALLATION.md\n"),
+                }
+        }
+    }
+    // AMD rocm-sdk discovery/init/test (issue #15 follow-up): the TheRock
+    // `rocm` dist ships the `rocm-sdk` CLI (`rocm-sdk path --root`). Run
+    // `init` once and capture the `test` output tail into the install log
+    // for future bug reports. AMD-gated, warn-only throughout (init may
+    // need admin) — never fails the install. OFFICIAL WHEELS ONLY: the
+    // CLI arrives with the pip-installed `rocm` dist, no builds anywhere.
+    if amd_cmds.is_some() {
+        if let Some(py) = resolve_env_python(&repo, &env_path.to_string_lossy()) {
+            // Prefer the `rocm-sdk` binary on PATH, then
+            // `<env python> -m rocm_sdk` (covers both install layouts).
+            let run_sdk = |args: &[&str]| -> Option<String> {
+                let combined = |o: &std::process::Output| {
+                    format!(
+                        "{}{}",
+                        String::from_utf8_lossy(&o.stdout),
+                        String::from_utf8_lossy(&o.stderr)
+                    )
+                };
+                if let Ok(o) = silent_command("rocm-sdk")
+                    .args(args)
+                    .current_dir(&repo)
+                    .output()
+                {
+                    if o.status.success() {
+                        return Some(combined(&o));
+                    }
+                }
+                let mut margs = vec!["-m", "rocm_sdk"];
+                margs.extend(args.iter().copied());
+                silent_command(&py)
+                    .args(&margs)
+                    .current_dir(&repo)
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| combined(&o))
+            };
+            match run_sdk(&["init"]) {
+                    Some(_) => emit("[i] rocm-sdk init ok (admin may have been needed — continuing).\n"),
+                    None => emit("[!] rocm-sdk init unavailable/failed — continuing (warn-only; admin may be needed, see docs/AMD-INSTALLATION.md).\n"),
+                }
+            match run_sdk(&["test"]) {
+                Some(out) => {
+                    let tail: String = out
+                        .lines()
+                        .rev()
+                        .take(20)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    emit(&format!("[i] rocm-sdk test output tail:\n{tail}\n"));
+                }
+                None => emit("[!] rocm-sdk test unavailable/failed — continuing (warn-only).\n"),
+            }
+        }
     }
     emit("[*] Install finished.\n");
     // Remember where the working install lives (next to the data-dir override
@@ -4016,64 +4265,219 @@ pub async fn install_dlss5(
 
 #[cfg(test)]
 mod amd_therock_tests {
-    use super::amd_therock_torch_cmds;
-    /// Primary pins the exact verified 7.15 stack (bracket-free for
-    /// setup.py's plain splice); fallback is the community staging float.
-    fn check_primary(p: &str, targets: &[&str]) {
+    use super::{amd_therock_torch_cmds, apply_attention_mode_auto};
+    /// Primary is the doc per-family float with rocm[devel]; fallback is
+    /// the community v2-staging float.
+    fn check_primary(p: &str, fam: &str) {
         assert!(p.starts_with("--pre "), "got {p}");
-        assert!(p.contains("torch==2.12.0+rocm7.15.0a20260728"), "got {p}");
+        assert!(p.contains("--pre"), "got {p}");
+        assert!(p.contains("rocm[devel]"), "got {p}");
         assert!(
-            p.contains("torchvision==0.27.0+rocm7.15.0a20260728"),
-            "got {p}"
+            p.contains(&format!("/v2/{fam}/")),
+            "primary missing /v2/{fam}/: {p}"
         );
+        for pkg in ["torch", "torchaudio", "torchvision"] {
+            assert!(p.contains(pkg), "{pkg} missing: {p}");
+        }
+    }
+    #[test]
+    fn doc_float_primary_per_profile() {
+        let (p, f) = amd_therock_torch_cmds("AMD_GFX1201", "AMD Radeon AI PRO R9700").unwrap();
+        check_primary(&p, "gfx120X-all");
+        assert!(p.contains("/v2/gfx120X-all/"), "got {p}");
+        assert!(f.contains("/v2-staging/gfx120X-all/"), "got {f}");
+        let (p, f) = amd_therock_torch_cmds("AMD_GFX110X", "AMD Radeon RX 7900 XTX").unwrap();
+        check_primary(&p, "gfx110X-all");
+        assert!(f.contains("/v2-staging/gfx110X-all/"), "got {f}");
+        // Strix Halo gets gfx1151; Strix Point 890M narrows to gfx1150.
+        let (p, f) = amd_therock_torch_cmds("AMD_GFX1151", "AMD Ryzen AI Max+ PRO 395").unwrap();
+        check_primary(&p, "gfx1151");
+        assert!(f.contains("/v2-staging/gfx1151/"), "got {f}");
+        let (p, f) = amd_therock_torch_cmds("AMD_GFX1151", "AMD Radeon 890M").unwrap();
+        check_primary(&p, "gfx1150");
+        assert!(!p.contains("gfx1151"), "got {p}");
+        assert!(f.contains("/v2-staging/gfx1150/"), "got {f}");
+        let (p, f) = amd_therock_torch_cmds("AMD_GFX1151", "Phoenix Radeon 780M").unwrap();
+        check_primary(&p, "gfx1150");
+        assert!(f.contains("/v2-staging/gfx1150/"), "got {f}");
+        // RDNA 2 discrete float.
+        let (p, f) = amd_therock_torch_cmds("AMD_GFX103X", "AMD Radeon RX 6800 XT").unwrap();
+        check_primary(&p, "gfx103X-dgpu");
+        assert!(f.contains("/v2-staging/gfx103X-dgpu/"), "got {f}");
+        assert!(amd_therock_torch_cmds("RTX_50", "NVIDIA GeForce RTX 5090").is_none());
+    }
+    #[test]
+    fn attention_auto_only_when_missing_or_empty() {
+        let mut missing = serde_json::json!({"video_profile": 4});
+        assert!(apply_attention_mode_auto(&mut missing));
+        assert_eq!(missing["attention_mode"], serde_json::json!("auto"));
+        let mut empty = serde_json::json!({"attention_mode": ""});
+        assert!(apply_attention_mode_auto(&mut empty));
+        assert_eq!(empty["attention_mode"], serde_json::json!("auto"));
+        // setup.py's 'sage' artifact default + genuinely deliberate values stay.
+        let mut artifact = serde_json::json!({"attention_mode": "sage"});
+        assert!(apply_attention_mode_auto(&mut artifact));
+        assert_eq!(artifact["attention_mode"], serde_json::json!("auto"));
+        let mut artifact2 = serde_json::json!({"attention_mode": "sage2"});
+        assert!(apply_attention_mode_auto(&mut artifact2));
+        assert_eq!(artifact2["attention_mode"], serde_json::json!("auto"));
+        for keep in ["sdpa", "flash", "auto", "sage3"] {
+            let mut v = serde_json::json!({"attention_mode": keep});
+            assert!(!apply_attention_mode_auto(&mut v), "{keep} must stay");
+            assert_eq!(v["attention_mode"], serde_json::json!(keep));
+        }
+    }
+}
+#[cfg(test)]
+mod exit_106_tests {
+    use super::{amd_therock_torch_cmds, env_missing_pyvenv, setup_exit_106_hint};
+    #[test]
+    fn stale_env_detection() {
+        // Dir without pyvenv.cfg is the exit-106 shape; everything else
+        // (absent path, healthy venv) is not stale.
+        let d = std::env::temp_dir().join(format!(
+            "wgp-pyvenv-probe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|x| x.as_nanos())
+                .unwrap_or(0)
+        ));
+        assert!(!env_missing_pyvenv(&d));
+        std::fs::create_dir_all(&d).unwrap();
+        assert!(env_missing_pyvenv(&d));
+        std::fs::write(d.join("pyvenv.cfg"), b"home = x").unwrap();
+        assert!(!env_missing_pyvenv(&d));
+        // pyvenv.cfg as a DIRECTORY still counts as stale (must be a file).
+        std::fs::remove_file(d.join("pyvenv.cfg")).unwrap();
+        std::fs::create_dir_all(d.join("pyvenv.cfg")).unwrap();
+        assert!(env_missing_pyvenv(&d));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+    #[test]
+    fn exit_106_maps_only_106() {
+        let msg = setup_exit_106_hint(106).expect("106 must map");
         assert!(
-            p.contains("torchaudio==2.11.0+rocm7.15.0a20260728"),
-            "got {p}"
+            msg.contains("106") && msg.contains("pyvenv.cfg"),
+            "got {msg}"
         );
-        assert!(
-            p.contains("--index-url https://rocm.nightlies.amd.com/whl-multi-arch/"),
-            "got {p}"
-        );
-        assert!(!p.contains('[') && !p.contains(']'), "bracket-free: {p}");
-        for t in targets {
+        for code in [0, 1, 2, -1] {
             assert!(
-                p.contains(&format!("amd-torch-device-{t}==2.12.0+rocm7.15.0a20260728")),
-                "{t} missing: {p}"
-            );
-            assert!(
-                p.contains(&format!(
-                    "amd-torchvision-device-{t}==0.27.0+rocm7.15.0a20260728"
-                )),
-                "{t} missing: {p}"
+                setup_exit_106_hint(code).is_none(),
+                "code {code} must keep the generic hint"
             );
         }
     }
     #[test]
-    fn pinned_primary_per_profile() {
-        let (p, f) = amd_therock_torch_cmds("AMD_GFX1201", "AMD Radeon AI PRO R9700").unwrap();
-        check_primary(&p, &["gfx1200", "gfx1201"]);
-        assert!(f.contains("/v2-staging/gfx120X-all/"), "got {f}");
-        let (p, f) = amd_therock_torch_cmds("AMD_GFX110X", "AMD Radeon RX 7900 XTX").unwrap();
-        check_primary(&p, &["gfx1100", "gfx1101", "gfx1102", "gfx1103"]);
-        assert!(f.contains("/v2-staging/gfx110X-all/"), "got {f}");
-        // Strix Halo gets both APUs; Strix Point 890M narrows to gfx1150.
-        let (p, f) = amd_therock_torch_cmds("AMD_GFX1151", "AMD Ryzen AI Max+ PRO 395").unwrap();
-        check_primary(&p, &["gfx1150", "gfx1151"]);
-        assert!(f.contains("/v2-staging/gfx1151/"), "got {f}");
-        let (p, f) = amd_therock_torch_cmds("AMD_GFX1151", "AMD Radeon 890M").unwrap();
-        check_primary(&p, &["gfx1150"]);
-        assert!(!p.contains("gfx1151"), "got {p}");
-        assert!(f.contains("/v2-staging/gfx1150/"), "got {f}");
-        // RDNA 2: full discrete target set on the pinned primary.
-        let (p, f) = amd_therock_torch_cmds("AMD_GFX103X", "AMD Radeon RX 6800 XT").unwrap();
-        check_primary(
-            &p,
-            &[
-                "gfx1030", "gfx1031", "gfx1032", "gfx1033", "gfx1034", "gfx1035", "gfx1036",
-            ],
+    fn torch_cmds_stay_single_command() {
+        // Resolver-loop guard: upstream SageAttention author reports ONE
+        // plain-pip `torch trio + rocm[...]` command can loop forever
+        // (rocm-first-then-trio works). Our setup_config splice is a
+        // SINGLE string appended to setup.py's `{pip} install` argv (no
+        // shell, so `&&` chaining is not expressible) and setup.py drives
+        // it via `uv pip` (resolver differs from plain pip) — kept as
+        // one command, fallback untouched. This test pins that shape so a
+        // future split is deliberate, not drift.
+        for (profile, gpu) in [
+            ("AMD_GFX1201", "AMD Radeon AI PRO R9700"),
+            ("AMD_GFX110X", "AMD Radeon RX 7900 XTX"),
+            ("AMD_GFX1151", "AMD Radeon 890M"),
+            ("AMD_GFX103X", "AMD Radeon RX 6800 XT"),
+        ] {
+            let (primary, fallback) = amd_therock_torch_cmds(profile, gpu).unwrap();
+            for cmd in [&primary, &fallback] {
+                assert!(
+                    !cmd.contains("&&") && !cmd.contains("||") && !cmd.contains(';'),
+                    "single pip argv only, no shell chaining: {cmd}"
+                );
+            }
+            assert!(primary.contains("rocm[devel]"), "got {primary}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod pipeline_separation_tests {
+    use super::{amd_therock_torch_cmds, triton_windows_pip_args};
+    #[test]
+    fn intel_cpu_and_nvidia_get_no_amd_torch_cmds() {
+        // Cross-talk invariant: only AMD_* profiles take the TheRock path.
+        // INTEL_XPU keeps the legacy direct setup.py spawn (CPU torch).
+        for p in ["INTEL_XPU", "CPU"] {
+            assert_eq!(
+                amd_therock_torch_cmds(p, "Intel Arc A770 Graphics"),
+                None,
+                "{p}"
+            );
+            assert_eq!(amd_therock_torch_cmds(p, ""), None, "{p}");
+        }
+        for (p, g) in [
+            ("RTX_40", "NVIDIA GeForce RTX 4070"),
+            ("RTX_50", "NVIDIA GeForce RTX 5090"),
+            ("GTX_10", "NVIDIA GeForce GTX 1080"),
+        ] {
+            assert_eq!(amd_therock_torch_cmds(p, g), None, "{p}");
+        }
+    }
+    #[test]
+    fn intel_cpu_full_gate_passthrough() {
+        // Cross-talk invariant: the AMD package gate (features.rs) passes
+        // everything through untouched off-AMD — NVIDIA behavior identical.
+        for p in ["INTEL_XPU", "CPU", "RTX_40"] {
+            for pkg in [
+                "triton",
+                "triton-windows",
+                "bitsandbytes",
+                "spas_sage_attn",
+                "sageattention",
+                "flash-attn",
+                "nvidia-cuda-runtime-cu12",
+            ] {
+                assert_eq!(
+                    crate::features::amd_package_gate_result(p, pkg).unwrap(),
+                    pkg,
+                    "{p} {pkg}"
+                );
+            }
+        }
+    }
+    #[test]
+    fn triton_windows_args_are_wheels_only() {
+        // OFFICIAL WHEELS ONLY: the arg sequence is a plain PyPI float — no
+        // build-from-source surface of any kind.
+        assert_eq!(
+            triton_windows_pip_args(),
+            vec!["-m", "pip", "install", "-U", "triton-windows"]
         );
-        assert!(f.contains("/v2-staging/gfx103X-dgpu/"), "got {f}");
-        assert!(amd_therock_torch_cmds("RTX_50", "NVIDIA GeForce RTX 5090").is_none());
+        let joined = triton_windows_pip_args().join(" ");
+        for banned in [
+            "cmake",
+            "ninja",
+            "git+",
+            "setup.py",
+            "vcvars",
+            "--no-build-isolation",
+        ] {
+            assert!(!joined.contains(banned), "{joined}");
+        }
+    }
+    #[test]
+    fn non_amd_reconcile_helpers_leave_values_absent() {
+        // Cross-talk invariant: without our recorded prepend the PATH strip is
+        // a no-op, and the stale-key list carries no HSA keys (HSA handling
+        // stays exactly as-is, owned by the launch block above the reconcile).
+        assert_eq!(
+            crate::launch::strip_own_path_prepend("C:\\x;C:\\y", ""),
+            "C:\\x;C:\\y"
+        );
+        assert_eq!(
+            crate::launch::strip_own_path_prepend("", "C:\\rocm\\bin"),
+            ""
+        );
+        assert_eq!(crate::launch::NON_AMD_STALE_ENV_KEYS.len(), 8); // +HIP_VISIBLE_DEVICES (virtual-GPU pin, meaningless off-AMD)
+        for k in crate::launch::NON_AMD_STALE_ENV_KEYS {
+            assert!(!k.starts_with("HSA"), "{k}: HSA stays separate");
+        }
     }
 }
 
