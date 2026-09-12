@@ -151,8 +151,8 @@ pub(crate) fn hip_pin_value(discrete_amd: usize, virtual_adapters: usize) -> Opt
     }
 }
 /// MIOpen mode for AMD launch from the Manage-backed `amdEnv` config key
-/// (`amdEnv.miopenDisabled`, default false — backend-only for now, the
-/// frontend can bind the key later). Some(_) → set-if-absent as today;
+/// (`amdEnv.miopenDisabled`, default false — bound in Manage → AMD ROCm).
+/// Some(_) → set-if-absent as today;
 /// None → leave MIOPEN_FIND_MODE fully unset. Pure core + unit-tested.
 pub(crate) fn miopen_find_mode_value(miopen_disabled: bool) -> Option<&'static str> {
     if miopen_disabled {
@@ -735,8 +735,8 @@ runpy.run_path(sys.argv[0], run_name='__main__')
                 }
             }
             // MIOpen toggle (issue #15 follow-up): Manage-backed
-            // `amdEnv.miopenDisabled` (default false, backend-only for now
-            // — the frontend can bind the key later). When true,
+            // `amdEnv.miopenDisabled` (default false, Manage → AMD ROCm).
+            // When true,
             // MIOPEN_FIND_MODE is NOT set at all and the log says so;
             // when false, the current FAST set-if-absent stays.
             match miopen_find_mode() {
