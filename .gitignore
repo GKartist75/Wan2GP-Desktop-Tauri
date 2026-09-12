@@ -9,3 +9,5 @@ release.pid
 relnotes-*.md
 # Local Pi runtime state
 .atl/
+.pi/
+build-local.log
