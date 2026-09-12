@@ -1,7 +1,10 @@
 //! Wan2GP server lifecycle (launch/stop/browser modes).
 use crate::base::*;
 use crate::{
-    hw::{get_gpu_info_sync, kernel_profile_key, probe_command, wmi_gpu_fallback},
+    hw::{
+        get_gpu_info_sync, kernel_profile_key, probe_command, wmi_all_gpus, wmi_gpu_fallback,
+        wmi_virtual_adapters,
+    },
     status::{get_active_env, resolve_env_python},
 };
 use std::path::{Path, PathBuf};
@@ -44,6 +47,128 @@ pub(crate) fn terminal_title() -> Option<String> {
         .get()
         .and_then(|m| m.lock().ok())
         .and_then(|g| g.clone())
+}
+// AMD ROCm PATH prepend tracking: the AMD launch env prepends the ROCm SDK
+// bin dirs to PATH in this process. On a later non-AMD launch in the same
+// process that prepend is stale (and the compiler vars below are worse), so
+// the non-AMD reconcile strips exactly what was prepended. Recorded once per
+// prepend; HSA override handling is untouched.
+static AMD_PATH_PREPEND: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
+/// Keys this launcher sets for the AMD ROCm session env. Meaningless off-AMD:
+/// on any non-AMD launch they are removed unconditionally (never set-if-absent
+/// there), each removal logged at `[i]` level. HSA override keys are NOT here —
+/// HSA handling stays exactly as-is. Pure data + unit-tested.
+pub(crate) const NON_AMD_STALE_ENV_KEYS: &[&str] = &[
+    "ROCM_HOME",
+    "CC",
+    "CXX",
+    "DISTUTILS_USE_SDK",
+    "FLASH_ATTENTION_TRITON_AMD_ENABLE",
+    "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
+    "MIOPEN_FIND_MODE",
+    "HIP_VISIBLE_DEVICES",
+];
+/// Strip our own recorded PATH prepend: remove the exact `prepended` prefix
+/// (`add` in `format!("{add};{old}")`) when present, case-insensitively.
+/// Anything else (user PATH, foreign entries) passes through untouched.
+/// Pure + unit-tested.
+pub(crate) fn strip_own_path_prepend(current: &str, prepended: &str) -> String {
+    if prepended.is_empty() || current.is_empty() {
+        return current.to_string();
+    }
+    let mut rest = current;
+    loop {
+        if rest.eq_ignore_ascii_case(prepended) {
+            return String::new();
+        }
+        if rest.len() > prepended.len()
+            && rest[..prepended.len()].eq_ignore_ascii_case(prepended)
+            && rest[prepended.len()..].starts_with(';')
+        {
+            rest = &rest[prepended.len() + 1..];
+        } else {
+            break;
+        }
+    }
+    rest.to_string()
+}
+/// Reconcile stale AMD session env on a non-AMD launch: remove every
+/// NON_AMD_STALE_ENV_KEYS var unconditionally (they are meaningless off-AMD;
+/// a ROCm-prepended PATH and `CC=clang-cl` break later Intel/CPU/NVIDIA pip
+/// builds in this same launcher process) and strip our recorded PATH prepend.
+/// Each removal logged at `[i]` level. HSA override handling is NOT touched.
+/// The Intel path gains zero new env behavior beyond this reconcile.
+pub(crate) fn reconcile_non_amd_session_env(mut emit: impl FnMut(&str)) {
+    for k in NON_AMD_STALE_ENV_KEYS {
+        if std::env::var(k).is_ok() {
+            std::env::remove_var(k);
+            emit(&format!(
+                "[i] removed stale AMD session env {k} (non-AMD launch)\n"
+            ));
+        }
+    }
+    let recorded = AMD_PATH_PREPEND
+        .get()
+        .and_then(|m| m.lock().ok())
+        .and_then(|g| g.clone())
+        .unwrap_or_default();
+    if !recorded.is_empty() {
+        let old = std::env::var("PATH").unwrap_or_default();
+        let stripped = strip_own_path_prepend(&old, &recorded);
+        if stripped != old {
+            std::env::set_var("PATH", &stripped);
+            emit(&format!(
+                "[i] removed stale AMD ROCm PATH prepend {recorded}\n"
+            ));
+        }
+    }
+}
+/// First plausible absolute-dir line of `rocm-sdk path --root` stdout.
+/// None for empty/relative output or dirs that don't exist (never invent
+/// paths — the caller falls back to dir-guessing). Pure + unit-tested.
+pub(crate) fn parse_rocm_sdk_root(out: &str) -> Option<PathBuf> {
+    out.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .find(|l| {
+            let p = Path::new(l);
+            p.is_absolute() || (l.len() > 3 && l.as_bytes()[1] == b':')
+        })
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+}
+/// Virtual-GPU HIP pin decision (issue #15 follow-up): exactly one
+/// discrete AMD GPU PLUS ignored virtual display adapter(s) (e.g. a Meta
+/// Virtual Monitor next to one discrete card) → pin HIP to device 0.
+/// Multi-AMD boxes (the right index would be a guess) and
+/// no-virtual-adapter boxes → None (do nothing). Pure + unit-tested.
+pub(crate) fn hip_pin_value(discrete_amd: usize, virtual_adapters: usize) -> Option<&'static str> {
+    if discrete_amd == 1 && virtual_adapters > 0 {
+        Some("0")
+    } else {
+        None
+    }
+}
+/// MIOpen mode for AMD launch from the Manage-backed `amdEnv` config key
+/// (`amdEnv.miopenDisabled`, default false — backend-only for now, the
+/// frontend can bind the key later). Some(_) → set-if-absent as today;
+/// None → leave MIOPEN_FIND_MODE fully unset. Pure core + unit-tested.
+pub(crate) fn miopen_find_mode_value(miopen_disabled: bool) -> Option<&'static str> {
+    if miopen_disabled {
+        None
+    } else {
+        Some("FAST")
+    }
+}
+/// Config read behind the MIOpen toggle (missing key → false → FAST).
+fn miopen_find_mode() -> Option<&'static str> {
+    let disabled = load_config_value()
+        .get("amdEnv")
+        .and_then(|a| a.get("miopenDisabled"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    miopen_find_mode_value(disabled)
 }
 // External-terminal mode (run.bat style): generate a script that runs wgp.py
 // with the same args/env, open it in a VISIBLE console window, wait for the
@@ -523,10 +648,76 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             }
         }
     }
+    /// ROCm SDK dir for the AMD launch env. Prefers the `rocm-sdk` CLI
+    /// shipped inside the TheRock `rocm` dist (`rocm-sdk path --root` —
+    /// the `rocm-sdk` binary on PATH first, then `<env python> -m rocm_sdk`,
+    /// since the exact installed entry point varies by `rocm` release),
+    /// falling back to dir-guessing (`<env>/Lib/site-packages/rocm`)
+    /// when the CLI is absent or fails. Never invents paths; None when
+    /// everything misses. AMD-gated by the caller; NVIDIA/Intel/CPU paths
+    /// never call it.
+    pub(crate) fn amd_rocm_sdk_dir() -> Option<PathBuf> {
+        // CLI first (warn-only by design: any failure falls through to
+        // dir-guessing below, never fails launch).
+        if let Ok(o) = silent_command("rocm-sdk").args(["path", "--root"]).output() {
+            if o.status.success() {
+                if let Some(d) = parse_rocm_sdk_root(&String::from_utf8_lossy(&o.stdout)) {
+                    return Some(d);
+                }
+            }
+        }
+        let env = get_active_env();
+        let raw = env.get("path")?.as_str()?;
+        if let Some(py) = resolve_env_python(&crate::base::get_repo_dir(), raw) {
+            if let Ok(o) = silent_command(&py)
+                .args(["-m", "rocm_sdk", "path", "--root"])
+                .output()
+            {
+                if o.status.success() {
+                    if let Some(d) = parse_rocm_sdk_root(&String::from_utf8_lossy(&o.stdout)) {
+                        return Some(d);
+                    }
+                }
+            }
+        }
+        let base = if Path::new(raw).is_absolute() {
+            PathBuf::from(raw)
+        } else {
+            crate::base::get_repo_dir().join(
+                raw.trim_start_matches(".\\")
+                    .trim_start_matches("./")
+                    .trim_start_matches(".\\")
+                    .trim_start_matches("./"),
+            )
+        };
+        // Windows venv/uv/conda layout first, then POSIX layouts.
+        let direct = [
+            base.join("Lib").join("site-packages").join("rocm"),
+            base.join("lib").join("site-packages").join("rocm"),
+        ];
+        for d in direct {
+            if d.is_dir() {
+                return Some(d);
+            }
+        }
+        // POSIX versioned lib dir: <env>/lib/python3*/site-packages/rocm.
+        if let Ok(rd) = std::fs::read_dir(base.join("lib")) {
+            for e in rd.flatten() {
+                let cand = e.path().join("site-packages").join("rocm");
+                if cand.is_dir() {
+                    return Some(cand);
+                }
+            }
+        }
+        None
+    }
     // AMD ROCm session env (doc-leading: docs/AMD-INSTALLATION.md "Running Wan2GP").
     // Set-if-absent so explicit user overrides always win; logged like the HSA
-    // override above. Stale values on GPU switch are harmless (NVIDIA ignores
-    // them), so unlike HSA they are never removed here.
+    // override above. On a NON-AMD launch the stale values are NOT harmless:
+    // `CC=clang-cl`, `CXX=clang-cl`, `DISTUTILS_USE_SDK=1` and a
+    // ROCm-prepended PATH break later Intel/CPU/NVIDIA pip builds in this
+    // same launcher process — so the else branch below reconciles them
+    // away (HSA handling above stays exactly as-is).
     {
         let gpu = get_gpu_info_sync();
         let profile = kernel_profile_key(
@@ -537,13 +728,99 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             for (k, v) in [
                 ("FLASH_ATTENTION_TRITON_AMD_ENABLE", "TRUE"),
                 ("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1"),
-                ("MIOPEN_FIND_MODE", "FAST"),
             ] {
                 if std::env::var(k).is_err() {
                     std::env::set_var(k, v);
                     emit(&format!("[i] GPU profile env: {k}={v}\n"));
                 }
             }
+            // MIOpen toggle (issue #15 follow-up): Manage-backed
+            // `amdEnv.miopenDisabled` (default false, backend-only for now
+            // — the frontend can bind the key later). When true,
+            // MIOPEN_FIND_MODE is NOT set at all and the log says so;
+            // when false, the current FAST set-if-absent stays.
+            match miopen_find_mode() {
+                Some(v) => {
+                    if std::env::var("MIOPEN_FIND_MODE").is_err() {
+                        std::env::set_var("MIOPEN_FIND_MODE", v);
+                        emit(&format!("[i] GPU profile env: MIOPEN_FIND_MODE={v}\n"));
+                    }
+                }
+                None => emit("[i] MIOpen disabled by user setting\n"),
+            }
+            // Virtual-GPU HIP pin (strict conditions only): exactly one
+            // discrete AMD GPU PLUS ignored virtual display adapter(s)
+            // (e.g. a Meta Virtual Monitor next to one discrete card) →
+            // set-if-absent HIP_VISIBLE_DEVICES=0 so HIP can't land on the
+            // virtual shim. Multi-AMD boxes (the index would be a guess)
+            // and no-virtual-adapter boxes do nothing.
+            {
+                let discrete = wmi_all_gpus()
+                    .iter()
+                    .filter(|(_, v, _, _)| v == "AMD")
+                    .count();
+                let virtuals = wmi_virtual_adapters().len();
+                if let Some(v) = hip_pin_value(discrete, virtuals) {
+                    if std::env::var("HIP_VISIBLE_DEVICES").is_err() {
+                        std::env::set_var("HIP_VISIBLE_DEVICES", v);
+                        emit("[i] GPU profile env: HIP_VISIBLE_DEVICES=0 (one AMD GPU + virtual display adapter — pinning HIP to the discrete card)\n");
+                    }
+                }
+            }
+            // Full AMD launch env: derive the ROCm SDK dir from the
+            // installed env (the `rocm` package dir, e.g.
+            // `<env>/Lib/site-packages/rocm`). Never invent paths: when
+            // the dir is absent, log and continue without failing launch.
+            match amd_rocm_sdk_dir() {
+                    Some(sdk) => {
+                        let sdk_s = sdk.to_string_lossy().to_string();
+                        if std::env::var("ROCM_HOME").is_err() {
+                            std::env::set_var("ROCM_HOME", &sdk_s);
+                            emit(&format!("[i] GPU profile env: ROCM_HOME={sdk_s}\n"));
+                        }
+                        let llvm_bin = sdk.join("lib").join("llvm").join("bin");
+                        let sdk_bin = sdk.join("bin");
+                        let mut prepend: Vec<String> = Vec::new();
+                        if llvm_bin.is_dir() {
+                            prepend.push(llvm_bin.to_string_lossy().to_string());
+                        }
+                        if sdk_bin.is_dir() {
+                            prepend.push(sdk_bin.to_string_lossy().to_string());
+                        }
+                            if !prepend.is_empty() {
+                                let old = std::env::var("PATH").unwrap_or_default();
+                                let add = prepend.join(";");
+                                if !old.split(';').any(|p| p.eq_ignore_ascii_case(&add)) {
+                                    std::env::set_var("PATH", format!("{add};{old}"));
+                                    if let Ok(mut g) = AMD_PATH_PREPEND
+                                        .get_or_init(|| std::sync::Mutex::new(None))
+                                        .lock()
+                                    {
+                                        *g = Some(add.clone());
+                                    }
+                                    emit(&format!("[i] GPU profile env: PATH prepend {add}\n"));
+                                }
+                            }
+                        for (k, v) in [
+                            ("CC", "clang-cl"),
+                            ("CXX", "clang-cl"),
+                            ("DISTUTILS_USE_SDK", "1"),
+                        ] {
+                            if std::env::var(k).is_err() {
+                                std::env::set_var(k, v);
+                                emit(&format!("[i] GPU profile env: {k}={v}\n"));
+                            }
+                        }
+                    }
+                        None => emit("[!] ROCm SDK dir not found (no rocm package in the active env) — launching without ROCM_HOME/CC/CXX.\n"),
+                    }
+        } else {
+            // Non-AMD launch in a process that previously ran AMD: strip
+            // the stale ROCm/compiler session env (unconditional — these
+            // keys are meaningless off-AMD) and our recorded PATH prepend.
+            // HSA handling above is untouched; the Intel path gains zero
+            // new env behavior beyond this reconcile.
+            reconcile_non_amd_session_env(&emit);
         }
     }
     std::env::set_var("PYTHONUNBUFFERED", "1");
@@ -1261,5 +1538,107 @@ mod launch_args_tests {
             vec!["--teacache", "a b", "--verbose", "2"]
         );
         assert_eq!(split_launch_args(""), Vec::<String>::new());
+    }
+    #[test]
+    fn path_strip_removes_only_recorded_prepend() {
+        // Exact recorded prefix (case-insensitive) is stripped; user PATH survives.
+        assert_eq!(
+            strip_own_path_prepend("C:\\rocm\\bin;C:\\x", "C:\\rocm\\bin"),
+            "C:\\x"
+        );
+        assert_eq!(
+            strip_own_path_prepend("c:\\ROCM\\bin;C:\\x", "C:\\rocm\\bin"),
+            "C:\\x"
+        );
+        // Multi-dir prepend (llvm bin + sdk bin joined by ';') strips as one block.
+        assert_eq!(strip_own_path_prepend("A;B;C:\\x", "A;B"), "C:\\x");
+        // Not our prepend (middle of PATH, partial match) → untouched.
+        assert_eq!(
+            strip_own_path_prepend("C:\\x;C:\\rocm\\bin", "C:\\rocm\\bin"),
+            "C:\\x;C:\\rocm\\bin"
+        );
+        assert_eq!(
+            strip_own_path_prepend("C:\\rocm\\bin-extra;C:\\x", "C:\\rocm\\bin"),
+            "C:\\rocm\\bin-extra;C:\\x"
+        );
+        // Empty inputs are no-ops.
+        assert_eq!(strip_own_path_prepend("C:\\x", ""), "C:\\x");
+        assert_eq!(strip_own_path_prepend("", "C:\\rocm\\bin"), "");
+    }
+    #[test]
+    fn non_amd_reconcile_clears_stale_vars() {
+        // Stale AMD compiler/ROCm vars from an earlier AMD launch in this
+        // process must be gone after the non-AMD reconcile; HSA keys are NOT
+        // this function's business (handled separately above).
+        let saved_path = std::env::var("PATH").unwrap_or_default();
+        let saved: Vec<(String, Option<String>)> = NON_AMD_STALE_ENV_KEYS
+            .iter()
+            .map(|k| (k.to_string(), std::env::var(k).ok()))
+            .collect();
+        for k in NON_AMD_STALE_ENV_KEYS {
+            std::env::set_var(k, "stale");
+        }
+        std::env::set_var("HSA_OVERRIDE_GFX_VERSION", "11.0.0");
+        let mut logged: Vec<String> = Vec::new();
+        reconcile_non_amd_session_env(|m: &str| logged.push(m.to_string()));
+        for k in NON_AMD_STALE_ENV_KEYS {
+            assert!(std::env::var(k).is_err(), "{k} must be removed");
+        }
+        // HSA override untouched by this reconcile.
+        assert_eq!(
+            std::env::var("HSA_OVERRIDE_GFX_VERSION").as_deref(),
+            Ok("11.0.0")
+        );
+        // One [i] line per removed key.
+        assert_eq!(logged.len(), NON_AMD_STALE_ENV_KEYS.len());
+        assert!(logged.iter().all(|l| l.starts_with("[i]")));
+        // Restore.
+        std::env::remove_var("HSA_OVERRIDE_GFX_VERSION");
+        for (k, v) in saved {
+            match v {
+                Some(val) => std::env::set_var(&k, val),
+                None => std::env::remove_var(&k),
+            }
+        }
+        std::env::set_var("PATH", saved_path);
+    }
+    #[test]
+    fn hip_pin_strict_conditions_only() {
+        // Reporter shape: one discrete AMD card + virtual monitor → pin.
+        assert_eq!(hip_pin_value(1, 1), Some("0"));
+        assert_eq!(hip_pin_value(1, 3), Some("0"));
+        // Multi-AMD (the right index would be a guess), no AMD card, and
+        // no-virtual-adapter boxes → do nothing.
+        assert_eq!(hip_pin_value(2, 1), None);
+        assert_eq!(hip_pin_value(0, 1), None);
+        assert_eq!(hip_pin_value(1, 0), None);
+        assert_eq!(hip_pin_value(0, 0), None);
+    }
+    #[test]
+    fn miopen_disabled_unsets() {
+        // Default (false) keeps the FAST set-if-absent; true leaves the var
+        // fully unset (never an empty string — MIOpen reads absence).
+        assert_eq!(miopen_find_mode_value(false), Some("FAST"));
+        assert_eq!(miopen_find_mode_value(true), None);
+    }
+    #[test]
+    fn rocm_sdk_root_parses() {
+        // First plausible absolute-dir line wins; junk/relative → None.
+        let d = std::env::temp_dir().join(format!("wgp-rocm-probe-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        let ds = d.to_string_lossy().to_string();
+        assert_eq!(parse_rocm_sdk_root(&format!("{ds}\n")), Some(d.clone()));
+        assert_eq!(
+            parse_rocm_sdk_root(&format!("rocm-sdk 1.2.3\n{ds}\n")),
+            Some(d.clone())
+        );
+        assert_eq!(parse_rocm_sdk_root(""), None);
+        assert_eq!(parse_rocm_sdk_root("not-a-path\nrelative/dir\n"), None);
+        // Points nowhere on disk → None (never invent paths).
+        assert_eq!(
+            parse_rocm_sdk_root("C:\\definitely-not-here-wgp\\rocm\n"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
