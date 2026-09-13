@@ -477,13 +477,15 @@ function syncNativeBoundsAdjusted() {
     } catch {}
     hideNativeHiddenNote();
     // Bounds spam quieting: transitions fire this up to 3× per flip — log
-    // only on actual change.
+    // only on actual change, and only when Manage → Debug enables it.
     const _bk = `${Math.round(x)}.${Math.round(y)}.${Math.round(w)}.${Math.round(h)}`;
     if (window.__lastNativeBounds !== _bk) {
       window.__lastNativeBounds = _bk;
-      appendLog(
-        `[embed] native bounds x=${Math.round(x)} y=${Math.round(y)} w=${Math.round(w)} h=${Math.round(h)}`,
-      );
+      if (window.__debugBounds) {
+        appendLog(
+          `[embed] native bounds x=${Math.round(x)} y=${Math.round(y)} w=${Math.round(w)} h=${Math.round(h)}`,
+        );
+      }
     }
     if (w > 10 && h > 10) {
       try {
@@ -556,6 +558,18 @@ function initSettingsToggles() {
       el.checked
         ? "Update check on launch enabled"
         : 'Update check on launch disabled — updates only via "Check for updates"',
+    );
+  });
+  $("debugBoundsChk")?.addEventListener("change", async () => {
+    const el = $("debugBoundsChk");
+    const c = await window.w2gp.configLoad();
+    c.debugBounds = el.checked;
+    await window.w2gp.configSave(c);
+    window.__debugBounds = el.checked === true;
+    showToast(
+      el.checked
+        ? "Embed-bounds logging on — reposition the view to see lines"
+        : "Embed-bounds logging off",
     );
   });
   $("shareToggle")?.addEventListener("change", async () => {
@@ -696,6 +710,10 @@ function openSettings() {
     // Desktop embed picker: native (default) vs iframe child webview
     const em = $("embedModeSelect");
     if (em) em.value = cfg.embedMode === "iframe" ? "iframe" : "native";
+    // Debug flags (cached on window for hot paths — no async in the log call)
+    window.__debugBounds = cfg.debugBounds === true;
+    const db = $("debugBoundsChk");
+    if (db) db.checked = cfg.debugBounds === true;
   });
   loadBrowserList();
   refreshPlugins();
@@ -933,7 +951,6 @@ function renderPlugins() {
       ins.textContent = "Install";
       ins.style.marginLeft = "6px";
       ins.addEventListener("click", async () => {
-        const orig = ins.textContent;
         ins.disabled = true;
         ins.textContent = "Installing…";
         appendLog("[*] Installing plugin " + p.name + " — progress below…");
@@ -1635,7 +1652,8 @@ function drawSpark(id, data, color) {
   data.forEach((v, i) => {
     const x = (i / (data.length - 1)) * w;
     const y = h - (Math.max(0, Math.min(max, v)) / max) * h;
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
   });
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.25;
@@ -2436,7 +2454,7 @@ async function startInstall() {
 // per-model Move-to rows with Browse. Resolves {backup, moveModels} |
 // {skip:true} | null (cancel). Model destinations must be OUTSIDE the wiped folder.
 function showReinstallBackupModal() {
-  return new Promise(async (resolve) => {
+  return new Promise((resolve) => {
     const modal = $("backupModal");
     if (!modal) {
       resolve({ backup: true, moveModels: [] });
@@ -2459,136 +2477,142 @@ function showReinstallBackupModal() {
     rowsEl.innerHTML = "";
     $("backupIncludeCheckbox").checked = true;
     modal.classList.remove("hidden");
-    // Gather: repo path, size breakdown, model locations.
-    const paths = await window.w2gp.getInstallPaths().catch(() => null);
-    const repo = (paths && paths.repo) || "";
-    let size = null;
-    try {
-      size = await window.w2gp.folderSize(repo);
-    } catch (e) {
-      size = { error: e.message };
-    }
-    if (!size || size.error) {
-      sumEl.textContent =
-        "size unavailable (" + ((size && size.error) || "unknown") + ")";
-    } else {
-      sumEl.textContent = fmtBytes(size.bytes) + " total";
-      bdEl.innerHTML = (size.entries || [])
-        .slice(0, 8)
-        .map(
-          (e) =>
-            '<div class="istack-row"><span class="istack-k">' +
-            escHtml(e.name) +
-            '</span><span class="istack-v">' +
-            escHtml(fmtBytes(e.bytes)) +
-            "</span></div>",
-        )
-        .join("");
-    }
-    const entryBytes = {};
-    for (const e of (size && size.entries) || [])
-      entryBytes[e.name.toLowerCase()] = e.bytes;
-    // Which model folders live INSIDE the wiped repo?
-    const mp = await window.w2gp.getModelPaths().catch(() => null);
-    const norm = (p) => (p || "").replace(/\//g, "\\");
-    const abs = (p) =>
-      /^[A-Za-z]:\\/.test(p || "") || /\\\\/.test(p || "")
-        ? norm(p)
-        : norm(repo + "\\" + (p || ""));
-    const inside = (p) => {
-      const a = abs(p).toLowerCase();
-      return a.startsWith(repo.toLowerCase().replace(/\\+$/, "") + "\\");
-    };
-    const found = [];
-    const repoNorm = repo.toLowerCase().replace(/\\+$/, "");
-    const push = (type, label, from, trusted) => {
-      if (!from) return;
-      const a = abs(from);
-      if (a.toLowerCase() === repoNorm) return; // '.' == the repo itself — never offer to move it
-      if (
-        !inside(from) ||
-        found.some((f) => f.from.toLowerCase() === a.toLowerCase())
-      )
-        return;
-      found.push({ type, label, from: a, trusted: !!trusted });
-    };
-    if (mp) {
-      push("ckpts", "Checkpoints", mp.checkpoints, true);
-      push("loras", "LoRAs", mp.loras, true);
-      push("output", "Output", mp.output, true);
-    }
-    // Default subdirs count too (ckpts/, loras/, outputs/ under the repo).
-    for (const [sub, type, label] of [
-      ["ckpts", "ckpts", "Checkpoints"],
-      ["loras", "loras", "LoRAs"],
-      ["outputs", "output", "Output"],
-      ["output", "output", "Output"],
-    ]) {
-      push(type, label, repo + "\\" + sub, false);
-    }
-    // Untrusted (default-subdir) rows need a size entry proving they exist;
-    // config-listed rows are trusted as-is.
-    const rows = found.filter((f) => {
-      if (f.trusted) return true;
-      const base = f.from.split("\\").pop().toLowerCase();
-      return Object.hasOwn(entryBytes, base);
-    });
-    const dsts = {};
-    $("backupGoBtn").onclick = () => {
-      const moveModels = [];
-      rows.forEach((r, i) => {
-        if (dsts[i])
-          moveModels.push({ type: r.type, from: r.from, to: dsts[i] });
-      });
-      done({ backup: $("backupIncludeCheckbox").checked, moveModels });
-    };
-    if (!rows.length) return;
-    secEl.style.display = "";
-    rowsEl.innerHTML = "";
-    rows.forEach((r, i) => {
-      const base = r.from.split("\\").pop().toLowerCase();
-      const div = document.createElement("div");
-      div.className = "migrate-row";
-      div.innerHTML =
-        "<label>" +
-        escHtml(r.label + " (" + fmtBytes(entryBytes[base]) + ")") +
-        "</label>" +
-        '<div class="migrate-path"><input type="text" id="backupDst' +
-        i +
-        '" readonly placeholder="stays — will be deleted">' +
-        '<button class="btn btn-ghost small" id="backupBrowse' +
-        i +
-        '">Move to…</button></div>' +
-        '<div class="istack-hint">' +
-        escHtml(r.from) +
-        "</div>";
-      rowsEl.appendChild(div);
-      $("backupBrowse" + i).onclick = async () => {
-        const dir = await window.w2gp.selectFolder().catch(() => null);
-        if (!dir) return;
-        if (isDriveRoot(dir)) {
-          alert("Pick a folder, not a drive root.");
-          return;
-        }
-        if (
-          dir
-            .toLowerCase()
-            .startsWith(repo.toLowerCase().replace(/\\+$/, "") + "\\")
-        ) {
-          alert(
-            "Destination must be OUTSIDE the wiped folder — it would be deleted too.",
-          );
-          return;
-        }
-        dsts[i] = dir;
-        $("backupDst" + i).value = dir;
-        $("backupDst" + i).title = dir;
+    // Gather: repo path, size breakdown, model locations. This async tail
+    // runs in a fail-closed IIFE (never an async executor): any unexpected
+    // throw cancels via done(null) instead of hanging the installer on a
+    // never-settling promise. Callers already treat null as cancel.
+    // (Tail keeps executor-level indent so the diff stays reviewable.)
+    (async () => {
+      const paths = await window.w2gp.getInstallPaths().catch(() => null);
+      const repo = (paths && paths.repo) || "";
+      let size = null;
+      try {
+        size = await window.w2gp.folderSize(repo);
+      } catch (e) {
+        size = { error: e.message };
+      }
+      if (!size || size.error) {
+        sumEl.textContent =
+          "size unavailable (" + ((size && size.error) || "unknown") + ")";
+      } else {
+        sumEl.textContent = fmtBytes(size.bytes) + " total";
+        bdEl.innerHTML = (size.entries || [])
+          .slice(0, 8)
+          .map(
+            (e) =>
+              '<div class="istack-row"><span class="istack-k">' +
+              escHtml(e.name) +
+              '</span><span class="istack-v">' +
+              escHtml(fmtBytes(e.bytes)) +
+              "</span></div>",
+          )
+          .join("");
+      }
+      const entryBytes = {};
+      for (const e of (size && size.entries) || [])
+        entryBytes[e.name.toLowerCase()] = e.bytes;
+      // Which model folders live INSIDE the wiped repo?
+      const mp = await window.w2gp.getModelPaths().catch(() => null);
+      const norm = (p) => (p || "").replace(/\//g, "\\");
+      const abs = (p) =>
+        /^[A-Za-z]:\\/.test(p || "") || /\\\\/.test(p || "")
+          ? norm(p)
+          : norm(repo + "\\" + (p || ""));
+      const inside = (p) => {
+        const a = abs(p).toLowerCase();
+        return a.startsWith(repo.toLowerCase().replace(/\\+$/, "") + "\\");
       };
-    });
+      const found = [];
+      const repoNorm = repo.toLowerCase().replace(/\\+$/, "");
+      const push = (type, label, from, trusted) => {
+        if (!from) return;
+        const a = abs(from);
+        if (a.toLowerCase() === repoNorm) return; // '.' == the repo itself — never offer to move it
+        if (
+          !inside(from) ||
+          found.some((f) => f.from.toLowerCase() === a.toLowerCase())
+        )
+          return;
+        found.push({ type, label, from: a, trusted: !!trusted });
+      };
+      if (mp) {
+        push("ckpts", "Checkpoints", mp.checkpoints, true);
+        push("loras", "LoRAs", mp.loras, true);
+        push("output", "Output", mp.output, true);
+      }
+      // Default subdirs count too (ckpts/, loras/, outputs/ under the repo).
+      for (const [sub, type, label] of [
+        ["ckpts", "ckpts", "Checkpoints"],
+        ["loras", "loras", "LoRAs"],
+        ["outputs", "output", "Output"],
+        ["output", "output", "Output"],
+      ]) {
+        push(type, label, repo + "\\" + sub, false);
+      }
+      // Untrusted (default-subdir) rows need a size entry proving they exist;
+      // config-listed rows are trusted as-is.
+      const rows = found.filter((f) => {
+        if (f.trusted) return true;
+        const base = f.from.split("\\").pop().toLowerCase();
+        return Object.hasOwn(entryBytes, base);
+      });
+      const dsts = {};
+      $("backupGoBtn").onclick = () => {
+        const moveModels = [];
+        rows.forEach((r, i) => {
+          if (dsts[i])
+            moveModels.push({ type: r.type, from: r.from, to: dsts[i] });
+        });
+        done({ backup: $("backupIncludeCheckbox").checked, moveModels });
+      };
+      if (!rows.length) return;
+      secEl.style.display = "";
+      rowsEl.innerHTML = "";
+      rows.forEach((r, i) => {
+        const base = r.from.split("\\").pop().toLowerCase();
+        const div = document.createElement("div");
+        div.className = "migrate-row";
+        div.innerHTML =
+          "<label>" +
+          escHtml(r.label + " (" + fmtBytes(entryBytes[base]) + ")") +
+          "</label>" +
+          '<div class="migrate-path"><input type="text" id="backupDst' +
+          i +
+          '" readonly placeholder="stays — will be deleted">' +
+          '<button class="btn btn-ghost small" id="backupBrowse' +
+          i +
+          '">Move to…</button></div>' +
+          '<div class="istack-hint">' +
+          escHtml(r.from) +
+          "</div>";
+        rowsEl.appendChild(div);
+        $("backupBrowse" + i).onclick = async () => {
+          const dir = await window.w2gp.selectFolder().catch(() => null);
+          if (!dir) return;
+          if (isDriveRoot(dir)) {
+            alert("Pick a folder, not a drive root.");
+            return;
+          }
+          if (
+            dir
+              .toLowerCase()
+              .startsWith(repo.toLowerCase().replace(/\\+$/, "") + "\\")
+          ) {
+            alert(
+              "Destination must be OUTSIDE the wiped folder — it would be deleted too.",
+            );
+            return;
+          }
+          dsts[i] = dir;
+          $("backupDst" + i).value = dir;
+          $("backupDst" + i).title = dir;
+        };
+      });
+    })().catch(() => done(null));
   });
 }
 
-async function doInstall(installed, mode, opts) {
+async function doInstall(_installed, mode, opts) {
   $("reinstallChoice").classList.add("hidden");
   // Checklist verdict consumed — hide it so it can't be re-dispatched mid-install.
   _targetChoiceMode = null;
@@ -3143,7 +3167,6 @@ async function refreshDashboard() {
     return;
   }
   _dashRefreshing = true;
-  const dash = $("dashboard");
   try {
     // status / checkInstalled / manageList are independent — run them in one
     // batch instead of 3 sequential IPC round-trips (~2-6ms saved each, more
@@ -3442,6 +3465,8 @@ async function refreshDashboard() {
     (async () => {
       const probe = async () => {
         try {
+          if (window.w2gp.noGpuAvailable)
+            return await window.w2gp.noGpuAvailable();
           return await window.w2gp.chromeAvailable();
         } catch {
           return null;
@@ -3451,21 +3476,25 @@ async function refreshDashboard() {
       if (available === false) available = await probe();
       if (available === null) return;
       // Flake guard: a single negative probe (common at cold start) must not
-      // flash "Chrome not installed" — show only after 2 consecutive misses.
-      window._chromeMissCount =
-        available === false ? (window._chromeMissCount || 0) + 1 : 0;
-      const noChrome = available === false && window._chromeMissCount >= 2;
-      if (noChrome)
+      // flash "no browser installed" — show only after 2 consecutive misses.
+      window._noGpuMissCount =
+        available === false ? (window._noGpuMissCount || 0) + 1 : 0;
+      const noBrowser = available === false && window._noGpuMissCount >= 2;
+      if (noBrowser)
         appendLog(
-          "[!] Chrome probe: not found twice (Launch in Chrome disabled)",
+          "[!] No-GPU browser probe: none found twice (No-GPU launches disabled)",
         );
-      else if (available === true && window._chromeWasMissing)
-        appendLog("[*] Chrome probe: found on re-probe (first probe flaked)");
-      window._chromeWasMissing = available === false;
-      const btn = $("browserNoGpuBtn");
+      else if (available === true && window._noGpuWasMissing)
+        appendLog(
+          "[*] No-GPU browser probe: found on re-probe (first probe flaked)",
+        );
+      window._noGpuWasMissing = available === false;
+      for (const id of ["browserNoGpuBtn", "termNoGpuBtn"]) {
+        const btn = $(id);
+        if (btn) btn.disabled = noBrowser;
+      }
       const hint = $("noGpuHint");
-      if (btn) btn.disabled = noChrome;
-      if (hint) hint.style.display = noChrome ? "block" : "none";
+      if (hint) hint.style.display = noBrowser ? "block" : "none";
     })();
   } finally {
     _dashRefreshing = false;
@@ -3600,7 +3629,7 @@ $("sageSyncDismissBtn")?.addEventListener("click", () => {
 // Shows the EXACT configured version (e.g. nunchaku 0.3.1) and an "update
 // available" hint when the installed wheel is older than the profile declares.
 // GTX 10/16, AMD, Apple profiles carry no kernels → the subsection hides.
-function renderKernelWheels(wheels, kernelProfile, osKey) {
+function renderKernelWheels(wheels, kernelProfile, _osKey) {
   const card = $("kernelWheelsSubsection");
   const box = $("kernelWheels");
   const tag = $("kernelProfileTag");
@@ -4015,7 +4044,7 @@ async function loadModelPaths() {
 // When changing a model folder via the pencil, ask whether to physically MOVE
 // the existing files (so nothing is re-downloaded) or just point Wan2GP at the
 // new (empty) location. Then write wgp_config.json accordingly.
-async function changeModelFolder(type, key, cfgKey, singular) {
+async function changeModelFolder(type, key, _cfgKey, singular) {
   const dir = await window.w2gp.selectFolder();
   if (!dir) return;
   // ponytail: reject file-as-folder (orca-paste Temp png)
@@ -4562,7 +4591,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // ── Launch buttons: disabled + hint when Wan2GP is not installed ──
 function setLaunchButtonsInstalled(installed) {
-  ["browserBtn", "browserNoGpuBtn", "termBtn", "appBtn"].forEach((id) => {
+  [
+    "browserBtn",
+    "browserNoGpuBtn",
+    "termBtn",
+    "termNoGpuBtn",
+    "appBtn",
+  ].forEach((id) => {
     const b = $(id);
     if (b) b.disabled = !installed;
   });
@@ -4578,7 +4613,10 @@ async function openBrowserView(url, noGpu) {
     const r = await window.w2gp.launchBrowserNoGpu(url);
     if (!r || !r.success)
       throw new Error((r && r.error) || "no-GPU launch failed");
-    appendLog(`[*] Launched in browser with GPU disabled.`);
+    appendLog(
+      `[*] Launched in browser with GPU disabled${r.via ? ` (${r.via})` : ""}.`,
+    );
+    if (r.note) appendLog(`[!] ${r.note}`);
   } else {
     await window.w2gp.launchBrowser(url);
   }
@@ -4586,12 +4624,17 @@ async function openBrowserView(url, noGpu) {
   serverMode = "browser";
   window.w2gp.uiModeSet("browser"); // crash recovery: remember browser mode
   showBrowserRunningUI();
-  $("browserBtn").textContent = "Open Wan2GP in Browser";
+  $("browserBtn").textContent = "Open Browser";
   if (noGpu) {
-    $("browserNoGpuBtn").textContent = "Open in Chrome (no GPU)";
+    $("browserNoGpuBtn").textContent = "Open No-GPU";
     $("browserBtn").style.display = "none";
+    // Terminal re-open would silently re-enable GPU acceleration — hide
+    // both until Stop (same reason the re-open path pins launchBrowserNoGpu).
+    $("termBtn").style.display = "none";
+    $("termNoGpuBtn").style.display = "none";
   } else {
     $("browserNoGpuBtn").style.display = "none";
+    $("termNoGpuBtn").style.display = "none";
   }
   $("launchInfo").classList.add("hidden");
 }
@@ -4620,7 +4663,7 @@ $("browserBtn").addEventListener("click", async () => {
     appendLog(`[LAUNCH ERROR] ${errText(e)}`);
     $("launchInfo").classList.add("hidden");
     btn.disabled = false;
-    if (!browserRunning) btn.textContent = "Launch Wan2GP in Browser";
+    if (!browserRunning) btn.textContent = "Browser";
   }
 });
 
@@ -4650,7 +4693,7 @@ $("browserNoGpuBtn").addEventListener("click", async () => {
     appendLog(`[LAUNCH ERROR] ${errText(e)}`);
     $("launchInfo").classList.add("hidden");
     btn.disabled = false;
-    if (!browserRunning) btn.textContent = "Launch in Chrome (no GPU script)";
+    if (!browserRunning) btn.textContent = "Browser No-GPU";
   }
 });
 
@@ -4672,17 +4715,53 @@ $("termBtn").addEventListener("click", async () => {
     serverMode = "browser"; // UI treatment identical to browser mode (running + Stop + re-open)
     window.w2gp.uiModeSet("browser"); // crash recovery: remember browser mode
     showBrowserRunningUI();
-    btn.textContent = "Open Wan2GP in Browser";
+    btn.textContent = "Open Browser";
     $("browserBtn").style.display = "none";
     $("browserNoGpuBtn").style.display = "none";
+    $("termNoGpuBtn").style.display = "none";
     $("launchInfo").classList.add("hidden");
   } catch (e) {
     appendLog(`[LAUNCH ERROR] ${errText(e)}`);
     $("launchInfo").classList.add("hidden");
   } finally {
     $("termBtn").disabled = false;
-    if (!browserRunning)
-      $("termBtn").textContent = "Launch in External Terminal";
+    if (!browserRunning) $("termBtn").textContent = "Terminal";
+  }
+});
+
+// ── Launch in a real terminal + No-GPU browser (visible console window running
+// wgp.py like run.bat; the script opens the selected default browser with GPU
+// acceleration disabled to free VRAM for generation) ──
+$("termNoGpuBtn").addEventListener("click", async () => {
+  // Already running → re-open with the SAME no-GPU path (never silently
+  // re-enable GPU acceleration).
+  if (browserRunning && currentUrl) {
+    await window.w2gp.launchBrowserNoGpu(currentUrl);
+    return;
+  }
+  const btn = $("termNoGpuBtn");
+  btn.disabled = true;
+  btn.textContent = "Starting...";
+  $("launchInfo").classList.remove("hidden");
+  try {
+    const result = await window.w2gp.launch("terminal-nogpu");
+    currentUrl = result.url;
+    // The generated .bat opens the no-GPU browser itself when ready, so we don't double-open.
+    browserRunning = true;
+    serverMode = "browser"; // UI treatment identical to browser mode (running + Stop + re-open)
+    window.w2gp.uiModeSet("browser"); // crash recovery: remember browser mode
+    showBrowserRunningUI();
+    btn.textContent = "Open No-GPU";
+    $("browserBtn").style.display = "none";
+    $("browserNoGpuBtn").style.display = "none";
+    $("termBtn").style.display = "none";
+    $("launchInfo").classList.add("hidden");
+  } catch (e) {
+    appendLog(`[LAUNCH ERROR] ${errText(e)}`);
+    $("launchInfo").classList.add("hidden");
+  } finally {
+    $("termNoGpuBtn").disabled = false;
+    if (!browserRunning) $("termNoGpuBtn").textContent = "Terminal No-GPU";
   }
 });
 
@@ -4707,14 +4786,25 @@ function armPendingTimeout() {
       );
       $("appBtn").disabled = false;
       setAppLaunchLabel();
-      ["browserBtn", "browserNoGpuBtn"].forEach((id) => {
+      ["browserBtn", "browserNoGpuBtn", "termNoGpuBtn"].forEach((id) => {
         const b = $(id);
         if (b) b.disabled = false;
       });
-      if (!browserRunning)
-        $("browserBtn").textContent = "Launch Wan2GP in Browser";
+      if (!browserRunning) $("browserBtn").textContent = "Browser";
     }
   }, 180000);
+}
+// Bounded wait for the view-transition mutex. openDesktopView, closeWebview,
+// checkCrashRecovery, the Stop-all teardown and the server-exit path all
+// mutate the same four UI elements (dashBody, webviewContainer, wvControls,
+// serverMode) — never interleave them or the UI strands mixed states
+// (dashboard visible WITH Desktop topbar controls, #14 follow-up).
+async function awaitViewFree(timeoutMs) {
+  const t0 = Date.now();
+  while (window.__viewBusy && Date.now() - t0 < (timeoutMs || 20000)) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return !window.__viewBusy;
 }
 async function openDesktopView(url, fresh) {
   // Transition mutex with closeWebview: double-clicks / fast Back-and-forth
@@ -4945,11 +5035,14 @@ async function closeWebview(silent) {
     window.w2gp.uiModeSet(null);
     // Server is still running behind the dashboard → the launch button becomes "Back to…"
     setAppLaunchLabel();
-    // Silent when invoked from the server-exit path (no server behind us —
-    // claiming otherwise is exactly the stale "still running" confusion).
+    // Silent when invoked from the server-exit path. On a manual Back press,
+    // only claim a live server when we actually believe one is behind us —
+    // after a stop/exit nothing runs and the old message lied (shot-2 class).
     if (!silent)
       appendLog(
-        "[*] Back on dashboard. Server still running — flip back anytime.",
+        appRunning
+          ? "[*] Back on dashboard. Server still running — flip back anytime."
+          : "[*] Back on dashboard.",
       );
   } finally {
     window.__viewBusy = false;
@@ -4978,6 +5071,9 @@ async function checkCrashRecovery() {
       : "[i] Launcher UI recovered after a crash. The Wan2GP server is not running.",
   );
   if (info.serverRunning && info.mode === "app" && info.url) {
+    // Same UI state as open/close/Stop — hold the transition mutex so a
+    // Stop pressed mid-recovery can't interleave into a mixed state.
+    window.__viewBusy = true;
     try {
       // Force a reload: after a renderer crash the embedded Gradio page may be in a
       // bad state, so re-open from a fresh load rather than re-attaching a live session.
@@ -4991,6 +5087,23 @@ async function checkCrashRecovery() {
             : "failed to re-create embed",
         );
       noteEmbedFallback(created);
+      // createBrowserView takes seconds — a Stop may have landed meanwhile.
+      // Re-probe: never open a view onto a just-stopped server.
+      try {
+        const fresh = await window.w2gp
+          .getCrashRecoveryInfo()
+          .catch(() => null);
+        if (!fresh || !fresh.pending || !fresh.serverRunning) {
+          appendLog(
+            "[i] Server went away during recovery — staying on dashboard.",
+          );
+          try {
+            await window.w2gp.destroyBrowserView();
+          } catch {}
+          window.__viewBusy = false;
+          return;
+        }
+      } catch {}
       appendLog(
         `[*] Desktop view recovered: ${(created && created.mode) || "iframe"} renderer — ${info.url}`,
       );
@@ -5016,6 +5129,7 @@ async function checkCrashRecovery() {
         setFtDock(dock);
       }
       showToast("Launcher UI recovered — Wan2GP re-opened");
+      window.__viewBusy = false;
     } catch (e) {
       appendLog(
         "[!] Could not re-open the embedded view after the crash: " + e.message,
@@ -5027,12 +5141,13 @@ async function checkCrashRecovery() {
       try {
         await window.w2gp.destroyBrowserView();
       } catch {}
+      window.__viewBusy = false;
     }
   } else if (info.serverRunning && info.mode === "browser") {
     browserRunning = true;
     serverMode = "browser";
     showBrowserRunningUI();
-    $("browserBtn").textContent = "Open Wan2GP in Browser";
+    $("browserBtn").textContent = "Open Browser";
     appendLog("[i] Browser-mode launch restored — server running.");
   } else {
     // Dashboard (or no server): detach any leftover BrowserView so it can't
@@ -5124,20 +5239,40 @@ function startDownloadsWatch() {
     // then the native Save-As dialog pops on finish (cancel keeps Downloads).
     try {
       window.w2gp.onDownloadStarted((p) => {
-        if (p && p.name) showToast("⬇ Downloading: " + p.name);
+        if (p && p.name)
+          showToast(
+            "⬇ Downloading: " + p.name + (p.dlId ? " (#" + p.dlId + ")" : ""),
+          );
       });
     } catch {}
     try {
       window.w2gp.onDownloadFinished((p) => {
-        if (!p || !p.path) return;
+        // Log FIRST, dedup second: a suppressed duplicate must leave a
+        // trace (#14 one-shot was this silent return — the staged path
+        // gets reused once Save-As moves the file away). Keyed on the
+        // backend dlId nonce, never on the reusable path.
+        if (!p || !p.path) {
+          appendLog("[dl] finish event with no path — dropped.");
+          return;
+        }
+        const tag = p.dlId ? " (#" + p.dlId + ")" : "";
         if (p.success === false) {
+          appendLog(
+            "[dl] download FAILED" +
+              tag +
+              ": " +
+              (p.name || p.url || "unknown"),
+          );
           showToast("✗ Download failed: " + (p.name || p.url || "unknown"));
           return;
         }
-        const key = "staged|" + p.path;
-        if (_dlWatchSeen.has(key)) return;
+        appendLog("[*] Download finished" + tag + ": " + (p.name || p.path));
+        const key = "dl#" + (p.dlId ?? "staged|" + p.path);
+        if (_dlWatchSeen.has(key)) {
+          appendLog("[dl] duplicate finish suppressed: " + key);
+          return;
+        }
         _dlWatchSeen.add(key);
-        appendLog("[*] Download finished: " + (p.name || p.path));
         finishNativeDownload(p);
       });
     } catch {}
@@ -5166,9 +5301,13 @@ function startDownloadsWatch() {
       const files = await window.w2gp.downloadsSince(_dlWatchBaseline);
       for (const f of files || []) {
         const key = (f.name || "") + "|" + (f.ms || 0);
+        // NB: no logging on the duplicate path — downloadsSince
+        // re-reports every file newer than baseline on EVERY poll, so a
+        // log here would spam every 4s. New arrivals log below.
         if (!f.name || _dlWatchSeen.has(key)) continue;
         _dlWatchSeen.add(key);
         if (!isWangpDownload(f.name)) continue;
+        appendLog("[*] Download detected: " + f.name);
         showDownloadPrompt(f.name);
       }
     } catch {}
@@ -5298,15 +5437,18 @@ function resetBrowserLaunchUI() {
   browserRunning = false;
   serverMode = null;
   window.w2gp.uiModeSet(null);
-  $("browserBtn").textContent = "Launch Wan2GP in Browser";
+  $("browserBtn").textContent = "Browser";
   $("browserBtn").style.display = "";
   $("browserBtn").disabled = false;
-  $("browserNoGpuBtn").textContent = "Launch in Chrome (no GPU script)";
+  $("browserNoGpuBtn").textContent = "Browser No-GPU";
   $("browserNoGpuBtn").style.display = "";
   $("browserNoGpuBtn").disabled = false;
-  $("termBtn").textContent = "Launch in External Terminal";
+  $("termBtn").textContent = "Terminal";
   $("termBtn").style.display = "";
   $("termBtn").disabled = false;
+  $("termNoGpuBtn").textContent = "Terminal No-GPU";
+  $("termNoGpuBtn").style.display = "";
+  $("termNoGpuBtn").disabled = false;
 }
 
 // ── Stop Wan2GP button ──
@@ -5376,13 +5518,20 @@ $("stopAllBtn").addEventListener("click", async () => {
   // Server is gone: tear down the Desktop view state NOW (don't wait for the
   // exit event) so "Back to Wan2GP in Desktop" can never point at a dead
   // server and no dead page lingers. Survivors (clean=false) keep their view.
+  // The reset is UNCONDITIONAL and serialized on the view mutex: a concurrent
+  // open/recovery/exit flow must never interleave into dashboard+controls.
   if (clean) {
-    appRunning = false;
-    _termWinOpen = false;
+    await awaitViewFree(20000);
+    window.__viewBusy = true;
     try {
-      await window.w2gp.destroyBrowserView();
-    } catch {}
-    if (serverMode === "app") {
+      const hadView =
+        serverMode === "app" ||
+        !$("webviewContainer").classList.contains("hidden");
+      appRunning = false;
+      _termWinOpen = false;
+      try {
+        await window.w2gp.destroyBrowserView();
+      } catch {}
       serverMode = null;
       try {
         $("webviewContainer").classList.add("hidden");
@@ -5393,9 +5542,15 @@ $("stopAllBtn").addEventListener("click", async () => {
       try {
         window.w2gp.uiModeSet(null);
       } catch {}
+      setAppLaunchLabel();
+      appendLog(
+        hadView
+          ? "[*] Desktop view closed (server stopped)."
+          : "[*] Servers stopped (already on dashboard).",
+      );
+    } finally {
+      window.__viewBusy = false;
     }
-    setAppLaunchLabel();
-    appendLog("[*] Desktop view closed (server stopped).");
   }
 });
 
@@ -5416,7 +5571,15 @@ try {
     } catch {}
   });
 } catch {}
-window.w2gp.onWangpExit((c) => {
+window.w2gp.onAppClosing(() => {
+  // Ordered close: the window stays alive while the backend stops
+  // sessions first — tell the user why close takes a few seconds.
+  appendLog("[*] Closing — stopping Wan2GP sessions first…");
+  try {
+    showToast("Stopping sessions before exit…");
+  } catch {}
+});
+window.w2gp.onWangpExit(async (c) => {
   // Payload shapes: {code: n|null} on process end, {stopped:true} on manual stop.
   // (Was interpolating the whole object → "exited (code [object Object])".)
   const code =
@@ -5438,7 +5601,12 @@ window.w2gp.onWangpExit((c) => {
   // open rebuilds it instead of showing a dead page.
   window.w2gp.destroyBrowserView().catch(() => {});
   if (serverMode === "app") {
-    if (!$("webviewContainer").classList.contains("hidden")) closeWebview(true);
+    if (!$("webviewContainer").classList.contains("hidden")) {
+      // closeWebview skips when a transition is in flight — wait for it
+      // first so a real exit can never strand visible view controls.
+      await awaitViewFree(20000);
+      closeWebview(true);
+    }
   } else if (serverMode === "browser") {
     hideBrowserRunningUI();
     resetBrowserLaunchUI();
@@ -5716,7 +5884,7 @@ async function refreshLLMEngines() {
   let data;
   try {
     data = await getLLMEngines();
-  } catch (e) {
+  } catch {
     data = { engines: [] };
   }
   const engines = (data && data.engines) || [];
@@ -5886,11 +6054,11 @@ async function refreshDeepy() {
   try {
     const s = await window.w2gp.deepyStatus();
     if (s && s.ok) status = s;
-  } catch (_) {}
+  } catch {}
   try {
     const d = await getLLMEngines();
     engines = (d && d.engines) || [];
-  } catch (_) {}
+  } catch {}
 
   const ready = (id) => {
     // ponytail: local model lives in Wan2GP — it validates the 27B requirement + downloads on first use, nothing for the launcher to probe
@@ -6698,7 +6866,7 @@ async function loadGpuDeviceOptions(current) {
       }
     });
     sel.value = current && /^cuda:\d+$/.test(current) ? current : "auto";
-  } catch (e) {
+  } catch {
     sel.value = "auto";
   }
 }
@@ -6838,7 +7006,6 @@ $("cliDocsLink")?.addEventListener("click", (e) => {
 });
 
 // ── Auto-Update ──
-let updateState = null;
 
 // Reflect Desktop-Launcher update availability on the dashboard "Check Desktop
 // Updates" action button itself (persistent dot + green border), so users who
@@ -6897,7 +7064,6 @@ window.w2gp.onUpdateStatus((status) => {
       break;
     case "available":
       setDesktopUpdateIndicator(true);
-      updateState = status;
       if (status.autoDownload === false) {
         // Auto-updates disabled: don't auto-download — offer the manual
         // Download button instead.
@@ -7787,7 +7953,7 @@ $("tsComputeBtn")?.addEventListener("click", async function () {
   );
   try {
     const r = await window.w2gp.tsGpuCompute();
-    const kernelLines = (r, ok) => {
+    const kernelLines = (r) => {
       const k = (r && r.kernels) || {};
       return Object.keys(k)
         .filter((d) => d !== "sage2_symbol" && d !== "quanto_qbytes_mm")

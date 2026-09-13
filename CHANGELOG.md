@@ -6,6 +6,15 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 - Manage → AMD ROCm section with MIOpen-disable toggle (binds the `amdEnv.miopenDisabled` backend key; unsets `MIOPEN_FIND_MODE` at AMD launch when on)
 
+## [0.6.4] — 2026-09-13
+
+- Ordered app-close: first X starts session shutdown and the window stays; tracked PIDs plus terminal window die synchronously (milliseconds), a worker then runs the full verified sweep (WMI plus port scans catch old/orphaned sessions) and closes the window when done; second X or a 30s watchdog forces the exit. A final close-port sweep re-checks Wan2GP-port listeners and kills only provably-ours processes (tracked child or repo-signal cmdline; foreign/unverifiable PIDs are spared and logged).
+- Launch modes: Desktop hero button plus a 2x2 grid — Browser, Browser No-GPU, Terminal, Terminal No-GPU. No-GPU opens the selected default browser with GPU acceleration disabled (Chrome, any Chromium, Firefox, OS default) so the browser frees VRAM; a hint appears when no supported browser is found.
+- Terminal launch fix: the external-terminal server command now carries the bootstrap shim instead of a hardcoded script name (all terminal modes died with unrecognized-arguments).
+- Native downloads traced per-download: Requested assigns [dl #id], Finished reaps it (unpaired finishes mint a fresh id and say so), so a staged path reused after Save-As never collides; both events also go to the backend log bus.
+- Manage Debug: verbose embed-bounds logging toggle (off by default; takes effect immediately, no restart).
+- AMD driver label fix: the 32.x store branch reads as current (Adrenalin 24.x-26.x+); pre-2024 drivers still warn (issue #15).
+
 ## [0.6.3] — 2026-09-12
 
 - AMD easy-mode installer fixes (issue #15 follow-up): per-family `rocm[devel]` doc-recipe torch float (`/v2/<fam>/`, v2-staging fallback), full ROCm launch env derived from the installed env (`ROCM_HOME`, LLVM/bin PATH prepend, `CC`/`CXX=clang-cl`, `DISTUTILS_USE_SDK=1` — set-if-absent, never invented), `attention_mode` defaults to `"auto"` after AMD setup when missing/empty **or holding setup.py's bogus `'sage'`/`'sage2'` default** (upstream picks it with `if "20" in profile_key`, which matches `"AMD_GFX1201"` via the "1201" substring — every fresh AMD config was born `sage` with no sage backend installed; deliberate values like `sdpa`/`flash` stay untouched), package installs refuse CUDA/bitsandbytes/vanilla triton/vanilla spas_sage_attn/sdist flash-attn on AMD with a docs/AMD-INSTALLATION.md pointer (vanilla `triton` maps to `triton-windows`; Manage hides those add buttons on AMD), and AMD verify logs torch + HIP versions via `collect_env`

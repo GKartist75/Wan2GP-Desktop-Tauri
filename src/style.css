@@ -383,7 +383,17 @@ body {
 .launch-btn:hover { background: var(--accent-hover); }
 .launch-btn:active { transform: scale(0.98); }
 .launch-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.launch-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .launch-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    /* Hero + 2x2 launch layout: Desktop commands the left, alternatives grid the right.
+       Grid cells use short labels (full text in title tooltips); running-state
+       label swaps in app.js use the same short forms so the grid never pops. */
+    .launch-hero-row { display: flex; gap: 8px; align-items: stretch; }
+    .launch-hero-row .launch-hero { flex: 1.25; font-size: 0.8rem; }
+    .launch-hero-row .launch-grid { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    .launch-hero-row .launch-grid .launch-btn { width: auto; }
+    @media (max-width: 1100px) {
+      .launch-hero-row { flex-direction: column; }
+    }
 .launch-hint { display: none; font-size: 0.6875rem; color: var(--text-secondary); line-height: 1.4; padding: 2px 4px; text-align: center; }
 .launch-info {
   margin-top: 6px; border-radius: var(--radius-sm); overflow: hidden;

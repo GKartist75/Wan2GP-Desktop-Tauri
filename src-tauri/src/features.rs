@@ -569,6 +569,29 @@ static OPENCODE_PID: std::sync::OnceLock<std::sync::Mutex<Option<u32>>> =
 // listening on :4096. After the PID kill (or when no PID was stored),
 // sweep local port 4096 and kill ONLY node/opencode owners — never
 // foreign processes. Stays SYNC; returns true if anything was killed.
+/// Fast synchronous kill for app-close (see shutdown_cleanup): tracked PID
+/// only, no port-scan PowerShell. Milliseconds; the :4096 orphan sweep
+/// stays on the toggle/Stop path.
+pub(crate) fn stop_opencode_fast() -> bool {
+    let pid = OPENCODE_PID
+        .get()
+        .and_then(|m| m.lock().ok())
+        .and_then(|mut g| g.take());
+    if let Some(pid) = pid {
+        #[cfg(windows)]
+        {
+            let _ = silent_command("taskkill")
+                .args(["/F", "/T", "/PID", &pid.to_string()])
+                .output();
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = silent_command("kill").arg(pid.to_string()).output();
+        }
+        return true;
+    }
+    false
+}
 pub(crate) fn stop_opencode_server() -> bool {
     let mut killed_any = false;
     let pid = OPENCODE_PID

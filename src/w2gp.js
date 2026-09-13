@@ -487,6 +487,7 @@
             return { ok: true };
         },
         chromeAvailable: () => call("chrome_available"),
+        noGpuAvailable: () => call("no_gpu_available"),
         openTaskManager: () => call("open_task_manager"),
         configLoad: () => call("config_load"),
         configSave: (cfg) => call("config_save", { cfg }),
@@ -588,6 +589,10 @@
         },
         onWangpExit: (cb) => {
             listen("wangp-exit", cb);
+            return () => {};
+        },
+        onAppClosing: (cb) => {
+            listen("app-closing", cb);
             return () => {};
         },
         onUpdateStatus: (cb) => {

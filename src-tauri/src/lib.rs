@@ -12,7 +12,12 @@ mod system;
 mod troubleshoot;
 mod updates;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
+/// Ordered app-close state: first X starts session shutdown (window stays),
+/// worker closes the window when sessions are dead; second X forces out.
+static APP_CLOSING: AtomicBool = AtomicBool::new(false);
+static CLOSE_CONFIRMED: AtomicBool = AtomicBool::new(false);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -73,11 +78,49 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| {
-            // Closing the launcher stops the Wan2GP server and helper servers.
-            // Explorer/browser windows are never touched — see shutdown_cleanup.
+            // Ordered close: sessions (running AND old/orphaned) die FIRST,
+            // the app exits SECOND. Fast kills fire synchronously (ms),
+            // then the window stays alive while a worker runs the full
+            // verified sweep (WMI + port scans catch orphans the fast path
+            // can't see) and closes the window when done. Second X or a
+            // 30s watchdog forces the exit so nobody gets trapped.
+            // Explorer/browser windows are never touched.
             if window.label() == "main" {
-                if let tauri::WindowEvent::CloseRequested { .. } = event {
-                    crate::system::shutdown_cleanup(window.app_handle());
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    if CLOSE_CONFIRMED.load(Ordering::SeqCst) {
+                        return; // worker/watchdog approved — proceed with close
+                    }
+                    if APP_CLOSING.swap(true, Ordering::SeqCst) {
+                        // Second X while sessions are stopping: force out now.
+                        CLOSE_CONFIRMED.store(true, Ordering::SeqCst);
+                        window.app_handle().exit(0);
+                        return;
+                    }
+                    api.prevent_close();
+                    crate::system::shutdown_cleanup_fast();
+                    {
+                        use tauri::Emitter;
+                        let _ = window.emit("app-closing", serde_json::json!({ "stopping": true }));
+                    }
+                    let app = window.app_handle().clone();
+                    std::thread::spawn(move || {
+                        use tauri::Manager;
+                        crate::system::shutdown_cleanup_full(&app);
+                        CLOSE_CONFIRMED.store(true, Ordering::SeqCst);
+                        if let Some(m) = app.get_window("main") {
+                            let _ = m.close();
+                        } else {
+                            app.exit(0);
+                        }
+                    });
+                    let app2 = window.app_handle().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(30));
+                        if !CLOSE_CONFIRMED.load(Ordering::SeqCst) {
+                            CLOSE_CONFIRMED.store(true, Ordering::SeqCst);
+                            app2.exit(0);
+                        }
+                    });
                 }
             }
             // Term console window closed via X: tell the main window so its
@@ -148,6 +191,7 @@ pub fn run() {
             launch::detect_browsers,
             launch::launch_browser,
             launch::launch_browser_no_gpu,
+            launch::no_gpu_available,
             launch::chrome_available,
             system::set_data_dir,
             system::reset_data_dir,
