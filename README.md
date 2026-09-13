@@ -25,7 +25,7 @@
 - [📊 Monitoring & control](#-monitoring--control)
 - [🔧 GPU kernels](#-gpu-kernels--what-gets-installed-per-gpu)
 - [Deepy — your offline agent](#deepy--your-offline-agent)
-- [🧩 Plugin Manager & ✨ DLSS5](#-plugin-manager--status-pro-included)
+- [🧩 Plugin Manager & ✨ DLSS5](#-plugin-manager)
 - [🔥 What's New](#-whats-new)
 - [🛠 Build from source](#-build-from-source)
 - [⭐ Star History](#-star-history)
@@ -220,11 +220,11 @@ Switching live-re-renders the selector; **Apply** writes a consistent `wgp_confi
 
 ---
 
-## 🧩 Plugin Manager — Status Pro included
+## 🧩 Plugin Manager
 
 **Manage → Plugins** lists WanGP's catalog merged with your installed `plugins/` folder (system vs community grouping), with search, Name/Latest/Author sort, and per-plugin enable checkboxes. From a git URL you can install (clone + `requirements.txt` + enable), per-plugin ↻ check/update, 🗑 uninstall, library refresh, and check-all-updates — all with console progress.
 
-- **Status Pro** is a default plugin: installed automatically on fresh setup and kept enabled (locked checkbox), but still uninstallable — one click reinstalls it.
+- **Status Pro** is uninstalled by default (temporarily incompatible with the current Deepy update): no longer auto-installed or force-enabled, and removed from existing installs — reinstall/enable it manually once fixed.
 - **★ Favourites** auto-install on fresh setup (stored in `desktop-config.json` → `favoritePlugins`).
 - Changes apply on next Wan2GP launch.
 
@@ -246,7 +246,9 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.6.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.4) *(latest)* — Ordered app-close (sessions die first, verified sweep runs, then the window closes; second X forces out; foreign processes spared), Launch hero + 2x2 grid (Browser / Browser No-GPU / Terminal / Terminal No-GPU — No-GPU frees VRAM for generation), terminal-launch argparse fix (no more unrecognized-arguments in terminal modes), per-download [dl #id] tracing on the backend log bus, verbose embed-bounds debug toggle (off by default).
+- [**v0.6.5**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.5) *(latest)* — mmgp 3.8.0 fallout fixes (Update auto-reinstalls changed `requirements.txt` + post-update dep recheck with drift warning, Status Pro uninstalled by default), Install-button progress feedback (Working…/Installing… locks, Measuring… log, wipe-phase lines, no double-press), more env-panel packages (MMGP/XFormers/Torchaudio/MoviePy), self-repairing first-launch bar.
+
+- [**v0.6.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.4) — Ordered app-close (sessions die first, verified sweep runs, then the window closes; second X forces out; foreign processes spared), Launch hero + 2x2 grid (Browser / Browser No-GPU / Terminal / Terminal No-GPU — No-GPU frees VRAM for generation), terminal-launch argparse fix (no more unrecognized-arguments in terminal modes), per-download [dl #id] tracing on the backend log bus, verbose embed-bounds debug toggle (off by default).
 
 - [**v0.6.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.3) — AMD easy-mode installer (#15): per-family `/v2/` ROCm torch float with `rocm[devel]`, full ROCm launch env, attention Auto (incl. setup.py `sage`-artifact repair), fixed AMD package buttons + auto `triton-windows`, repair flow survives missing `pyvenv.cfg` (no more exit 106), Intel/AMD pipelines separated. In-app updater fixed (signed artifacts + `latest.json`).
 

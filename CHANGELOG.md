@@ -6,6 +6,10 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 - Manage → AMD ROCm section with MIOpen-disable toggle (binds the `amdEnv.miopenDisabled` backend key; unsets `MIOPEN_FIND_MODE` at AMD launch when on)
 
+## [0.6.5] — 2026-09-13
+
+- mmgp 3.8.0 fallout fixes: no-`wt.exe` terminal launch passes an empty `start` title (a quoted title was executed as a program — "Windows cannot find 'Wan2GP-Launcher-…'"), the quick pip box redirects `-r`/`-e`/flag/`requirements.txt` input to the restore button instead of installing a literal filename, Update auto-reinstalls `requirements.txt` when the pull changes it (result carries `requirements`/`depCheck`/`drift`, dashboard narrates reinstall/failure), a post-update one-probe `importlib.metadata` recheck warns on version drift with a restore pointer (never fails the update), Status Pro is uninstalled by default (temporarily incompatible with the current Deepy update — removed from existing installs, reinstall manually once fixed); Install-button feedback (Working…/Installing… locks, Measuring… log line, backend wipe-phase lines, no double-press); env panel gains MMGP/XFormers/Torchaudio/MoviePy rows; first-launch yellow bar self-repairs (repainted from server state on every dashboard refresh)
+
 ## [0.6.4] — 2026-09-13
 
 - Ordered app-close: first X starts session shutdown and the window stays; tracked PIDs plus terminal window die synchronously (milliseconds), a worker then runs the full verified sweep (WMI plus port scans catch old/orphaned sessions) and closes the window when done; second X or a 30s watchdog forces the exit. A final close-port sweep re-checks Wan2GP-port listeners and kills only provably-ours processes (tracked child or repo-signal cmdline; foreign/unverifiable PIDs are spared and logged).

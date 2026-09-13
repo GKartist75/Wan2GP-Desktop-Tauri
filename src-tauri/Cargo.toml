@@ -1,6 +1,6 @@
 [package]
 name = "wan2gp-desktop-launcher-tauri"
-version = "0.6.4"
+version = "0.6.5"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -30,6 +30,8 @@ tauri-plugin-updater = "2.11.0"
 reqwest = { version = "0.13.4", features = ["json"] }
 chrono = "0.4"
 sha2 = "0.10"
+base64 = { version = "0.23.1", default-features = false, features = ["alloc"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 
 [profile.release]
 opt-level = 3
@@ -41,4 +43,7 @@ strip = true
 [profile.dev]
 opt-level = 0
 incremental = true
+
+[target.cfg-windows.dependencies]
+windows = "0.62.2"
 
