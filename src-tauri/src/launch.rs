@@ -308,11 +308,15 @@ fn launch_in_terminal(
                 ])
                 .spawn()
         } else {
+            // `start` only treats the first arg as a window title when it is
+            // quoted — an unquoted title is executed as a program ("Windows
+            // cannot find 'Wan2GP-Launcher-…'"). Pass an empty quoted title;
+            // the .bat already runs `title {title}` and wt.exe keeps --title.
             std::process::Command::new("cmd.exe")
                 .args([
                     "/C",
                     "start",
-                    &title,
+                    "",
                     "cmd",
                     "/K",
                     script.to_string_lossy().as_ref(),

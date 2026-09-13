@@ -2979,6 +2979,9 @@ pub async fn reinstall(
         .and_then(|o| o.get("moveModels"))
         .and_then(|m| m.as_array())
     {
+        if !moves.is_empty() {
+            emit("[*] Moving model libraries out of the way…\n");
+        }
         for mv in moves {
             let from = mv.get("from").and_then(|x| x.as_str()).unwrap_or("");
             let to = mv.get("to").and_then(|x| x.as_str()).unwrap_or("");
@@ -3042,6 +3045,7 @@ pub async fn reinstall(
         }
     }
     if repo.exists() {
+        emit("[*] Moving old installation to trash…\n");
         // ponytail: .electron is the live WebView2 Shared Dictionary — locked while launcher runs, keep it (Electron d186d49+e3e8505)
         // .reinstall-backup must survive too (data_dir == repo on default installs) — restore_backup() merges it back after install.
         const KEEP: &[&str] = &[".electron", ".reinstall-backup"];
@@ -3539,6 +3543,20 @@ async fn pip_show_version(py: &str, dists: &[&str]) -> Option<String> {
     }
     crate::hw::parse_pip_show_versions(&String::from_utf8_lossy(&out.stdout))
 }
+/// Byte-hash + length signature of a file for change detection (FNV-1a).
+/// None when the file is missing — callers treat a missing pre-pull file as
+/// changed so a newly-added requirements.txt still triggers a reinstall.
+/// Pure + unit-tested.
+pub(crate) fn file_sig(p: &Path) -> Option<(u64, u64)> {
+    std::fs::read(p).ok().map(|b| {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for byte in &b {
+            h ^= *byte as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        (h, b.len() as u64)
+    })
+}
 #[tauri::command]
 pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     mutating_try("update")?;
@@ -3547,6 +3565,10 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         mutating_done();
         return Err("not a git repo".into());
     }
+    // Hash requirements.txt BEFORE the pull: a missing pre-pull file counts
+    // as changed so a newly-added pin file still triggers a reinstall.
+    let req_path = repo.join("requirements.txt");
+    let pre_sig = file_sig(&req_path);
     let emit = |m: &str| {
         crate::base::push_log(m, "setup");
         let _ = app.emit("launch-log", m.to_string());
@@ -3555,8 +3577,288 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         mutating_done();
         return Err("git pull failed — see console output (offline? diverged branch?)".into());
     }
+    // Upstream bumps (e.g. mmgp 3.7.14 → 3.8.0 with a wgp.py hard-exit on
+    // mismatch) only take effect once the pinned packages are reinstalled.
+    // Reinstall on change only — a slow no-op pip run on every update.
+    let changed = file_sig(&req_path) != pre_sig;
+    let mut requirements = "unchanged";
+    let mut pip_ok = true;
+    let mut req_error: Option<&str> = None;
+    if changed && req_path.exists() {
+        let env = get_active_env();
+        let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
+        let py_opt = if raw.is_empty() {
+            None
+        } else {
+            resolve_env_python(&repo, raw)
+        };
+        match py_opt {
+            None => {
+                emit("[!] requirements.txt changed but no environment Python found — run Install/Repair, then restore requirements from Manage.\n");
+                requirements = "skipped-no-env";
+            }
+            Some(py) => {
+                emit("[*] requirements.txt changed — reinstalling pinned packages…\n");
+                let py_s = py.to_string_lossy().to_string();
+                if !run_logged(
+                    &app,
+                    &py_s,
+                    &["-m", "pip", "install", "-r", "requirements.txt"],
+                    Some(&repo),
+                    emit,
+                )
+                .await
+                {
+                    emit("[!] requirements reinstall failed — see the console output above; the git pull itself stays applied.\n");
+                    requirements = "failed";
+                    pip_ok = false;
+                    req_error = Some("pip install -r requirements.txt failed — see console output");
+                } else {
+                    requirements = "reinstalled";
+                }
+            }
+        }
+    }
+    // Post-update dependency recheck: ONE quick env-python probe against
+    // the post-pull == pins. Warn-only — drift never fails the update.
+    let (dep_check, drift) = post_update_dep_check(&repo, &req_path, &emit);
     mutating_done();
-    Ok(serde_json::json!({"ok": true, "success": true}))
+    let mut result = serde_json::json!({"ok": true, "success": pip_ok, "requirements": requirements, "depCheck": dep_check, "drift": drift});
+    if let Some(e) = req_error {
+        result["error"] = serde_json::Value::String(e.to_string());
+    }
+    Ok(result)
+}
+/// Parse `name==version` pins from requirements.txt text. Only exact pins;
+/// skips comments, options (`-r`/`-e`/`--…`), URLs, extras (`pkg[x]==…`),
+/// and non-`==` specifiers. Pure + unit-tested.
+pub(crate) fn parse_requirement_pins(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('-') {
+            continue;
+        }
+        let low = line.to_ascii_lowercase();
+        if low.contains("://") || low.starts_with("git+") || low.starts_with("file:") {
+            continue;
+        }
+        let line = match line.find('#') {
+            Some(i) => line[..i].trim(),
+            None => line,
+        };
+        // Environment marker (`pkg==1.0; python_version > …`) — pin is left of `;`.
+        let line = match line.find(';') {
+            Some(i) => line[..i].trim(),
+            None => line,
+        };
+        let Some(eq) = line.find("==") else {
+            continue;
+        };
+        let (name, ver) = (line[..eq].trim(), line[eq + 2..].trim());
+        // Bare distribution name only — extras (`pkg[x]`) and compound
+        // specifiers (`a>=1,==2`) fail this gate and are skipped.
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+        {
+            continue;
+        }
+        let ver = ver.split_whitespace().next().unwrap_or("");
+        if ver.is_empty()
+            || !ver
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "._-+!*:".contains(c))
+        {
+            continue;
+        }
+        out.push((name.to_string(), ver.to_string()));
+    }
+    out
+}
+/// Pure drift classifier for one pin: None = in-spec (exact match OR
+/// installed NEWER than pinned — e.g. onnxruntime-gpu 1.25.0.dev20260210001
+/// vs pinned 1.22.0 must NOT read as drift, else update() would wrongly
+/// downgrade the user). Some(msg) = drift (older, missing, unparseable —
+/// fail closed). Reuses hw::version_gt so PEP 440 pre/dev segments compare
+/// numerically ("1.25.0.dev20260210001" > "1.22.0" decides on 25 > 22
+/// before the dev tail). Pure + unit-tested.
+pub(crate) fn pin_drift_entry(name: &str, got: Option<&str>, wanted: &str) -> Option<String> {
+    match got {
+        Some(g) if g == wanted => None,
+        Some("NOTFOUND") | None => Some(format!("{name} missing -> {wanted}")),
+        Some(g) => {
+            if version_like(g) && version_like(wanted) && crate::hw::version_gt(g, wanted) {
+                None
+            } else {
+                Some(format!("{name} {g} -> {wanted}"))
+            }
+        }
+    }
+}
+/// Minimal "looks like a version" gate so garbage never reads as newer:
+/// at least one dot-separated component must start with an ASCII digit
+/// (PEP 440 versions always do). version_gt alone maps garbage to 0, so
+/// without this a numeric install vs a garbage pin would compare GREATER
+/// and wrongly clear drift — fail closed instead. Pure + unit-tested.
+fn version_like(v: &str) -> bool {
+    v.split('.')
+        .any(|p| p.chars().next().is_some_and(|c| c.is_ascii_digit()))
+}
+/// Post-update dependency recheck: compare post-pull requirements.txt `==`
+/// pins against installed dist versions with ONE env-python probe
+/// (`importlib.metadata`, pinned names as argv). A NEWER installed build
+/// is in-spec (never drift): downgrading the user on every update would
+/// undo working upgrades, so only an older/missing/unparseable version
+/// reads as drift. Emits exactly one setup-channel summary line and
+/// returns `(depCheck, drift)` for the update() result. Never fails the
+/// update — probe trouble degrades to a warn-only drift entry so the
+/// dashboard still nudges toward restore.
+fn post_update_dep_check(
+    repo: &Path,
+    req_path: &Path,
+    emit: &dyn Fn(&str),
+) -> (&'static str, Vec<String>) {
+    if !req_path.exists() {
+        return ("no-requirements", Vec::new());
+    }
+    let text = std::fs::read_to_string(req_path).unwrap_or_default();
+    let pins = parse_requirement_pins(&text);
+    if pins.is_empty() {
+        emit("[✓] dependencies match requirements.txt (0 pinned)\n");
+        return ("ok", Vec::new());
+    }
+    let env = get_active_env();
+    let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
+    let py_opt = if raw.is_empty() {
+        None
+    } else {
+        resolve_env_python(repo, raw)
+    };
+    let Some(py) = py_opt else {
+        return ("skipped-no-env", Vec::new());
+    };
+    let script = "import sys, importlib.metadata as m\nfor n in sys.argv[1:]:\n try:\n  print(n.lower().replace('_','-') + '==' + m.version(n))\n except Exception:\n  print(n.lower().replace('_','-') + '==NOTFOUND')";
+    let mut cmd = silent_command(&py);
+    cmd.arg("-c").arg(script).current_dir(repo);
+    for (name, _) in &pins {
+        cmd.arg(name);
+    }
+    let probed = cmd.output().ok().filter(|o| o.status.success());
+    let Some(out) = probed else {
+        emit("[!] dependency recheck skipped — package probe failed; use restore from Manage if versions look wrong.\n");
+        return (
+            "drift",
+            vec!["version probe failed — use restore".to_string()],
+        );
+    };
+    let mut installed = std::collections::HashMap::new();
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        if let Some(eq) = line.rfind("==") {
+            installed.insert(
+                line[..eq].trim().to_string(),
+                line[eq + 2..].trim().to_string(),
+            );
+        }
+    }
+    let mut drift = Vec::new();
+    for (name, wanted) in &pins {
+        let key = name.to_ascii_lowercase().replace('_', "-");
+        if let Some(entry) = pin_drift_entry(name, installed.get(&key).map(|s| s.as_str()), wanted)
+        {
+            drift.push(entry);
+        }
+    }
+    if drift.is_empty() {
+        emit(&format!(
+            "[✓] dependencies match requirements.txt ({} pinned)\n",
+            pins.len()
+        ));
+        ("ok", Vec::new())
+    } else {
+        emit(&format!(
+            "[!] dependency drift: {} — use restore\n",
+            drift.join(", ")
+        ));
+        ("drift", drift)
+    }
+}
+#[cfg(test)]
+mod req_pin_tests {
+    use super::{parse_requirement_pins, pin_drift_entry};
+    #[test]
+    fn exact_pins_parse() {
+        let pins = parse_requirement_pins("mmgp==3.8.0\ntorch==2.10.0\n");
+        assert_eq!(
+            pins,
+            vec![
+                ("mmgp".to_string(), "3.8.0".to_string()),
+                ("torch".to_string(), "2.10.0".to_string()),
+            ]
+        );
+    }
+    #[test]
+    fn skips_comments_options_urls_extras_and_ranges() {
+        let text = "# comment\n-r other.txt\n-e .\n-c c.txt\n--index-url https://x\nhttps://example.com/a.whl\ngit+https://example.com/r.git\npkg[extra]==1.0\nfoo>=1.0\nbar\nmmgp == 3.8.0  # inline\nbaz==1.0; python_version > \"3.10\"\n";
+        let pins = parse_requirement_pins(text);
+        assert_eq!(
+            pins,
+            vec![
+                ("mmgp".to_string(), "3.8.0".to_string()),
+                ("baz".to_string(), "1.0".to_string()),
+            ]
+        );
+    }
+    #[test]
+    fn rejects_triple_eq_and_bad_names() {
+        let pins = parse_requirement_pins("pkg===1.0\nna me==1.0\n==1.0\nfoo==\n");
+        assert!(pins.is_empty(), "got {pins:?}");
+    }
+    #[test]
+    fn newer_stable_is_not_drift() {
+        assert!(pin_drift_entry("mmgp", Some("3.8.1"), "3.8.0").is_none());
+    }
+    #[test]
+    fn newer_dev_segment_is_not_drift() {
+        assert!(
+            pin_drift_entry("onnxruntime-gpu", Some("1.25.0.dev20260210001"), "1.22.0").is_none()
+        );
+    }
+    #[test]
+    fn older_is_drift() {
+        assert_eq!(
+            pin_drift_entry("mmgp", Some("3.7.14"), "3.8.0"),
+            Some("mmgp 3.7.14 -> 3.8.0".to_string())
+        );
+    }
+    #[test]
+    fn missing_is_drift() {
+        assert_eq!(
+            pin_drift_entry("mmgp", None, "3.8.0"),
+            Some("mmgp missing -> 3.8.0".to_string())
+        );
+        assert_eq!(
+            pin_drift_entry("mmgp", Some("NOTFOUND"), "3.8.0"),
+            Some("mmgp missing -> 3.8.0".to_string())
+        );
+    }
+    #[test]
+    fn unparseable_is_drift_fail_closed() {
+        assert_eq!(
+            pin_drift_entry("mmgp", Some("abc"), "3.8.0"),
+            Some("mmgp abc -> 3.8.0".to_string())
+        );
+        // Numeric install vs garbage pin must NOT read as newer.
+        assert_eq!(
+            pin_drift_entry("mmgp", Some("3.8.0"), "abc"),
+            Some("mmgp 3.8.0 -> abc".to_string())
+        );
+    }
+    #[test]
+    fn exact_match_is_not_drift() {
+        assert!(pin_drift_entry("mmgp", Some("3.8.0"), "3.8.0").is_none());
+    }
 }
 pub(crate) fn fs_extra_fallback_copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;

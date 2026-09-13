@@ -2134,6 +2134,19 @@ $("clearOutputPath")?.addEventListener("click", async () => {
 });
 
 async function startInstall() {
+  if (_installRunning) return;
+  const _restoreStartBtn = () => {
+    const _b = $("installStartBtn");
+    if (_b) {
+      _b.disabled = false;
+      _b.textContent = "Install";
+    }
+  };
+  const _sb0 = $("installStartBtn");
+  if (_sb0) {
+    _sb0.disabled = true;
+    _sb0.textContent = "Working…";
+  }
   // Helper to show prereq help card
   function showPrereqHelp(title, text, url, tool) {
     $("prereqHelp").classList.remove("hidden");
@@ -2191,6 +2204,7 @@ async function startInstall() {
       "https://git-scm.com/downloads",
       "git",
     );
+    _restoreStartBtn();
     return;
   }
   if (selectedEnvType === "venv") {
@@ -2203,6 +2217,7 @@ async function startInstall() {
         "https://www.python.org/downloads/",
         "python",
       );
+      _restoreStartBtn();
       return;
     }
   }
@@ -2216,6 +2231,7 @@ async function startInstall() {
         "https://docs.astral.sh/uv/#installation",
         "uv",
       );
+      _restoreStartBtn();
       return;
     }
   }
@@ -2229,6 +2245,7 @@ async function startInstall() {
         "https://docs.anaconda.com/miniconda/",
         "conda",
       );
+      _restoreStartBtn();
       return;
     }
   }
@@ -2246,6 +2263,7 @@ async function startInstall() {
         ? pickedRadio("reinstallChoice")
         : null;
   const collectFreshBackup = async () => {
+    appendLog("[*] Measuring existing installation folders…");
     const choice = await showReinstallBackupModal().catch(() => null);
     if (!choice) return false;
     _freshBackupChoice = choice;
@@ -2260,6 +2278,7 @@ async function startInstall() {
       pickedRadio("reinstallChoice") === "fresh");
   if (freshPicked && !_freshBackupChoice) {
     await collectFreshBackup();
+    _restoreStartBtn();
     return;
   }
   // Are-you-sure gate: the Install button sits below the checks, and
@@ -2315,8 +2334,10 @@ async function startInstall() {
         wipeWarn +
         "\n\nThis downloads several GB and takes 5–20 minutes.",
     )
-  )
+  ) {
+    _restoreStartBtn();
     return;
+  }
   // Windows long paths gate (issue #15): enabling only takes effect
   // after a reboot, so offer it BEFORE any download — and stop here
   // when enabled, telling the user to reboot and re-run Install.
@@ -2347,6 +2368,7 @@ async function startInstall() {
         } catch (e) {
           appendLog("[!] Long paths enable failed: " + errText(e));
         }
+        _restoreStartBtn();
         return;
       }
       appendLog(
@@ -2370,11 +2392,16 @@ async function startInstall() {
       // backup choice instead of launching stale, then wait for Press 2.
       _freshBackupChoice = null;
       _freshBackupPick = { mode: _targetChoiceMode, value: live };
+      appendLog("[*] Measuring existing installation folders…");
       const choice = await showReinstallBackupModal().catch(() => null);
-      if (!choice) return;
+      if (!choice) {
+        _restoreStartBtn();
+        return;
+      }
       _freshBackupChoice = choice;
       _freshBackupPick = { mode: _targetChoiceMode, value: liveFreshPick() };
       showToast("Backup choice saved — press Install to start");
+      _restoreStartBtn();
       return;
     }
     const stored = _freshBackupChoice;
@@ -2652,10 +2679,21 @@ async function doInstall(_installed, mode, opts) {
     );
     return;
   }
+  const _diBtn = $("installStartBtn");
+  if (_diBtn) {
+    _diBtn.disabled = true;
+    _diBtn.textContent = "Installing…";
+  }
+  document
+    .querySelectorAll(".env-type-btn")
+    .forEach((b) => (b.disabled = true));
+  $("installSubtitle").textContent = "Starting installer — progress below…";
   let skipClone = false;
   if (mode === "reinstall") {
     $("installSubtitle").textContent = "Removing existing installation...";
-    appendLog("[*] Removing existing Wan2GP installation...");
+    appendLog(
+      "[*] Removing existing Wan2GP installation (large folders can take several minutes — wait for the next line)…",
+    );
     const ok = await window.w2gp.reinstall(opts || null);
     if (ok && ok.movedModels && ok.movedModels.length) {
       appendLog("[*] Models relocated: " + ok.movedModels.join("; "));
@@ -2680,6 +2718,11 @@ async function doInstall(_installed, mode, opts) {
         .querySelectorAll(".env-type-btn")
         .forEach((b) => (b.disabled = false));
       $("installStartBtn").classList.remove("hidden");
+      const _rbBtn = $("installStartBtn");
+      if (_rbBtn) {
+        _rbBtn.disabled = false;
+        _rbBtn.textContent = "Install";
+      }
       _installRunning = false;
       return;
     }
@@ -3229,6 +3272,10 @@ async function refreshDashboard() {
         "specBits",
         "specNumpy",
         "specTokenizers",
+        "specMmgp",
+        "specXformers",
+        "specTorchaudio",
+        "specMoviepy",
         "specSparge",
       ].forEach((id) => {
         const el = $(id);
@@ -3252,6 +3299,10 @@ async function refreshDashboard() {
         "dotBits",
         "dotNumpy",
         "dotTokenizers",
+        "dotMmgp",
+        "dotXformers",
+        "dotTorchaudio",
+        "dotMoviepy",
       ].forEach((id) => {
         const el = $(id);
         if (el) el.classList.remove("installed");
@@ -3392,6 +3443,10 @@ async function refreshDashboard() {
       );
       setSpec("specNumpy", "dotNumpy", status.versions?.numpy);
       setSpec("specTokenizers", "dotTokenizers", status.versions?.tokenizers);
+      setSpec("specMmgp", "dotMmgp", status.versions?.mmgp);
+      setSpec("specXformers", "dotXformers", status.versions?.xformers);
+      setSpec("specTorchaudio", "dotTorchaudio", status.versions?.torchaudio);
+      setSpec("specMoviepy", "dotMoviepy", status.versions?.moviepy);
 
       // ── GPU Kernel Wheels (profile-driven) ──
       renderKernelWheels(
@@ -3496,6 +3551,12 @@ async function refreshDashboard() {
       const hint = $("noGpuHint");
       if (hint) hint.style.display = noBrowser ? "block" : "none";
     })();
+    // Self-healing first-launch info bar: repaint from STATE on every
+    // dashboard refresh so any runtime path that left it hidden (fresh load
+    // never shows it; exit/stop paths don't restore it) is corrected.
+    // Instant feedback still comes from the explicit show/hide calls at
+    // launch-click/error/ready sites — this only corrects drift.
+    paintLaunchInfo();
   } finally {
     _dashRefreshing = false;
     if (_dashPending) {
@@ -4591,6 +4652,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // ── Launch buttons: disabled + hint when Wan2GP is not installed ──
 function setLaunchButtonsInstalled(installed) {
+  _launchInstalled = !!installed; // client-side installed state (drives paintLaunchInfo)
   [
     "browserBtn",
     "browserNoGpuBtn",
@@ -4770,6 +4832,42 @@ let currentUrl = null;
 let serverMode = null; // 'app' | 'browser' | null
 let browserRunning = false; // browser-mode server currently up (button acts as re-open)
 let appRunning = false; // desktop-mode (BrowserView) server currently up (button acts as "Back to…")
+// Client-side "Wan2GP installed" state (mirrors setLaunchButtonsInstalled).
+// Drives paintLaunchInfo: the bar must never show when not installed.
+let _launchInstalled = false;
+// ── First-launch info bar (#launchInfo): shown ONLY while starting/launching ──
+// Explicit show/hide calls at launch-click/error/ready sites give instant
+// feedback; this repaint only corrects drift (a runtime path that strands it
+// hidden mid-start). It never shows outside the starting window — not on
+// fresh page load, not after Stop — and never when Wan2GP is not installed.
+// Runs on the refresh path, so every dashboard refresh repaints it from STATE.
+function paintLaunchInfo() {
+  try {
+    const bar = $("launchInfo");
+    if (!bar) return;
+    if (!_launchInstalled) {
+      bar.classList.add("hidden");
+      return;
+    }
+    const starting = [
+      "browserBtn",
+      "browserNoGpuBtn",
+      "termBtn",
+      "termNoGpuBtn",
+      "appBtn",
+    ].some((id) => {
+      const b = $(id);
+      return !!b && b.disabled && /Starting/.test(b.textContent || "");
+    });
+    if (starting) {
+      bar.classList.remove("hidden");
+      return;
+    }
+    // Outside the starting window the bar stays hidden (fresh load,
+    // ready, stopped) — it informs the launch wait, nothing else.
+    bar.classList.add("hidden");
+  } catch {}
+}
 
 // ── Launch in App (BrowserView — renders Gradio reliably on Electron 40; intercepts
 //     /manifest.json to dodge gradio#11553 blank-page bug) ──
@@ -5692,8 +5790,18 @@ $("updateBtn").addEventListener("click", async () => {
   $("updateBtn").disabled = true;
   $("updateBtn").textContent = "Working...";
   try {
-    await window.w2gp.update();
+    const r = await window.w2gp.update();
     appendLog("[*] Wan2GP update complete");
+    if (r && r.requirements === "reinstalled")
+      appendLog("[*] requirements.txt changed — pinned packages reinstalled");
+    else if (r && r.requirements === "failed")
+      appendLog(
+        "[!] requirements reinstall failed — see the console output above; the git pull itself stays applied.",
+      );
+    if (r && r.depCheck === "drift" && Array.isArray(r.drift) && r.drift.length)
+      appendLog(
+        "[!] dependency drift: " + r.drift.join(", ") + " — use restore",
+      );
     refreshDashboard();
   } catch (e) {
     appendLog("[!] Update failed: " + e.message);
@@ -5795,6 +5903,28 @@ function normalizePipSpec(raw) {
 }
 $("pipInstallBtn").addEventListener("click", async () => {
   const input = $("pipInput");
+  // Quick-box trap: users paste upstream's `pip install -r requirements.txt`
+  // here. normalizePipSpec strips `-r`, leaving the literal file name as a
+  // package spec. Catch file/flag input BEFORE normalizing and redirect to
+  // the restore button instead of sending `pip install requirements.txt`.
+  const rawPip = input?.value || "";
+  const lowPip = rawPip.toLowerCase();
+  const pipTokens = lowPip.split(/\s+/).filter(Boolean);
+  if (
+    /(^|\s)pip\s+install\s+-r/i.test(rawPip) ||
+    pipTokens.some((t) => t === "-r" || t === "-e" || t === "-c") ||
+    pipTokens.some((t) => t.startsWith("-")) ||
+    lowPip.includes("requirements.txt") ||
+    /--[a-z0-9]/i.test(rawPip)
+  ) {
+    showToast(
+      "That box installs single packages only (e.g. mmgp==3.8.0). For requirements.txt use the restore button.",
+    );
+    if (input) input.disabled = false;
+    $("pipInstallBtn").disabled = false;
+    $("pipInstallBtn").textContent = "pip install";
+    return;
+  }
   const pkg = normalizePipSpec(input?.value);
   if (!pkg) return;
   input.disabled = true;

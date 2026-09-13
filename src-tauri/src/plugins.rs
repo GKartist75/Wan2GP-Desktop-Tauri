@@ -22,8 +22,12 @@ const BUNDLED_PLUGINS: &[&str] = &[
     "motion_designer",
     "sample",
 ];
-// Status Pro is a default plugin: installed on fresh setup, kept enabled, not uninstallable.
+// Status Pro is temporarily disabled (incompatible with the current Deepy
+// update): no longer auto-installed or force-enabled; a normal community
+// plugin the user can install/enable manually once fixed.
 const STATUS_PRO_ID: &str = "wan2gp-status-pro";
+// Kept for manual reinstall reference while auto-install is disabled.
+#[allow(dead_code)]
 const STATUS_PRO_URL: &str = "https://github.com/totideyouover2026-max/wan2gp-status-pro";
 
 // repo dir name from a git URL (mirrors shared/utils/plugins.py plugin_id_from_url).
@@ -100,8 +104,32 @@ pub fn plugins_list() -> serde_json::Value {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    let cfg = read_wgp_config(&repo);
-    let enabled = str_list(&cfg, "enabled_plugins");
+    let mut cfg = read_wgp_config(&repo);
+    let mut enabled = str_list(&cfg, "enabled_plugins");
+    // One-time self-healing: Status Pro is temporarily incompatible with the
+    // current Deepy update — uninstall it on existing installs (config +
+    // plugins/wan2gp-status-pro folder; locked files defer via
+    // pending_plugin_deletions). Idempotent: after removal the condition
+    // is false, so no further write or log happens.
+    if enabled.iter().any(|x| x == STATUS_PRO_ID) {
+        // Reuses plugin_uninstall's remove_dir_all-or-defer logic; Err when
+        // the folder is already gone is fine to ignore.
+        let _ = plugin_uninstall(Some(STATUS_PRO_ID.to_string()));
+        enabled.retain(|x| x != STATUS_PRO_ID);
+        cfg["enabled_plugins"] = serde_json::Value::Array(
+            enabled
+                .iter()
+                .map(|s| serde_json::Value::String(s.clone()))
+                .collect(),
+        );
+        let p = repo.join("wgp_config.json");
+        if atomic_write(&p, &serde_json::to_string_pretty(&cfg).unwrap_or_default()).is_ok() {
+            crate::base::push_log(
+                    "[i] Uninstalled wan2gp-status-pro (temporarily incompatible with the current Deepy update) — reinstall it manually once fixed.\n",
+                    "launch",
+                );
+        }
+    }
     // Wan2GP's own refreshed library (written by its plugin manager AND by us —
     // same file, same schema): fresher metadata wins over the shipped plugins.json.
     let local_cat = read_local_catalog(&repo);
@@ -205,9 +233,9 @@ pub fn plugins_list() -> serde_json::Value {
             "date": date,
             "url": url,
             "installed": local.contains_key(&id),
-            "enabled": id == STATUS_PRO_ID || SYSTEM_PLUGINS.contains(&id.as_str()) || enabled.contains(&id),
+            "enabled": SYSTEM_PLUGINS.contains(&id.as_str()) || enabled.contains(&id),
             "system": SYSTEM_PLUGINS.contains(&id.as_str()),
-            "locked": id == STATUS_PRO_ID,
+            "locked": false,
             "group": if SYSTEM_PLUGINS.contains(&id.as_str()) || BUNDLED_PLUGINS.contains(&id.as_str()) { "system" } else { "community" },
         }));
     }
@@ -250,9 +278,9 @@ pub fn plugins_list() -> serde_json::Value {
         out.push(serde_json::json!({
             "id": id, "name": name, "author": author, "version": ver, "description": "", "date": date, "url": url,
             "installed": local.contains_key(&id),
-            "enabled": id == STATUS_PRO_ID || SYSTEM_PLUGINS.contains(&id.as_str()) || enabled.contains(&id),
+            "enabled": SYSTEM_PLUGINS.contains(&id.as_str()) || enabled.contains(&id),
             "system": SYSTEM_PLUGINS.contains(&id.as_str()),
-            "locked": id == STATUS_PRO_ID,
+            "locked": false,
             "group": if SYSTEM_PLUGINS.contains(&id.as_str()) || BUNDLED_PLUGINS.contains(&id.as_str()) { "system" } else { "community" },
         }));
     }
@@ -394,7 +422,7 @@ async fn install_requirements(
 // ponytail: no mutating guard — runs INSIDE install()'s guard; concurrent
 // plugin_install calls are still serialized by their own guard.
 pub async fn ensure_favorite_plugins(app: tauri::AppHandle) {
-    let mut favs: Vec<String> = vec![STATUS_PRO_URL.to_string()];
+    let mut favs: Vec<String> = Vec::new();
     let user: Vec<String> = load_config_value()
         .get("favoritePlugins")
         .and_then(|v| v.as_array())
