@@ -199,8 +199,10 @@ pub(crate) fn adapter_ram_known_mb(raw: u64) -> Option<f64> {
 }
 
 /// AMD display-driver verdict from a Win32_VideoController DriverVersion
-/// (`32.0.11029.1008` style). AMD moved to 32.x with the 2024 / Adrenalin
-/// 24.x releases, so major < 32 ≈ pre-24.x → update recommended (TheRock
+/// (`32.0.11029.1008` style). AMD moved to the 32.x store branch with the
+/// 2024 / Adrenalin 24.x releases and kept it (Adrenalin marketing switched
+/// to Year.Month, e.g. 26.9.1, while the store version stays 32.0.x — #15),
+/// so major < 32 ≈ pre-24.x → update recommended (TheRock wants ≥ 24.5).
 /// wants ≥ 24.5). Unparseable/empty → "unknown" (warn, don't block).
 /// "Basic Display Adapter" is detected on the NAME by callers, not here.
 /// Pure + unit-tested.
@@ -750,9 +752,11 @@ mod amd_driver_tests {
     use super::classify_amd_driver;
     #[test]
     fn driver_verdicts() {
-        // Adrenalin/Pro 24.x era (32.x) — current.
+        // 32.x store branch (Adrenalin 24.x–26.x+) — current.
         assert_eq!(classify_amd_driver("32.0.11029.1008"), "ok");
         assert_eq!(classify_amd_driver("32.0.12019.1028"), "ok");
+        // #15 reporter's Adrenalin 26.9.1 (store 32.0.31041.3013) — must not mislabel.
+        assert_eq!(classify_amd_driver("32.0.31041.3013"), "ok");
         // 23.x era (31.x) — predates the 24.5 TheRock floor: warn.
         assert_eq!(classify_amd_driver("31.0.21029.1006"), "old");
         assert_eq!(classify_amd_driver("30.0.13025.1000"), "old");

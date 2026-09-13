@@ -909,6 +909,17 @@ pub fn create_desktop_shortcut() -> serde_json::Value {
 //   NOTE: a native child composites ABOVE the DOM (like Electron's BrowserView),
 //   so the floating terminal / Manage panel must hide or shrink it (see app.js).
 const GRADIO_VIEW_LABEL: &str = "wan2gp-view";
+/// Per-download id for native-embed downloads (#14 one-shot diagnosis).
+/// Requested assigns the id (keyed by staged path); Finished reaps it, so
+/// a staged path reused after Save-As moves the file away NEVER collides
+/// in the frontend seen-set again. Both events also go to the backend log
+/// bus, so a dead frontend listener still leaves a trace.
+static DL_NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static DL_IDS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
+    std::sync::OnceLock::new();
+fn dl_ids() -> &'static std::sync::Mutex<std::collections::HashMap<String, u64>> {
+    DL_IDS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
 
 /// Staging area for native-embed downloads: bytes land here invisibly, then
 /// save_staged_download pops the native Save-As dialog (browser-with-ask
@@ -1070,20 +1081,43 @@ pub async fn create_browser_view(
                 let fname = suggested.or(from_url).unwrap_or_else(|| "wan2gp-download".into());
                 let safe: PathBuf = Path::new(&fname).file_name()
                     .map(PathBuf::from).unwrap_or_else(|| PathBuf::from("wan2gp-download"));
-                let staged = unique_in(&staging_dir(), &safe.to_string_lossy());
-                let staged_name = staged.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| fname.clone());
-                *destination = staged;
-                let _ = webview.emit("download-started", serde_json::json!({"url": url.as_str(), "name": staged_name}));
-                true
+                    let staged = unique_in(&staging_dir(), &safe.to_string_lossy());
+                    let staged_name = staged.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| fname.clone());
+                    let dl_id = DL_NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if let Ok(mut m) = dl_ids().lock() {
+                        m.insert(staged.to_string_lossy().to_string(), dl_id);
+                    }
+                    crate::base::push_log(
+                        &format!("[dl #{dl_id}] requested: {staged_name} ({})\n", url.as_str()),
+                        "launch",
+                    );
+                    *destination = staged;
+                    let _ = webview.emit("download-started", serde_json::json!({"url": url.as_str(), "name": staged_name, "dlId": dl_id}));
+                    true
             }
-            DownloadEvent::Finished { url, path, success } => {
-                let _ = webview.emit("download-finished", serde_json::json!({
-                    "url": url.as_str(),
-                    "path": path.as_ref().map(|p| p.to_string_lossy().to_string()),
-                    "name": path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
-                    "success": success }));
-                true
-            }
+                DownloadEvent::Finished { url, path, success } => {
+                    // Reap the Requested id by staged path; an unpaired finish
+                    // (no matching request — shouldn't happen) mints a fresh id
+                    // and says so instead of silently reusing a stale key.
+                    let (dl_id, paired) = match path.as_ref().map(|p| p.to_string_lossy().to_string()) {
+                        Some(k) => match dl_ids().lock().ok().and_then(|mut m| m.remove(&k)) {
+                            Some(id) => (id, true),
+                            None => (DL_NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed), false),
+                        },
+                        None => (DL_NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed), false),
+                    };
+                    let fname = path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "?".into());
+                    crate::base::push_log(
+                        &format!("[dl #{dl_id}] finished: {fname} success={success}{}\n", if paired { "" } else { " (UNPAIRED — no matching request)" }),
+                        "launch",
+                    );
+                    let _ = webview.emit("download-finished", serde_json::json!({
+                        "url": url.as_str(),
+                        "path": path.as_ref().map(|p| p.to_string_lossy().to_string()),
+                        "name": path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
+                        "success": success, "dlId": dl_id }));
+                    true
+                }
             _ => true,
         }
     });
@@ -1502,14 +1536,33 @@ pub fn ui_mode_set(mode: Option<String>) -> serde_json::Value {
 pub fn on_system_theme_change() -> serde_json::Value {
     serde_json::json!(null)
 }
-// App-close cleanup: stop the Wan2GP server and our OpenCode server only.
+// App-close cleanup, split in two for the ordered close (see lib.rs):
+// - shutdown_cleanup_fast: tracked PIDs + terminal window, milliseconds,
+//   runs synchronously inside CloseRequested so sessions START dying now.
+// - shutdown_cleanup_full: BLOCKING full verified sweep (WMI + port scans
+//   catch old/orphaned sessions the fast path can't see) — runs on the
+//   close worker thread; the window closes only after it returns.
 // Explorer and browser windows are NEVER touched here — even ones the
-// launcher opened. Runs synchronously inside CloseRequested so our processes
-// are dead before the app exits.
-pub(crate) fn shutdown_cleanup(app: &tauri::AppHandle) {
-    // NB: must be the SYNC blocking variant. stop_wangp() is async and
-    // its Future would be dropped unpolled here (CloseRequested is sync),
-    // silently skipping the kill and orphaning the server every close.
+// launcher opened.
+pub(crate) fn shutdown_cleanup_fast() {
+    crate::launch::stop_wangp_fast();
+    crate::features::stop_opencode_fast();
+}
+pub(crate) fn shutdown_cleanup_full(app: &tauri::AppHandle) {
     let _ = crate::launch::stop_wangp_blocking(app.clone());
     crate::features::stop_opencode_server();
+    // Final net: listeners left on Wan2GP ports are re-checked and only
+    // ours are killed (foreign processes are spared and logged). Runs
+    // last so its kills are never re-reported as stragglers.
+    let swept = crate::launch::close_port_sweep();
+    if !swept.is_empty() {
+        crate::base::push_log(
+            &format!(
+                "[stop] CLOSE sweep killed {} process(es): {:?}\n",
+                swept.len(),
+                swept
+            ),
+            "launch",
+        );
+    }
 }

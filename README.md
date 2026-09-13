@@ -246,7 +246,9 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.6.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.3) *(latest)* — AMD easy-mode installer (#15): per-family `/v2/` ROCm torch float with `rocm[devel]`, full ROCm launch env, attention Auto (incl. setup.py `sage`-artifact repair), fixed AMD package buttons + auto `triton-windows`, repair flow survives missing `pyvenv.cfg` (no more exit 106), Intel/AMD pipelines separated. In-app updater fixed (signed artifacts + `latest.json`).
+- [**v0.6.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.4) *(latest)* — Ordered app-close (sessions die first, verified sweep runs, then the window closes; second X forces out; foreign processes spared), Launch hero + 2x2 grid (Browser / Browser No-GPU / Terminal / Terminal No-GPU — No-GPU frees VRAM for generation), terminal-launch argparse fix (no more unrecognized-arguments in terminal modes), per-download [dl #id] tracing on the backend log bus, verbose embed-bounds debug toggle (off by default).
+
+- [**v0.6.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.3) — AMD easy-mode installer (#15): per-family `/v2/` ROCm torch float with `rocm[devel]`, full ROCm launch env, attention Auto (incl. setup.py `sage`-artifact repair), fixed AMD package buttons + auto `triton-windows`, repair flow survives missing `pyvenv.cfg` (no more exit 106), Intel/AMD pipelines separated. In-app updater fixed (signed artifacts + `latest.json`).
 
 - [**v0.6.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.2) — Windows long paths end to end (preflight warn + one-click enable + install gate), gallery keeps last results (seeded `clear_file_list` default), installer no longer asks twice (backup-stash/radio/foreign-folder fixes).
 

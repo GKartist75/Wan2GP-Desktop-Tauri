@@ -1539,7 +1539,7 @@ pub(crate) fn run_preflight_checks(
             .and_then(|v| v.as_str())
             .unwrap_or("");
         match classify_amd_driver(ver) {
-            "ok" => checks.push(PreflightCheck { id: "driver", level: "ok", msg: format!("AMD driver {ver} (24.x era)") }),
+            "ok" => checks.push(PreflightCheck { id: "driver", level: "ok", msg: format!("AMD driver {ver} (32.x branch)") }),
             "old" => checks.push(PreflightCheck { id: "driver", level: "warn", msg: format!("AMD driver {ver} predates 2024 — TheRock wants Adrenalin/Pro >= 24.5; update to avoid kernel surprises.") }),
             _ => checks.push(PreflightCheck { id: "driver", level: "warn", msg: "could not read the AMD driver version — if the install misbehaves, update Adrenalin/Pro first.".into() }),
         }

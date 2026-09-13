@@ -170,18 +170,40 @@ fn miopen_find_mode() -> Option<&'static str> {
         .unwrap_or(false);
     miopen_find_mode_value(disabled)
 }
+// Server command for the external-terminal .bat: `"<py>" -u <args…>`.
+// args[0] is the bootstrap shim (`py <boot> wgp.py …`) — never hardcode a
+// script name here: duplicating `wgp.py` makes argparse die with
+// "unrecognized arguments: <boot> wgp.py" (all terminal modes).
+fn terminal_server_command(py: &str, args: &[String]) -> String {
+    let joined = args
+        .iter()
+        .map(|a| {
+            if a.contains(' ') {
+                format!("\"{}\"", a.replace('%', "%%"))
+            } else {
+                a.replace('%', "%%")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("\"{py}\" -u {joined}")
+}
 // External-terminal mode (run.bat style): generate a script that runs wgp.py
 // with the same args/env, open it in a VISIBLE console window, wait for the
 // server, open the browser. Not a streamed child — the user owns the window.
+// Nine wires (same env/args as hidden launch, plus the no-GPU open mode) —
+// kept flat to mirror the launch() call-site locals; allowed by policy.
+#[allow(clippy::too_many_arguments)]
 fn launch_in_terminal(
     app: tauri::AppHandle,
-    repo: &PathBuf,
+    repo: &Path,
     py: &str,
     args: &[String],
     port: u64,
     _cfg: &serde_json::Value,
     hf_token: String,
     claude_key: String,
+    no_gpu: bool,
 ) -> Result<serde_json::Value, String> {
     let emit = |msg: &str| {
         crate::base::push_log(msg, "launch");
@@ -225,17 +247,9 @@ fn launch_in_terminal(
             env_lines.push(format!("set {k}={val}"));
         }
     }
-    let arg_str = args
-        .iter()
-        .map(|a| {
-            if a.contains(' ') {
-                format!("\"{}\"", a.replace('%', "%%"))
-            } else {
-                a.replace('%', "%%")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
+    // Quoted server command (`"<py>" -u <boot> wgp.py …`); the template
+    // wraps it in `cmd /c "…"`.
+    let server_cmd = terminal_server_command(py, args);
     #[cfg(windows)]
     {
         // Unique per launch: the old fixed wan2gp-terminal.bat raced when
@@ -246,8 +260,30 @@ fn launch_in_terminal(
             .unwrap_or(0);
         let script = std::env::temp_dir().join(format!("wan2gp-terminal-{millis}.bat"));
         let url = format!("http://localhost:{port}");
-        let full = format!("@echo off\r\ntitle {title}\r\ncd /d \"{repo}\"\r\n{envs}\r\necho [Wan2GP Desktop Launcher] Starting on port {port}...\r\nstart /b \"\" cmd /c \"\"{py}\" -u wgp.py {arg_str}\" 2>&1\r\necho Waiting for server on port {port}...\r\nset RC=0\r\n:waitloop\r\ntimeout /t 2 /nobreak >nul\r\nset /a RC+=1\r\nif %RC% gtr 60 (echo Server failed to start. Check console. ^& pause ^& exit /b 1)\r\npowershell -Command \"try{{$(Invoke-WebRequest -Uri http://127.0.0.1:{port}/config -TimeoutSec 2 -UseBasicParsing).StatusCode -eq 200;exit 0}}catch{{exit 1}}\" >nul 2>&1 && goto ready\r\ngoto waitloop\r\n:ready\r\necho Wan2GP is ready! Opening browser...\r\nstart {url}\r\necho [Wan2GP] Server running. Close this window to stop it.\r\npause >nul\r\n",
-            repo = repo.display(), envs = env_lines.join("\r\n"));
+        // No-GPU variant: open the user's selected default browser with GPU
+        // acceleration disabled so the browser frees VRAM for generation.
+        // Falls back through Chrome → any Chromium → Firefox (plain, noted)
+        // → OS default. The console window itself is unaffected.
+        let open_line = if no_gpu {
+            match resolve_no_gpu_browser() {
+                Some((exe, id)) if is_chromium_browser(&id) => format!(
+                    "start \"\" \"{exe}\" {flags} {url}",
+                    flags = NO_GPU_CHROME_FLAGS.join(" ")
+                ),
+                Some((exe, _)) => {
+                    emit("[!] Default browser is Firefox — it has no command-line GPU switch, opening it normally (no VRAM savings).\n");
+                    format!("start \"\" \"{exe}\" {url}")
+                }
+                None => {
+                    emit("[!] No supported browser found — external terminal will open the default browser instead (GPU on).\n");
+                    format!("start {url}")
+                }
+            }
+        } else {
+            format!("start {url}")
+        };
+        let full = format!("@echo off\r\ntitle {title}\r\ncd /d \"{repo}\"\r\n{envs}\r\necho [Wan2GP Desktop Launcher] Starting on port {port}...\r\necho [Wan2GP] Running: {server_cmd}\r\nstart /b \"\" cmd /c \"{server_cmd}\" 2>&1\r\necho Waiting for server on port {port}...\r\nset RC=0\r\n:waitloop\r\nrem Start-Sleep via PowerShell, not timeout /t: a GNU timeout from Git/MSYS on PATH mangles the flags. PowerShell is already required below.\r\npowershell -NoProfile -Command \"Start-Sleep -Seconds 2\" >nul 2>&1\r\nset /a RC+=1\r\nif %RC% gtr 60 (echo Server failed to start. Check console. ^& pause ^& exit /b 1)\r\npowershell -Command \"try{{$(Invoke-WebRequest -Uri http://127.0.0.1:{port}/config -TimeoutSec 2 -UseBasicParsing).StatusCode -eq 200;exit 0}}catch{{exit 1}}\" >nul 2>&1 && goto ready\r\ngoto waitloop\r\n:ready\r\necho Wan2GP is ready! Opening browser...\r\n{open_line}\r\necho [Wan2GP] Server running. Close this window to stop it.\r\npause >nul\r\n",
+                repo = repo.display(), envs = env_lines.join("\r\n"));
         std::fs::write(&script, full).map_err(|e| {
             mutating_done();
             e.to_string()
@@ -289,12 +325,12 @@ fn launch_in_terminal(
         }
         mutating_done();
         Ok(
-            serde_json::json!({"ok": true, "port": port, "mode": "terminal", "url": url, "fresh": true}),
+            serde_json::json!({"ok": true, "port": port, "mode": if no_gpu { "terminal-nogpu" } else { "terminal" }, "url": url, "fresh": true}),
         )
     }
     #[cfg(not(windows))]
     {
-        let _ = (cfg, hf_token, claude_key);
+        let _ = (cfg, hf_token, claude_key, no_gpu);
         mutating_done();
         return Err("External terminal mode is Windows-only in this build".into());
     }
@@ -835,7 +871,9 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     std::env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
     // External-terminal mode: visible console window running wgp.py (run.bat style).
     // Not a child we stream — the user owns the window; Stop also kills by title.
-    if mode == "terminal" {
+    // "terminal-nogpu" runs the same visible console but opens no-GPU Chrome
+    // from the script instead of the OS default browser.
+    if mode == "terminal" || mode == "terminal-nogpu" {
         return launch_in_terminal(
             app,
             &repo,
@@ -845,6 +883,7 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             &cfg,
             hf_token.clone(),
             claude_key.clone(),
+            mode == "terminal-nogpu",
         );
     }
     let (rx, child) = cmd.spawn().map_err(|e| {
@@ -909,6 +948,254 @@ pub async fn stop_wangp(app: tauri::AppHandle) -> Result<serde_json::Value, Stri
         .await
         .map_err(|e| e.to_string())
 }
+/// Fast synchronous kill for app-close (see shutdown_cleanup): tracked
+/// child PID + external-terminal window only — no PowerShell scans, no
+/// sleeps, milliseconds. The full verified sweep stays on the Stop button
+/// path (plus close-time best-effort background work).
+/// Kill one PID (/f /t tree-kill on Windows, -9 elsewhere). Skips 0,
+/// our own PID and already-killed PIDs. File-level so both the Stop
+/// sweep and the close sweep share it (was an identical closure).
+fn kill_pid(pid: u32, killed: &mut Vec<u32>) {
+    if pid == 0 || pid == std::process::id() || killed.contains(&pid) {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        let _ = silent_command("taskkill")
+            .args(["/pid", &pid.to_string(), "/f", "/t"])
+            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = silent_command("kill")
+            .arg("-9")
+            .arg(pid.to_string())
+            .output();
+    }
+    killed.push(pid);
+}
+/// Wan2GP ports: configured serverPort + the 7860/7861 defaults. Shared
+/// by the Stop sweep and the close sweep so they can never disagree.
+fn wan2gp_ports() -> Vec<u64> {
+    let sport = load_config_value()
+        .get("serverPort")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(7860);
+    let mut sports = vec![sport];
+    for p in [7860u64, 7861u64] {
+        if !sports.contains(&p) {
+            sports.push(p);
+        }
+    }
+    sports
+}
+/// Repo prefix for origin checks (`c:\wan2gp\` lowercase). Shared by
+/// the Stop matcher and the close sweep so they can never disagree.
+fn wangp_repo_prefix() -> String {
+    format!(
+        "{}\\",
+        get_repo_dir()
+            .to_string_lossy()
+            .replace('/', "\\")
+            .to_lowercase()
+    )
+}
+/// True only for processes OUR launcher started: the cmdline must name
+/// wgp.py AND carry one of three repo signals — repo path in argv,
+/// interpreter under the repo, or our bootstrap filename. Anything else
+/// (user scripts, other software's Python) is foreign and must survive.
+/// Pure so it stays unit-tested.
+fn is_ours_process(exe: &str, cmd: &str, repo_pre: &str) -> bool {
+    if !cmd.to_lowercase().contains("wgp.py") {
+        return false;
+    }
+    let cl = cmd.to_lowercase();
+    cl.contains(repo_pre)                      // interpreter or script path under repo
+|| exe.to_lowercase().replace('/', "\\").starts_with(repo_pre) // env python, relative argv
+|| cl.contains("wan2gp-bootstrap-") // our launcher bootstrap (any interpreter)
+}
+/// Origin signature of one PID: (interpreter path, full command line).
+/// None when the process is gone or unreadable — callers must treat
+/// None as FOREIGN (fail closed, never kill unverifiable processes).
+fn process_signature(pid: u32) -> Option<(String, String)> {
+    if pid == 0 || pid == std::process::id() {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        let ps = format!(
+"Get-CimInstance Win32_Process -Filter \"ProcessId='{pid}'\" | ForEach-Object {{ $_.ExecutablePath + '|' + $_.CommandLine }}"
+);
+        let o = silent_command("powershell")
+            .args(["-NoProfile", "-Command", &ps])
+            .output()
+            .ok()?;
+        if !o.status.success() {
+            return None;
+        }
+        let line = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        if line.is_empty() {
+            return None;
+        }
+        let mut parts = line.splitn(2, '|');
+        match (parts.next(), parts.next()) {
+            (Some(exe), Some(cmd)) if !cmd.trim().is_empty() => {
+                Some((exe.to_string(), cmd.to_string()))
+            }
+            _ => None,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let cmd = std::fs::read_to_string(format!("/proc/{pid}/cmdline"))
+            .ok()
+            .map(|s| s.replace('\0', " ").trim().to_string())
+            .filter(|s| !s.is_empty())?;
+        let exe = std::fs::read_link(format!("/proc/{pid}/exe"))
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        Some((exe, cmd))
+    }
+}
+/// Close-path guard: never ourselves, never PID 0. Origin is checked
+/// separately via is_ours_process — this is only the sanity gate.
+/// Pure so it stays unit-tested.
+fn close_sweep_should_kill(pid: u32) -> bool {
+    pid != 0 && pid != std::process::id()
+}
+/// Final close sweep: re-check every listener on the Wan2GP ports and
+/// kill it ONLY when it is provably ours — tracked child PID, or a
+/// cmdline carrying our repo signals (is_ours_process). Orphans from
+/// crashed instances die here; foreign processes (user scripts, other
+/// software's Python) are spared and logged as such. Unverifiable PIDs
+/// fail closed (spared, loudly). Runs last in shutdown_cleanup_full.
+pub(crate) fn close_port_sweep() -> Vec<u32> {
+    let sports = wan2gp_ports();
+    let repo_pre = wangp_repo_prefix();
+    let tracked = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g);
+    // One scan: (pid, process name, port) for EVERY listener on our
+    // ports — no owner pre-filter; origin is decided per PID below.
+    let mut listeners: Vec<(u32, String, u64)> = Vec::new();
+    #[cfg(windows)]
+    {
+        let list = sports
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let ps = format!("Get-NetTCPConnection -LocalPort {list} -State Listen | ForEach-Object {{ $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p) {{ $p.Id.ToString() + '|' + $p.ProcessName + '|' + $_.LocalPort }} }}");
+        match silent_command("powershell")
+            .args(["-NoProfile", "-Command", &ps])
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                for line in String::from_utf8_lossy(&o.stdout).lines() {
+                    let mut parts = line.splitn(3, '|');
+                    if let (Some(pid_s), Some(name), Some(port_s)) =
+                        (parts.next(), parts.next(), parts.next())
+                    {
+                        if let (Ok(pid), Ok(port)) =
+                            (pid_s.trim().parse::<u32>(), port_s.trim().parse::<u64>())
+                        {
+                            listeners.push((pid, name.trim().to_string(), port));
+                        }
+                    }
+                }
+            }
+            // Exit 1 + "No matching" = ports free (the CLEAN case) — silent.
+            Ok(o) => {
+                let code = o.status.code().unwrap_or(-1);
+                let err: String = String::from_utf8_lossy(&o.stderr)
+                    .chars()
+                    .take(200)
+                    .collect();
+                if !(code == 1 && err.contains("No matching")) {
+                    crate::base::push_log(
+                        &format!("[stop] CLOSE sweep scan failed (exit {code}): {err}\n"),
+                        "launch",
+                    );
+                }
+            }
+            Err(e) => crate::base::push_log(
+                &format!("[stop] CLOSE sweep scan spawn failed: {e}\n"),
+                "launch",
+            ),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        for port in &sports {
+            if let Ok(o) = silent_command("lsof")
+                .args(["-ti", &format!("tcp:{port}")])
+                .output()
+            {
+                if o.status.success() {
+                    for line in String::from_utf8_lossy(&o.stdout).lines() {
+                        if let Ok(pid) = line.trim().parse::<u32>() {
+                            listeners.push((pid, String::new(), *port));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut killed: Vec<u32> = Vec::new();
+    for (pid, name, port) in listeners {
+        if !close_sweep_should_kill(pid) || killed.contains(&pid) {
+            continue;
+        }
+        let ours = tracked == Some(pid)
+            || process_signature(pid)
+                .map(|(exe, cmd)| is_ours_process(&exe, &cmd, &repo_pre))
+                .unwrap_or(false);
+        if ours {
+            crate::base::push_log(
+                &format!(
+                    "[stop] CLOSE sweep: killing {} PID {pid} on Wan2GP port {port} (verified ours)\n",
+                    if name.is_empty() { "?" } else { &name }
+                ),
+                "launch",
+            );
+            kill_pid(pid, &mut killed);
+        } else {
+            // Foreign or unverifiable — spared by policy, but said out
+            // loud so a surviving OUR server can never hide here silently.
+            crate::base::push_log(
+                &format!(
+                    "[stop] CLOSE sweep: leaving {} PID {pid} on port {port} (not ours — spared)\n",
+                    if name.is_empty() { "?" } else { &name }
+                ),
+                "launch",
+            );
+        }
+    }
+    killed
+}
+pub(crate) fn stop_wangp_fast() {
+    if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
+        if pid != 0 && pid != std::process::id() {
+            #[cfg(windows)]
+            {
+                let _ = silent_command("taskkill")
+                    .args(["/pid", &pid.to_string(), "/f", "/t"])
+                    .output();
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = silent_command("kill")
+                    .arg("-9")
+                    .arg(pid.to_string())
+                    .output();
+            }
+        }
+    }
+    #[cfg(windows)]
+    if let Some(t) = terminal_title() {
+        let _ = silent_command("taskkill")
+            .args(["/F", "/FI", &format!("WINDOWTITLE eq {t}*")])
+            .output();
+    }
+}
 pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
     // Scoped stop: ONLY our Wan2GP processes — the tracked child plus any python
     // running OUR repo's wgp.py (uv-shim/child split, detached terminal mode).
@@ -921,31 +1208,8 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
     // filename — the ONLY signal for uv-managed interpreters outside the repo
     // (proven orphan: uv python in AppData + relative `wgp.py`, unkillable by
     // the old repo-path-only filter).
-    let repo = get_repo_dir();
-    let repo_s = repo.to_string_lossy().replace('/', "\\").to_lowercase();
-    let repo_pre = format!("{repo_s}\\");
+    let repo_pre = wangp_repo_prefix();
     let mut killed: Vec<u32> = Vec::new();
-    // Plain closure (no captures): killed is passed in so later reads don't
-    // fight the borrow checker.
-    let kill_pid = |pid: u32, killed: &mut Vec<u32>| {
-        if pid == 0 || pid == std::process::id() || killed.contains(&pid) {
-            return;
-        }
-        #[cfg(windows)]
-        {
-            let _ = silent_command("taskkill")
-                .args(["/pid", &pid.to_string(), "/f", "/t"])
-                .output();
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = silent_command("kill")
-                .arg("-9")
-                .arg(pid.to_string())
-                .output();
-        }
-        killed.push(pid);
-    };
     // One scan pass: all python.exe with wgp.py in the command line.
     // Returns (pid, exe_path, cmdline); filtering happens in Rust (exact,
     // case-insensitive — no PowerShell quoting pitfalls). Failures are LOUD:
@@ -954,7 +1218,9 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
         let mut out = Vec::new();
         #[cfg(windows)]
         {
-            let ps = "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object { $_.CommandLine -like '*wgp.py*' } | ForEach-Object { $_.ProcessId + '|' + $_.ExecutablePath + '|' + $_.CommandLine }";
+            // python.exe OR pythonw.exe: windowed interpreters have no console
+            // but run our server just the same (missed by the old filter).
+            let ps = "Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='pythonw.exe'\" | Where-Object { $_.CommandLine -like '*wgp.py*' } | ForEach-Object { $_.ProcessId + '|' + $_.ExecutablePath + '|' + $_.CommandLine }";
             match silent_command("powershell")
                 .args(["-NoProfile", "-Command", ps])
                 .output()
@@ -989,7 +1255,7 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
         }
         #[cfg(not(windows))]
         {
-            let pat = repo.join("wgp.py").to_string_lossy().to_string();
+            let pat = get_repo_dir().join("wgp.py").to_string_lossy().to_string();
             if let Ok(o) = silent_command("pgrep").args(["-af", &pat]).output() {
                 if o.status.success() {
                     for line in String::from_utf8_lossy(&o.stdout).lines() {
@@ -1005,15 +1271,9 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
         }
         out
     };
-    let is_ours = |exe: &str, cmd: &str| -> bool {
-        if !cmd.to_lowercase().contains("wgp.py") {
-            return false;
-        }
-        let cl = cmd.to_lowercase();
-        cl.contains(&repo_pre)                      // interpreter or script path under repo
-            || exe.to_lowercase().replace('/', "\\").starts_with(&repo_pre) // env python, relative argv
-            || cl.contains("wan2gp-bootstrap-") // our launcher bootstrap (any interpreter)
-    };
+    // Origin matcher shared with the close sweep (is_ours_process) —
+    // one definition, one behaviour, unit-tested at the file level.
+    let is_ours = |exe: &str, cmd: &str| -> bool { is_ours_process(exe, cmd, &repo_pre) };
     if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
         kill_pid(pid, &mut killed);
     }
@@ -1059,16 +1319,7 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
     // for a rebuild can't clean up, so the next instance (possibly with a
     // changed port) must still catch the previous session's listener —
     // proven orphan class 2026-09-10 (PID on :7861 survived every Stop).
-    let sport = load_config_value()
-        .get("serverPort")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(7860);
-    let mut sports = vec![sport];
-    for p in [7860u64, 7861u64] {
-        if !sports.contains(&p) {
-            sports.push(p);
-        }
-    }
+    let sports = wan2gp_ports();
     // Live progress: the sweep below takes seconds (PowerShell spawns) —
     // without these the console sits dead and Stop feels frozen.
     let say = |m: &str| {
@@ -1441,6 +1692,47 @@ fn find_browser_exe(id: &str) -> Option<String> {
     }
     None
 }
+// Flags that run Chrome with GPU acceleration disabled so the browser frees
+// VRAM for generation. Shared by launch_browser_no_gpu and the
+// terminal-nogpu script (keep the two in sync).
+const NO_GPU_CHROME_FLAGS: [&str; 7] = [
+    "--disable-gpu",
+    "--disable-gpu-compositing",
+    "--disable-accelerated-2d-canvas",
+    "--disable-accelerated-video-decode",
+    "--use-angle=swiftshader",
+    "--enable-unsafe-swiftshader",
+    "--disable-webgpu",
+];
+/// Chromium-family ids share Chrome's --disable-gpu flag surface (Opera's
+/// launcher.exe forwards flags to opera.exe).
+fn is_chromium_browser(id: &str) -> bool {
+    matches!(id, "chrome" | "edge" | "brave" | "opera" | "vivaldi")
+}
+/// Which browser a no-GPU launch should use: the user's selected default
+/// first, then Chrome, then any installed Chromium, then Firefox (plain
+/// launch — Firefox offers no CLI GPU kill switch). None when no known
+/// browser is installed at all.
+fn resolve_no_gpu_browser() -> Option<(String, String)> {
+    let chosen = load_config_value()
+        .get("defaultBrowser")
+        .and_then(|v| v.as_str())
+        .unwrap_or("system")
+        .to_string();
+    if chosen != "system" {
+        if let Some(exe) = find_browser_exe(&chosen) {
+            return Some((exe, chosen));
+        }
+        // Stale selection (uninstalled after being picked) falls through to
+        // the fallbacks below instead of failing.
+    }
+    for id in ["chrome", "edge", "brave", "opera", "vivaldi", "firefox"] {
+        if let Some(exe) = find_browser_exe(id) {
+            return Some((exe, id.into()));
+        }
+    }
+    None
+}
 #[tauri::command]
 pub fn launch_browser_no_gpu(url: Option<String>) -> serde_json::Value {
     // No-GPU browser frees VRAM for generation (mirrors Electron's chrome flags).
@@ -1448,33 +1740,23 @@ pub fn launch_browser_no_gpu(url: Option<String>) -> serde_json::Value {
     if !(u.starts_with("http://") || u.starts_with("https://")) {
         return serde_json::json!({"ok": false, "success": false, "error": "invalid url"});
     }
-    let chosen = load_config_value()
-        .get("defaultBrowser")
-        .and_then(|v| v.as_str())
-        .unwrap_or("system")
-        .to_string();
-    // Prefer Chrome, else the chosen browser, else whatever opener gives (GPU on).
-    let exe = find_browser_exe("chrome").or_else(|| {
-        if chosen != "system" {
-            find_browser_exe(&chosen)
-        } else {
-            None
-        }
-    });
-    let Some(path) = exe else {
-        return serde_json::json!({"ok": false, "success": false, "error": "No Chromium browser found for no-GPU launch"});
+    // User's selected default first, then Chrome, then any Chromium/Firefox.
+    let Some((path, id)) = resolve_no_gpu_browser() else {
+        return serde_json::json!({"ok": false, "success": false, "error": "No supported browser found for no-GPU launch"});
     };
-    let args = [
-        "--disable-gpu",
-        "--disable-gpu-compositing",
-        "--disable-accelerated-2d-canvas",
-        "--disable-accelerated-video-decode",
-        "--use-angle=swiftshader",
-        "--enable-unsafe-swiftshader",
-        "--disable-webgpu",
-    ];
+    if !is_chromium_browser(&id) {
+        // Firefox has no CLI GPU kill switch (MOZ_WEBRENDER=0 is a no-op
+        // upstream) — launch it plainly and say so instead of pretending.
+        return match silent_command(&path).arg(&u).spawn() {
+            Ok(_) => {
+                serde_json::json!({"ok": true, "success": true, "via": id, "gpu_disabled": false, "note": "Firefox has no command-line GPU switch — launched normally, no VRAM savings."})
+            }
+            Err(e) => serde_json::json!({"ok": false, "success": false, "error": e.to_string()}),
+        };
+    }
+    let args = NO_GPU_CHROME_FLAGS;
     match silent_command(&path).args(args).arg(&u).spawn() {
-        Ok(_) => serde_json::json!({"ok": true, "success": true}),
+        Ok(_) => serde_json::json!({"ok": true, "success": true, "via": id}),
         Err(e) => serde_json::json!({"ok": false, "success": false, "error": e.to_string()}),
     }
 }
@@ -1500,6 +1782,12 @@ pub fn chrome_available() -> bool {
         .arg("chrome")
         .output()
         .is_ok_and(|o| o.status.success())
+}
+#[tauri::command]
+pub fn no_gpu_available() -> bool {
+    // Any browser resolve_no_gpu_browser can open (Chromium with flags,
+    // Firefox plainly) — gates the no-GPU launch buttons.
+    resolve_no_gpu_browser().is_some()
 }
 
 #[tauri::command]
@@ -1527,6 +1815,70 @@ pub async fn popout_webview(
 #[cfg(test)]
 mod launch_args_tests {
     use super::*;
+    #[test]
+    fn origin_matcher_keeps_only_launcher_processes() {
+        let pre = "c:\\wan2gp\\";
+        // Ours: interpreter or script under the repo.
+        assert!(is_ours_process(
+            "C:\\Wan2GP\\env_uv\\Scripts\\python.exe",
+            "C:\\Wan2GP\\env_uv\\Scripts\\python.exe wgp.py --port 7861",
+            pre
+        ));
+        // Ours: bootstrap marker (uv-managed interpreter outside repo).
+        assert!(is_ours_process(
+            "C:\\Users\\x\\AppData\\uv\\python.exe",
+            "python.exe C:\\Temp\\wan2gp-bootstrap-9-3.py wgp.py",
+            pre
+        ));
+        // Foreign: other software's Python, no repo signals.
+        assert!(!is_ours_process(
+            "C:\\Other\\soft\\python.exe",
+            "C:\\Other\\soft\\python.exe analyzer.py --port 7861",
+            pre
+        ));
+        // Foreign even WITH wgp.py in argv when it is not under our repo
+        // and has no bootstrap marker (e.g. someone else's checkout).
+        assert!(!is_ours_process(
+            "D:\\Stuff\\python.exe",
+            "D:\\Stuff\\python.exe D:\\Stuff\\wgp.py",
+            pre
+        ));
+        // No wgp.py at all: never ours.
+        assert!(!is_ours_process(
+            "C:\\Wan2GP\\env_uv\\Scripts\\python.exe",
+            "python.exe -m pip list",
+            pre
+        ));
+    }
+    #[test]
+    fn close_sweep_guard_skips_zero_and_self() {
+        // The final close sweep kills ANY owner on Wan2GP ports — the
+        // only two PIDs it must never touch are 0 and ourselves.
+        assert!(!close_sweep_should_kill(0));
+        assert!(!close_sweep_should_kill(std::process::id()));
+        assert!(close_sweep_should_kill(123456));
+    }
+    #[test]
+    fn terminal_command_runs_bootstrap_first_no_dup_script() {
+        // Regression: the .bat once ran `py -u wgp.py <boot> wgp.py …`, and
+        // wgp.py's argparse rejected `<boot> wgp.py` as unrecognized args.
+        let args = vec![
+            "C:\\Temp\\wan2gp-bootstrap-1-2.py".to_string(),
+            "wgp.py".to_string(),
+            "--server-port".to_string(),
+            "7861".to_string(),
+        ];
+        let cmd = terminal_server_command("C:\\Wan2GP\\env_uv\\Scripts\\python.exe", &args);
+        assert_eq!(
+cmd,
+"\"C:\\Wan2GP\\env_uv\\Scripts\\python.exe\" -u C:\\Temp\\wan2gp-bootstrap-1-2.py wgp.py --server-port 7861"
+);
+        assert_eq!(
+            cmd.matches("wgp.py").count(),
+            1,
+            "script name must appear exactly once"
+        );
+    }
     #[test]
     fn split_launch_args_quotes() {
         assert_eq!(

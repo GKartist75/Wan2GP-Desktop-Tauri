@@ -209,6 +209,11 @@
             <p class="token-hint" id="webviewMemStatus">Sums working-set of all WebView2 processes + the launcher. Run once per embed mode to compare.</p>
           </div>
           <div class="settings-section" style="margin-top:12px">
+            <h3>Debug</h3>
+            <label class="toggle-row"><input type="checkbox" id="debugBoundsChk"> <span>Verbose embed-bounds logging</span></label>
+            <p class="token-hint">Logs <code>[embed] native bounds …</code> to the console whenever the native child webview is repositioned. Off by default — enable only when chasing cut-off or offset embedded-view layout bugs. Takes effect immediately, no restart.</p>
+          </div>
+          <div class="settings-section" style="margin-top:12px">
             <h3>SageAttention wheel</h3>
             <div class="token-field">
               <select id="sageSafeSelect" class="input" style="max-width:360px">
@@ -782,23 +787,32 @@
 
       <!-- Right column: Actions, Updates, Console -->
       <div class="col-right">
-        <button class="launch-btn launch-amber" id="browserBtn">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-            Launch Wan2GP in Browser
-        </button>
-        <button class="launch-btn launch-muted" id="browserNoGpuBtn" style="margin-top:4px">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-            Launch in Chrome (no GPU script)
-        </button>
-        <button class="launch-btn launch-term" id="termBtn" style="margin-top:4px">
-            <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-            Launch in External Terminal
-        </button>
-        <div class="launch-hint" id="noGpuHint" style="display:none">Chrome not installed — this launches Chrome with minimal GPU use to free VRAM.</div>
-        <button class="launch-btn launch-green" id="appBtn" style="margin-top:4px">
-            <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="18" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-            Launch Wan2GP in Desktop
-        </button>
+            <!-- Launch: Desktop hero + 2x2 grid of alternative modes -->
+            <div class="launch-hero-row">
+              <button class="launch-btn launch-green launch-hero" id="appBtn" title="Launch Wan2GP embedded in the Desktop app">
+                <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="18" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                Launch Wan2GP in Desktop
+              </button>
+              <div class="launch-grid">
+                <button class="launch-btn launch-amber" id="browserBtn" title="Launch Wan2GP in your browser">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                Browser
+                </button>
+                <button class="launch-btn launch-muted" id="browserNoGpuBtn" title="Launch in your selected browser with GPU disabled to free VRAM for generation">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                Browser No-GPU
+                </button>
+                <button class="launch-btn launch-term" id="termBtn" title="Launch in a real external terminal window">
+                <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                Terminal
+                </button>
+                <button class="launch-btn launch-term" id="termNoGpuBtn" title="External terminal window plus the selected browser with GPU disabled">
+                <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                Terminal No-GPU
+                </button>
+              </div>
+            </div>
+        <div class="launch-hint" id="noGpuHint" style="display:none">No supported browser found — install Chrome, Edge, Brave, Opera, Vivaldi or Firefox for the No-GPU launches.</div>
         <div class="launch-info hidden" id="launchInfo">
           <div class="li-text">⏳ First launch loads models + compiles CUDA kernels — this will take some extra time. Subsequent starts are faster.</div>
           <div class="li-bar"><div class="li-fill"></div></div>
