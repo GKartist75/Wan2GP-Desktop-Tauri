@@ -821,8 +821,13 @@
           <div class="li-text">⏳ First launch loads models + compiles CUDA kernels — this will take some extra time. Subsequent starts are faster.</div>
           <div class="li-bar"><div class="li-fill"></div></div>
         </div>
-        <div class="launch-hint" id="notInstalledHint" style="display:none">Wan2GP is not installed — restart the Desktop launcher to install.</div>
-        <div class="action-grid-2">
+            <div class="launch-hint" id="notInstalledHint" style="display:none">Wan2GP is not installed — restart the Desktop launcher to install.</div>
+            <div id="driftBanner" style="display:none;margin-top:8px;padding:8px 12px;border:1px solid #F87171;border-radius:6px;background:rgba(248,113,113,.08);font-size:13px">
+              <span id="driftBannerText"></span>
+              <button class="btn btn-ghost small" id="driftRestoreBtn" style="margin-left:8px">Restore now</button>
+              <button class="btn btn-ghost small" id="driftDismissBtn">Dismiss</button>
+            </div>
+            <div class="action-grid-2">
           <button class="action-item" id="updateBtn">
             <svg viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
             Update Wan2GP (DeepBeepMeep)

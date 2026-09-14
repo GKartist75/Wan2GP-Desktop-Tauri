@@ -5862,8 +5862,50 @@ function updateFtStatus(state) {
   }
 }
 
+// ── Dependency-drift banner (issue #23): post-update drift is warn-only
+// backend-side, so the dashboard makes it unmissable here — toast for
+// attention plus a persistent banner with a working Restore action.
+// All text via textContent (XSS-safe). Banner stays until Restore
+// succeeds or the user dismisses it.
+function showDriftBanner(drift) {
+  const b = $("driftBanner");
+  const t = $("driftBannerText");
+  if (!b || !t) return;
+  const list = drift.slice(0, 5).join(", ");
+  const more = drift.length > 5 ? " (+" + (drift.length - 5) + " more)" : "";
+  t.textContent =
+    "[!] Dependency drift: " + list + more + " — generation may crash. ";
+  b.style.display = "";
+}
+function hideDriftBanner() {
+  const b = $("driftBanner");
+  if (b) b.style.display = "none";
+}
+$("driftRestoreBtn")?.addEventListener("click", async () => {
+  if (
+    !confirm(
+      "Reinstall all packages from requirements.txt? This will restore pinned versions.",
+    )
+  )
+    return;
+  const btn = $("driftRestoreBtn");
+  if (btn) btn.disabled = true;
+  appendLog("[*] Restoring packages from requirements.txt...");
+  try {
+    const rr = await window.w2gp.restoreRequirements();
+    if (rr && rr.success) {
+      appendLog("[*] Requirements restored.");
+      hideDriftBanner();
+      setTimeout(refreshDashboard, 2000);
+    } else showToast("✗ Restore failed: " + ((rr && rr.error) || "unknown"));
+  } catch (e) {
+    showToast("✗ " + errText(e));
+  }
+  if (btn) btn.disabled = false;
+});
+$("driftDismissBtn")?.addEventListener("click", hideDriftBanner);
 // ── Event Wiring: Dashboard ──
-$("updateBtn").addEventListener("click", async () => {
+    $("updateBtn").addEventListener("click", async () => {
   $("updateBtn").disabled = true;
   $("updateBtn").textContent = "Working...";
   try {
@@ -5877,10 +5919,13 @@ $("updateBtn").addEventListener("click", async () => {
       appendLog(
         "[!] requirements reinstall failed — see the console output above; the git pull itself stays applied.",
       );
-    if (r && r.depCheck === "drift" && Array.isArray(r.drift) && r.drift.length)
+    if (r && r.depCheck === "drift" && Array.isArray(r.drift) && r.drift.length) {
       appendLog(
         "[!] dependency drift: " + r.drift.join(", ") + " — use restore",
       );
+      showToast("[!] Dependency drift — packages missing or outdated. See the red banner.");
+      showDriftBanner(r.drift);
+    }
     refreshDashboard();
   } catch (e) {
     appendLog("[!] Update failed: " + errText(e));

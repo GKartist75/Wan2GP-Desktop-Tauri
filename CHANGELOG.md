@@ -4,6 +4,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- Dependency drift after update is now unmissable (issue #23): a toast plus a persistent dashboard banner with a working Restore-now action, instead of a single log line that was easy to miss
+
 ## [0.6.7] — 2026-09-14
 
 - Update no longer dies on untracked files colliding with incoming upstream adds (0.6.6 report: a local `shared/gradio/import_files.pyi` blocked the pull): byte-identical strays are removed so the merge lands them tracked, differing ones move to `.launcher-update-backup/` — nothing deleted, pull error now names this cause
