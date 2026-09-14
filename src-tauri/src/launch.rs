@@ -40,6 +40,28 @@ fn split_launch_args(s: &str) -> Vec<String> {
     }
     out
 }
+/// Shared wgp.py base args (Slice `deepy-web`: common builder for the main
+/// server and the standalone Deepy Web process — no fork, verbatim upstream
+/// flags only). `--config` is intentionally omitted: children spawn with
+/// `current_dir = repo`, so upstream resolves its config folder default.
+/// `--deepy-sessions-dir` is passed explicitly (verified in
+/// `shared/cli_args.py`: `default: ./deepy_sessions`).
+pub(crate) struct WgpLaunchBase {
+    pub port: u64,
+    pub server_name: String,
+    pub sessions_dir: String,
+}
+pub(crate) fn build_wgp_args(base: &WgpLaunchBase) -> Vec<String> {
+    vec![
+        "wgp.py".to_string(),
+        "--server-port".to_string(),
+        base.port.to_string(),
+        "--server-name".to_string(),
+        base.server_name.clone(),
+        "--deepy-sessions-dir".to_string(),
+        base.sessions_dir.clone(),
+    ]
+}
 static TERMINAL_TITLE: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
     std::sync::OnceLock::new();
 pub(crate) fn terminal_title() -> Option<String> {

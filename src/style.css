@@ -517,6 +517,9 @@ body {
 .deepy-enhancer-note { font-size: 0.5rem; color: var(--text-tertiary); font-style: italic; }
 .deepy-enhancer-label { font-weight: 600; color: var(--text-primary); }
 .deepy-actions { display: flex; gap: 8px; margin-top: 10px; }
+.deepyweb-urls { display: flex; flex-direction: column; gap: 6px; }
+.deepyweb-url-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.deepyweb-url { font-size: 0.62rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; word-break: break-all; }
 
 /* ── DLSS consent box (outer overlay comes from the shared .modal-overlay
    system below — hidden via the `hidden` class like migrationModal). ── */

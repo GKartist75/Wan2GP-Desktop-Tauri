@@ -740,10 +740,168 @@
           <div class="deepy-actions">
             <button class="btn btn-primary" id="deepyApplyBtn" disabled title="Save the Deepy mode choice into Wan2GP config (applies on next launch)">Apply</button>
           </div>
-          <div id="deepyStatusMsg" class="pip-advanced-hint" style="margin-top:8px"></div>
-        </div>
+              <div id="deepyStatusMsg" class="pip-advanced-hint" style="margin-top:8px"></div>
+            </div>
 
-        <!-- Optional DLSS5 runtime (upstream scripts/install_dlss5.ps1). Consent
+            <!-- Deepy Web standalone (upstream `wgp.py --deepy-server`): one-button
+                 Same-PC + Phone-LAN HTTP. Standalone process on deepyPort — it does
+                 NOT live-sync with the Gradio /deepy/ view (finish → stop → resume). -->
+            <div class="card" id="deepyWebCard" style="margin-top:10px">
+              <div class="card-header">
+                <span class="card-title">📱 Deepy Web</span>
+              </div>
+              <p class="path-hint">Phone-friendly Deepy chat in a second process beside the main server. Start it here, open the Same-PC URL on this PC or scan the Phone URL from your phone (same Wi-Fi).</p>
+              <div id="deepyWebStatus" class="pip-advanced-hint" style="margin-top:4px">Checking…</div>
+              <div class="deepyweb-urls" style="margin-top:8px">
+                <div class="deepyweb-url-row">
+                  <span class="deepy-sub-label">Same-PC</span>
+                  <code id="deepyWebSamePcUrl" class="deepyweb-url">—</code>
+                  <button class="btn btn-ghost small" id="deepyWebSamePcCopy" title="Copy Same-PC URL">Copy</button>
+                  <button class="btn btn-ghost small" id="deepyWebSamePcQr" title="Show Same-PC URL as QR">QR</button>
+                </div>
+                <div class="deepyweb-url-row">
+                  <span class="deepy-sub-label">Phone</span>
+                  <code id="deepyWebPhoneUrl" class="deepyweb-url">—</code>
+                  <button class="btn btn-ghost small" id="deepyWebPhoneCopy" title="Copy Phone URL">Copy</button>
+                  <button class="btn btn-ghost small" id="deepyWebPhoneQr" title="Show Phone URL as QR">QR</button>
+                </div>
+                <div id="deepyWebIpList" style="margin-top:6px"></div>
+              </div>
+              <p class="path-hint" id="deepyWebPhoneHint" style="margin-top:4px"></p>
+                      <div style="margin-top:8px">
+                        <div class="deepy-sub-label">Tailscale (off-LAN)</div>
+                        <div id="deepyWebTailscaleStatus" class="pip-advanced-hint" style="margin-top:4px">Checking…</div>
+                        <div class="deepyweb-url-row" id="deepyWebTailscaleRow" style="display:none;margin-top:4px">
+                          <span class="deepy-sub-label">Tailnet</span>
+                          <code id="deepyWebTailnetUrl" class="deepyweb-url">—</code>
+                          <button class="btn btn-ghost small" id="deepyWebTailnetCopy" title="Copy tailnet URL">Copy</button>
+                          <button class="btn btn-ghost small" id="deepyWebTailnetQr" title="Show tailnet URL as QR">QR</button>
+                        </div>
+                        <p class="path-hint" style="margin-top:4px">Public-NAT rule: public exposure needs Auth + trusted HTTPS — forward the HTTPS port only, never plain HTTP.</p>
+                      </div>
+                      <details style="margin-top:6px">
+                        <summary class="deepy-sub-label" style="cursor:pointer">Router VPN (docs only — no automation)</summary>
+                        <p class="path-hint" style="margin:6px 0 6px 0;line-height:1.6">Router VPN varies by firmware and is unreliable behind CGNAT/UPnP — the launcher does not automate port forwards. Prefer Tailscale above; if you forward manually, use Auth + trusted HTTPS and forward the HTTPS port only.</p>
+                      </details>
+                      <details style="margin-top:6px">
+                        <summary class="deepy-sub-label" style="cursor:pointer">Tailscale setup guide (use Deepy Web from anywhere)</summary>
+                    <ol class="path-hint" style="margin:6px 0 6px 18px;line-height:1.6">
+                      <li>Install Tailscale on this PC (<a id="deepyWebTailscaleLink" href="#" style="color:var(--accent)">tailscale.com/download</a>) and sign in — this PC gets a 100.x address.</li>
+                      <li>Install Tailscale on your phone and sign in with the same account.</li>
+                      <li>The Tailscale row (100.x) appears automatically in the URL list above — scan its QR from your phone.</li>
+                      <li>It works from anywhere (home, mobile data); Tailscale encrypts the traffic end to end.</li>
+                    </ol>
+                    <p class="path-hint">Notes: both devices must stay signed in (the free personal plan is enough); approve new devices at login.tailscale.com if asked. Turn Auth on below — every device on your tailnet can reach the port.</p>
+                  </details>
+              
+                  <details style="margin-top:6px">
+                    <summary class="deepy-sub-label" style="cursor:pointer">Protection quick guide (when to use Auth / HTTPS)</summary>
+                    <ul class="path-hint" style="margin:6px 0 6px 18px;line-height:1.6">
+                      <li><strong>Same-PC only:</strong> nothing leaves your PC — no password needed.</li>
+                      <li><strong>Trusted home LAN:</strong> Auth recommended on shared networks; HTTPS protects against interception.</li>
+                      <li><strong>Tailscale/VPN:</strong> Auth optional if only trusted users join; keep public port forwarding closed.</li>
+                      <li><strong>Public internet (NAT forward):</strong> Auth + trusted HTTPS required — forward the HTTPS port only, never plain HTTP. (Enable LAN HTTPS under Advanced below.)</li>
+                    </ul>
+                  </details>
+<div class="deepy-actions" style="margin-top:8px">
+                <button class="btn btn-primary" id="deepyWebStartBtn">Start Deepy Web</button>
+                <button class="btn btn-ghost" id="deepyWebStopBtn">Stop</button>
+              </div>
+              <div id="deepyWebAuthBanner" class="pip-advanced-hint" style="margin-top:6px;display:none"></div>
+                  <div id="deepyWebAuthWarning" class="pip-advanced-hint" style="margin-top:6px;display:none;color:#F87171"></div>
+                  <div id="deepyWebAuthPassword" class="pip-advanced-hint" style="margin-top:6px;display:none"></div>
+                  <div style="margin-top:8px">
+                    <div class="deepy-sub-label">Auth (remote lock)</div>
+                    <div class="deepy-mode-row" style="margin-top:4px">
+                      <label class="deepy-mode-opt"><input type="radio" name="deepyWebAuth" value="off" checked> Off</label>
+                      <label class="deepy-mode-opt"><input type="radio" name="deepyWebAuth" value="fixed"> Fixed</label>
+                    </div>
+                    <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                      <label class="path-hint" for="deepyWebAuthFixed">Fixed secret</label>
+                      <input id="deepyWebAuthFixed" type="password" autocomplete="new-password" style="width:180px" placeholder="type or generate secret">
+                        <button class="btn btn-ghost small" id="deepyWebAuthShow">Show</button>
+                    </div>
+                    <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                      <label class="path-hint" for="deepyWebAuthLen">Length (8–64)</label>
+                      <input id="deepyWebAuthLen" type="number" min="8" max="64" step="1" value="16" style="width:70px">
+                      <button class="btn btn-ghost small" id="deepyWebAuthGen">Generate passphrase</button>
+                    </div>
+                    <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                      <label class="path-hint"><input id="deepyWebAuthRemember" type="checkbox"> Remember on this PC (30 days)</label>
+                      <button class="btn btn-ghost small" id="deepyWebAuthForget">Forget</button>
+                    </div>
+                    <p class="path-hint" id="deepyWebSavedNote" style="margin-top:4px;display:none"></p>
+                    <p class="path-hint" id="deepyWebAuthHint" style="margin-top:4px">Password travels via child env only. Without Remember, restart invalidates it. A remembered password is stored on this PC in plain text — anyone with file access can read it. Tip: 3–4 plain words you can type on the phone.</p>
+                  </div>
+                      <div id="deepyWebMicGate" class="pip-advanced-hint" style="margin-top:6px;display:none"></div>
+                      <details style="margin-top:6px">
+                        <summary class="deepy-sub-label" style="cursor:pointer">Phone CA-install guide (needed for trusted HTTPS + mic)</summary>
+                        <ol class="path-hint" style="margin:6px 0 6px 18px;line-height:1.6">
+                          <li>On this PC, export the mkcert root CA (run <code>mkcert -CAROOT</code>, copy <code>rootCA.pem</code> to your phone).</li>
+                          <li>iOS: open the file → install profile → Settings → General → About → Certificate Trust Settings → enable full trust.</li>
+                          <li>Android: Settings → Security → Install certificate (CA) → pick <code>rootCA.pem</code>.</li>
+                          <li>Reopen the HTTPS phone URL — the lock icon must show, then voice input is allowed.</li>
+                        </ol>
+                        <p class="path-hint">Bring-own certs need their own CA installed instead. Nothing is installed silently — every step is an explicit tap.</p>
+                      </details>
+                          <details style="margin-top:8px">
+                            <summary class="deepy-sub-label" style="cursor:pointer">Advanced (mode, port, HTTPS)</summary>
+                    <div class="deepy-mode-row" style="margin-top:6px">
+                      <label class="deepy-mode-opt"><input type="radio" name="deepyWebMode" value="same-pc" checked> Same-PC only</label>
+                      <label class="deepy-mode-opt"><input type="radio" name="deepyWebMode" value="lan"> Phone-LAN (HTTP)</label>
+                    </div>
+                    <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                      <label class="path-hint" for="deepyWebPortInput">Deepy Web port (default: server port + 1)</label>
+                      <input id="deepyWebPortInput" type="number" min="1" max="65535" step="1" style="width:90px" placeholder="auto">
+                      <button class="btn btn-ghost small" id="deepyWebPortSave">Save</button>
+                        </div>
+                          <div style="margin-top:8px">
+                            <div class="deepy-sub-label">LAN HTTPS (mic / voice needs trusted HTTPS)</div>
+                            <div class="deepy-mode-row" style="margin-top:4px">
+                              <label class="deepy-mode-opt"><input type="radio" name="deepyWebHttps" value="off" checked> Off</label>
+                              <label class="deepy-mode-opt"><input type="radio" name="deepyWebHttps" value="on"> On</label>
+                            </div>
+                            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                              <label class="path-hint" for="deepyWebCertInput">Cert .pem</label>
+                              <input id="deepyWebCertInput" type="text" style="width:220px" placeholder="C:\certs\lan-cert.pem">
+                            </div>
+                            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                              <label class="path-hint" for="deepyWebKeyInput">Key .key</label>
+                              <input id="deepyWebKeyInput" type="text" style="width:220px" placeholder="C:\certs\lan-cert-key.pem">
+                            </div>
+                            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                              <button class="btn btn-ghost small" id="deepyWebCertBring">Use these files</button>
+                              <button class="btn btn-ghost small" id="deepyWebCertCreate">Create LAN cert (mkcert)</button>
+                            </div>
+                            <p class="path-hint" id="deepyWebHttpsHint" style="margin-top:4px">HTTPS serves a trusted URL with your cert. Mic/voice stays blocked on plain HTTP.</p>
+                          </div>
+                          <details style="margin-top:6px">
+                            <summary class="deepy-sub-label" style="cursor:pointer">Install mkcert on this PC (needed for Create-LAN-cert)</summary>
+                            <ol class="path-hint" style="margin:6px 0 6px 18px;line-height:1.6">
+                              <li>Open PowerShell and run <code>winget install FiloSottile.mkcert</code> (or <code>choco install mkcert</code> / <code>scoop install mkcert</code>), then close and reopen the terminal.</li>
+                              <li>Create the local CA once: <code>mkcert -install</code> — explicit, trusts mkcert's CA on this PC only.</li>
+                              <li>Back in this card press <em>Create LAN cert (mkcert)</em>, then follow the Phone CA-install guide so your phone trusts it too.</li>
+                            </ol>
+                          </details>
+    </details>
+              <p class="path-hint" style="margin-top:6px"><em>Standalone ≠ Gradio /deepy/: finish in one view, stop Deepy Web, then resume in the other — the two do not live-sync.</em></p>
+              <p class="path-hint">Phone tip: after scanning, use your browser's <em>Add to Home Screen</em> (iOS Share &gt; Add, Android Install) for app-like access.</p>
+            </div>
+
+            <!-- Deepy Web QR modal: shows the selected URL as a scannable code.
+                 Same convention as dlss5Modal: hidden via `hidden`, shown by removing it. -->
+            <div id="deepyWebQrModal" class="modal-overlay hidden">
+              <div class="modal-box" style="text-align:center">
+                <h3 style="margin:0 0 8px">Scan to open Deepy Web</h3>
+                <canvas id="deepyWebQrCanvas" width="232" height="232" style="width:232px;height:232px;image-rendering:pixelated;background:#fff;border-radius:8px"></canvas>
+                <p class="path-hint" style="margin-top:8px"><code id="deepyWebQrCaption"></code></p>
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+                  <button class="btn btn-ghost" id="deepyWebQrClose">Close</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Optional DLSS5 runtime (upstream scripts/install_dlss5.ps1). Consent
              ("I ACCEPT") is taken in the modal below — never skipped. -->
         <div class="card" id="dlss5Card" style="margin-top:10px">
           <div class="card-header">
@@ -1245,6 +1403,8 @@
        node --test suite requires, so escaping logic lives in one place. -->
   <!-- Tauri shim: provides window.w2gp via invoke() — ponytail: one file replaces 9600L preload.js -->
   <script src="w2gp.js" defer></script>
+  <!-- Vendored Nayuki QR-Code-generator (MIT) for the Deepy Web Phone-URL QR — offline, no npm chain -->
+  <script src="qrcodegen.js" defer></script>
   <script src="services/escape.js" defer></script>
   <script src="services/pip-spec.js" defer></script>
   <script src="app.js" defer></script>

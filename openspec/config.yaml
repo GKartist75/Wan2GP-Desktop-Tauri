@@ -1,0 +1,68 @@
+strict_tdd: true
+context: |
+  wan2gp-desktop-launcher-tauri is a Tauri 2 project.
+  Rust backend plus vanilla JS frontend.
+  Detected markers: src-tauri/Cargo.toml,
+  src-tauri/tauri.conf.json, package.json.
+  Package managers: cargo, npm.
+  Additional evidence: Rust backend in src-tauri/src
+  (install, launch, status, features, plugins,
+  config, hw, updates); vanilla JS UI in src/
+  (app.js, w2gp.js, services/).
+  Upstream Wan2GP owned separately; never override
+  its setup.py mapping.
+  Primary test command: cargo test --manifest-path src-tauri/Cargo.toml.
+  Unit tests: cargo test (cargo test --manifest-path src-tauri/Cargo.toml).
+  Integration tests: none.
+  E2E tests: none.
+rules:
+  proposal:
+    require_problem_statement: true
+  spec:
+    require_acceptance_criteria: true
+  design:
+    require_tradeoffs: true
+  tasks:
+    protect_review_workload: true
+  apply:
+    test_command: "cargo test --manifest-path src-tauri/Cargo.toml"
+  verify:
+    test_command: "cargo test --manifest-path src-tauri/Cargo.toml"
+testing:
+  detected: "2026-09-11"
+  runner:
+    command: "cargo test --manifest-path src-tauri/Cargo.toml"
+    framework: "cargo test"
+  layers:
+    unit: "cargo test"
+    integration: ""
+    e2e: ""
+  commands:
+    unit:
+      - scope: "src-tauri"
+        command: "cargo test --manifest-path src-tauri/Cargo.toml"
+        framework: "cargo test"
+    integration:
+      []
+    e2e:
+      []
+  coverage:
+    command: ""
+    commands:
+      []
+quality:
+  lint: "cargo clippy --manifest-path src-tauri/Cargo.toml"
+  lint_commands:
+    - scope: "src-tauri"
+      command: "cargo clippy --manifest-path src-tauri/Cargo.toml"
+      framework: "clippy"
+  typecheck: "cargo check --manifest-path src-tauri/Cargo.toml"
+  typecheck_commands:
+    - scope: "src-tauri"
+      command: "cargo check --manifest-path src-tauri/Cargo.toml"
+      framework: "rustc"
+  format: "cargo fmt"
+  format_commands:
+    - scope: "src-tauri"
+      command: "cargo fmt"
+      framework: "rustfmt"
