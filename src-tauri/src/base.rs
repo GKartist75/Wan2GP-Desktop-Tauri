@@ -69,6 +69,25 @@ pub(crate) fn term_tool(tool: &str) -> std::process::Command {
     std::process::Command::new(tool)
 }
 pub(crate) static LOG_HISTORY: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+/// Prefix upstream-child output lines so the console shows who said what:
+/// launcher lines already carry `[*]`/`[!]`/`[✓]`; child lines (wgp.py,
+/// setup.py, Deepy server) get `[wan2gp] `. Empty lines pass through
+/// untagged (push_log drops them anyway). Parsing consumers (notifier
+/// `%`/keyword `contains`, install sliding window, profile guard) run on
+/// the RAW chunk — tag only at emit/push time, never before parsing.
+pub(crate) fn tag_child_lines(chunk: &str) -> String {
+    chunk
+        .split('\n')
+        .map(|line| {
+            if line.trim().is_empty() {
+                line.to_string()
+            } else {
+                format!("[wan2gp] {line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 pub(crate) fn push_log(text: &str, source: &str) {
     if text.is_empty() {
         return;
@@ -516,6 +535,24 @@ pub(crate) fn pip_spec_ok(spec: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+mod child_tag_tests {
+    use super::tag_child_lines;
+    #[test]
+    fn tags_plain_lines() {
+        assert_eq!(tag_child_lines("hello"), "[wan2gp] hello");
+        assert_eq!(tag_child_lines("a\nb"), "[wan2gp] a\n[wan2gp] b");
+    }
+    #[test]
+    fn leaves_empties_untagged() {
+        assert_eq!(tag_child_lines(""), "");
+        assert_eq!(tag_child_lines("x\n\n"), "[wan2gp] x\n\n");
+        assert_eq!(
+            tag_child_lines("  \nUvicorn running"),
+            "  \n[wan2gp] Uvicorn running"
+        );
+    }
+}
 #[cfg(test)]
 mod pip_spec_tests {
     use super::pip_spec_ok;

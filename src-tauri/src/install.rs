@@ -365,6 +365,13 @@ fn tool_candidates(tool: &str, home: &str) -> Vec<std::path::PathBuf> {
             p("C:\\Python311\\python.exe".into()),
             p("C:\\Program Files\\Python311\\python.exe".into()),
         ],
+        // Astral-script and cargo defaults: on PATH for new processes but
+        // invisible to a running launcher until a registry refresh — the
+        // exact "not found here, already installed there" split.
+        "uv" => vec![
+            p(format!("{home}\\.local\\bin\\uv.exe")),
+            p(format!("{home}\\.cargo\\bin\\uv.exe")),
+        ],
         _ => vec![],
     }
 }
@@ -378,6 +385,10 @@ fn tool_candidates(tool: &str, home: &str) -> Vec<std::path::PathBuf> {
             p(format!("{home}/anaconda3/bin/conda")),
         ],
         "py" | "python" => vec![p("/usr/bin/python3".into())],
+        "uv" => vec![
+            p(format!("{home}/.local/bin/uv")),
+            p(format!("{home}/.cargo/bin/uv")),
+        ],
         _ => vec![],
     }
 }
@@ -1934,6 +1945,9 @@ pub async fn install(
             return Err("git clone failed — check output above".into());
         }
         emit("[*] Repository cloned.\n");
+        if record_wangp_pin(&repo) {
+            emit("[*] Recorded this upstream commit as the rollback point.\n");
+        }
         emit_phase("clone", "Clone Wan2GP repository", true);
     }
     emit(&format!(
@@ -2454,7 +2468,7 @@ pub async fn install(
                 match ev {
                     CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => {
                         let txt = String::from_utf8_lossy(&b).to_string();
-                        emit(&txt);
+                        emit(&tag_child_lines(&txt));
                         install_progress_classify(&app, &txt);
                         // Profile guard (issue #15): the hook passes our key
                         // directly, so a different reported profile means
@@ -3043,6 +3057,14 @@ pub async fn reinstall(
         if repo.join("wgp_config.json").exists() {
             let _ = std::fs::copy(repo.join("wgp_config.json"), backup.join("wgp_config.json"));
         }
+        // desktop-config.json (tokens, launchArgs, prefs) lives in the data
+        // dir, which IS the repo on default installs — back it up or the
+        // wipe eats it. A custom data dir is never wiped; the restore step
+        // drops that spare copy by bytes (see settings_restore_action).
+        let dc = get_config_file();
+        if dc.exists() {
+            let _ = std::fs::copy(&dc, backup.join("desktop-config.json"));
+        }
     }
     if repo.exists() {
         emit("[*] Moving old installation to trash…\n");
@@ -3132,6 +3154,28 @@ pub async fn reinstall(
 /// and wiped with everything else when data_dir == repo. Only entries missing
 /// from the fresh clone are moved back (upstream ships its own system
 /// plugins); a conflicting wgp_config.json is kept aside, never overwritten.
+/// Restore action for one backed-up settings file (desktop-config.json).
+/// Decided by bytes so a custom data dir (never wiped) just drops its spare
+/// copy instead of writing a pointless .backup.json.
+#[derive(Debug, PartialEq)]
+pub(crate) enum SettingsRestore {
+    /// Fresh install has no copy — copy the backup into place.
+    Copy,
+    /// Target exists with identical bytes — drop the backup silently.
+    KeepBackup,
+    /// Target exists with different bytes — keep target, save backup aside.
+    SaveAside,
+}
+
+/// Pure decision: what to do with a backed-up settings file given the current
+/// target state (`None` when the fresh install has no copy yet).
+pub(crate) fn settings_restore_action(target: Option<&[u8]>, backup: &[u8]) -> SettingsRestore {
+    match target {
+        None => SettingsRestore::Copy,
+        Some(cur) if cur == backup => SettingsRestore::KeepBackup,
+        Some(_) => SettingsRestore::SaveAside,
+    }
+}
 #[tauri::command]
 pub async fn restore_backup(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     use tauri::Emitter;
@@ -3175,6 +3219,30 @@ pub async fn restore_backup(app: tauri::AppHandle) -> Result<serde_json::Value, 
             restored.push(
                 "wgp_config.backup.json (your old settings — review & merge manually)".into(),
             );
+        }
+    }
+    let bdc = backup.join("desktop-config.json");
+    if bdc.exists() {
+        let target = get_config_file();
+        if target != bdc {
+            let backed = std::fs::read(&bdc).unwrap_or_default();
+            match settings_restore_action(std::fs::read(&target).ok().as_deref(), &backed) {
+                SettingsRestore::Copy => {
+                    if std::fs::copy(&bdc, &target).is_ok() {
+                        restored.push("desktop-config.json (tokens, launch args, prefs)".into());
+                    }
+                }
+                SettingsRestore::KeepBackup => {}
+                SettingsRestore::SaveAside => {
+                    let aside = target.with_extension("backup.json");
+                    if std::fs::copy(&bdc, &aside).is_ok() {
+                        restored.push(
+                                "desktop-config.backup.json (your old tokens/settings — review & merge manually)"
+                                    .into(),
+                            );
+                    }
+                }
+            }
         }
     }
     let _ = std::fs::remove_dir_all(&backup);
@@ -3557,6 +3625,249 @@ pub(crate) fn file_sig(p: &Path) -> Option<(u64, u64)> {
         (h, b.len() as u64)
     })
 }
+/// One tracked-tree deviation from upstream (`git status --porcelain`).
+#[derive(Debug, PartialEq)]
+pub(crate) struct DriftEntry {
+    pub path: String,
+    pub kind: DriftKind,
+}
+
+/// Short code of a drift entry. Unknown codes map to Modified (fail-open:
+/// a strange line stays visible instead of silently vanishing).
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub(crate) enum DriftKind {
+    Modified,
+    Deleted,
+    StagedNew,
+    Renamed,
+    Untracked,
+}
+
+/// Parse `git status --porcelain=v1` output into drift entries.
+/// Rename lines (`R  old -> new`) report the new path; quoted paths
+/// (spaces) are unquoted. Pure + unit-tested.
+pub(crate) fn parse_git_porcelain(out: &str) -> Vec<DriftEntry> {
+    let mut entries = Vec::new();
+    for line in out.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        let (xy, rest) = line.split_at(2);
+        let mut path = rest.trim_start().to_string();
+        if path.len() >= 2 && path.starts_with('"') && path.ends_with('"') {
+            path = path[1..path.len() - 1].to_string();
+        }
+        if path.is_empty() {
+            continue;
+        }
+        let kind = if xy == "??" {
+            DriftKind::Untracked
+        } else if xy.starts_with('R') {
+            DriftKind::Renamed
+        } else if xy.contains('D') {
+            DriftKind::Deleted
+        } else if xy.starts_with('A') {
+            DriftKind::StagedNew
+        } else {
+            DriftKind::Modified
+        };
+        if kind == DriftKind::Renamed {
+            if let Some((_, new)) = path.split_once(" -> ") {
+                let mut np = new.trim().to_string();
+                if np.len() >= 2 && np.starts_with('"') && np.ends_with('"') {
+                    np = np[1..np.len() - 1].to_string();
+                }
+                path = np;
+            }
+        }
+        entries.push(DriftEntry { path, kind });
+    }
+    entries
+}
+
+/// True when TRACKED files differ from HEAD (untracked user files never
+/// count — neither stash nor reset may take them). Probe failure reads
+/// dirty (conservative: callers abort instead of touching work blindly).
+pub(crate) fn git_tracked_dirty(repo: &Path) -> bool {
+    silent_command("git")
+        .args(["status", "--porcelain=v1"])
+        .current_dir(repo)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            parse_git_porcelain(&String::from_utf8_lossy(&o.stdout))
+                .iter()
+                .any(|e| e.kind != DriftKind::Untracked)
+        })
+        .unwrap_or(true)
+}
+/// A recorded upstream pin (desktop-config `wangpCommit` + `wangpCommitDate`).
+pub(crate) struct WangpPin {
+    pub hash: String,
+    pub date: String,
+}
+/// True for a full 40-hex git object hash (short prefixes rejected: a
+/// reset to an ambiguous prefix must never run).
+pub(crate) fn is_commit_hash(s: &str) -> bool {
+    s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+/// Pure rollback decision: Err names why not, Ok carries the reset target.
+/// A dirty tree refuses (Verify/Repair or stash first) — reset would eat edits.
+pub(crate) fn rollback_plan(pin: Option<&str>, dirty: bool) -> Result<String, String> {
+    let hash = pin.filter(|h| !h.is_empty()).ok_or_else(|| {
+        "No recorded Wan2GP update yet — update once first, then a rollback point exists."
+            .to_string()
+    })?;
+    if !is_commit_hash(hash) {
+        return Err(
+            "Recorded Wan2GP pin is not a valid commit hash — update once to re-record it."
+                .to_string(),
+        );
+    }
+    if dirty {
+        return Err(
+            "Tracked Wan2GP files differ — Verify/Repair (or stash) first, then roll back.".into(),
+        );
+    }
+    Ok(hash.to_string())
+}
+/// Read the recorded pin from desktop-config (None when never recorded).
+pub(crate) fn read_wangp_pin() -> Option<WangpPin> {
+    let cfg = load_config_value();
+    let hash = cfg.get("wangpCommit").and_then(|v| v.as_str())?.to_string();
+    let date = cfg
+        .get("wangpCommitDate")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if !is_commit_hash(&hash) {
+        return None;
+    }
+    Some(WangpPin { hash, date })
+}
+/// Record the checkout's current upstream commit as the rollback point.
+/// Best-effort (false on any git/config trouble — callers log, never fail).
+pub(crate) fn record_wangp_pin(repo: &Path) -> bool {
+    let hash = silent_command("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| is_commit_hash(s));
+    let Some(hash) = hash else {
+        return false;
+    };
+    let date = silent_command("git")
+        .args(["show", "-s", "--format=%ci", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let mut cfg = load_config_value();
+    let Some(m) = cfg.as_object_mut() else {
+        return false;
+    };
+    m.insert("wangpCommit".to_string(), serde_json::Value::String(hash));
+    m.insert(
+        "wangpCommitDate".to_string(),
+        serde_json::Value::String(date),
+    );
+    let p = get_config_file();
+    serde_json::to_string_pretty(&cfg)
+        .ok()
+        .and_then(|s| atomic_write(&p, &s).ok())
+        .is_some()
+}
+/// Short HEAD hash of the checkout (None outside git / on trouble).
+pub(crate) fn wangp_head_short(repo: &Path) -> Option<String> {
+    silent_command("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+#[cfg(test)]
+mod wangp_git_tests {
+    use super::{parse_git_porcelain, DriftEntry, DriftKind};
+    #[test]
+    fn porcelain_parses_mixed_working_tree() {
+        let out = " M wgp.py\n D deleted.py\n?? new-local.txt\n";
+        assert_eq!(
+            parse_git_porcelain(out),
+            vec![
+                DriftEntry {
+                    path: "wgp.py".into(),
+                    kind: DriftKind::Modified
+                },
+                DriftEntry {
+                    path: "deleted.py".into(),
+                    kind: DriftKind::Deleted
+                },
+                DriftEntry {
+                    path: "new-local.txt".into(),
+                    kind: DriftKind::Untracked
+                },
+            ]
+        );
+    }
+    #[test]
+    fn porcelain_parses_staged_and_renames() {
+        let out = "A  added.py\nR  old.py -> new.py\nMM both.py\n";
+        let got = parse_git_porcelain(out);
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0].kind, DriftKind::StagedNew);
+        assert_eq!(got[1].path, "new.py");
+        assert_eq!(got[1].kind, DriftKind::Renamed);
+        assert_eq!(got[2].kind, DriftKind::Modified);
+    }
+    #[test]
+    fn porcelain_empty_and_unknown() {
+        assert!(parse_git_porcelain("").is_empty());
+        assert!(parse_git_porcelain("\n").is_empty());
+        // Unknown codes stay visible (fail-open as Modified, never hidden).
+        let got = parse_git_porcelain("X! weird.py\n");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].kind, DriftKind::Modified);
+    }
+}
+#[cfg(test)]
+mod wangp_pin_tests {
+    use super::{is_commit_hash, rollback_plan};
+    #[test]
+    fn hash_shape_accepts_40_hex() {
+        assert!(is_commit_hash(&"a".repeat(40)));
+        assert!(is_commit_hash(&("3bd5e0b".to_string() + &"0".repeat(33))));
+        assert!(is_commit_hash(&format!("ABCDEF{}", "0".repeat(34))));
+        assert!(!is_commit_hash("3bd5e0b"));
+        assert!(!is_commit_hash(&"x".repeat(40)));
+        assert!(!is_commit_hash(""));
+    }
+    #[test]
+    fn rollback_needs_a_pin() {
+        assert!(rollback_plan(None, false).is_err());
+    }
+    #[test]
+    fn rollback_rejects_garbage_pin() {
+        assert!(rollback_plan(Some("not-a-hash"), false).is_err());
+    }
+    #[test]
+    fn rollback_refuses_dirty_tree() {
+        assert!(rollback_plan(Some(&"a".repeat(40)), true).is_err());
+    }
+    #[test]
+    fn rollback_resolves_clean_pinned_tree() {
+        let h = "a".repeat(40);
+        assert_eq!(rollback_plan(Some(&h), false), Ok(h));
+    }
+}
 #[tauri::command]
 pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     mutating_try("update")?;
@@ -3569,18 +3880,81 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
     // as changed so a newly-added pin file still triggers a reinstall.
     let req_path = repo.join("requirements.txt");
     let pre_sig = file_sig(&req_path);
+    let pre_text = std::fs::read_to_string(&req_path).unwrap_or_default();
     let emit = |m: &str| {
         crate::base::push_log(m, "setup");
         let _ = app.emit("launch-log", m.to_string());
     };
+    // Fetch first so the log names what's incoming; then merge. A dirty
+    // tree (hand-edited wgp.py, …) aborts a bare pull with "would be
+    // overwritten by merge" — stash it aside and pop it back after.
+    // The stash is recoverable by design: on pull or pop failure the
+    // stash is KEPT and the error names it (nothing dropped silently).
+    // Untracked-only dirt never stashes (plain push would save nothing
+    // and the later pop would misreport) — merges don't touch it anyway.
+    if !run_logged(&app, "git", &["fetch", "origin"], Some(&repo), emit).await {
+        mutating_done();
+        return Err("git fetch failed — offline? See console output above.".into());
+    }
+    let incoming = silent_command("git")
+        .args(["rev-list", "--count", "HEAD..@{u}"])
+        .current_dir(&repo)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| s != "0" && !s.is_empty());
+    if let Some(n) = incoming {
+        emit(&format!("[*] {n} upstream change(s) incoming…\n"));
+    }
+    let mut stashed = false;
+    if git_tracked_dirty(&repo) {
+        emit("[*] Local file changes detected — stashing them aside before pull…\n");
+        if !run_logged(
+            &app,
+            "git",
+            &["stash", "push", "-m", "launcher-update-autostash"],
+            Some(&repo),
+            emit,
+        )
+        .await
+        {
+            mutating_done();
+            return Err("git stash failed — your files are untouched. Resolve local changes by hand, then retry.".into());
+        }
+        stashed = true;
+    }
     if !run_logged(&app, "git", &["pull"], Some(&repo), emit).await {
         mutating_done();
-        return Err("git pull failed — see console output (offline? diverged branch?)".into());
+        return Err(if stashed {
+        "git pull failed after stashing — your changes are kept in the stash (git stash list: launcher-update-autostash). Resolve by hand, then retry."
+        } else {
+        "git pull failed — offline? diverged branch? See console output above."
+        }
+        .into());
+    }
+    if stashed {
+        if !run_logged(&app, "git", &["stash", "pop"], Some(&repo), emit).await {
+            mutating_done();
+            return Err("Update pulled, but your stashed changes CONFLICT with it — the stash is KEPT (git stash list: launcher-update-autostash). Resolve the conflicts by hand, then drop the stash.".into());
+        }
+        emit("[*] Local changes restored on top of the update.\n");
     }
     // Upstream bumps (e.g. mmgp 3.7.14 → 3.8.0 with a wgp.py hard-exit on
     // mismatch) only take effect once the pinned packages are reinstalled.
     // Reinstall on change only — a slow no-op pip run on every update.
     let changed = file_sig(&req_path) != pre_sig;
+    // Visible pin diff (what pip streams but never names):
+    // `mmgp 3.7.14 -> 3.8.0`, `+pkg==v`, `-pkg==v`. Same parser as drift.
+    let pin_diff: Vec<String> = if changed {
+        let post_text = std::fs::read_to_string(&req_path).unwrap_or_default();
+        diff_requirement_pins(&pre_text, &post_text)
+    } else {
+        Vec::new()
+    };
+    for d in &pin_diff {
+        emit(&format!("    {d}\n"));
+    }
     let mut requirements = "unchanged";
     let mut pip_ok = true;
     let mut req_error: Option<&str> = None;
@@ -3622,12 +3996,192 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
     // Post-update dependency recheck: ONE quick env-python probe against
     // the post-pull == pins. Warn-only — drift never fails the update.
     let (dep_check, drift) = post_update_dep_check(&repo, &req_path, &emit);
+    // The pull landed (or was already current): this HEAD is the new
+    // rollback point. Best-effort — a record failure never fails update.
+    if record_wangp_pin(&repo) {
+        emit("[*] Recorded this upstream commit as the rollback point.\n");
+    }
     mutating_done();
-    let mut result = serde_json::json!({"ok": true, "success": pip_ok, "requirements": requirements, "depCheck": dep_check, "drift": drift});
+    let mut result = serde_json::json!({"ok": true, "success": pip_ok, "requirements": requirements, "pinDiff": pin_diff, "depCheck": dep_check, "drift": drift});
     if let Some(e) = req_error {
         result["error"] = serde_json::Value::String(e.to_string());
     }
     Ok(result)
+}
+/// Read-only report of tracked-tree deviations from upstream (Dubon-class
+/// updater failures, plugin-mangled trees). Untracked user files are
+/// listed, never touched. List capped at 50 entries with totals.
+#[tauri::command]
+pub async fn verify_wangp_files() -> Result<serde_json::Value, String> {
+    let repo = get_repo_dir();
+    if !repo.join(".git").exists() {
+        return Err("not a git repo".into());
+    }
+    let out = silent_command("git")
+        .args(["status", "--porcelain=v1"])
+        .current_dir(&repo)
+        .output()
+        .map_err(|e| format!("git status failed to spawn: {e}"))?;
+    if !out.status.success() {
+        return Err("git status failed — see console output".into());
+    }
+    let entries = parse_git_porcelain(&String::from_utf8_lossy(&out.stdout));
+    let dirty_total = entries
+        .iter()
+        .filter(|e| e.kind != DriftKind::Untracked)
+        .count();
+    let untracked = entries
+        .iter()
+        .filter(|e| e.kind == DriftKind::Untracked)
+        .count();
+    let dirty: Vec<serde_json::Value> = entries
+        .iter()
+        .filter(|e| e.kind != DriftKind::Untracked)
+        .take(50)
+        .map(|e| serde_json::json!({"path": e.path, "kind": format!("{:?}", e.kind)}))
+        .collect();
+    Ok(serde_json::json!({
+    "ok": true,
+    "clean": dirty_total == 0,
+    "dirty": dirty,
+    "dirtyTotal": dirty_total,
+    "untracked": untracked,
+    "head": wangp_head_short(&repo)
+        .map(serde_json::Value::String)
+        .unwrap_or(serde_json::Value::Null),
+    "pin": read_wangp_pin()
+        .map(|p| serde_json::json!({"hash": p.hash, "date": p.date}))
+        .unwrap_or(serde_json::Value::Null),
+    }))
+}
+/// Tracked-only repair of the Wan2GP checkout: recoverable stash of local
+/// edits, fetch, hard reset to exactly what was fetched. Untracked files
+/// (wgp_config.json, models, envs, settings) are NEVER touched — no
+/// `git clean`, ever. Refuses Pinokio trees like reinstall does.
+/// Restart Wan2GP afterwards to run the repaired files.
+#[tauri::command]
+pub async fn repair_wangp_files(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    mutating_try("repair-files")?;
+    let repo = get_repo_dir();
+    if !repo.join(".git").exists() {
+        mutating_done();
+        return Err("not a git repo".into());
+    }
+    if let Some(where_) = pinokio_root(&repo) {
+        mutating_done();
+        return Err(format!(
+            "This folder is Pinokio-managed ({}). Repair it from inside Pinokio instead.",
+            where_.display()
+        ));
+    }
+    let emit = |m: &str| {
+        crate::base::push_log(m, "setup");
+        let _ = app.emit("launch-log", m.to_string());
+    };
+    let had_edits = git_tracked_dirty(&repo);
+    if had_edits {
+        emit("[*] Stashing local edits (recoverable: git stash list)…\n");
+        if !run_logged(
+            &app,
+            "git",
+            &["stash", "push", "-m", "launcher-repair-backup"],
+            Some(&repo),
+            emit,
+        )
+        .await
+        {
+            mutating_done();
+            return Err("git stash failed — your files are untouched. Resolve local changes by hand, then retry.".into());
+        }
+    }
+    if !run_logged(&app, "git", &["fetch", "origin"], Some(&repo), emit).await {
+        mutating_done();
+        return Err("git fetch failed — offline? See console output above.".into());
+    }
+    if !run_logged(
+        &app,
+        "git",
+        &["reset", "--hard", "FETCH_HEAD"],
+        Some(&repo),
+        emit,
+    )
+    .await
+    {
+        mutating_done();
+        return Err("git reset failed — see console output above.".into());
+    }
+    emit("[*] Tracked Wan2GP files restored to upstream. Untracked files (settings, models, envs) untouched — restart Wan2GP to run the repaired files.\n");
+    if record_wangp_pin(&repo) {
+        emit("[*] Recorded this upstream commit as the rollback point.\n");
+    }
+    mutating_done();
+    Ok(serde_json::json!({"ok": true, "repaired": true, "stashed": had_edits}))
+}
+/// One-click return to the recorded update point: for when a new upstream
+/// `main` breaks the rig (issue-#19 class). Refuses dirty trees
+/// (Verify/Repair or stash first) and Pinokio trees. Fetches the pin
+/// first so it also works on shallow clones. Records nothing new —
+/// HEAD becomes the pin.
+#[tauri::command]
+pub async fn rollback_wangp(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    mutating_try("rollback")?;
+    let repo = get_repo_dir();
+    if !repo.join(".git").exists() {
+        mutating_done();
+        return Err("not a git repo".into());
+    }
+    if let Some(where_) = pinokio_root(&repo) {
+        mutating_done();
+        return Err(format!(
+            "This folder is Pinokio-managed ({}). Roll back from inside Pinokio instead.",
+            where_.display()
+        ));
+    }
+    let pin = read_wangp_pin().map(|p| p.hash);
+    let target = match rollback_plan(pin.as_deref(), git_tracked_dirty(&repo)) {
+        Ok(t) => t,
+        Err(e) => {
+            mutating_done();
+            return Err(e);
+        }
+    };
+    let emit = |m: &str| {
+        crate::base::push_log(m, "setup");
+        let _ = app.emit("launch-log", m.to_string());
+    };
+    emit(&format!(
+        "[*] Rolling Wan2GP back to recorded update {target}…\n"
+    ));
+    // Shallow clones may not have the object: fetch it explicitly first.
+    if !run_logged(
+        &app,
+        "git",
+        &["fetch", "origin", target.as_str()],
+        Some(&repo),
+        emit,
+    )
+    .await
+    {
+        mutating_done();
+        return Err(
+            "git fetch of the recorded commit failed — offline? See console output above.".into(),
+        );
+    }
+    if !run_logged(
+        &app,
+        "git",
+        &["reset", "--hard", target.as_str()],
+        Some(&repo),
+        emit,
+    )
+    .await
+    {
+        mutating_done();
+        return Err("git reset failed — see console output above.".into());
+    }
+    emit("[*] Rolled back. Untracked files (settings, models, envs) untouched — restart Wan2GP.\n");
+    mutating_done();
+    Ok(serde_json::json!({"ok": true, "rolledBack": true, "commit": &target[..8]}))
 }
 /// Parse `name==version` pins from requirements.txt text. Only exact pins;
 /// skips comments, options (`-r`/`-e`/`--…`), URLs, extras (`pkg[x]==…`),
@@ -3676,6 +4230,46 @@ pub(crate) fn parse_requirement_pins(text: &str) -> Vec<(String, String)> {
         out.push((name.to_string(), ver.to_string()));
     }
     out
+}
+/// Human-readable diff of two requirements.txt pin sets: `name a -> b`
+/// bumps in new-file order, then `+name==v` additions, then `-name==v`
+/// removals. Same parser as the drift check (one source of truth) —
+/// unparseable lines are invisible to both sides. Pure + unit-tested.
+pub(crate) fn diff_requirement_pins(old: &str, new: &str) -> Vec<String> {
+    use std::collections::HashMap;
+    let old_pins = parse_requirement_pins(old);
+    let new_pins = parse_requirement_pins(new);
+    let old_map: HashMap<&str, &str> = old_pins
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    let new_map: HashMap<&str, &str> = new_pins
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    let mut out = Vec::new();
+    for (name, ver) in &new_pins {
+        match old_map.get(name.as_str()) {
+            None => out.push(format!("+{name}=={ver}")),
+            Some(old_ver) if *old_ver != ver => out.push(format!("{name} {old_ver} -> {ver}")),
+            _ => {}
+        }
+    }
+    for (name, ver) in &old_pins {
+        if !new_map.contains_key(name.as_str()) {
+            out.push(format!("-{name}=={ver}"));
+        }
+    }
+    out
+}
+/// One rendered line of the visible per-pin requirements report:
+/// `    mmgp 3.8.0 ✓` when in-spec, `    mmgp 3.7.14 -> 3.8.0 ✗` on drift.
+/// Same verdict as the drift check (one source of truth). Pure + unit-tested.
+pub(crate) fn format_pin_line(name: &str, got: Option<&str>, wanted: &str) -> String {
+    match pin_drift_entry(name, got, wanted) {
+        None => format!("    {name} {} ✓", got.unwrap_or("?")),
+        Some(d) => format!("    {d} ✗"),
+    }
 }
 /// Pure drift classifier for one pin: None = in-spec (exact match OR
 /// installed NEWER than pinned — e.g. onnxruntime-gpu 1.25.0.dev20260210001
@@ -3786,7 +4380,7 @@ fn post_update_dep_check(
 }
 #[cfg(test)]
 mod req_pin_tests {
-    use super::{parse_requirement_pins, pin_drift_entry};
+    use super::{diff_requirement_pins, format_pin_line, parse_requirement_pins, pin_drift_entry};
     #[test]
     fn exact_pins_parse() {
         let pins = parse_requirement_pins("mmgp==3.8.0\ntorch==2.10.0\n");
@@ -3858,6 +4452,67 @@ mod req_pin_tests {
     #[test]
     fn exact_match_is_not_drift() {
         assert!(pin_drift_entry("mmgp", Some("3.8.0"), "3.8.0").is_none());
+    }
+    #[test]
+    fn pin_diff_reports_bumps_adds_removals() {
+        let old = "mmgp==3.7.14\ntorch==2.10.0\noldpkg==1.0\n";
+        let new = "mmgp==3.8.0\ntorch==2.10.0\nnewpkg==2.0\n";
+        assert_eq!(
+            diff_requirement_pins(old, new),
+            vec![
+                "mmgp 3.7.14 -> 3.8.0".to_string(),
+                "+newpkg==2.0".to_string(),
+                "-oldpkg==1.0".to_string(),
+            ]
+        );
+    }
+    #[test]
+    fn pin_diff_empty_when_identical() {
+        let t = "mmgp==3.8.0\n";
+        assert!(diff_requirement_pins(t, t).is_empty());
+    }
+    #[test]
+    fn pin_line_marks_in_spec() {
+        assert_eq!(
+            format_pin_line("mmgp", Some("3.8.0"), "3.8.0"),
+            "    mmgp 3.8.0 ✓"
+        );
+    }
+    #[test]
+    fn pin_line_marks_drift_and_missing() {
+        assert_eq!(
+            format_pin_line("mmgp", Some("3.7.14"), "3.8.0"),
+            "    mmgp 3.7.14 -> 3.8.0 ✗"
+        );
+        assert_eq!(
+            format_pin_line("mmgp", None, "3.8.0"),
+            "    mmgp missing -> 3.8.0 ✗"
+        );
+    }
+}
+#[cfg(test)]
+mod desktop_config_backup_tests {
+    use super::{settings_restore_action, SettingsRestore};
+    #[test]
+    fn missing_target_copies_backup() {
+        assert_eq!(
+            settings_restore_action(None, b"{\"theme\":\"dark\"}"),
+            SettingsRestore::Copy
+        );
+    }
+    #[test]
+    fn identical_target_drops_backup_silently() {
+        assert_eq!(
+            settings_restore_action(Some(b"{\"theme\":\"dark\"}"), b"{\"theme\":\"dark\"}"),
+            SettingsRestore::KeepBackup
+        );
+    }
+    #[test]
+    fn changed_target_saves_backup_aside() {
+        assert_eq!(
+            settings_restore_action(Some(b"{\"theme\":\"light\"}"), b"{\"theme\":\"dark\"}"),
+            SettingsRestore::SaveAside
+        );
     }
 }
 pub(crate) fn fs_extra_fallback_copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
@@ -4276,6 +4931,11 @@ async fn install_prerequisite_windows(
         crate::base::push_log(msg, "setup");
         let _ = app.emit("setup-output", msg.to_string());
     };
+    // Pick up anything installed while the launcher runs (new consoles,
+    // other installers, astral script) before probing — a stale process
+    // PATH is exactly the "not found here, already installed there"
+    // complaint. Cheap (two reg queries) on a button press, never hot-loop.
+    refresh_path_from_registry();
     // Already there (installed manually meanwhile)? Skip the download.
     if probe_tool(&tool) {
         emit(&format!("[*] {tool} is already installed.\n"));
@@ -5182,6 +5842,33 @@ mod tool_path_tests {
             vec![PathBuf::from("C:\\Windows\\py.exe")]
         );
         assert!(tool_candidates("nope", home).is_empty());
+    }
+    #[test]
+    fn candidate_tables_cover_astral_uv_defaults() {
+        // JedsDeadBaby report: astral-script uv in ~/.local/bin (or cargo's
+        // ~/.cargo/bin) probed "already installed" by the installer while
+        // the display gate said "not found" — the tables knew no uv home.
+        let home = if cfg!(windows) {
+            "C:\\Users\\t"
+        } else {
+            "/home/t"
+        };
+        let uv = tool_candidates("uv", home);
+        assert!(!uv.is_empty(), "uv has no known-location candidates");
+        assert!(uv.iter().all(|p| p.is_absolute()));
+        let joined = uv
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("|");
+        assert!(
+            joined.contains(".local"),
+            "astral default ~/.local/bin missing: {joined}"
+        );
+        assert!(
+            joined.contains(".cargo"),
+            "cargo default ~/.cargo/bin missing: {joined}"
+        );
     }
     #[test]
     fn gates_agree_with_resolution() {

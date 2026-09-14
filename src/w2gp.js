@@ -13,6 +13,48 @@
             return Promise.resolve(() => {});
         }
     }
+    // URL guard for external navigation/embeds: only http(s) targets are ever
+    // opened or embedded. Anything else (javascript:, data:, unparsable, …)
+    // resolves to null so callers skip the navigation instead of executing it.
+    // All legit launcher targets (localhost server URLs, https docs) pass
+    // through unchanged — the returned string is the caller's own text.
+    function openValidatedFallback(safe) {
+        try {
+            if (!safe) return false;
+            const a = document.createElement("a");
+            a.href = safe;
+            a.target = "_blank";
+            a.rel = "noopener noreferrer";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            return true;
+        } catch {
+            return false;
+        }
+    }
+    function safeRedirectUrl(raw) {
+        const cand = String(raw == null ? "" : raw).trim();
+        if (!cand) return null;
+        try {
+            const u = new URL(cand);
+            if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+            if (u.username || u.password) return null;
+            if (!u.hostname) return null;
+            return cand;
+        } catch {}
+        return null;
+    }
+    function safeHttpUrl(raw, fallback) {
+        const fb = String(fallback == null ? "" : fallback).trim();
+        const cand = String(raw == null ? "" : raw).trim() || fb;
+        if (!cand) return null;
+        try {
+            const proto = new URL(cand).protocol;
+            if (proto === "http:" || proto === "https:") return cand;
+        } catch {}
+        return null;
+    }
     // Native-embed bookkeeping: true while a real child Webview (not an iframe)
     // owns the Gradio view. A native child composites ABOVE the DOM, so overlay
     // tricks (floating terminal over the view) don't apply — callers must hide
@@ -106,6 +148,9 @@
         reinstall: (opts) => call("reinstall", { options: opts ?? null }),
         uninstall: (opts) => call("uninstall", { options: opts ?? null }),
         update: () => call("update"),
+        verifyWangpFiles: () => call("verify_wangp_files"),
+        repairWangpFiles: () => call("repair_wangp_files"),
+        rollbackWangp: () => call("rollback_wangp"),
         syncKernels: () => call("sync_kernels"),
         installPlan: () => call("install_plan"),
         validateInstall: () => call("validate_install"),
@@ -202,7 +247,8 @@
             try {
                 await call("open_external", { url: u });
             } catch {}
-            window.open(u, "_blank");
+            const safePop = safeRedirectUrl(u);
+            if (safePop) openValidatedFallback(safePop);
             return { ok: true };
         },
         // ponytail: BrowserView → embedded iframe in webviewContainer (Tauri) — simple, no separate window.
@@ -295,7 +341,20 @@
             // (copy results), downloads (gallery save — blocked without the token),
             // picture-in-picture, display-capture, web-share. No `sandbox`
             // attribute on purpose (it would cripple scripts/uploads).
-            c.innerHTML = `<iframe src="${u}" style="flex:1;width:100%;height:100%;border:0;background:#111;display:block;" allow="fullscreen; autoplay; camera; microphone; clipboard-read; clipboard-write; allow-downloads; allow-downloads-without-user-activation; picture-in-picture; display-capture; web-share"></iframe>`;
+            // DOM-built iframe (no HTML string interpolation): same style and
+            // Permissions-Policy tokens as before; src gated to http(s) with the
+            // localhost default as fallback.
+            const frame = document.createElement("iframe");
+            frame.src =
+                safeHttpUrl(u, "http://localhost:7861") ||
+                "http://localhost:7861";
+            frame.style.cssText =
+                "flex:1;width:100%;height:100%;border:0;background:#111;display:block;";
+            frame.setAttribute(
+                "allow",
+                "fullscreen; autoplay; camera; microphone; clipboard-read; clipboard-write; allow-downloads; allow-downloads-without-user-activation; picture-in-picture; display-capture; web-share",
+            );
+            c.appendChild(frame);
             host.appendChild(c);
             // Carry over the zoom slider's current value so a rebuilt view doesn't
             // silently reset to 100% while the label claims otherwise.
@@ -447,7 +506,8 @@
                 });
             } catch {
                 try {
-                    window.open(u, "_blank");
+                    const safeExt = safeRedirectUrl(u);
+                    if (safeExt) openValidatedFallback(safeExt);
                 } catch {}
             }
             try {
@@ -467,7 +527,8 @@
                     url: u,
                 });
             } catch {
-                window.open(u, "_blank");
+                const safeLb = safeRedirectUrl(u);
+                if (safeLb) openValidatedFallback(safeLb);
             }
             return { ok: true };
         },
@@ -482,7 +543,8 @@
                     url: u,
                 });
             } catch {
-                window.open(u, "_blank");
+                const safeNg = safeRedirectUrl(u);
+                if (safeNg) openValidatedFallback(safeNg);
             }
             return { ok: true };
         },

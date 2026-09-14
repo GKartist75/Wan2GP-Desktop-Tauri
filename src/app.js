@@ -60,7 +60,6 @@ function appendLog(text, forward) {
 }
 
 const termFollow = { termBody: true, ftTermBody: true, installTermBody: true };
-const termAutoScroll = {};
 const termDirty = {};
 
 const termText = {};
@@ -811,14 +810,23 @@ async function refreshPlugins() {
   try {
     r = await window.w2gp.pluginsList();
   } catch (e) {
-    list.innerHTML = '<p class="token-hint">✗ ' + escHtml(e.message) + "</p>";
+    list.textContent = "";
+    {
+      const p = document.createElement("p");
+      p.className = "token-hint";
+      p.textContent = "✗ " + ((e && e.message) || String(e));
+      list.append(p);
+    }
     return;
   }
   if (!r || !r.ok) {
-    list.innerHTML =
-      '<p class="token-hint">' +
-      escHtml((r && r.error) || "Failed to load") +
-      "</p>";
+    list.textContent = "";
+    {
+      const p = document.createElement("p");
+      p.className = "token-hint";
+      p.textContent = (r && r.error) || "Failed to load";
+      list.append(p);
+    }
     return;
   }
   try {
@@ -1475,9 +1483,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (list && hp.packages && hp.packages.length) {
           if (header)
             header.textContent = "(" + hp.profile.replace(/_/g, " ") + ")";
-          list.innerHTML = hp.packages
-            .map((p) => '<span class="ipkg-item">' + escHtml(p) + "</span>")
-            .join("");
+          list.textContent = "";
+          for (const p of hp.packages) {
+            const s = document.createElement("span");
+            s.className = "ipkg-item";
+            s.textContent = p;
+            list.append(s);
+          }
           $("installPkgs").style.display = "";
         }
         // Distinct kernel-wheels group (so the wheels are clearly visible pre-install)
@@ -1486,16 +1498,19 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (klist && hp.kernels && hp.kernels.length) {
           if (kheader)
             kheader.textContent = "(" + hp.profile.replace(/_/g, " ") + ")";
-          klist.innerHTML = hp.kernels
-            .map(
-              (k) =>
-                '<div class="ikernel-item"><span class="ikernel-label">' +
-                escHtml(k.label) +
-                '</span><span class="ikernel-dist">' +
-                escHtml(k.dist) +
-                "</span></div>",
-            )
-            .join("");
+          klist.textContent = "";
+          for (const k of hp.kernels) {
+            const row = document.createElement("div");
+            row.className = "ikernel-item";
+            const lab = document.createElement("span");
+            lab.className = "ikernel-label";
+            lab.textContent = k.label;
+            const dist = document.createElement("span");
+            dist.className = "ikernel-dist";
+            dist.textContent = k.dist;
+            row.append(lab, dist);
+            klist.append(row);
+          }
           $("installKernels").style.display = "";
         }
         // GPU Profile Overview — installer only (different screen; the dashboard
@@ -1534,16 +1549,19 @@ document.addEventListener("DOMContentLoaded", async () => {
             ["Free disk", freeGb + " GB"],
           ];
           const renderRows = () => {
-            grid.innerHTML = rows
-              .map(
-                (row) =>
-                  '<div class="istack-row"><span class="istack-k">' +
-                  escHtml(row[0]) +
-                  '</span><span class="istack-v">' +
-                  escHtml(row[1]) +
-                  "</span></div>",
-              )
-              .join("");
+            grid.textContent = "";
+            for (const row of rows) {
+              const d = document.createElement("div");
+              d.className = "istack-row";
+              const k = document.createElement("span");
+              k.className = "istack-k";
+              k.textContent = row[0];
+              const v = document.createElement("span");
+              v.className = "istack-v";
+              v.textContent = row[1];
+              d.append(k, v);
+              grid.append(d);
+            }
           };
           renderRows();
           // Exact Python pin setup.py will demand via `uv venv --python X`
@@ -1579,21 +1597,27 @@ document.addEventListener("DOMContentLoaded", async () => {
                 freeGb +
                 " GB free — 50+ GB recommended (models are tens–hundreds of GB).",
             );
-          let warnHtml = warns.length
-            ? warns
-                .map((w) => '<div class="istack-w">⚠ ' + escHtml(w) + "</div>")
-                .join("")
-            : "";
-          if (
-            freeBytes != null &&
-            freeBytes >= 10 * 1073741824 &&
-            freeBytes < 50 * 1073741824
-          )
-            warnHtml +=
-              '<div class="istack-hint">' +
-              freeGb +
-              " GB free is tight — models alone can exceed 50 GB. A non-system drive is recommended.</div>";
-          warn.innerHTML = warnHtml;
+          if (warn) {
+            warn.textContent = "";
+            for (const w of warns) {
+              const d = document.createElement("div");
+              d.className = "istack-w";
+              d.textContent = "⚠ " + w;
+              warn.append(d);
+            }
+            if (
+              freeBytes != null &&
+              freeBytes >= 10 * 1073741824 &&
+              freeBytes < 50 * 1073741824
+            ) {
+              const d = document.createElement("div");
+              d.className = "istack-hint";
+              d.textContent =
+                freeGb +
+                " GB free is tight — models alone can exceed 50 GB. A non-system drive is recommended.";
+              warn.append(d);
+            }
+          }
           stack.style.display = "";
           // Hard block only when install can't succeed (cu130 driver too old, or ~no disk).
           const startBtn = $("installStartBtn");
@@ -1674,11 +1698,11 @@ function pushMetric(key, val) {
 
 function startMetricsPolling() {
   const tick = async () => {
-    // Skip sampling while the dashboard is hidden (webview/embed open): the
-    // IPC + nvidia-smi query every 2s was running even when nothing displayed
-    // it. The next shown-state tick resumes automatically.
-    const dash = $("dashBody");
-    if (dash && dash.style.display === "none") return;
+    // Skip sampling only when the window itself is hidden/minimized.
+    // The topbar metrics stay visible in embed/webview mode while dashBody
+    // is hidden — gating on dashBody froze them whenever Wan2GP runs
+    // embedded. (visibilitychange already pauses the timer when hidden.)
+    if (document.hidden) return;
     let m;
     try {
       m = await window.w2gp.getSystemMetrics();
@@ -1914,27 +1938,34 @@ $("validateInstallBtn")?.addEventListener("click", async () => {
   const warn = $("installStackWarn");
   btn.disabled = true;
   btn.textContent = "Validating…";
-  if (warn) warn.innerHTML = "";
+  if (warn) warn.textContent = "";
   try {
     const r = await window.w2gp.validateInstall();
     if (r && r.ok) {
       const line = `✓ torch ${r.torch} · CUDA available: ${r.cudaAvailable} (${r.cudaVer})`;
-      if (warn)
-        warn.innerHTML =
-          '<div class="istack-ok">⚡ ' + escHtml(line) + "</div>";
+      if (warn) {
+        const d = document.createElement("div");
+        d.className = "istack-ok";
+        d.textContent = "⚡ " + line;
+        warn.append(d);
+      }
       btn.textContent = "Validated ✓";
     } else {
-      if (warn)
-        warn.innerHTML =
-          '<div class="istack-w">✗ ' +
-          escHtml((r && r.error) || "validation failed") +
-          "</div>";
+      if (warn) {
+        const d = document.createElement("div");
+        d.className = "istack-w";
+        d.textContent = "✗ " + ((r && r.error) || "validation failed");
+        warn.append(d);
+      }
       btn.textContent = "Validate failed";
     }
   } catch (e) {
-    if (warn)
-      warn.innerHTML =
-        '<div class="istack-w">✗ ' + escHtml(e.message) + "</div>";
+    if (warn) {
+      const d = document.createElement("div");
+      d.className = "istack-w";
+      d.textContent = "✗ " + ((e && e.message) || String(e));
+      warn.append(d);
+    }
     btn.textContent = "Validate failed";
   }
 });
@@ -2151,7 +2182,7 @@ async function startInstall() {
   function showPrereqHelp(title, text, url, tool) {
     $("prereqHelp").classList.remove("hidden");
     $("prereqTitle").textContent = title;
-    $("prereqText").innerHTML = text;
+    $("prereqText").textContent = text;
     $("prereqDownloadBtn").onclick = async function () {
       this.disabled = true;
       this.textContent = "Installing...";
@@ -2523,17 +2554,19 @@ function showReinstallBackupModal() {
           "size unavailable (" + ((size && size.error) || "unknown") + ")";
       } else {
         sumEl.textContent = fmtBytes(size.bytes) + " total";
-        bdEl.innerHTML = (size.entries || [])
-          .slice(0, 8)
-          .map(
-            (e) =>
-              '<div class="istack-row"><span class="istack-k">' +
-              escHtml(e.name) +
-              '</span><span class="istack-v">' +
-              escHtml(fmtBytes(e.bytes)) +
-              "</span></div>",
-          )
-          .join("");
+        bdEl.textContent = "";
+        for (const e of (size.entries || []).slice(0, 8)) {
+          const d = document.createElement("div");
+          d.className = "istack-row";
+          const k = document.createElement("span");
+          k.className = "istack-k";
+          k.textContent = e.name;
+          const v = document.createElement("span");
+          v.className = "istack-v";
+          v.textContent = fmtBytes(e.bytes);
+          d.append(k, v);
+          bdEl.append(d);
+        }
       }
       const entryBytes = {};
       for (const e of (size && size.entries) || [])
@@ -2599,19 +2632,24 @@ function showReinstallBackupModal() {
         const base = r.from.split("\\").pop().toLowerCase();
         const div = document.createElement("div");
         div.className = "migrate-row";
-        div.innerHTML =
-          "<label>" +
-          escHtml(r.label + " (" + fmtBytes(entryBytes[base]) + ")") +
-          "</label>" +
-          '<div class="migrate-path"><input type="text" id="backupDst' +
-          i +
-          '" readonly placeholder="stays — will be deleted">' +
-          '<button class="btn btn-ghost small" id="backupBrowse' +
-          i +
-          '">Move to…</button></div>' +
-          '<div class="istack-hint">' +
-          escHtml(r.from) +
-          "</div>";
+        const lab = document.createElement("label");
+        lab.textContent = r.label + " (" + fmtBytes(entryBytes[base]) + ")";
+        const path = document.createElement("div");
+        path.className = "migrate-path";
+        const inp = document.createElement("input");
+        inp.type = "text";
+        inp.id = "backupDst" + i;
+        inp.readOnly = true;
+        inp.placeholder = "stays — will be deleted";
+        const btn = document.createElement("button");
+        btn.className = "btn btn-ghost small";
+        btn.id = "backupBrowse" + i;
+        btn.textContent = "Move to…";
+        path.append(inp, btn);
+        const hint = document.createElement("div");
+        hint.className = "istack-hint";
+        hint.textContent = r.from;
+        div.append(lab, path, hint);
         rowsEl.appendChild(div);
         $("backupBrowse" + i).onclick = async () => {
           const dir = await window.w2gp.selectFolder().catch(() => null);
@@ -2862,8 +2900,8 @@ async function refreshModelDiskGates() {
     return;
   }
   const seen = new Set();
-  let html = "",
-    blocked = false;
+  const frag = document.createDocumentFragment();
+  let blocked = false;
   for (const [label, p] of targets) {
     const root = driveRootOf(p);
     if (seen.has(root)) continue;
@@ -2879,33 +2917,34 @@ async function refreshModelDiskGates() {
     const gb = d.free / 1073741824;
     if (gb < 10) {
       blocked = true;
-      html +=
-        '<div class="istack-w">⛔ ' +
-        escHtml(
-          label +
-            " drive " +
-            root +
-            " has only " +
-            gb.toFixed(1) +
-            " GB free — a model library needs tens of GB. Pick a roomier drive.",
-        ) +
-        "</div>";
+      const d = document.createElement("div");
+      d.className = "istack-w";
+      d.textContent =
+        "⛔ " +
+        label +
+        " drive " +
+        root +
+        " has only " +
+        gb.toFixed(1) +
+        " GB free — a model library needs tens of GB. Pick a roomier drive.";
+      frag.append(d);
     } else if (gb < 50) {
-      html +=
-        '<div class="istack-hint">⚠ ' +
-        escHtml(
-          label +
-            " drive " +
-            root +
-            ": " +
-            gb.toFixed(1) +
-            " GB free — tight for a model library.",
-        ) +
-        "</div>";
+      const d = document.createElement("div");
+      d.className = "istack-hint";
+      d.textContent =
+        "⚠ " +
+        label +
+        " drive " +
+        root +
+        ": " +
+        gb.toFixed(1) +
+        " GB free — tight for a model library.";
+      frag.append(d);
     }
   }
   if (my !== _gatesRun) return;
-  box.innerHTML = html;
+  box.textContent = "";
+  box.append(frag);
   window._modelDriveBlocked = blocked;
   const startBtn = $("installStartBtn");
   if (blocked && startBtn) {
@@ -3007,8 +3046,13 @@ async function refreshTargetVerdict() {
   box.style.display = "";
   const envNames = (t.envs && Object.keys(t.envs).join(", ")) || "";
   if (v === "ours_healthy") {
-    body.innerHTML =
-      '<div class="istack-ok">✓ ' + escHtml(t.hint || "") + "</div>";
+    body.textContent = "";
+    {
+      const d = document.createElement("div");
+      d.className = "istack-ok";
+      d.textContent = "✓ " + (t.hint || "");
+      body.append(d);
+    }
     // Reuse path: the choice lives in the trio radios, the big Install
     // button dispatches it — same contract as the no-env checklist.
     $("reinstallChoice")?.classList.remove("hidden");
@@ -3030,16 +3074,28 @@ async function refreshTargetVerdict() {
     // dispatches it (see startInstall) — no competing action buttons.
     // Adopt-cover note: the generic Keep/Update/Skip trio doesn't apply.
     $("reinstallChoice")?.classList.add("hidden");
-    body.innerHTML =
-      '<div class="istack-w">⚠ ' +
-      escHtml(t.hint || "") +
-      "</div>" +
-      (envNames
-        ? '<div class="istack-hint">Env folders found: ' +
-          escHtml(envNames) +
-          " — repair recreates the broken one, keeps models & settings.</div>"
-        : "") +
-      '<div class="istack-hint">Tick your choice below, then press Install.</div>';
+    body.textContent = "";
+    {
+      const d = document.createElement("div");
+      d.className = "istack-w";
+      d.textContent = "⚠ " + (t.hint || "");
+      body.append(d);
+    }
+    if (envNames) {
+      const d = document.createElement("div");
+      d.className = "istack-hint";
+      d.textContent =
+        "Env folders found: " +
+        envNames +
+        " — repair recreates the broken one, keeps models & settings.";
+      body.append(d);
+    }
+    {
+      const d = document.createElement("div");
+      d.className = "istack-hint";
+      d.textContent = "Tick your choice below, then press Install.";
+      body.append(d);
+    }
     if (choiceList) {
       choiceList.style.display = "";
       const repair = choiceList.querySelector('input[value="repair"]');
@@ -3082,18 +3138,23 @@ async function refreshTargetVerdict() {
         detail += " Reusable library: " + lines.join(", ") + ".";
       } catch {}
     }
-    body.innerHTML =
-      '<div class="istack-w">' +
-      icon +
-      " " +
-      escHtml(t.hint || "") +
-      "</div>" +
-      '<div class="istack-hint">' +
-      escHtml(detail) +
-      (isPinokio
-        ? ""
-        : " Installing here merges upstream over unknown files — an empty folder is safer.") +
-      "</div>";
+    body.textContent = "";
+    {
+      const d = document.createElement("div");
+      d.className = "istack-w";
+      d.textContent = icon + " " + (t.hint || "");
+      body.append(d);
+    }
+    {
+      const d = document.createElement("div");
+      d.className = "istack-hint";
+      d.textContent =
+        detail +
+        (isPinokio
+          ? ""
+          : " Installing here merges upstream over unknown files — an empty folder is safer.");
+      body.append(d);
+    }
     if (browse) {
       browse.style.display = "";
       browse.onclick = () => {
@@ -3472,7 +3533,17 @@ async function refreshDashboard() {
     envs.forEach((e) => {
       const div = document.createElement("div");
       div.className = "env-list-item" + (e.active ? " active" : "");
-      div.innerHTML = `<span class="env-dot"></span><span class="env-list-name">${escHtml(e.name)}</span><span style="font-size:0.65rem;color:#666;flex-shrink:0">${escHtml(e.type)}</span>`;
+      {
+        const dot = document.createElement("span");
+        dot.className = "env-dot";
+        const nm = document.createElement("span");
+        nm.className = "env-list-name";
+        nm.textContent = e.name;
+        const ty = document.createElement("span");
+        ty.style.cssText = "font-size:0.65rem;color:#666;flex-shrink:0";
+        ty.textContent = e.type;
+        div.append(dot, nm, ty);
+      }
       if (!e.active) {
         div.setAttribute("role", "button");
         div.tabIndex = 0;
@@ -4607,16 +4678,22 @@ async function loadWangpChangelog(showLoading) {
       updateBtn?.querySelector(".update-dot")?.remove();
     }
 
-    listEl.innerHTML = upstream.commits
-      .map(
-        (c) =>
-          `<div class="cl-item">
-        <span class="cl-date">${fmtDate(c.date)}</span>
-        <span class="cl-msg">${escHtml(c.message)}</span>
-        <span class="cl-author">${escHtml(c.author)}</span>
-      </div>`,
-      )
-      .join("");
+    listEl.textContent = "";
+    for (const c of upstream.commits) {
+      const item = document.createElement("div");
+      item.className = "cl-item";
+      const dt = document.createElement("span");
+      dt.className = "cl-date";
+      dt.textContent = fmtDate(c.date);
+      const msg = document.createElement("span");
+      msg.className = "cl-msg";
+      msg.textContent = c.message;
+      const au = document.createElement("span");
+      au.className = "cl-author";
+      au.textContent = c.author;
+      item.append(dt, msg, au);
+      listEl.append(item);
+    }
   } finally {
     _wangpCheckBusy = false;
   }
@@ -5792,9 +5869,11 @@ $("updateBtn").addEventListener("click", async () => {
   try {
     const r = await window.w2gp.update();
     appendLog("[*] Wan2GP update complete");
-    if (r && r.requirements === "reinstalled")
+    if (r && r.requirements === "reinstalled") {
       appendLog("[*] requirements.txt changed — pinned packages reinstalled");
-    else if (r && r.requirements === "failed")
+      const pd = r && r.pinDiff;
+      if (Array.isArray(pd) && pd.length) appendLog("    " + pd.join("\n    "));
+    } else if (r && r.requirements === "failed")
       appendLog(
         "[!] requirements reinstall failed — see the console output above; the git pull itself stays applied.",
       );
@@ -5804,11 +5883,118 @@ $("updateBtn").addEventListener("click", async () => {
       );
     refreshDashboard();
   } catch (e) {
-    appendLog("[!] Update failed: " + e.message);
-    alert("Update: " + e.message);
+    appendLog("[!] Update failed: " + errText(e));
+    alert("Update: " + errText(e));
   }
   $("updateBtn").disabled = false;
   $("updateBtn").textContent = "↻ Update Wan2GP (DeepBeepMeep)";
+});
+$("repairFilesBtn")?.addEventListener("click", async () => {
+  const btn = $("repairFilesBtn");
+  if (btn) btn.disabled = true;
+  try {
+    const v = await window.w2gp.verifyWangpFiles().catch((e) => ({
+      error: errText(e),
+    }));
+    if (v && v.error) {
+      showToast("✗ Verify failed: " + v.error);
+    } else if (!v || v.clean) {
+      const untracked =
+        v && v.untracked
+          ? " (" + v.untracked + " untracked user file(s) left alone)"
+          : "";
+      showToast("✓ Wan2GP files match upstream.");
+      appendLog("[*] Verify: tracked files clean" + untracked + ".");
+    } else {
+      const dirty = v.dirty || [];
+      const total = v.dirtyTotal || dirty.length;
+      const names = dirty
+        .slice(0, 10)
+        .map((d) => (d.path || "?") + " [" + (d.kind || "?") + "]")
+        .join("\n");
+      const more =
+        total > dirty.length ? "\n…+" + (total - dirty.length) + " more" : "";
+      const ok = confirm(
+        total +
+          " tracked Wan2GP file(s) differ from upstream:\n" +
+          names +
+          more +
+          "\n\nRepair restores them (your edits are stashed recoverably; settings/models untouched). Continue?",
+      );
+      if (ok) {
+        appendLog("[*] Repairing Wan2GP files…");
+        const r = await window.w2gp.repairWangpFiles();
+        if (r && (r.ok || r.repaired)) {
+          showToast("✓ Wan2GP files repaired — restart Wan2GP to run them.");
+          appendLog(
+            "[*] Repair done" +
+              (r.stashed ? " (prior edits stashed, recoverable via git)" : "") +
+              ".",
+          );
+        } else showToast("✗ Repair failed: " + ((r && r.error) || "unknown"));
+        refreshDashboard();
+      }
+    }
+  } catch (e) {
+    showToast("✗ " + errText(e));
+  }
+  if (btn) btn.disabled = false;
+});
+$("rollbackBtn")?.addEventListener("click", async () => {
+  const btn = $("rollbackBtn");
+  if (btn) btn.disabled = true;
+  try {
+    const v = await window.w2gp.verifyWangpFiles().catch((e) => ({
+      error: errText(e),
+    }));
+    if (v && v.error) {
+      showToast("✗ Rollback check failed: " + v.error);
+    } else {
+      const pin = (v && v.pin) || null;
+      const head = (v && v.head) || null;
+      if (!pin || !pin.hash) {
+        showToast("No recorded Wan2GP update yet — update once first.");
+      } else if (head && pin.hash.slice(0, head.length) === head) {
+        showToast("✓ Already at the recorded update (" + head + ").");
+        appendLog("[*] Rollback: already at " + head + ", nothing to do.");
+      } else if (v && !v.clean) {
+        showToast(
+          "Tracked files differ — Verify/Repair (or stash) first, then roll back.",
+        );
+      } else {
+        const when = pin.date ? " (" + pin.date + ")" : "";
+        const ok = confirm(
+          "Roll back Wan2GP to the recorded update?\n" +
+            pin.hash.slice(0, 8) +
+            when +
+            " → HEAD is " +
+            (head || "unknown") +
+            "\n\nUntracked files (settings/models) untouched. Continue?",
+        );
+        if (ok) {
+          appendLog("[*] Rolling back Wan2GP…");
+          const r = await window.w2gp.rollbackWangp();
+          if (r && (r.ok || r.rolledBack)) {
+            showToast(
+              "✓ Rolled back to " +
+                ((r && r.commit) || "recorded update") +
+                " — restart Wan2GP.",
+            );
+            appendLog(
+              "[*] Rolled back to " +
+                ((r && r.commit) || "recorded update") +
+                ".",
+            );
+          } else
+            showToast("✗ Rollback failed: " + ((r && r.error) || "unknown"));
+          refreshDashboard();
+        }
+      }
+    }
+  } catch (e) {
+    showToast("✗ " + errText(e));
+  }
+  if (btn) btn.disabled = false;
 });
 document
   .querySelectorAll(".theme-toggle")
@@ -6002,12 +6188,6 @@ if (_pipInstallOrig) {
 // installer (pip for Claude Code, npm for Codex/OpenCode) and, for engines with
 // a server (OpenCode), a Start/Stop server toggle. New engines = one data line
 // in services/llm-engines.js — no UI branch.
-function dot(on) {
-  return on
-    ? '<span class="spec-dot dot-ok"></span>'
-    : '<span class="spec-dot dot-bad"></span>';
-}
-
 async function refreshLLMEngines() {
   const list = $("llmEnginesList");
   if (!list) return;
@@ -6023,56 +6203,144 @@ async function refreshLLMEngines() {
       '<div class="spec-row"><span class="spec-value">No LLM engines available — reload the Dashboard or check the logs.</span></div>';
     return;
   }
-  list.innerHTML = engines
-    .map((e) => {
-      const cliRow = e.cli
-        ? `<div class="spec-row"><span class="spec-label">${e.cli} CLI</span>${dot(e.cliOnPath)}<span class="spec-value">${e.cliOnPath ? "on PATH" : "not found"}</span></div>`
-        : "";
-      const pipRow = e.pipPackage
-        ? `<div class="spec-row"><span class="spec-label">${e.pipPackage}</span>${dot(e.pipInstalled)}<span class="spec-value">${e.pipInstalled ? "installed" : "missing"}</span></div>`
-        : "";
-      let action = "";
-      if (e.install && e.install.mode === "pip") {
-        const done = e.pipInstalled;
-        action = `<button class="pip-install-btn llm-install-btn" data-engine="${e.id}">${done ? "Reinstall " + e.install.spec : "Install " + e.install.spec}</button>${done ? `<button class="pip-install-btn llm-remove-btn" data-engine="${e.id}">Remove</button>` : ""}`;
-      } else if (e.install && e.install.mode === "npm") {
-        const done = e.cliOnPath;
-        // ponytail: label used the codex spec for every npm engine (opencode card lied) — use this engine's own spec
-        action = `<button class="pip-install-btn llm-install-btn" data-engine="${e.id}">${done ? "Reinstall via npm (" + e.install.spec + ")" : "Install via npm (" + e.install.spec + ")"}</button>${done ? `<button class="pip-install-btn llm-remove-btn" data-engine="${e.id}">Remove</button>` : ""}`;
-      } else if (e.external) {
-        action = `<span class="spec-value llm-external-hint">External — install via terminal, then it auto-detects.</span>`;
-      }
-      let serveBtn = "";
-      if (e.serve) {
-        serveBtn = `<button class="pip-install-btn llm-serve-btn" data-engine="${e.id}">${e.serverRunning ? "Stop server" : "Start server"}</button>`;
-      }
-      let authBtn = "";
-      if (e.auth) {
-        // Open the official Claude Code authentication guide (the user asked for a
-        // how-to page, not a silent terminal launch that blocks on Max/Pro).
-        authBtn = `<button class="pip-install-btn llm-auth-btn" data-engine="${e.id}" data-auth-docs="${e.auth.docsUrl || ""}">How to sign in</button>`;
-      }
-      const serverRow = e.serverUrl
-        ? `<div class="spec-row"><span class="spec-label">Server</span><span class="spec-value">${e.serverUrl}</span></div>`
-        : "";
-      const notes = e.notes
-        ? `<div class="pip-advanced-hint">${e.notes}</div>`
-        : "";
-      const auth = e.auth
-        ? `<div class="pip-advanced-hint">${e.auth.help}</div>`
-        : "";
-      const keyNote = e.claudeApiKeySet
-        ? `<div class="pip-advanced-hint" style="color:#4ADE80">✓ Anthropic API key active — Claude Code will use it instead of a Max/Pro login (needs API credits in the Console; billed per use).</div>`
-        : "";
-      return `<div class="llm-engine-card">
-      <div class="llm-engine-head"><span class="llm-engine-title">${e.label}</span>${action}</div>
-      <div class="env-specs">${cliRow}${pipRow}${serverRow}</div>
-      ${serveBtn ? `<div class="llm-serve-row">${serveBtn}</div>` : ""}
-      ${authBtn ? `<div class="llm-serve-row">${authBtn}</div>` : ""}
-      <div class="pip-advanced-hint">${e.desc}</div>${auth}${keyNote}${notes}
-    </div>`;
-    })
-    .join("");
+  list.textContent = "";
+  const specDot = (on) => {
+    const s = document.createElement("span");
+    s.className = on ? "spec-dot dot-ok" : "spec-dot dot-bad";
+    return s;
+  };
+  const engineBtn = (cls, label, engineId, extra) => {
+    const b = document.createElement("button");
+    b.className = "pip-install-btn " + cls;
+    b.dataset.engine = engineId;
+    b.textContent = label;
+    if (extra) for (const k of Object.keys(extra)) b.dataset[k] = extra[k];
+    return b;
+  };
+  const hintDiv = (text, color) => {
+    const d = document.createElement("div");
+    d.className = "pip-advanced-hint";
+    if (color) d.style.color = color;
+    d.textContent = text;
+    return d;
+  };
+  for (const e of engines) {
+    const card = document.createElement("div");
+    card.className = "llm-engine-card";
+    const head = document.createElement("div");
+    head.className = "llm-engine-head";
+    const title = document.createElement("span");
+    title.className = "llm-engine-title";
+    title.textContent = e.label;
+    head.append(title);
+    if (e.install && e.install.mode === "pip") {
+      const done = e.pipInstalled;
+      head.append(
+        engineBtn(
+          "llm-install-btn",
+          (done ? "Reinstall " : "Install ") + e.install.spec,
+          e.id,
+        ),
+      );
+      if (done) head.append(engineBtn("llm-remove-btn", "Remove", e.id));
+    } else if (e.install && e.install.mode === "npm") {
+      const done = e.cliOnPath;
+      head.append(
+        engineBtn(
+          "llm-install-btn",
+          (done ? "Reinstall via npm (" : "Install via npm (") +
+            e.install.spec +
+            ")",
+          e.id,
+        ),
+      );
+      if (done) head.append(engineBtn("llm-remove-btn", "Remove", e.id));
+    } else if (e.external) {
+      const s = document.createElement("span");
+      s.className = "spec-value llm-external-hint";
+      s.textContent = "External — install via terminal, then it auto-detects.";
+      head.append(s);
+    }
+    card.append(head);
+    const specs = document.createElement("div");
+    specs.className = "env-specs";
+    const specRow = (labelText, dotOn, valueText) => {
+      const d = document.createElement("div");
+      d.className = "spec-row";
+      const lab = document.createElement("span");
+      lab.className = "spec-label";
+      lab.textContent = labelText;
+      const val = document.createElement("span");
+      val.className = "spec-value";
+      val.textContent = valueText;
+      d.append(lab, specDot(dotOn), val);
+      return d;
+    };
+    if (e.cli)
+      specs.append(
+        specRow(
+          e.cli + " CLI",
+          e.cliOnPath,
+          e.cliOnPath ? "on PATH" : "not found",
+        ),
+      );
+    if (e.pipPackage)
+      specs.append(
+        specRow(
+          e.pipPackage,
+          e.pipInstalled,
+          e.pipInstalled ? "installed" : "missing",
+        ),
+      );
+    if (e.serverUrl) {
+      const d = document.createElement("div");
+      d.className = "spec-row";
+      const lab = document.createElement("span");
+      lab.className = "spec-label";
+      lab.textContent = "Server";
+      const val = document.createElement("span");
+      val.className = "spec-value";
+      val.textContent = e.serverUrl;
+      d.append(lab, val);
+      specs.append(d);
+    }
+    card.append(specs);
+    if (e.serve) {
+      const row = document.createElement("div");
+      row.className = "llm-serve-row";
+      row.append(
+        engineBtn(
+          "llm-serve-btn",
+          e.serverRunning ? "Stop server" : "Start server",
+          e.id,
+        ),
+      );
+      card.append(row);
+    }
+    if (e.auth) {
+      // Open the official Claude Code authentication guide (the user asked for a
+      // how-to page, not a silent terminal launch that blocks on Max/Pro).
+      const row = document.createElement("div");
+      row.className = "llm-serve-row";
+      row.append(
+        engineBtn("llm-auth-btn", "How to sign in", e.id, {
+          authDocs: e.auth.docsUrl || "",
+        }),
+      );
+      card.append(row);
+    }
+    card.append(hintDiv(e.desc));
+    if (e.auth) card.append(hintDiv(e.auth.help));
+    if (e.claudeApiKeySet)
+      card.append(
+        hintDiv(
+          "✓ Anthropic API key active — Claude Code will use it instead of a Max/Pro login (needs API credits in the Console; billed per use).",
+          "#4ADE80",
+        ),
+      );
+    if (e.notes) card.append(hintDiv(e.notes));
+    list.append(card);
+  }
   list.querySelectorAll(".llm-install-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const id = btn.dataset.engine;
@@ -6241,41 +6509,69 @@ async function refreshDeepy() {
         ? "Deepy Zero runs locally — pick the Qwen model Wan2GP will use."
         : "Florence 2 + Llama 3.2 3B is the default local model when Deepy is off.";
     if (enhancerHint) enhancerHint.textContent = sub;
-    enhancerOpts.innerHTML = DEEPY_PANEL_ENHANCERS.map((o) => {
+    enhancerOpts.textContent = "";
+    for (const o of DEEPY_PANEL_ENHANCERS) {
       const enabled = forThisMode(o);
-      const checked = o.id === chosen.id ? "checked" : "";
-      const disabled = enabled ? "" : "disabled";
-      const note = enabled
-        ? ""
-        : `<span class="deepy-enhancer-note"> — only for ${o.modes[0] === "zero" ? "Deepy Zero" : "Disabled"}</span>`;
-      const cls = enabled
+      const lab = document.createElement("label");
+      lab.className = enabled
         ? "deepy-enhancer-opt"
         : "deepy-enhancer-opt deepy-enhancer-opt-disabled";
-      return (
-        `<label class="${cls}">\n` +
-        `  <input type="radio" name="deepyEnhancer" value="${o.id}" ${checked} ${disabled}>\n` +
-        `  <span class="deepy-enhancer-label">${o.label}</span>${note}\n` +
-        `</label>`
-      );
-    }).join("");
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "deepyEnhancer";
+      radio.value = o.id;
+      if (o.id === chosen.id) radio.checked = true;
+      if (!enabled) radio.disabled = true;
+      const name = document.createElement("span");
+      name.className = "deepy-enhancer-label";
+      name.textContent = o.label;
+      lab.append(radio, "\n  ", name);
+      if (!enabled) {
+        const note = document.createElement("span");
+        note.className = "deepy-enhancer-note";
+        note.textContent =
+          " — only for " + (o.modes[0] === "zero" ? "Deepy Zero" : "Disabled");
+        lab.append(note);
+      }
+      lab.append("\n");
+      enhancerOpts.append(lab);
+    }
   };
   renderEnhancer(currentMode, currentEnhancer);
 
-  opts.innerHTML = DEEPY_PANEL_ENGINES.map((en) => {
+  opts.textContent = "";
+  for (const en of DEEPY_PANEL_ENGINES) {
     const isReady = ready(en.id);
-    const dotCls = isReady ? "dot-ok" : "dot-bad";
-    const dotChar = isReady ? "●" : "○";
-    const cost = en.paid
-      ? '<span class="deepy-cost-paid">paid</span>'
-      : '<span class="deepy-cost-free">free</span>';
-    return `<label class="deepy-engine-opt">
-      <input type="radio" name="deepyEngine" value="${en.id}" ${en.id === selectedEngine ? "checked" : ""}>
-      <span class="${dotCls}">${dotChar}</span>
-      <span class="deepy-engine-label">${en.label}</span>
-      <span class="deepy-engine-cost">${cost}</span>
-    </label>`;
-  }).join("");
+    const lab = document.createElement("label");
+    lab.className = "deepy-engine-opt";
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "deepyEngine";
+    radio.value = en.id;
+    if (en.id === selectedEngine) radio.checked = true;
+    const dot = document.createElement("span");
+    dot.className = isReady ? "dot-ok" : "dot-bad";
+    dot.textContent = isReady ? "●" : "○";
+    const name = document.createElement("span");
+    name.className = "deepy-engine-label";
+    name.textContent = en.label;
+    const cost = document.createElement("span");
+    cost.className = "deepy-engine-cost";
+    cost.textContent = en.paid ? "paid" : "free";
+    lab.append(
+      radio,
+      "\n          ",
+      dot,
+      "\n          ",
+      name,
+      "\n          ",
+      cost,
+      "\n        ",
+    );
+    opts.append(lab);
+  }
 
+  statusMsg.textContent = "";
   if (status.available) {
     const label =
       {
@@ -6283,18 +6579,21 @@ async function refreshDeepy() {
         zero: "Deepy Zero (local model)",
         prime: "Deepy Prime",
       }[currentMode] || currentMode;
-    statusMsg.innerHTML =
-      "Currently: <strong>" +
-      label +
-      "</strong>" +
-      (currentMode === "prime" && currentProfile
+    const st = document.createElement("strong");
+    st.textContent = label;
+    statusMsg.append(
+      "Currently: ",
+      st,
+      currentMode === "prime" && currentProfile
         ? " — engine: " + currentProfile
-        : "");
+        : "",
+    );
   } else {
-    statusMsg.innerHTML =
-      '<span style="color:#FBBF24">' +
-      (status.reason || "Wan2GP config not found — install Wan2GP first.") +
-      "</span>";
+    const s = document.createElement("span");
+    s.style.color = "#FBBF24";
+    s.textContent =
+      status.reason || "Wan2GP config not found — install Wan2GP first.";
+    statusMsg.append(s);
   }
 
   const syncApply = () => {
@@ -6366,17 +6665,19 @@ async function refreshDeepy() {
     );
     applyBtn.textContent = "Apply";
     if (r && r.ok) {
-      statusMsg.innerHTML =
-        '<span style="color:#4ADE80">✓ ' +
-        (r.message || "Deepy updated") +
-        "</span>";
+      const s = document.createElement("span");
+      s.style.color = "#4ADE80";
+      s.textContent = "✓ " + (r.message || "Deepy updated");
+      statusMsg.textContent = "";
+      statusMsg.append(s);
       showToast("✓ " + (r.message || "Deepy updated"));
       refreshDeepy();
     } else {
-      statusMsg.innerHTML =
-        '<span style="color:#F87171">✗ ' +
-        (r && r.error ? r.error : "update failed") +
-        "</span>";
+      const s = document.createElement("span");
+      s.style.color = "#F87171";
+      s.textContent = "✗ " + ((r && r.error) || "update failed");
+      statusMsg.textContent = "";
+      statusMsg.append(s);
       showToast("✗ " + (r && r.error ? r.error : "update failed"));
       applyBtn.disabled = false;
     }
@@ -6449,29 +6750,46 @@ function renderDlss5Progress() {
     return;
   }
   box.style.display = "block";
-  box.innerHTML =
-    _dlss5Rows
-      .map((f) => {
-        const ph = _dlss5State[f.id];
-        const sha = String(f.sha || "");
-        if (ph === "downloading")
-          return `<div class="spec-row"><span class="spec-label"><span>…</span> ${f.id}</span><span class="spec-value">${f.version} · downloading…</span></div>`;
-        const ok = ph === "verified" || (!ph && f.installed);
-        const icon = ok
-          ? '<span class="dot-ok">●</span>'
-          : '<span style="color:#F87171">●</span>';
-        const note =
-          `${f.version} · ` +
-          (ok ? "✓ SHA " : "SHA ") +
-          sha.slice(0, 12) +
-          "… " +
-          (ok ? "" : "— not installed");
-        return `<div class="spec-row"><span class="spec-label">${icon} ${f.id}</span><span class="spec-value">${note}</span></div>`;
-      })
-      .join("") +
-    (_dlss5Done
-      ? '<div class="pip-advanced-hint" style="color:#4ADE80">✓ DLSS 5 components installed — restart Wan2GP.</div>'
-      : "");
+  box.textContent = "";
+  for (const f of _dlss5Rows) {
+    const ph = _dlss5State[f.id];
+    const sha = String(f.sha || "");
+    const row = document.createElement("div");
+    row.className = "spec-row";
+    const lab = document.createElement("span");
+    lab.className = "spec-label";
+    const val = document.createElement("span");
+    val.className = "spec-value";
+    if (ph === "downloading") {
+      const dots = document.createElement("span");
+      dots.textContent = "…";
+      lab.append(dots, " " + f.id);
+      val.textContent = f.version + " · downloading…";
+    } else {
+      const ok = ph === "verified" || (!ph && f.installed);
+      const icon = document.createElement("span");
+      if (ok) icon.className = "dot-ok";
+      else icon.style.color = "#F87171";
+      icon.textContent = "●";
+      lab.append(icon, " " + f.id);
+      val.textContent =
+        f.version +
+        " · " +
+        (ok ? "✓ SHA " : "SHA ") +
+        sha.slice(0, 12) +
+        "… " +
+        (ok ? "" : "— not installed");
+    }
+    row.append(lab, val);
+    box.append(row);
+  }
+  if (_dlss5Done) {
+    const d = document.createElement("div");
+    d.className = "pip-advanced-hint";
+    d.style.color = "#4ADE80";
+    d.textContent = "✓ DLSS 5 components installed — restart Wan2GP.";
+    box.append(d);
+  }
 }
 // ── Installer live downloads (per-file rows from uv output) ──
 const _installDl = new Map();
@@ -6535,31 +6853,32 @@ function installProgressPaint() {
   if (!box || !list || !_installDl.size) return;
   box.style.display = "";
   const names = [..._installDl.keys()].slice(-40);
-  list.innerHTML = names
-    .map((n) => {
-      const r = _installDl.get(n);
-      const st =
-        r.state === "installed"
-          ? '<span class="iprog-state installed">✓ ' +
-            escHtml(r.version || "done") +
-            "</span>"
-          : '<span class="iprog-state downloading">⬇ ' +
-            escHtml(r.size || "…") +
-            "</span>";
-      return (
-        '<div class="iprog-row"><div class="iprog-top"><span class="iprog-name" title="' +
-        escHtml(n) +
-        '">' +
-        escHtml(n) +
-        "</span>" +
-        st +
-        "</div>" +
-        '<div class="iprog-bar' +
-        (r.state === "installed" ? " done" : "") +
-        '"><div></div></div></div>'
-      );
-    })
-    .join("");
+  list.textContent = "";
+  for (const n of names) {
+    const r = _installDl.get(n);
+    const row = document.createElement("div");
+    row.className = "iprog-row";
+    const top = document.createElement("div");
+    top.className = "iprog-top";
+    const nm = document.createElement("span");
+    nm.className = "iprog-name";
+    nm.title = n;
+    nm.textContent = n;
+    const st = document.createElement("span");
+    if (r.state === "installed") {
+      st.className = "iprog-state installed";
+      st.textContent = "✓ " + (r.version || "done");
+    } else {
+      st.className = "iprog-state downloading";
+      st.textContent = "⬇ " + (r.size || "…");
+    }
+    top.append(nm, st);
+    const bar = document.createElement("div");
+    bar.className = "iprog-bar" + (r.state === "installed" ? " done" : "");
+    bar.append(document.createElement("div"));
+    row.append(top, bar);
+    list.append(row);
+  }
   const cnt = $("installProgressCount");
   if (cnt)
     cnt.textContent = _installDlDone + "/" + _installDl.size + " installed";
@@ -7311,28 +7630,41 @@ function renderAutoTuneHardware(hw) {
       '<span class="env-type-tag" style="background:#4A3D2E;color:#F8C58A">Triton</span>',
     );
 
-  el.innerHTML =
-    '\
-    <div class="hw-compact">\
-      <span class="hw-chip"><span class="hw-chip-label">GPU</span>' +
-    escHtml(hw.gpu_name) +
-    '</span>\
-      <span class="hw-chip"><span class="hw-chip-label">VRAM</span>' +
-    hw.gpu_vram_gb +
-    ' GB</span>\
-      <span class="hw-chip"><span class="hw-chip-label">RAM</span>' +
-    hw.ram_gb +
-    ' GB</span>\
-      <span class="hw-chip"><span class="hw-chip-label">CUDA</span>' +
-    (hw.cuda_version || "—") +
-    '</span>\
-      <span class="hw-chip"><span class="hw-chip-label">Cap</span>' +
-    (hw.gpu_capability || "—") +
-    '</span>\
-    </div>\
-    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">' +
-    badges.join("") +
-    "</div>";
+  el.textContent = "";
+  const wrap = document.createElement("div");
+  wrap.className = "hw-compact";
+  const chip = (labelText, valueText) => {
+    const c = document.createElement("span");
+    c.className = "hw-chip";
+    const l = document.createElement("span");
+    l.className = "hw-chip-label";
+    l.textContent = labelText;
+    c.append(l, valueText);
+    return c;
+  };
+  wrap.append(
+    chip("GPU", hw.gpu_name),
+    chip("VRAM", hw.gpu_vram_gb + " GB"),
+    chip("RAM", hw.ram_gb + " GB"),
+    chip("CUDA", hw.cuda_version || "—"),
+    chip("Cap", hw.gpu_capability || "—"),
+  );
+  const brow = document.createElement("div");
+  brow.style.cssText = "display:flex;gap:4px;flex-wrap:wrap;margin-top:4px";
+  const badge = (bg, fg, text) => {
+    const s = document.createElement("span");
+    s.className = "env-type-tag";
+    s.style.background = bg;
+    s.style.color = fg;
+    s.textContent = text;
+    return s;
+  };
+  if (hw.supports_fp8) brow.append(badge("#2D4A2E", "#8BC48B", "FP8"));
+  if (hw.supports_nvfp4) brow.append(badge("#2D3A5E", "#8AB4F8", "NVFP4"));
+  if (hw.supports_flash) brow.append(badge("#3A2D4E", "#C58AF8", "Flash"));
+  if (hw.supports_sage) brow.append(badge("#2D3A3E", "#8AF8C5", "Sage"));
+  if (hw.supports_triton) brow.append(badge("#4A3D2E", "#F8C58A", "Triton"));
+  el.append(wrap, brow);
 }
 
 // escHtml now comes from services/escape.js (loaded before app.js) so the
@@ -7368,7 +7700,8 @@ $("autotuneDetectBtn").addEventListener("click", async () => {
   } catch (e) {
     status.className = "";
     status.style.background = "#3A1E1E";
-    status.innerHTML = "\u274c Detection failed: " + escHtml(e.message);
+    status.textContent =
+      "\u274c Detection failed: " + ((e && e.message) || String(e));
   } finally {
     btn.disabled = false;
     btn.textContent = "\u27b3 Detect";
@@ -7549,9 +7882,19 @@ $("autotuneFailsafeChk").addEventListener("change", async () => {
     // Nothing detected yet — tell the user Detect will honor it.
     status.className = "";
     status.style.background = "var(--bg-tertiary)";
-    status.innerHTML = $("autotuneFailsafeChk").checked
-      ? "⚠️ Failsafe enabled — run <strong>Detect</strong> to see the P5 recommendation."
-      : "Failsafe off — run <strong>Detect</strong> when ready.";
+    status.textContent = "";
+    {
+      const on = $("autotuneFailsafeChk").checked;
+      const lead = document.createElement("span");
+      lead.textContent = on
+        ? "⚠️ Failsafe enabled — run "
+        : "Failsafe off — run ";
+      const st = document.createElement("strong");
+      st.textContent = "Detect";
+      const tail = document.createElement("span");
+      tail.textContent = on ? " to see the P5 recommendation." : " when ready.";
+      status.append(lead, st, tail);
+    }
     return;
   }
   try {
@@ -7563,13 +7906,14 @@ $("autotuneFailsafeChk").addEventListener("change", async () => {
     memProfileFromRecommendation(rec);
     status.className = "";
     status.style.background = "var(--bg-tertiary)";
-    status.innerHTML = $("autotuneFailsafeChk").checked
+    status.textContent = $("autotuneFailsafeChk").checked
       ? "⚠️ Failsafe mode active — P5 (maximum compatibility) selected. Apply to write it."
       : "ℹ️ Failsafe mode off — standard matrix recommendation restored.";
   } catch (e) {
     status.className = "";
     status.style.background = "#3A1E1E";
-    status.innerHTML = "❌ Failsafe toggle failed: " + escHtml(e.message);
+    status.textContent =
+      "❌ Failsafe toggle failed: " + ((e && e.message) || String(e));
   }
 });
 
@@ -7903,12 +8247,13 @@ async function openUninstallModal() {
         } catch {}
         const div = document.createElement("div");
         div.className = "istack-row";
-        div.innerHTML =
-          '<span class="istack-k">' +
-          escHtml(label) +
-          '</span><span class="istack-v">' +
-          escHtml(p + sizeTxt) +
-          "</span>";
+        const k = document.createElement("span");
+        k.className = "istack-k";
+        k.textContent = label;
+        const v = document.createElement("span");
+        v.className = "istack-v";
+        v.textContent = p + sizeTxt;
+        div.append(k, v);
         rows.appendChild(div);
       }
     } else {
@@ -8009,9 +8354,9 @@ $("uninstallBtn")?.addEventListener("click", async function () {
 });
 
 // ── 🛟 Troubleshooting (P0 — upstream TROUBLESHOOTING.md) ──
-function tsStatus(id, html) {
+function tsStatus(id, text) {
   const el = $(id);
-  if (el) el.innerHTML = html;
+  if (el) el.textContent = text;
 }
 async function tsRefreshLaunchArgs() {
   try {
@@ -8020,6 +8365,18 @@ async function tsRefreshLaunchArgs() {
     if ($("portInput")) $("portInput").value = cfg.serverPort || 7860;
   } catch {}
 }
+$("tsUpstreamDocsLink")?.addEventListener("click", async (ev) => {
+  ev.preventDefault();
+  await window.w2gp.openExternal(
+    "https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/TROUBLESHOOTING.md",
+  );
+});
+$("tsInstallDocsLink")?.addEventListener("click", async (ev) => {
+  ev.preventDefault();
+  await window.w2gp.openExternal(
+    "https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/INSTALLATION.md",
+  );
+});
 $("tsFailsafeBtn")?.addEventListener("click", async function () {
   this.disabled = true;
   tsStatus("tsFailsafeStatus", "Applying…");
@@ -8036,7 +8393,7 @@ $("tsFailsafeBtn")?.addEventListener("click", async function () {
     showToast("✓ Failsafe applied — relaunch Wan2GP");
     tsRefreshLaunchArgs();
   } catch (e) {
-    tsStatus("tsFailsafeStatus", "✗ " + escHtml(errText(e)));
+    tsStatus("tsFailsafeStatus", "✗ " + errText(e));
     showToast("✗ " + errText(e));
   }
   this.disabled = false;
@@ -8060,18 +8417,15 @@ $("tsCudaBtn")?.addEventListener("click", async function () {
         (r.name ? ": " + r.name : "") +
         ")";
       appendLog("[✓] CUDA check: " + msg);
-      tsStatus("tsFailsafeStatus", "✓ " + escHtml(msg));
+      tsStatus("tsFailsafeStatus", "✓ " + msg);
     } else {
-      tsStatus(
-        "tsFailsafeStatus",
-        "✗ " + escHtml((r && r.error) || "probe failed"),
-      );
+      tsStatus("tsFailsafeStatus", "✗ " + ((r && r.error) || "probe failed"));
       appendLog(
         "[!] CUDA check failed: " + ((r && (r.stderr || r.error)) || "unknown"),
       );
     }
   } catch (e) {
-    tsStatus("tsFailsafeStatus", "✗ " + escHtml(errText(e)));
+    tsStatus("tsFailsafeStatus", "✗ " + errText(e));
   }
   this.disabled = false;
 });
@@ -8112,14 +8466,11 @@ $("tsComputeBtn")?.addEventListener("click", async function () {
       appendLog("[✓] " + msg);
       kernelLines(r).forEach((l) => appendLog("    " + l));
       if (r.kernel_warning) appendLog("[i] " + r.kernel_warning);
-      tsStatus("tsFailsafeStatus", "✓ " + escHtml(msg));
+      tsStatus("tsFailsafeStatus", "✓ " + msg);
       showToast("✓ GPU compute passed");
     } else {
       const det = r && r.detail ? " " + JSON.stringify(r.detail) : "";
-      tsStatus(
-        "tsFailsafeStatus",
-        "✗ " + escHtml((r && r.error) || "probe failed"),
-      );
+      tsStatus("tsFailsafeStatus", "✗ " + ((r && r.error) || "probe failed"));
       const kl = kernelLines(r).filter((l) => l.startsWith("✗"));
       appendLog(
         "[!] GPU compute failed: " + ((r && r.error) || "unknown") + det,
@@ -8127,7 +8478,7 @@ $("tsComputeBtn")?.addEventListener("click", async function () {
       kl.forEach((l) => appendLog("    " + l));
     }
   } catch (e) {
-    tsStatus("tsFailsafeStatus", "✗ " + escHtml(errText(e)));
+    tsStatus("tsFailsafeStatus", "✗ " + errText(e));
   }
   this.disabled = false;
 });
@@ -8142,7 +8493,7 @@ $("tsPortCheckBtn")?.addEventListener("click", async () => {
         "⚠ Port " +
           r.port +
           " busy — " +
-          escHtml(r.owner.name || "unknown") +
+          (r.owner.name || "unknown") +
           " (pid " +
           r.owner.pid +
           ")" +
@@ -8151,7 +8502,7 @@ $("tsPortCheckBtn")?.addEventListener("click", async () => {
     else
       tsStatus("tsPortStatus", "⚠ Port " + r.port + " busy — owner unknown.");
   } catch (e) {
-    tsStatus("tsPortStatus", "✗ " + escHtml(errText(e)));
+    tsStatus("tsPortStatus", "✗ " + errText(e));
   }
 });
 $("tsPortKillBtn")?.addEventListener("click", async function () {
@@ -8174,7 +8525,7 @@ $("tsPortKillBtn")?.addEventListener("click", async function () {
     );
     appendLog("[*] Port fix (kill): " + JSON.stringify(r));
   } catch (e) {
-    tsStatus("tsPortStatus", "✗ " + escHtml(errText(e)));
+    tsStatus("tsPortStatus", "✗ " + errText(e));
     showToast("✗ " + errText(e));
   }
   this.disabled = false;
@@ -8191,7 +8542,7 @@ $("tsPortBumpBtn")?.addEventListener("click", async function () {
     appendLog("[✓] Port bumped " + r.from + " → " + r.port);
     tsRefreshLaunchArgs();
   } catch (e) {
-    tsStatus("tsPortStatus", "✗ " + escHtml(errText(e)));
+    tsStatus("tsPortStatus", "✗ " + errText(e));
     showToast("✗ " + errText(e));
   }
   this.disabled = false;
@@ -8230,7 +8581,7 @@ $("tsLongPathsBtn")?.addEventListener("click", async function () {
       console.log("[ts] long paths enabled", r);
     }
   } catch (e) {
-    tsStatus("tsLongPathsStatus", "Error: " + escHtml(errText(e)));
+    tsStatus("tsLongPathsStatus", "Error: " + errText(e));
     showToast("Error: " + errText(e));
   } finally {
     this.disabled = false;
@@ -8255,7 +8606,7 @@ $("tsDebugCopyBtn")?.addEventListener("click", async function () {
     tsStatus("tsDebugStatus", "✓ Copied — paste into Discord / GitHub.");
     showToast("✓ Debug info copied to clipboard");
   } catch (e) {
-    tsStatus("tsDebugStatus", "✗ " + escHtml(errText(e)));
+    tsStatus("tsDebugStatus", "✗ " + errText(e));
   }
   this.disabled = false;
 });

@@ -22,13 +22,6 @@ const BUNDLED_PLUGINS: &[&str] = &[
     "motion_designer",
     "sample",
 ];
-// Status Pro is temporarily disabled (incompatible with the current Deepy
-// update): no longer auto-installed or force-enabled; a normal community
-// plugin the user can install/enable manually once fixed.
-const STATUS_PRO_ID: &str = "wan2gp-status-pro";
-// Kept for manual reinstall reference while auto-install is disabled.
-#[allow(dead_code)]
-const STATUS_PRO_URL: &str = "https://github.com/totideyouover2026-max/wan2gp-status-pro";
 
 // repo dir name from a git URL (mirrors shared/utils/plugins.py plugin_id_from_url).
 fn plugin_id_from_url(url: &str) -> String {
@@ -104,32 +97,8 @@ pub fn plugins_list() -> serde_json::Value {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    let mut cfg = read_wgp_config(&repo);
-    let mut enabled = str_list(&cfg, "enabled_plugins");
-    // One-time self-healing: Status Pro is temporarily incompatible with the
-    // current Deepy update — uninstall it on existing installs (config +
-    // plugins/wan2gp-status-pro folder; locked files defer via
-    // pending_plugin_deletions). Idempotent: after removal the condition
-    // is false, so no further write or log happens.
-    if enabled.iter().any(|x| x == STATUS_PRO_ID) {
-        // Reuses plugin_uninstall's remove_dir_all-or-defer logic; Err when
-        // the folder is already gone is fine to ignore.
-        let _ = plugin_uninstall(Some(STATUS_PRO_ID.to_string()));
-        enabled.retain(|x| x != STATUS_PRO_ID);
-        cfg["enabled_plugins"] = serde_json::Value::Array(
-            enabled
-                .iter()
-                .map(|s| serde_json::Value::String(s.clone()))
-                .collect(),
-        );
-        let p = repo.join("wgp_config.json");
-        if atomic_write(&p, &serde_json::to_string_pretty(&cfg).unwrap_or_default()).is_ok() {
-            crate::base::push_log(
-                    "[i] Uninstalled wan2gp-status-pro (temporarily incompatible with the current Deepy update) — reinstall it manually once fixed.\n",
-                    "launch",
-                );
-        }
-    }
+    let cfg = read_wgp_config(&repo);
+    let enabled = str_list(&cfg, "enabled_plugins");
     // Wan2GP's own refreshed library (written by its plugin manager AND by us —
     // same file, same schema): fresher metadata wins over the shipped plugins.json.
     let local_cat = read_local_catalog(&repo);

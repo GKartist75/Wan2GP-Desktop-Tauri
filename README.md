@@ -246,7 +246,9 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.6.5**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.5) *(latest)* — mmgp 3.8.0 fallout fixes (Update auto-reinstalls changed `requirements.txt` + post-update dep recheck with drift warning, Status Pro uninstalled by default), Install-button progress feedback (Working…/Installing… locks, Measuring… log, wipe-phase lines, no double-press), more env-panel packages (MMGP/XFormers/Torchaudio/MoviePy), self-repairing first-launch bar.
+- [**v0.6.6**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.6) *(latest)* — updater v2 (dirty-tree stash + recoverable errors, no more `undefined`), Verify / Repair Wan2GP files + one-click rollback to the recorded upstream commit, reinstall keeps tokens/launchArgs/prefs, unified prerequisite probes, full per-pin requirements report on update, `[wan2gp]`-tagged console lines, XSS hardening (DOM-built panels), metrics stay live while Wan2GP runs embedded, Status Pro self-healing retired.
+
+- [**v0.6.5**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.5) — mmgp 3.8.0 fallout fixes (Update auto-reinstalls changed `requirements.txt` + post-update dep recheck with drift warning, Status Pro uninstalled by default), Install-button progress feedback (Working…/Installing… locks, Measuring… log, wipe-phase lines, no double-press), more env-panel packages (MMGP/XFormers/Torchaudio/MoviePy), self-repairing first-launch bar.
 
 - [**v0.6.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.4) — Ordered app-close (sessions die first, verified sweep runs, then the window closes; second X forces out; foreign processes spared), Launch hero + 2x2 grid (Browser / Browser No-GPU / Terminal / Terminal No-GPU — No-GPU frees VRAM for generation), terminal-launch argparse fix (no more unrecognized-arguments in terminal modes), per-download [dl #id] tracing on the backend log bus, verbose embed-bounds debug toggle (off by default).
 
