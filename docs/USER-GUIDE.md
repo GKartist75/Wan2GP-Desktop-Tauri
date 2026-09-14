@@ -26,7 +26,7 @@ The home screen. Top to bottom:
 **Top bar**
 
 | Button | What it does |
-|---|---|
+| --- | --- |
 | ← Back to Dashboard | Leaves the Viewer, back to this screen |
 | ⊞ Console | Toggles the floating terminal console |
 | ⟳ (reload icon) | Reloads the Wan2GP view |
@@ -54,7 +54,7 @@ The home screen. Top to bottom:
 **Active Environment card** — the selected Python env (`uv`, `venv` or `conda`):
 
 | Button | What it does |
-|---|---|
+| --- | --- |
 | unlink | Removes the env from the launcher (asks first) |
 | restore | Re-installs all packages from `requirements.txt` into the existing env (asks first) |
 | reinstall | Recreates the whole env from scratch — fresh Python, PyTorch, packages, kernels. Models, plugins and settings are kept (asks first, takes a while) |
@@ -73,14 +73,17 @@ copy button for the equivalent command.
 **Launch buttons** — start Wan2GP:
 
 | Button | Mode |
-|---|---|
+| --- | --- |
 | App/Desktop (green) | Embedded Viewer inside the launcher |
 | Browser | Opens your browser when the server is ready |
 | Browser No-GPU | Launches Chrome with GPU disabled to free VRAM for generation |
 | Terminal | Real Windows Terminal / cmd window |
 
-**Action row** — *Wan2GP Updates* (upstream version management), *Check updates*
-(launcher version), *Desktop shortcut*, *Auto-Tune shortcut*.
+**Action row** — *Wan2GP Updates* (upstream version management), *Verify / Repair
+Wan2GP files* (read-only drift check against upstream, then tracked-only
+repair — settings/models/envs untouched, Pinokio refused), *Check updates*
+(launcher version), *Desktop shortcut*, *Roll back Wan2GP update* (one-click
+return to the recorded upstream commit, dirty-tree guarded), *Auto-Tune shortcut*.
 
 **Console card** — live launcher + install/launch log with follow toggle.
 
@@ -173,6 +176,10 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **Xet Storage (hf_xet)** — fast HuggingFace downloads toggle.
 - **GGUF CUDA Kernel** — llama.cpp CUDA offload switch.
 - **Repair Settings** — resets launcher settings to defaults.
+- **AMD ROCm** (AMD only, applies on next launch) — *Disable MIOpen* leaves
+  `MIOPEN_FIND_MODE` fully unset (the upstream guide's `cudnn.enabled = False`
+  alternative). Try it if generation crashes with MIOpen/HIP errors while the
+  default `FAST` mode is set.
 
 ## Manage → Launch
 
@@ -188,12 +195,18 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 
 - **Wan2GP Desktop Launcher** — launcher version + update state.
 - **Legacy Electron Launcher** — one-click removal of the old launcher (data kept).
-- **Updates** — manual-only, version-aware launcher updates.
-- **Wan2GP (DeepBeepMeep)** — upstream version + update controls.
+- **Updates** — manual-only, version-aware launcher updates. The updater is
+  fetch-first (shows how many changes are incoming), auto-stashes a dirty tree
+  around the pull with recoverable restore, and reports step-named errors.
+- **Wan2GP (DeepBeepMeep)** — upstream version + update controls. Every
+  update/repair/clone records the upstream commit, so *Roll back Wan2GP
+  update* (Dashboard action row) can return to it later. Updates also show
+  the full requirements check: per-pin ✓/✗ lines plus the pin diff.
 - **Setup** — re-opens the installer (fresh / repair / migrate).
 - **🛟 Troubleshooting** — **Verify GPU compute** (proves torch + each kernel wheel
   actually *import*, naming the broken dist — run after AV restores, driver
   updates, or env surgery), GPU report, emergency fallback torch probe.
+  Links out to upstream `TROUBLESHOOTING.md` (plus `INSTALLATION.md`).
 - **Emergency Failsafe** — last-resort recovery when nothing launches.
 - **Server Port** — port conflict detection / override.
 - **Debug Bundle** — copies full diagnostics (hardware, paths, checks, log tail).
@@ -211,6 +224,9 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 
 - **Installed & Available** — plugin list with enable/disable/install/remove.
 - **Install from URL** — sideload a plugin from a link.
+- **★ Favourites** — starred plugins auto-install on fresh setup (stored in
+  `desktop-config.json`). Nothing auto-installs otherwise: plugins come only
+  from your favourites.
 
 ## Manage → Auto-Tune
 
@@ -222,6 +238,8 @@ profile (precision, attention backend, memory knobs). Re-run after GPU/driver ch
 ## Console & logs
 
 - Dashboard **Console card** and the installer console stream everything.
+  Upstream child lines (Wan2GP server, setup) carry a `[wan2gp]` prefix so you
+  can tell launcher lines apart from app lines.
 - **Export** saves the log to a file; **Copy diagnostics** (installer stack +
   System tab) puts the full report on the clipboard for Discord/GitHub.
 - The floating console docks bottom/left/top/right, floating, or minimised
@@ -235,7 +253,14 @@ profile (precision, attention backend, memory knobs). Re-run after GPU/driver ch
   accept folders → Install → confirm → Launch (App).
 - **Broken env, keep models:** Active Environment → *reinstall* (or installer →
   tick repair → Install → confirm).
-- **Wan2GP update:** Dashboard → Wan2GP Updates (manual, version-aware).
+- **Wan2GP update:** Dashboard → Wan2GP Updates (manual, version-aware,
+  full requirements report in the log).
+- **Repo files look edited/corrupt:** Dashboard → *Verify / Repair Wan2GP
+  files* (read-only report first; repair stashes recoverably, restores
+  tracked files only).
+- **Update broke something:** Dashboard → *Roll back Wan2GP update* (returns
+  to the recorded commit; refuses on dirty tracked files — Verify/Repair
+  first).
 - **Something's wrong:** System → Verify GPU compute, then Copy diagnostics /
   Debug Bundle and paste it in Discord/GitHub.
 - **Moving house:** Paths card pencil icons (or installer Migrate) — models,

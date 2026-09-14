@@ -2,9 +2,19 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
-## [Unreleased]
+## [0.6.6] — 2026-09-14
 
 - Manage → AMD ROCm section with MIOpen-disable toggle (binds the `amdEnv.miopenDisabled` backend key; unsets `MIOPEN_FIND_MODE` at AMD launch when on)
+- Updater v2: fetch-first with incoming-change count, dirty trees auto-stash (`launcher-update-autostash`) around the pull with recoverable pop, step-named errors (no more merge-abort dead end / `Update failed: undefined`)
+- Dashboard Verify / Repair Wan2GP files: read-only drift report plus tracked-only repair (recoverable stash + `reset --hard FETCH_HEAD`, never `git clean` — settings/models/envs untouched, Pinokio refused)
+- Roll back Wan2GP update: every update/repair/clone records the upstream commit (`wangpCommit`); one-click return with dirty-tree and hash-shape guards, shallow-clone safe
+- Reinstall preserves `desktop-config.json` (tokens, launchArgs, prefs) via the backup set with copy/aside semantics; skipped only on explicit wipe-without-backup
+- Prerequisite probes unified: astral/cargo uv homes in the candidate tables plus PATH refresh before probing (no more “UV not found” vs “already installed” loop)
+- Update shows the full requirements check: per-pin `✓`/`✗` lines plus `a -> b` / `+` / `-` pin diff in the log and result
+- Console tags upstream child lines `[wan2gp]` (launch + setup streams; progress/profile parsers still read raw text)
+- XSS hardening: http(s)-only external-link/iframe guards plus ~40 `innerHTML` sites converted to DOM building (tsStatus now text-only)
+- Menu reorder: Verify/Repair + Roll back grouped after Create Desktop Shortcut; metrics keep sampling while Wan2GP runs embedded (was frozen when `dashBody` hid)
+- Status Pro self-healing retired: no longer auto-uninstalled on existing installs, never auto-installed — plugins install only from user-starred favourites
 
 ## [0.6.5] — 2026-09-13
 

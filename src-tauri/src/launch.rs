@@ -908,12 +908,12 @@ runpy.run_path(sys.argv[0], run_name='__main__')
         while let Some(ev) = rx.recv().await {
             match ev {
                 CommandEvent::Stdout(b) => {
-                    let s = String::from_utf8_lossy(&b).to_string();
+                    let s = crate::base::tag_child_lines(&String::from_utf8_lossy(&b));
                     crate::base::push_log(&s, "launch");
                     let _ = app2.emit("launch-log", s);
                 }
                 CommandEvent::Stderr(b) => {
-                    let s = String::from_utf8_lossy(&b).to_string();
+                    let s = crate::base::tag_child_lines(&String::from_utf8_lossy(&b));
                     crate::base::push_log(&s, "launch");
                     let _ = app2.emit("launch-log", s);
                 }

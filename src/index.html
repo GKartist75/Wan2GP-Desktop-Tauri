@@ -292,7 +292,7 @@
         </div>
         <div class="settings-section">
           <h3>🛟 Troubleshooting</h3>
-          <p class="token-hint">One-click fixes from the upstream <code>TROUBLESHOOTING.md</code>. Read-only checks first — destructive actions always ask or back up.</p>
+          <p class="token-hint">One-click fixes from the upstream <a id="tsUpstreamDocsLink" href="#" style="color:var(--accent)">TROUBLESHOOTING.md</a> (see also <a id="tsInstallDocsLink" href="#" style="color:var(--accent)">INSTALLATION.md</a>). Read-only checks first — destructive actions always ask or back up.</p>
         </div>
         <div class="settings-section">
           <h3>Emergency Failsafe</h3>
@@ -831,10 +831,18 @@
             <svg viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             Check Desktop Updates
           </button>
+          <button class="action-item" id="repairFilesBtn" title="Check tracked Wan2GP files against upstream and restore them (settings/models untouched)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a5 5 0 0 0-7 7L3 18l3 3 4.7-4.7a5 5 0 0 0 7-7L14 13l-3-3 3.7-3.7z"/></svg>
+            Verify / Repair Wan2GP files
+          </button>
           <!-- Desktop shortcut -->
           <button class="action-item" id="desktopShortcutBtn">
             <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="12" y1="8" x2="12" y2="16"/></svg>
             Create Desktop Shortcut
+          </button>
+          <button class="action-item" id="rollbackBtn" title="Roll back to the recorded upstream update (settings/models untouched)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+            Roll back Wan2GP update
           </button>
           <button class="action-item" id="autoTuneDashBtn">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
