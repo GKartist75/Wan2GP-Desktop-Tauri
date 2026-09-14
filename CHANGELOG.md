@@ -2,6 +2,12 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [Unreleased]
+
+## [0.6.7] — 2026-09-14
+
+- Update no longer dies on untracked files colliding with incoming upstream adds (0.6.6 report: a local `shared/gradio/import_files.pyi` blocked the pull): byte-identical strays are removed so the merge lands them tracked, differing ones move to `.launcher-update-backup/` — nothing deleted, pull error now names this cause
+
 ## [0.6.6] — 2026-09-14
 
 - Manage → AMD ROCm section with MIOpen-disable toggle (binds the `amdEnv.miopenDisabled` backend key; unsets `MIOPEN_FIND_MODE` at AMD launch when on)
