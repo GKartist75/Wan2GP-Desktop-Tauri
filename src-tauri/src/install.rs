@@ -3685,6 +3685,83 @@ pub(crate) fn parse_git_porcelain(out: &str) -> Vec<DriftEntry> {
     entries
 }
 
+/// Untracked files that upstream is about to ADD at the same path abort
+/// a bare pull with "would be overwritten by merge" (0.6.6 report: a
+/// locally generated `shared/gradio/import_files.pyi`). Move them aside
+/// BEFORE the pull: byte-identical ones are deleted (the merge recreates
+/// them tracked); different ones go to `.launcher-update-backup/<path>`
+/// so nothing is ever lost. Directories are left alone (rare — the pull
+/// error then names them). Fail-open throughout: any probe failure just
+/// skips the guard and the pull behaves exactly as before.
+pub(crate) fn clear_untracked_merge_collisions(repo: &Path, emit: impl Fn(&str)) {
+    let added: Vec<String> = silent_command("git")
+        .args([
+            "diff",
+            "--name-only",
+            "--diff-filter=A",
+            "HEAD...FETCH_HEAD",
+        ])
+        .current_dir(repo)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    for rel in added {
+        let p = repo.join(&rel);
+        if !p.is_file() {
+            continue;
+        }
+        let untracked = silent_command("git")
+            .args(["status", "--porcelain=v1", "--", &rel])
+            .current_dir(repo)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).starts_with("??"))
+            .unwrap_or(false);
+        if !untracked {
+            continue;
+        }
+        let incoming = silent_command("git")
+            .args(["show", &format!("FETCH_HEAD:{rel}")])
+            .current_dir(repo)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| o.stdout);
+        let local = std::fs::read(&p).ok();
+        if incoming.is_some() && local == incoming {
+            if std::fs::remove_file(&p).is_ok() {
+                emit(&format!(
+"[i] Untracked {rel} is identical to the incoming upstream file — removed so the merge can land it tracked.\n"
+));
+            }
+            continue;
+        }
+        let backup = repo.join(".launcher-update-backup").join(&rel);
+        let moved = backup
+            .parent()
+            .map(|d| std::fs::create_dir_all(d).is_ok())
+            .unwrap_or(false)
+            && std::fs::rename(&p, &backup).is_ok();
+        if moved {
+            emit(&format!(
+"[i] Untracked {rel} collides with an incoming upstream file — moved aside to .launcher-update-backup/{rel} (nothing deleted).\n"
+));
+        } else {
+            emit(&format!(
+"[!] Untracked {rel} collides with an incoming upstream file and could not be moved aside — the update may fail; move or remove it by hand and retry.\n"
+));
+        }
+    }
+}
 /// True when TRACKED files differ from HEAD (untracked user files never
 /// count — neither stash nor reset may take them). Probe failure reads
 /// dirty (conservative: callers abort instead of touching work blindly).
@@ -3891,7 +3968,10 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
     // The stash is recoverable by design: on pull or pop failure the
     // stash is KEPT and the error names it (nothing dropped silently).
     // Untracked-only dirt never stashes (plain push would save nothing
-    // and the later pop would misreport) — merges don't touch it anyway.
+    // and the later pop would misreport) — EXCEPT files upstream is
+    // about to add at an untracked path (0.6.6 report: a locally
+    // generated `shared/gradio/import_files.pyi` blocked the pull).
+    // Those are moved aside below so the merge can land them tracked.
     if !run_logged(&app, "git", &["fetch", "origin"], Some(&repo), emit).await {
         mutating_done();
         return Err("git fetch failed — offline? See console output above.".into());
@@ -3924,12 +4004,13 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         }
         stashed = true;
     }
+    clear_untracked_merge_collisions(&repo, emit);
     if !run_logged(&app, "git", &["pull"], Some(&repo), emit).await {
         mutating_done();
         return Err(if stashed {
         "git pull failed after stashing — your changes are kept in the stash (git stash list: launcher-update-autostash). Resolve by hand, then retry."
         } else {
-        "git pull failed — offline? diverged branch? See console output above."
+        "git pull failed — offline? diverged branch? an untracked file colliding with an incoming upstream file? See console output above."
         }
         .into());
     }

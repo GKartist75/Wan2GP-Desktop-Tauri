@@ -246,7 +246,9 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.6.6**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.6) *(latest)* — updater v2 (dirty-tree stash + recoverable errors, no more `undefined`), Verify / Repair Wan2GP files + one-click rollback to the recorded upstream commit, reinstall keeps tokens/launchArgs/prefs, unified prerequisite probes, full per-pin requirements report on update, `[wan2gp]`-tagged console lines, XSS hardening (DOM-built panels), metrics stay live while Wan2GP runs embedded, Status Pro self-healing retired.
+- [**v0.6.7**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.7) *(latest)* — updater no longer dies when an untracked file collides with an incoming upstream add (byte-identical strays are removed so the merge lands them tracked, differing ones move aside to `.launcher-update-backup/` — nothing deleted; the pull error now names this cause).
+
+- [**v0.6.6**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.6) — updater v2 (dirty-tree stash + recoverable errors, no more `undefined`), Verify / Repair Wan2GP files + one-click rollback to the recorded upstream commit, reinstall keeps tokens/launchArgs/prefs, unified prerequisite probes, full per-pin requirements report on update, `[wan2gp]`-tagged console lines, XSS hardening (DOM-built panels), metrics stay live while Wan2GP runs embedded, Status Pro self-healing retired.
 
 - [**v0.6.5**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.5) — mmgp 3.8.0 fallout fixes (Update auto-reinstalls changed `requirements.txt` + post-update dep recheck with drift warning, Status Pro uninstalled by default), Install-button progress feedback (Working…/Installing… locks, Measuring… log, wipe-phase lines, no double-press), more env-panel packages (MMGP/XFormers/Torchaudio/MoviePy), self-repairing first-launch bar.
 
