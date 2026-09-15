@@ -3302,6 +3302,11 @@ pub async fn uninstall(
         }
     };
     // Stop a running server first (locked files won't delete).
+    let log = |m: &str| {
+        crate::base::push_log(m, "setup");
+        let _ = app.emit("setup-output", m.to_string());
+    };
+    log("[*] Stopping Wan2GP server (locked files won't delete)…\n");
     let _ = crate::launch::stop_wangp_blocking(app.clone());
     // Keep-dirs under the repo survive; outside-repo model folders survive on their own.
     let mut keep_dirs: Vec<PathBuf> = Vec::new();
@@ -3325,19 +3330,92 @@ pub async fn uninstall(
         }
     }
     let under_keep = |entry: &Path| keep_dirs.iter().any(|k| k == entry || k.starts_with(entry));
-    if let Ok(rd) = std::fs::read_dir(&repo) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if under_keep(&p) {
-                continue;
-            }
-            if p.is_dir() {
-                let _ = std::fs::remove_dir_all(&p);
-            } else {
-                let _ = std::fs::remove_file(&p);
+    if keep && !keep_dirs.is_empty() {
+        log("[*] Keeping model folders (checkpoints, LoRAs, output)…\n");
+    }
+    // Delete with console progress (uninstall_env parity): the env folder
+    // alone is 100k+ files / GBs, so silent remove_dir_all looks hung.
+    let entries: Vec<PathBuf> = std::fs::read_dir(&repo)
+        .map(|rd| rd.flatten().map(|e| e.path()).collect::<Vec<PathBuf>>())
+        .unwrap_or_default();
+    let doomed: Vec<PathBuf> = entries.into_iter().filter(|p| !under_keep(p)).collect();
+    log(&format!("[*] Removing {} item(s)…\n", doomed.len()));
+    // Recursive delete with progress: every directory entered is printed,
+    // plus a live current-file line (\r overwrites in place — no flooding)
+    // and the 2000-file milestones. Mirrors uninstall_env in config.rs.
+    fn rm_tree(
+        root: &Path,
+        path: &Path,
+        n: &mut u64,
+        app: &tauri::AppHandle,
+        depth: usize,
+        last_live: &mut std::time::Instant,
+    ) {
+        use tauri::Emitter;
+        if let Ok(rd) = std::fs::read_dir(path) {
+            for e in rd.flatten() {
+                let q = e.path();
+                if q.is_dir() && !q.is_symlink() {
+                    if depth <= 1 {
+                        let rel = q
+                            .strip_prefix(root)
+                            .unwrap_or(&q)
+                            .to_string_lossy()
+                            .to_string();
+                        let m = format!("[*] removing {rel}\\…\n");
+                        crate::base::push_log(&m, "setup");
+                        let _ = app.emit("setup-output", m);
+                    }
+                    rm_tree(root, &q, n, app, depth + 1, last_live);
+                    rm_retry(|| std::fs::remove_dir(&q).map_err(|e| e.to_string()));
+                } else {
+                    rm_retry(|| std::fs::remove_file(&q).map_err(|e| e.to_string()));
+                }
+                *n += 1;
+                if (*n).is_multiple_of(2000) {
+                    let m = format!("[*] …{n} files removed\n");
+                    crate::base::push_log(&m, "setup");
+                    let _ = app.emit("setup-output", m);
+                    *last_live = std::time::Instant::now();
+                } else if last_live.elapsed() > std::time::Duration::from_millis(500) {
+                    *last_live = std::time::Instant::now();
+                    let rel = q
+                        .strip_prefix(root)
+                        .unwrap_or(&q)
+                        .to_string_lossy()
+                        .to_string();
+                    let _ = app.emit("setup-output", format!("\r[*] removing {rel}"));
+                }
             }
         }
     }
+    fn rm_retry(mut op: impl FnMut() -> Result<(), String>) {
+        for attempt in 0..6 {
+            if op().is_ok() {
+                return;
+            }
+            if attempt < 5 {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+        }
+    }
+    let mut n: u64 = 0;
+    let mut last_live = std::time::Instant::now();
+    for p in &doomed {
+        let name = p
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if p.is_symlink() || !p.is_dir() {
+            log(&format!("[*] Removing {name}…\n"));
+            rm_retry(|| std::fs::remove_file(p).map_err(|e| e.to_string()));
+        } else {
+            log(&format!("[*] Removing {name}/…\n"));
+            rm_tree(p, p, &mut n, &app, 0, &mut last_live);
+            rm_retry(|| std::fs::remove_dir(p).map_err(|e| e.to_string()));
+        }
+    }
+    log(&format!("[*] File removal complete ({n} files).\n"));
     let _ = std::fs::remove_file(get_envs_file());
     let kept_paths: Vec<String> = keep_dirs
         .iter()
@@ -3361,6 +3439,16 @@ pub async fn uninstall(
 }
 #[tauri::command]
 pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    sync_kernels_inner(app, false).await
+}
+#[tauri::command]
+pub async fn restore_kernels(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    sync_kernels_inner(app, true).await
+}
+async fn sync_kernels_inner(
+    app: tauri::AppHandle,
+    pure_upstream: bool,
+) -> Result<serde_json::Value, String> {
     mutating_try("sync-kernels")?;
     let repo = get_repo_dir();
     let cfg_path = repo.join("setup_config.json");
@@ -3385,6 +3473,9 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value, St
         crate::base::push_log(msg, "setup");
         let _ = app.emit("launch-log", msg.to_string());
     };
+    if pure_upstream {
+        emit_log("[*] restore mode: pure upstream setup_config — launcher wheel overrides (sage safe build, GGUF floor) are off\n");
+    }
     let cfg: serde_json::Value = if cfg_path.exists() {
         serde_json::from_str(&std::fs::read_to_string(&cfg_path).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?
@@ -3475,11 +3566,17 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value, St
         .and_then(|k| k.as_array())
         .cloned()
         .unwrap_or_default();
-    let sage_safe = load_config_value()
-        .get("sageSafe")
-        .and_then(serde_json::Value::as_bool)
-        != Some(false); // ponytail: default safe post6 (1348e5b) — only false opts into upstream post4
-                        // ponytail: Sage wheel is not in gpu_profiles[RTX_30].kernels (only nunchaku+gguf) — handle it separately like Electron's setSageAttentionSafe
+    // Restore mode = pure upstream: ignore the launcher's sage-safe default
+    // (upstream setup_config pins post4) so the box returns to deepbeepmeep's set.
+    let sage_safe = if pure_upstream {
+        false
+    } else {
+        load_config_value()
+            .get("sageSafe")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+    }; // ponytail: default safe post6 (1348e5b) — only false opts into upstream post4
+       // ponytail: Sage wheel is not in gpu_profiles[RTX_30].kernels (only nunchaku+gguf) — handle it separately like Electron's setSageAttentionSafe
     let mut all_kernels = kernels.clone();
     if ["RTX_30", "RTX_40", "RTX_50"].contains(&profile.as_str()) {
         // ensure sage is in the sync list when toggling safe/upstream, so the wheel actually swaps
@@ -3551,8 +3648,13 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value, St
                 let _ = app.emit("launch-log", m.to_string());
                 continue;
             }
-            // GGUF 1.0.21 floor (docs prescription over setup_config lag).
-            let url = apply_gguf_override(&url);
+            // GGUF 1.0.21 floor (docs prescription over setup_config lag) —
+            // skipped in restore mode so upstream's pinned wheel returns.
+            let url = if pure_upstream {
+                url
+            } else {
+                apply_gguf_override(&url)
+            };
             // Triton no-downgrade (#2264): a pinned/ceiling spec must not
             // clobber a working newer triton (H3-sol setups). RTX_20/GTX_10
             // are exempt — upstream genuinely needs <3.3 on Turing/Pascal.

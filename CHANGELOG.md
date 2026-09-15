@@ -5,6 +5,10 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 ## [Unreleased]
 
 - Dependency drift after update is now unmissable (issue #23): a toast plus a persistent dashboard banner with a working Restore-now action, instead of a single log line that was easy to miss
+- Drift banner pinned above the Console with hover explanations; it auto-hides on a clean update and when the Active Environment restore succeeds (no more stale Restore/Dismiss)
+- Every dashboard button (150/150) now has a hover tooltip naming what it does plus scope/consequence
+- Uninstall Wan2GP streams live per-file removal progress to the Console (was silent until done)
+- GPU Kernel Wheels card gains Restore GPU Wheels next to ↻ Update GPU Wheels: Update installs upstream's wanted set plus launcher fixes (safe Sage build, GGUF 1.0.21 floor), Restore reinstalls deepbeepmeep's pure setup_config set
 
 ## [0.6.7] — 2026-09-14
 

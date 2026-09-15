@@ -4150,16 +4150,38 @@ $("checkPkgUpdatesBtn").addEventListener("click", async function () {
 $("syncKernelsBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   this.disabled = true;
-  this.textContent = "Syncing...";
+  this.textContent = "Updating…";
   try {
     const r = await window.w2gp.syncKernels();
-    if (r && r.success) showToast("✓ Kernel wheels synced");
-    else showToast("✗ Sync failed: " + (r && r.error ? r.error : "unknown"));
+    if (r && r.success) showToast("✓ GPU wheels updated");
+    else showToast("✗ Update failed: " + (r && r.error ? r.error : "unknown"));
   } catch (e) {
-    showToast("✗ Sync failed: " + e.message);
+    showToast("✗ Update failed: " + e.message);
   } finally {
     this.disabled = false;
-    this.textContent = "↻ Sync";
+    this.textContent = "↻ Update GPU Wheels";
+    setTimeout(refreshDashboard, 1500);
+  }
+});
+$("restoreKernelsBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  if (
+    !confirm(
+      "Reinstall deepbeepmeep's original wheels? This downgrades launcher overrides (sage safe build → post4, GGUF floor off).",
+    )
+  )
+    return;
+  this.disabled = true;
+  this.textContent = "Restoring…";
+  try {
+    const r = await window.w2gp.restoreKernels();
+    if (r && r.success) showToast("✓ GPU wheels restored to upstream set");
+    else showToast("✗ Restore failed: " + (r && r.error ? r.error : "unknown"));
+  } catch (e) {
+    showToast("✗ Restore failed: " + e.message);
+  } finally {
+    this.disabled = false;
+    this.textContent = "Restore GPU Wheels";
     setTimeout(refreshDashboard, 1500);
   }
 });

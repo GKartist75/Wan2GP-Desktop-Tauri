@@ -152,6 +152,7 @@
         repairWangpFiles: () => call("repair_wangp_files"),
         rollbackWangp: () => call("rollback_wangp"),
         syncKernels: () => call("sync_kernels"),
+        restoreKernels: () => call("restore_kernels"),
         installPlan: () => call("install_plan"),
         validateInstall: () => call("validate_install"),
         classifyTarget: () => call("classify_target"),

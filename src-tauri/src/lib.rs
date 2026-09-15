@@ -179,6 +179,7 @@ pub fn run() {
             install::reinstall,
             install::uninstall,
             install::sync_kernels,
+            install::restore_kernels,
             install::update,
             install::dlss5_status,
             install::install_dlss5,
