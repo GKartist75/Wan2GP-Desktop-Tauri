@@ -101,7 +101,7 @@ Version-present is not loadable (AV quarantine, wrong-torch ABIs) — Verify
 proves imports and names the culprit. Run after AV restores, driver updates,
 or env surgery.
 
-## Kernel sync (Manage → Sync Kernels)
+## Kernel wheels: Update vs Restore (Dashboard → GPU Kernel Wheels card)
 
 ```mermaid
 flowchart LR
@@ -109,8 +109,10 @@ flowchart LR
     PROF --> URLS["components.*.cmd.win wheel URLs"]
     URLS --> SWAP["Overrides (documented)\nSage post4→post6 (safe toggle)\nGGUF 1.0.14→1.0.21 (docs lead)"]
     SWAP --> PIP["pip install --upgrade\nper kernel, failures named"]
-    PIP --> OVERVIEW["Dashboard overview\nwant vs installed ✓/⚠/✗"]
+PIP --> OVERVIEW["Dashboard overview\nwant vs installed ✓/⚠/✗"]
 ```
+
+*↻ Update GPU Wheels* installs the wanted set above (upstream URLs plus launcher fixes: safe Sage build, GGUF 1.0.21 floor, no Triton downgrade). *Restore GPU Wheels* reinstalls deepbeepmeep's pure `setup_config.json` set with the overrides off — the way back when an override misbehaves.
 
 ## Update flow (launcher itself)
 

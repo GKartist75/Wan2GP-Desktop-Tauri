@@ -11,3 +11,4 @@ relnotes-*.md
 .atl/
 .pi/
 build-local.log
+build-*.log

@@ -35,8 +35,6 @@
 
 ## Download & Install
 
-**Coming from the Electron edition?** Install the Tauri build, open **Manage → About → Remove Electron launcher**. Your data carries over automatically — no reinstall of Wan2GP or models needed.
-
 1. Download the `*-setup.exe` (NSIS) or `*.msi` from **Releases** (button at top).
 2. Run it — pick install + models folders (or accept `C:\Wan2GP` / `C:\Wan2GP-Models`). The screen detects your GPU and lists exactly what it will install — all paths are editable.
 3. Click **Install** (~5–20 min: clone → env (`uv`/`venv`/`conda`, your pick) → PyTorch+CUDA → requirements → kernels → `wgp_config.json`). If the folder already holds a repo without a working env, tick your choice (repair env vs fresh repo) and press Install.
@@ -135,7 +133,6 @@ Same launcher, same Wan2GP, same features — new shell. The Electron edition sh
 - 🖥️ **Flexible launch** — Desktop embed, Browser, or External Terminal; pop-out, zoom, browser picker.
 - 🔄 **Safe updates** — manual-only, version-aware, from Dashboard / Manage → Updates.
 - 🛡️ **Crash-proof UI** — crash recovery restores your session.
-- 🧹 **Electron → Tauri switch** — Manage → About removes the legacy launcher silently, keeps all data.
 - 🧩 **Pinokio coexistence** — Pinokio installs detected and left untouched; one click reuses their model library, no re-downloads.
 
 ---
