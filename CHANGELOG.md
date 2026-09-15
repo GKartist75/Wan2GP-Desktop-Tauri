@@ -9,6 +9,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 - Every dashboard button (150/150) now has a hover tooltip naming what it does plus scope/consequence
 - Uninstall Wan2GP streams live per-file removal progress to the Console (was silent until done)
 - GPU Kernel Wheels card gains Restore GPU Wheels next to ↻ Update GPU Wheels: Update installs upstream's wanted set plus launcher fixes (safe Sage build, GGUF 1.0.21 floor), Restore reinstalls deepbeepmeep's pure setup_config set
+- Background launcher update check leaves a Console trace when up to date (`[*] Launcher vX is up to date`), instead of only a 3s banner flash
+- Yellow first-boot bar is refcounted across all launch paths: a failed side-click during a pending boot no longer hides it (no more stuck "Starting…" with no bar)
 
 ## [0.6.7] — 2026-09-14
 
