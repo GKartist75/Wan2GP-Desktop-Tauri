@@ -3939,6 +3939,7 @@ function refreshEnvUnlink(hasRepo) {
         var r = await window.w2gp.restoreRequirements();
         if (r && r.success) {
           appendLog("[*] Requirements restored.");
+          hideDriftBanner();
           setTimeout(refreshDashboard, 2000);
         } else showToast((r && r.error) || "Failed");
       } catch (e) {
@@ -5905,7 +5906,7 @@ $("driftRestoreBtn")?.addEventListener("click", async () => {
 });
 $("driftDismissBtn")?.addEventListener("click", hideDriftBanner);
 // ── Event Wiring: Dashboard ──
-    $("updateBtn").addEventListener("click", async () => {
+$("updateBtn").addEventListener("click", async () => {
   $("updateBtn").disabled = true;
   $("updateBtn").textContent = "Working...";
   try {
@@ -5919,12 +5920,23 @@ $("driftDismissBtn")?.addEventListener("click", hideDriftBanner);
       appendLog(
         "[!] requirements reinstall failed — see the console output above; the git pull itself stays applied.",
       );
-    if (r && r.depCheck === "drift" && Array.isArray(r.drift) && r.drift.length) {
+    if (
+      r &&
+      r.depCheck === "drift" &&
+      Array.isArray(r.drift) &&
+      r.drift.length
+    ) {
       appendLog(
         "[!] dependency drift: " + r.drift.join(", ") + " — use restore",
       );
-      showToast("[!] Dependency drift — packages missing or outdated. See the red banner.");
+      showToast(
+        "[!] Dependency drift — packages missing or outdated. See the red banner.",
+      );
       showDriftBanner(r.drift);
+    } else {
+      // Clean update (or no drift info) clears any stale banner from an
+      // earlier drift run — otherwise Restore/Dismiss linger confusingly.
+      hideDriftBanner();
     }
     refreshDashboard();
   } catch (e) {
