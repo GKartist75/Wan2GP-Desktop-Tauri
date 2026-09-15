@@ -37,9 +37,9 @@ The home screen. Top to bottom:
 
 **Banners** (appear only when relevant):
 
-- **Update available** — *Full Download* (complete ~93 MB package, always works, fixes corrupted installs), *Install & Restart* (incremental update), ✕ dismiss.
+- **Update available** — *Full Download* (complete package, always works, fixes corrupted installs), *Install & Restart* (incremental update), ✕ dismiss.
 - **Dependency drift** — packages missing or outdated after a Wan2GP update (first few named); *Restore now* reinstalls the pinned set, *Dismiss* snoozes it until the next update.
-- **Sync Kernels** — your GPU kernel wheels are out of sync; *Sync Kernels* reinstalls them, *Dismiss* hides it.
+- **SageAttention fix** (RTX 40/50 only) — the shipped Sage wheel has a known fp8 bug (false out-of-memory / stalling); *Sync Kernels* installs the stable build, *Dismiss* hides it.
 - **Models location warning** — your data sits inside the roaming AppData profile; *Migrate to new location* moves it out.
 
 **System card** — CPU, RAM, GPU, VRAM, GPU profile badge. Read-only health summary.
