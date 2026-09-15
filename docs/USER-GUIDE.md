@@ -49,7 +49,7 @@ The home screen. Top to bottom:
 - *Checkpoints / LoRAs / Output* — model and output folders, each with open + change buttons.
 - Keep models OUT of AppData/Roaming (tens–hundreds of GB, roams with your profile).
 
-**GPU Kernel Wheels card** — per-GPU wheels (torch, triton, sage/flash attention, nunchaku/GGUF) with installed versions. *↻ Sync* reinstalls them for the current GPU.
+**GPU Kernel Wheels card** — per-GPU wheels (torch, triton, sage/flash attention, nunchaku/GGUF) with installed versions. *↻ Update GPU Wheels* installs upstream's wanted set plus launcher fixes, *Restore GPU Wheels* reinstalls deepbeepmeep's pure upstream set.
 
 **Active Environment card** — the selected Python env (`uv`, `venv` or `conda`):
 

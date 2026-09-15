@@ -4,6 +4,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+## [0.6.8] — 2026-09-15
+
 - Dependency drift after update is now unmissable (issue #23): a toast plus a persistent dashboard banner with a working Restore-now action, instead of a single log line that was easy to miss
 - Drift banner pinned above the Console with hover explanations; it auto-hides on a clean update and when the Active Environment restore succeeds (no more stale Restore/Dismiss)
 - Every dashboard button (150/150) now has a hover tooltip naming what it does plus scope/consequence

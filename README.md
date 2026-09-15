@@ -246,7 +246,9 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.6.7**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.7) *(latest)* — updater no longer dies when an untracked file collides with an incoming upstream add (byte-identical strays are removed so the merge lands them tracked, differing ones move aside to `.launcher-update-backup/` — nothing deleted; the pull error now names this cause).
+- [**v0.6.8**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.8) *(latest)* — dependency drift after update is unmissable (toast + persistent banner with Restore, issue #23), hover tooltips on all 150 buttons, live uninstall progress, GPU Kernel Wheels split into Update (upstream + launcher fixes) vs Restore (pure upstream set), faster boot update checks with console traces, refcounted first-boot bar.
+
+- [**v0.6.7**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.7) — updater no longer dies when an untracked file collides with an incoming upstream add (byte-identical strays are removed so the merge lands them tracked, differing ones move aside to `.launcher-update-backup/` — nothing deleted; the pull error now names this cause).
 
 - [**v0.6.6**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.6) — updater v2 (dirty-tree stash + recoverable errors, no more `undefined`), Verify / Repair Wan2GP files + one-click rollback to the recorded upstream commit, reinstall keeps tokens/launchArgs/prefs, unified prerequisite probes, full per-pin requirements report on update, `[wan2gp]`-tagged console lines, XSS hardening (DOM-built panels), metrics stay live while Wan2GP runs embedded, Status Pro self-healing retired.
 
