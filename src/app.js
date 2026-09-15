@@ -1415,7 +1415,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       // renderer-side timers re-poll and re-flag the green dot + changelog.
       startWangpPolling();
       startDesktopPolling();
-      // immediate Desktop check removed — main.js does the 5s launch check (single API hit)
+      // (Wan2GP polls immediately at boot; Desktop does its early check
+      // 8s after boot inside startDesktopPolling.)
       // D1: silent settings auto-scan (issue #7 class) — out-of-range dropdown
       // values make Wan2GP reject the whole settings form on save; repair them
       // in the background so the user never hits the "can't save" wall. Writes
@@ -1842,11 +1843,12 @@ function startDesktopPolling() {
   };
   window.__desktopPollTimer = setInterval(poll, DESKTOP_POLL_MS);
   // One early check shortly after boot — the 5h interval alone means a fresh
-  // release sits unknown for hours (seen with v0.1.3). Delayed, not immediate,
-  // so backend/network are up and the boot sequence stays undisturbed.
+  // release sits unknown for hours (seen with v0.1.3). Slightly delayed (not
+  // immediate) so backend/network are up and the boot sequence stays
+  // undisturbed; this timer is the only boot-time self-check.
   if (!window.__desktopBootCheckDone) {
     window.__desktopBootCheckDone = true;
-    setTimeout(poll, 30000);
+    setTimeout(poll, 8000);
   }
   if (!window.__desktopVisBound) {
     window.__desktopVisBound = () => {
