@@ -1003,7 +1003,8 @@ fn kill_pid(pid: u32, killed: &mut Vec<u32>) {
 /// Wan2GP ports: configured serverPort + the 7860/7861 defaults. Shared
 /// by the Stop sweep and the close sweep so they can never disagree.
 fn wan2gp_ports() -> Vec<u64> {
-    let sport = load_config_value()
+    let cfg = load_config_value();
+    let sport = cfg
         .get("serverPort")
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(7860);
@@ -1011,6 +1012,17 @@ fn wan2gp_ports() -> Vec<u64> {
     for p in [7860u64, 7861u64] {
         if !sports.contains(&p) {
             sports.push(p);
+        }
+    }
+    // Deepy Web standalone (deepyPort, default serverPort+1) must die on app
+    // close too — otherwise it outlives the launcher as an orphan holding
+    // its port (seen live on :7862 while only the main ports were swept).
+    if let Some(dport) = crate::deepy_web::deepy_sweep_port(
+        sport,
+        cfg.get("deepyPort").and_then(serde_json::Value::as_u64),
+    ) {
+        if !sports.contains(&dport) {
+            sports.push(dport);
         }
     }
     sports

@@ -13,8 +13,22 @@
 use crate::base::*;
 use crate::status::{get_active_env, resolve_env_python};
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::Emitter;
+
+/// True while a `deepy_web_start` boot wait is in flight. Rejects concurrent
+/// starts (double-click / retry-while-loading) which would otherwise race two
+/// model loads onto one port and double VRAM use.
+static DEEPY_STARTING: AtomicBool = AtomicBool::new(false);
+
+/// RAII reset for `DEEPY_STARTING` — every exit path after it is set clears it.
+struct ClearDeepyStarting;
+impl Drop for ClearDeepyStarting {
+    fn drop(&mut self) {
+        DEEPY_STARTING.store(false, Ordering::SeqCst);
+    }
+}
 
 /// Default Deepy Web port: main `serverPort + 1` (e.g. 7861 for 7860).
 pub(crate) fn default_deepy_port(server_port: u64) -> u64 {
@@ -63,15 +77,27 @@ fn is_usable_lan_ip(s: &str) -> bool {
     }
 }
 
-/// Pick the LAN IPv4 for the Phone URL: first usable non-link-local,
-/// else first usable. Never returns loopback or `0.0.0.0`.
+/// Pick the LAN IPv4 for the Phone URL: first usable non-link-local *real*
+/// LAN address (a Tailscale 100.64/10 address is not same-Wi-Fi reachable,
+/// so it loses to plain LAN), else first usable non-link-local, else first
+/// usable. Never returns loopback or `0.0.0.0`.
 pub(crate) fn select_lan_ip(candidates: &[String]) -> Option<String> {
     let usable: Vec<&String> = candidates.iter().filter(|c| is_usable_lan_ip(c)).collect();
     usable
         .iter()
-        .find(|c| !c.trim().starts_with("169.254."))
+        .find(|c| !c.trim().starts_with("169.254.") && lan_ip_kind(c) == "lan")
+        .or_else(|| usable.iter().find(|c| !c.trim().starts_with("169.254.")))
         .or_else(|| usable.first())
         .map(|c| c.trim().to_string())
+}
+
+/// First usable Tailscale (100.64.0.0/10) address — the off-LAN host for
+/// the External URL row. `None` when Tailscale is not active.
+pub(crate) fn select_external_ip(candidates: &[String]) -> Option<String> {
+    ordered_lan_ips(candidates)
+        .into_iter()
+        .filter(|ip| !ip.starts_with("169.254."))
+        .find(|ip| lan_ip_kind(ip) == "tailscale")
 }
 
 /// Kind label for the multi-IP panel: Tailscale CGNAT (100.64.0.0/10) vs plain LAN.
@@ -483,6 +509,15 @@ fn clear_deepy_auth() {
         .unwrap_or_else(|e| e.into_inner()) = None;
 }
 
+/// Drop all in-memory Deepy tracking (spawned PID + auth mode) — used when a
+/// boot is abandoned so later status polls fall back to the port probe.
+fn clear_deepy_tracking() {
+    if let Some(m) = DEEPY_PID.get() {
+        *m.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+    clear_deepy_auth();
+}
+
 fn remember_deepy(child_pid: u32, mode: &str) {
     *DEEPY_PID
         .get_or_init(|| Mutex::new(None))
@@ -535,11 +570,15 @@ fn ensure_deepy_config_for_web() -> Result<String, String> {
         enh,
         prime_local_27b_present(&v),
     );
-    match plan {
+    let mut label = match plan {
         AutoPlan::Keep => Ok("kept".to_string()),
         AutoPlan::ZeroPlusQwen4B | AutoPlan::FallbackZero => {
-            let r =
-                crate::features::deepy_set("zero".to_string(), None, Some(serde_json::json!(3)));
+            let r = crate::features::deepy_set(
+                "zero".to_string(),
+                None,
+                Some(serde_json::json!(3)),
+                None,
+            );
             if r.get("ok").and_then(|x| x.as_bool()) == Some(true) {
                 Ok(if plan == AutoPlan::FallbackZero {
                     "fallback-zero".to_string()
@@ -560,7 +599,12 @@ fn ensure_deepy_config_for_web() -> Result<String, String> {
             } else {
                 None
             };
-            let r = crate::features::deepy_set(dtype.clone(), eng_arg, Some(serde_json::json!(3)));
+            let r = crate::features::deepy_set(
+                dtype.clone(),
+                eng_arg,
+                Some(serde_json::json!(3)),
+                None,
+            );
             if r.get("ok").and_then(|x| x.as_bool()) == Some(true) {
                 Ok("enhancer-3".to_string())
             } else {
@@ -571,16 +615,36 @@ fn ensure_deepy_config_for_web() -> Result<String, String> {
                     .to_string())
             }
         }
+    }?;
+    // Standard sessions: multisessions with selectable workspace (one shared
+    // outputs folder), so media generated in Deepy Web carries over to Gradio
+    // through session resume. `disabled` (upstream default) means a temporary
+    // conversation invisible across processes. An explicit choice is respected
+    // — only disabled/missing is upgraded.
+    // Re-read: the plan handling above may have rewritten the file already.
+    let ps = std::fs::read_to_string(&p)
+        .map_err(|_| "wgp_config.json not found — install Wan2GP first.".to_string())?;
+    let mut vv: serde_json::Value =
+        serde_json::from_str(&ps).map_err(|_| "wgp_config.json is corrupted.".to_string())?;
+    if needs_session_upgrade(&vv) {
+        let bak = p.with_file_name("wgp_config.json.deepy-bak");
+        let _ = std::fs::copy(&p, &bak);
+        vv["deepy_multi_session"] = serde_json::json!("selectable");
+        atomic_write(&p, &serde_json::to_string_pretty(&vv).unwrap_or_default())
+            .map_err(|_| "failed to write wgp_config.json".to_string())?;
+        label.push_str("+sessions");
     }
+    Ok(label)
 }
 
 fn deepy_urls(deepy_port: u64) -> serde_json::Value {
     let same_pc = same_pc_url(deepy_port);
-    let lan_rows: Vec<serde_json::Value> = phone_url_list(&lan_candidates(), deepy_port)
+    let cands = lan_candidates();
+    let lan_rows: Vec<serde_json::Value> = phone_url_list(&cands, deepy_port)
         .into_iter()
         .map(|(ip, url, kind)| serde_json::json!({"ip": ip, "url": url, "kind": kind}))
         .collect();
-    match resolve_lan_ip().and_then(|ip| phone_url(&ip, deepy_port)) {
+    let mut urls = match resolve_lan_ip().and_then(|ip| phone_url(&ip, deepy_port)) {
         Some(phone) => serde_json::json!({
             "samePc": same_pc,
             "phone": phone,
@@ -594,7 +658,23 @@ fn deepy_urls(deepy_port: u64) -> serde_json::Value {
             "phoneGuidance": "No LAN adapter found — connect to Wi-Fi/Ethernet to enable the Phone URL.",
             "lanIps": lan_rows,
         }),
+    };
+    // External row: Tailscale IPv4 URL for off-LAN access (null when
+    // Tailscale is not active — the frontend hides the row).
+    match select_external_ip(&cands).and_then(|ip| phone_url(&ip, deepy_port).map(|url| (ip, url)))
+    {
+        Some((ip, url)) => {
+            urls["external"] = serde_json::json!(url);
+            urls["externalIp"] = serde_json::json!(ip);
+            urls["externalUnavailable"] = serde_json::json!(false);
+        }
+        None => {
+            urls["external"] = serde_json::Value::Null;
+            urls["externalIp"] = serde_json::Value::Null;
+            urls["externalUnavailable"] = serde_json::json!(true);
+        }
     }
+    urls
 }
 
 #[tauri::command]
@@ -728,9 +808,44 @@ pub async fn deepy_web_start(
         Ok(p) => p,
         Err(e) => return Ok(serde_json::json!({"ok": false, "error": e})),
     };
+    // Serialize boots: a double-click or retry-while-loading must not spawn a
+    // second model load onto the same port (double VRAM, port race).
+    if DEEPY_STARTING.swap(true, Ordering::SeqCst) {
+        return Ok(
+            serde_json::json!({"ok": false, "error": "Deepy Web is already starting — wait for the current boot to finish."}),
+        );
+    }
+    let _clear_starting = ClearDeepyStarting;
+    // Pre-start cleanup: stop OUR strays on the target port (orphaned boots,
+    // earlier runs incl. other launcher instances) so Start never fails
+    // against our own leftovers. Manually-run servers are spared — only the
+    // bootstrap-shim signature is swept.
+    let mut pre_killed = false;
+    for (pid, _) in listeners_on_port(port) {
+        if process_cmdline(pid).is_some_and(|cmd| {
+            should_stop_deepy_process(&cmd, port) && is_launcher_deepy_cmdline(&cmd)
+        }) {
+            kill_pid_deepy(pid);
+            pre_killed = true;
+        }
+    }
+    for pid in launcher_deepy_pids() {
+        if process_cmdline(pid).is_some_and(|cmd| {
+            should_stop_deepy_process(&cmd, port) && is_launcher_deepy_cmdline(&cmd)
+        }) {
+            kill_pid_deepy(pid);
+            pre_killed = true;
+        }
+    }
+    if pre_killed {
+        let m = format!("[*] Stopped leftover Deepy Web process(es) on :{port} before starting…\n");
+        push_log(&m, "launch");
+        let _ = app.emit("launch-log", m);
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
     if !port_is_free(port) {
         return Ok(
-            serde_json::json!({"ok": false, "error": format!("Port {port} is already in use — pick another Deepy Web port or stop the occupying process.")}),
+            serde_json::json!({"ok": false, "error": format!("Port {port} is already in use by another program — stop it or pick another Deepy Web port.")}),
         );
     }
     let autoconf = match ensure_deepy_config_for_web() {
@@ -780,10 +895,10 @@ pub async fn deepy_web_start(
         let _ = app.emit("launch-log", msg.to_string());
     };
     emit(&format!(
-        "[*] Starting Deepy Web ({mode_label}) on :{port} (auto-config: {autoconf})…\n"
+        "[Deepy] Starting Deepy Web ({mode_label}) on :{port} (auto-config: {autoconf})…\n"
     ));
     if lan {
-        emit("[i] Phone-LAN mode: Windows may show a firewall prompt — allow it on private networks. No firewall rules are created silently: https://github.com/deepbeepmeep/Wan2GP\n");
+        emit("[Deepy] Phone-LAN mode: Windows may show a firewall prompt — allow it on private networks. No firewall rules are created silently: https://github.com/deepbeepmeep/Wan2GP\n");
     }
     mutating_try("deepy-web-start")?;
     let py = resolve_py();
@@ -845,10 +960,13 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     };
     let (rx, child) = shell_cmd.spawn().map_err(|e| {
         mutating_done();
-        emit(&format!("[DEEPY WEB ERROR] spawn failed: {e}\n"));
+        emit(&format!("[Deepy] ERROR: spawn failed: {e}\n"));
         e.to_string()
     })?;
-    emit(&format!("[*] Deepy Web PID {}\n", child.pid()));
+    emit(&format!(
+        "[Deepy] Deepy Web spawned (PID {})\n",
+        child.pid()
+    ));
     remember_deepy(child.pid(), mode_label);
     remember_deepy_auth(if auth_enabled {
         Some(resolved_auth.clone())
@@ -887,19 +1005,30 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             }
         }
     });
-    // Bounded wait: success returns as soon as the port opens; failure
-    // surfaces {error, hint} (flag drift) instead of fake-success.
+    // Setup done — release the global mutation guard before the boot wait so
+    // a slow model load never blocks installs/updates. Concurrent boots are
+    // covered by DEEPY_STARTING instead.
+    mutating_done();
+    // Bounded boot wait: a cold boot loads a multi-GB Qwen model before the
+    // port opens, so allow up to 5 minutes with progress in the launch log.
+    // (The old 12s timeout orphaned slow boots: the card flipped to Stopped
+    // while the process kept loading and bound the port minutes later.)
+    let child_pid = child.pid();
     let mut opened = false;
-    for _ in 0..12 {
-        std::thread::sleep(std::time::Duration::from_secs(1));
+    for waited in 1..=300u32 {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         if !port_is_free(port) {
             opened = true;
             break;
         }
+        if waited % 30 == 0 {
+            emit(&format!(
+                "[Deepy] Deepy Web still booting ({waited}s) — loading the Deepy model, this can take minutes on a cold start…\n"
+            ));
+        }
     }
-    mutating_done();
     if opened {
-        let m = format!("[✓] Deepy Web ready on {}\n", same_pc_url(port));
+        let m = format!("[Deepy] ✓ Deepy Web ready on {}\n", same_pc_url(port));
         crate::base::push_log(&m, "launch");
         let _ = app.emit("launch-log", m);
         Ok(serde_json::json!({
@@ -918,6 +1047,19 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             "httpsPort": if https_on { https_port.map(serde_json::Value::from).unwrap_or(serde_json::Value::Null) } else { serde_json::Value::Null },
         }))
     } else {
+        // Fail-closed: stop what we spawned (whole process tree) plus a
+        // port-scoped sweep, and clear tracking — no slow boot may survive to
+        // bind the port later behind the card's back.
+        kill_pid_deepy(child_pid);
+        for (pid, _) in listeners_on_port(port) {
+            if process_cmdline(pid).is_some_and(|cmd| should_stop_deepy_process(&cmd, port)) {
+                kill_pid_deepy(pid);
+            }
+        }
+        clear_deepy_tracking();
+        emit(&format!(
+            "[Deepy] ✗ Deepy Web did not open :{port} within 5 minutes — spawned process stopped.\n"
+        ));
         let early = stderr_buf.lock().map(|g| g.clone()).unwrap_or_default();
         let hint = flag_drift_hint(&early).unwrap_or_else(|| {
             "Deepy Web did not open its port — check Manage → logs for the traceback, then retry.".to_string()
@@ -998,6 +1140,132 @@ fn process_cmdline(pid: u32) -> Option<String> {
     }
 }
 
+/// True when a cmdline belongs to a Deepy Web server spawned by THIS launcher:
+/// our bootstrap shim (`wan2gp-deepy-bootstrap-*`) plus upstream
+/// `--deepy-server`. A manually-run `python wgp.py --deepy-server` has no
+/// shim and is NEVER matched — stop/start sweeps leave foreign processes alone.
+pub(crate) fn is_launcher_deepy_cmdline(cmdline: &str) -> bool {
+    let cl = cmdline.to_lowercase();
+    cl.contains("wan2gp-deepy-bootstrap-") && cl.contains("--deepy-server")
+}
+
+/// PIDs of launcher-spawned Deepy Web processes on ANY port (orphan sweep).
+/// Port-scoped `listeners_on_port` cannot see strays left on a shifted port,
+/// so Stop and pre-start cleanup use this signature sweep instead.
+fn launcher_deepy_pids() -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::new();
+    #[cfg(windows)]
+    {
+        let ps = "Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%wan2gp-deepy-bootstrap-%' AND CommandLine LIKE '%--deepy-server%'\" | ForEach-Object { $_.ProcessId }";
+        if let Ok(o) = silent_command("powershell")
+            .args(["-NoProfile", "-Command", ps])
+            .output()
+        {
+            if o.status.success() {
+                for line in String::from_utf8_lossy(&o.stdout).lines() {
+                    if let Ok(pid) = line.trim().parse::<u32>() {
+                        if pid != 0 && pid != std::process::id() {
+                            out.push(pid);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if let Ok(o) = silent_command("pgrep")
+            .args(["-f", "wan2gp-deepy-bootstrap-"])
+            .output()
+        {
+            if o.status.success() {
+                for line in String::from_utf8_lossy(&o.stdout).lines() {
+                    if let Ok(pid) = line.trim().parse::<u32>() {
+                        if pid != 0
+                            && pid != std::process::id()
+                            && std::fs::read_to_string(format!("/proc/{pid}/cmdline"))
+                                .map(|s| is_launcher_deepy_cmdline(&s.replace('\0', " ")))
+                                .unwrap_or(false)
+                        {
+                            out.push(pid);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// True when the sessions standard still needs enforcing: missing,
+/// upstream `disabled`, or our own legacy boolean `false`. `dedicated`,
+/// `selectable` (explicit choice) and other truthy values (upstream
+/// normalizes those to selectable) are left alone. Pure so it stays tested.
+pub(crate) fn needs_session_upgrade(v: &serde_json::Value) -> bool {
+    match v.get("deepy_multi_session") {
+        None => true,
+        Some(serde_json::Value::String(s)) => s == "disabled",
+        Some(serde_json::Value::Bool(b)) => !b,
+        Some(serde_json::Value::Number(n)) => n.as_i64().is_some_and(|i| i == 0),
+        _ => false,
+    }
+}
+
+/// Candidate outputs folders in priority order: configured save paths first
+/// (relative ones resolved against the repo), then repo `outputs`/`output`.
+/// Pure so it stays unit-tested; the opener command takes the first existing one.
+pub(crate) fn outputs_candidates(cfg: &serde_json::Value, repo: &std::path::Path) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for key in ["save_path", "image_save_path", "audio_save_path"] {
+        if let Some(s) = cfg
+            .get(key)
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let p = std::path::Path::new(s);
+            let abs = if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                repo.join(p)
+            };
+            let s = abs.to_string_lossy().to_string();
+            if !out.contains(&s) {
+                out.push(s);
+            }
+        }
+    }
+    for d in ["outputs", "output"] {
+        let s = repo.join(d).to_string_lossy().to_string();
+        if !out.contains(&s) {
+            out.push(s);
+        }
+    }
+    out
+}
+
+/// Fast-path kill for app close: the tracked child only (whole tree), no
+/// scans. The close worker's port sweep catches anything else.
+pub(crate) fn stop_deepy_fast() {
+    if let Some(pid) = DEEPY_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
+        kill_pid_deepy(pid);
+    }
+}
+
+/// Deepy port to include in the app-close port sweep: configured `deepyPort`
+/// or the `serverPort+1` default. None when unset/invalid or clashing with
+/// the main port (already swept as a Wan2GP port). Pure so it stays tested.
+pub(crate) fn deepy_sweep_port(server_port: u64, deepy_cfg: Option<u64>) -> Option<u64> {
+    let p = deepy_cfg.unwrap_or_else(|| server_port.saturating_add(1));
+    if p == 0 || p > 65535 || p == server_port {
+        None
+    } else {
+        Some(p)
+    }
+}
+
 fn kill_pid_deepy(pid: u32) {
     if pid == 0 || pid == std::process::id() {
         return;
@@ -1017,41 +1285,77 @@ fn kill_pid_deepy(pid: u32) {
     }
 }
 
+/// Open the shared Wan2GP outputs folder in Explorer (first existing
+/// candidate). Reports the tried path when nothing exists.
 #[tauri::command]
-pub async fn deepy_web_stop(deepy_port: Option<u64>) -> Result<serde_json::Value, String> {
-    let Some(port) = deepy_port else {
+pub async fn deepy_web_open_outputs(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    use tauri_plugin_opener::OpenerExt;
+    let repo = get_repo_dir();
+    let cfg: serde_json::Value = std::fs::read_to_string(repo.join("wgp_config.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let cands = outputs_candidates(&cfg, &repo);
+    let dir = cands
+        .iter()
+        .find(|p| std::path::Path::new(p).is_dir())
+        .or(cands.first());
+    let Some(dir) = dir else {
         return Ok(
-            serde_json::json!({"ok": false, "error": "deepyPort is required — stop refuses to guess which process to kill."}),
+            serde_json::json!({"ok": false, "error": "No outputs folder configured — generate something first."}),
         );
     };
+    match app.opener().open_path(dir, None::<&str>) {
+        Ok(()) => Ok(serde_json::json!({"ok": true, "path": dir})),
+        Err(e) => Ok(serde_json::json!({"ok": false, "error": e.to_string(), "path": dir})),
+    }
+}
+
+#[tauri::command]
+pub async fn deepy_web_stop(deepy_port: Option<u64>) -> Result<serde_json::Value, String> {
     let mut killed: Vec<u32> = Vec::new();
-    // Tracked child first (only when its cmdline still matches the scope).
-    if let Some(pid) = DEEPY_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
-        if process_cmdline(pid).is_some_and(|cmd| should_stop_deepy_process(&cmd, port)) {
-            kill_pid_deepy(pid);
-            killed.push(pid);
+    // Port-scoped kill when a port is known: tracked child + listeners whose
+    // cmdline matches (this also covers a manually-run server on the port).
+    if let Some(port) = deepy_port {
+        if let Some(pid) = DEEPY_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
+            if process_cmdline(pid).is_some_and(|cmd| should_stop_deepy_process(&cmd, port)) {
+                kill_pid_deepy(pid);
+                killed.push(pid);
+            }
+        }
+        for (pid, _) in listeners_on_port(port) {
+            if killed.contains(&pid) {
+                continue;
+            }
+            if process_cmdline(pid).is_some_and(|cmd| should_stop_deepy_process(&cmd, port)) {
+                kill_pid_deepy(pid);
+                killed.push(pid);
+            }
         }
     }
-    // Port-scoped sweep: listeners on deepyPort whose cmdline matches.
-    for (pid, _) in listeners_on_port(port) {
+    // Signature sweep (any port): launcher-spawned strays the port scope
+    // cannot see — orphans on a shifted port after a serverPort bump, boots
+    // that outlived their card, other launcher instances. Manually-run
+    // servers carry no shim signature and are spared.
+    for pid in launcher_deepy_pids() {
         if killed.contains(&pid) {
             continue;
         }
-        if process_cmdline(pid).is_some_and(|cmd| should_stop_deepy_process(&cmd, port)) {
-            kill_pid_deepy(pid);
-            killed.push(pid);
-        }
+        kill_pid_deepy(pid);
+        killed.push(pid);
     }
+    killed.sort_unstable();
+    killed.dedup();
     std::thread::sleep(std::time::Duration::from_secs(1));
-    let stopped = port_is_free(port);
-    if stopped {
-        clear_deepy_auth();
-        *DEEPY_PID
-            .get_or_init(|| Mutex::new(None))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = None;
+    // With a port: stopped = port free (a foreign occupant keeps it busy and
+    // is correctly reported as not-stopped). Without: no strays left.
+    let stopped = deepy_port
+        .map(port_is_free)
+        .unwrap_or_else(|| launcher_deepy_pids().is_empty());
+    if stopped || !killed.is_empty() {
+        clear_deepy_tracking();
     }
-    Ok(serde_json::json!({"ok": stopped, "stopped": stopped, "port": port, "killed": killed}))
+    Ok(serde_json::json!({"ok": stopped, "stopped": stopped, "port": deepy_port, "killed": killed}))
 }
 
 #[tauri::command]
@@ -1332,6 +1636,25 @@ mod tests {
         assert_eq!(select_lan_ip(&cands), None);
     }
 
+    #[test]
+    fn tri_phone_prefers_real_lan_over_tailscale() {
+        // Tailscale enumerates first on the reporter's PC — the Phone URL
+        // must still be the same-Wi-Fi address.
+        let cands = vec!["100.112.0.220".to_string(), "192.168.1.55".to_string()];
+        assert_eq!(select_lan_ip(&cands).as_deref(), Some("192.168.1.55"));
+        // Tailscale-only: Phone falls back to it (better than nothing).
+        let cands = vec!["100.112.0.220".to_string()];
+        assert_eq!(select_lan_ip(&cands).as_deref(), Some("100.112.0.220"));
+    }
+
+    #[test]
+    fn tri_external_picks_tailscale_ip() {
+        let cands = vec!["192.168.1.55".to_string(), "100.112.0.220".to_string()];
+        assert_eq!(select_external_ip(&cands).as_deref(), Some("100.112.0.220"));
+        let cands = vec!["192.168.1.55".to_string(), "127.0.0.1".to_string()];
+        assert_eq!(select_external_ip(&cands), None);
+    }
+
     // GREEN: arg composition — verbatim upstream flags.
     #[test]
     fn green_same_pc_args_exclude_listen() {
@@ -1360,6 +1683,80 @@ mod tests {
         let other_port = "C:\\Wan2GP\\env\\python.exe wgp.py --deepy-server --server-port 7862";
         assert!(!should_stop_deepy_process(other_port, 7861));
         assert!(!should_stop_deepy_process("notepad.exe", 7861));
+    }
+
+    #[test]
+    fn tri_launcher_sig_matches_only_shim_spawns() {
+        let shim = "C:\\Wan2GP\\env\\python.exe C:\\Users\\x\\AppData\\Local\\Temp\\wan2gp-deepy-bootstrap-18184-1.py wgp.py --deepy-server --server-port 7862 --server-name localhost";
+        assert!(is_launcher_deepy_cmdline(shim));
+        // Manual run: same flags, no shim — sweeps must spare it.
+        let manual = "C:\\Wan2GP\\env\\python.exe wgp.py --deepy-server --server-port 7862";
+        assert!(!is_launcher_deepy_cmdline(manual));
+        // The launcher itself must never match.
+        assert!(!is_launcher_deepy_cmdline(
+            "D:\\dev\\target\\release\\wan2gp-desktop-launcher-tauri.exe"
+        ));
+        // Case-insensitive (cmdline is lowercased before matching).
+        assert!(is_launcher_deepy_cmdline(
+            "WAN2GP-DEEPY-BOOTSTRAP-9.PY WGP.PY --DEEPY-SERVER"
+        ));
+    }
+
+    #[test]
+    fn tri_deepy_sweep_port_covers_standalone() {
+        assert_eq!(deepy_sweep_port(7860, None), Some(7861));
+        assert_eq!(deepy_sweep_port(7861, None), Some(7862));
+        assert_eq!(deepy_sweep_port(7860, Some(7862)), Some(7862));
+        assert_eq!(deepy_sweep_port(7860, Some(7860)), None);
+        assert_eq!(deepy_sweep_port(7860, Some(0)), None);
+        assert_eq!(deepy_sweep_port(7860, Some(99999)), None);
+    }
+
+    #[test]
+    fn tri_session_upgrade_only_when_disabled() {
+        let missing = serde_json::json!({});
+        assert!(needs_session_upgrade(&missing));
+        assert!(needs_session_upgrade(
+            &serde_json::json!({"deepy_multi_session": "disabled"})
+        ));
+        assert!(needs_session_upgrade(
+            &serde_json::json!({"deepy_multi_session": false})
+        ));
+        assert!(needs_session_upgrade(
+            &serde_json::json!({"deepy_multi_session": 0})
+        ));
+        assert!(!needs_session_upgrade(
+            &serde_json::json!({"deepy_multi_session": "dedicated"})
+        ));
+        assert!(!needs_session_upgrade(
+            &serde_json::json!({"deepy_multi_session": "selectable"})
+        ));
+        assert!(!needs_session_upgrade(
+            &serde_json::json!({"deepy_multi_session": true})
+        ));
+    }
+
+    #[test]
+    fn tri_outputs_candidates_prefer_configured() {
+        let repo = std::path::Path::new("C:/Wan2GP");
+        let cfg = serde_json::json!({
+            "save_path": "C:/Wan2GP-Models/outputs",
+            "image_save_path": "",
+            "audio_save_path": "C:/Wan2GP-Models/outputs",
+        });
+        let c = outputs_candidates(&cfg, repo);
+        assert_eq!(
+            c.first().map(String::as_str),
+            Some("C:/Wan2GP-Models/outputs")
+        );
+        assert!(c.iter().any(|p| p.ends_with("outputs")));
+        let rel = serde_json::json!({"save_path": "my-out"});
+        let c2 = outputs_candidates(&rel, repo);
+        assert!(c2
+            .first()
+            .map(String::as_str)
+            .unwrap_or("")
+            .contains("my-out"));
     }
 
     #[test]

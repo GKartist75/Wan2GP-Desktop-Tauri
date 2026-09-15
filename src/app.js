@@ -1414,6 +1414,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       // Launch-time check alone misses updates released mid-session; the
       // renderer-side timers re-poll and re-flag the green dot + changelog.
       startWangpPolling();
+      startDeepyWebPolling();
       startDesktopPolling();
       // (Wan2GP polls immediately at boot; Desktop does its early check
       // 8s after boot inside startDesktopPolling.)
@@ -1808,6 +1809,29 @@ function startMetricsPolling() {
 // hidden (user is in the webview / embedded browser).
 const WANGP_POLL_MS = 30 * 60 * 1000;
 const DESKTOP_POLL_MS = 5 * 60 * 60 * 1000;
+// Deepy Web self-healing poll (15s): the card otherwise only refreshes on
+// user actions, so a slow boot that binds the port late — or a process
+// started/stopped outside the card — leaves Start/Stop lying until the next
+// click. Light status only (no Tailscale probe); skipped while a start flow
+// owns the card.
+function startDeepyWebPolling() {
+  if (window.__deepyWebPollTimer) clearInterval(window.__deepyWebPollTimer);
+  const poll = () => {
+    if (document.hidden) return;
+    const dash = $("dashBody");
+    if (dash && dash.style.display === "none") return;
+    if (!$("deepyWebCard")) return;
+    if (window.__deepyWebStarting) return; // start flow owns the card
+    if (window.__deepyWebPollBusy) return;
+    window.__deepyWebPollBusy = true;
+    refreshDeepyWeb(true)
+      .catch(() => {})
+      .finally(() => {
+        window.__deepyWebPollBusy = false;
+      });
+  };
+  window.__deepyWebPollTimer = setInterval(poll, 15000);
+}
 function startWangpPolling() {
   if (window.__wangpPollTimer) clearInterval(window.__wangpPollTimer);
   const poll = () => {
@@ -6575,6 +6599,22 @@ async function refreshDeepy() {
   const currentMode = status.mode || "disabled";
   const currentEnhancer =
     typeof status.enhancerEnabled === "number" ? status.enhancerEnabled : null;
+  // Sessions section — pre-select from config (backend normalizes; missing
+  // keys fall back to upstream defaults). Launcher default for a fresh
+  // config is the selectable shared workspace.
+  const validSessionMode = ["disabled", "selectable", "dedicated"];
+  const curSessionMode = validSessionMode.includes(status.sessionMode)
+    ? status.sessionMode
+    : "selectable";
+  const curResetMode =
+    status.sessionResetMode === "reset_session"
+      ? "reset_session"
+      : "new_session";
+  const curGalleryMode =
+    status.sessionGalleryMediaMode === "copy" ? "copy" : "link";
+  if ($("deepySessionMode")) $("deepySessionMode").value = curSessionMode;
+  if ($("deepySessionReset")) $("deepySessionReset").value = curResetMode;
+  if ($("deepySessionGallery")) $("deepySessionGallery").value = curGalleryMode;
   // Default engine for Prime is OpenCode (universal providers / external, free).
   // Preserve an already-configured engine; otherwise fall back to OpenCode.
   const selectedEngine = currentUi || "opencode";
@@ -6755,10 +6795,16 @@ async function refreshDeepy() {
     ).value;
     applyBtn.disabled = true;
     applyBtn.textContent = "applying...";
+    const sessions = {
+      multi_session: ($("deepySessionMode") || {}).value || "selectable",
+      reset_mode: ($("deepySessionReset") || {}).value || "new_session",
+      gallery_media_mode: ($("deepySessionGallery") || {}).value || "link",
+    };
     const r = await window.w2gp.deepySet(
       mode,
       eng,
       enh ? parseInt(enh, 10) : null,
+      sessions,
     );
     applyBtn.textContent = "Apply";
     if (r && r.ok) {
@@ -6768,7 +6814,17 @@ async function refreshDeepy() {
       statusMsg.textContent = "";
       statusMsg.append(s);
       showToast("✓ " + (r.message || "Deepy updated"));
-      refreshDeepy();
+      appendLog(
+        "[Deepy] ✓ " +
+          (r.message || "Deepy mode: " + mode) +
+          " (sessions: " +
+          sessions.multi_session +
+          "/" +
+          sessions.reset_mode +
+          "/" +
+          sessions.gallery_media_mode +
+          ")",
+      );
     } else {
       const s = document.createElement("span");
       s.style.color = "#F87171";
@@ -6776,6 +6832,9 @@ async function refreshDeepy() {
       statusMsg.textContent = "";
       statusMsg.append(s);
       showToast("✗ " + (r && r.error ? r.error : "update failed"));
+      appendLog(
+        "[Deepy] ✗ update failed: " + ((r && r.error) || "update failed"),
+      );
       applyBtn.disabled = false;
     }
   };
@@ -6871,13 +6930,18 @@ async function deepyWebCertFlow(action) {
       );
       if (on) on.checked = true;
       showToast("✓ HTTPS cert ready" + (r.guide ? " — " + r.guide : ""));
-    } else showToast("✗ Cert: " + ((r && r.error) || "failed"));
+      appendLog("[Deepy] ✓ HTTPS cert ready (" + action + ")");
+    } else {
+      showToast("✗ Cert: " + ((r && r.error) || "failed"));
+      appendLog("[Deepy] ✗ cert failed: " + ((r && r.error) || "failed"));
+    }
   } catch (e) {
     showToast("✗ " + errText(e));
+    appendLog("[Deepy] ✗ cert error: " + errText(e));
   }
   refreshDeepyWeb();
 }
-async function refreshDeepyWeb() {
+async function refreshDeepyWeb(light = false) {
   const statusEl = $("deepyWebStatus");
   if (!statusEl) return;
   const samePcEl = $("deepyWebSamePcUrl");
@@ -6967,12 +7031,33 @@ async function refreshDeepyWeb() {
   } else {
     const b = document.createElement("strong");
     b.textContent = "Start Deepy Web";
-    statusEl.append("○ Stopped — pick a mode under Advanced, then ", b, ".");
+    statusEl.append("○ Stopped — pick a mode above, then ", b, ".");
     if (urls.clashNotice) statusEl.append(" " + urls.clashNotice);
   }
   if (samePcEl) samePcEl.textContent = urls.samePc || "—";
   if (phoneEl)
     phoneEl.textContent = urls.phone || "unavailable — see hint below";
+  // External row: Tailscale IPv4 URL for off-LAN access. Hidden when
+  // Tailscale is not active (backend sends external: null).
+  const extRow = $("deepyWebExternalRow");
+  const extEl = $("deepyWebExternalUrl");
+  const extHint = $("deepyWebExternalHint");
+  if (extEl) extEl.textContent = urls.external || "—";
+  if (extRow) extRow.style.display = urls.external ? "" : "none";
+  if (extHint) {
+    if (urls.external) {
+      extHint.style.display = "";
+      extHint.textContent =
+        deepyWebMode() === "lan"
+          ? "External via Tailscale IPv4 " +
+            (urls.externalIp || "") +
+            " — reachable from outside your LAN (Tailscale on both ends). Phone-LAN mode serves it."
+          : "External URL is shown for convenience — start in Phone-LAN mode to serve it.";
+    } else {
+      extHint.style.display = "none";
+      extHint.textContent = "";
+    }
+  }
   if (phoneHint) {
     if (urls.phone) {
       phoneHint.textContent =
@@ -6986,7 +7071,7 @@ async function refreshDeepyWeb() {
     }
   }
   if (startBtn) startBtn.disabled = !!s.running;
-  if (stopBtn) stopBtn.disabled = !s.running;
+  if (stopBtn) stopBtn.disabled = false; // always clickable: kills orphans even when the card thinks Stopped.
   renderDeepyWebIpList(urls);
   try {
     const banner = $("deepyWebAuthBanner");
@@ -7064,7 +7149,7 @@ async function refreshDeepyWeb() {
       }
     } catch {}
   } catch {}
-  refreshDeepyWebTailscale().catch(() => {});
+  if (!light) refreshDeepyWebTailscale().catch(() => {});
 }
 async function refreshDeepyWebTailscale() {
   const statusEl = $("deepyWebTailscaleStatus");
@@ -7150,6 +7235,16 @@ async function deepyWebStartFlow() {
   } catch {}
   if (statusEl) statusEl.textContent = "Starting Deepy Web…";
   if (startBtn) startBtn.disabled = true;
+  appendLog(
+    "[Deepy] Starting Deepy Web (" +
+      mode +
+      ") on :" +
+      (port || "auto") +
+      " auth=" +
+      authMode +
+      (httpsOn ? " https=on" : "") +
+      "…",
+  );
   try {
     const pre = await window.w2gp.deepyWebPreflight(mode);
     if (!pre || !pre.ok) {
@@ -7164,10 +7259,12 @@ async function deepyWebStartFlow() {
         statusEl.append(e);
       }
       showToast("✗ Deepy Web preflight: " + errs);
+      appendLog("[Deepy] ✗ preflight failed: " + errs);
       refreshDeepyWeb();
       return;
     }
     if (pre.clashNotice && statusEl) statusEl.textContent = pre.clashNotice;
+    window.__deepyWebStarting = true; // light poll stands down until boot resolves
     const r = await window.w2gp.deepyWebStart(mode, port, authMode, authFixed, {
       enabled: httpsOn,
       cert: httpsPaths.cert,
@@ -7175,6 +7272,12 @@ async function deepyWebStartFlow() {
     });
     if (r && r.ok) {
       showToast("✓ Deepy Web running on :" + r.port);
+      const extUrl = (r.urls && r.urls.external) || "";
+      appendLog(
+        "[Deepy] ✓ Deepy Web running on :" +
+          r.port +
+          (extUrl ? " — external " + extUrl : ""),
+      );
       try {
         const pwBox = $("deepyWebAuthPassword");
         const fixedInput = $("deepyWebAuthFixed");
@@ -7237,23 +7340,29 @@ async function deepyWebStartFlow() {
         statusEl.append(e);
       }
       showToast("✗ " + msg);
+      appendLog("[Deepy] ✗ start failed: " + msg);
     }
   } catch (e) {
     if (statusEl) statusEl.textContent = "✗ " + errText(e);
     showToast("✗ " + errText(e));
+    appendLog("[Deepy] ✗ start error: " + errText(e));
   }
+  window.__deepyWebStarting = false;
   refreshDeepyWeb();
 }
 async function deepyWebStopFlow() {
-  const port = _deepyWeb.port || deepyWebPortArg();
-  if (!port) {
-    showToast("No Deepy Web port known — nothing to stop.");
-    return;
-  }
+  // Null port is intentional: the backend still sweeps launcher-spawned
+  // strays on any port, so orphans die even when no port is known.
+  const port = _deepyWeb.port || deepyWebPortArg() || null;
   try {
     const r = await window.w2gp.deepyWebStop(port);
-    if (r && (r.ok || r.stopped)) {
-      showToast("■ Deepy Web stopped");
+    const killed = (r && r.killed) || [];
+    if (r && (r.ok || r.stopped || killed.length)) {
+      const stopMsg = killed.length
+        ? `■ Deepy Web stopped (${killed.length} process${killed.length === 1 ? "" : "es"})`
+        : "■ Deepy Web stopped";
+      showToast(stopMsg);
+      appendLog("[Deepy] " + stopMsg);
       try {
         const pwBox = $("deepyWebAuthPassword");
         if (pwBox) {
@@ -7261,9 +7370,13 @@ async function deepyWebStopFlow() {
           pwBox.textContent = "";
         }
       } catch {}
-    } else showToast("✗ Stop failed: " + ((r && r.error) || "unknown"));
+    } else {
+      showToast("✗ Stop failed: " + ((r && r.error) || "unknown"));
+      appendLog("[Deepy] ✗ stop failed: " + ((r && r.error) || "unknown"));
+    }
   } catch (e) {
     showToast("✗ " + errText(e));
+    appendLog("[Deepy] ✗ stop error: " + errText(e));
   }
   refreshDeepyWeb();
 }
@@ -7279,11 +7392,23 @@ function deepyWebCopyUrl(text) {
 }
 function deepyWebCopy(which) {
   const urls = _deepyWeb.urls || {};
-  deepyWebCopyUrl(which === "phone" ? urls.phone : urls.samePc);
+  deepyWebCopyUrl(
+    which === "phone"
+      ? urls.phone
+      : which === "external"
+        ? urls.external
+        : urls.samePc,
+  );
 }
 function deepyWebQr(which) {
   const urls = _deepyWeb.urls || {};
-  deepyWebQrUrl(which === "phone" ? urls.phone : urls.samePc);
+  deepyWebQrUrl(
+    which === "phone"
+      ? urls.phone
+      : which === "external"
+        ? urls.external
+        : urls.samePc,
+  );
 }
 function deepyWebQrUrl(text) {
   if (!text) {
@@ -7320,14 +7445,21 @@ function renderDeepyWebIpList(urls) {
   if (!box) return;
   box.textContent = "";
   const rows = (urls && urls.lanIps) || [];
+  // The External row already shows the Tailscale URL — listing it again
+  // here duplicates it, so skip tailscale rows while External is shown.
+  const hideTailscale = !!(urls && urls.external);
   for (const r of rows) {
     if (!r || !r.url) continue;
+    const isTs = r.kind === "tailscale";
+    if (isTs && hideTailscale) continue;
     const row = document.createElement("div");
     row.className = "deepyweb-url-row";
     const label = document.createElement("span");
     label.className = "deepy-sub-label";
-    label.textContent =
-      (r.kind === "tailscale" ? "Tailscale" : "LAN") + " · " + (r.ip || "");
+    // Short kind label only (the URL itself carries the IP) so the shared
+    // grid column stays aligned across all address rows.
+    label.textContent = isTs ? "Tailscale" : "LAN";
+    label.title = r.ip || "";
     const code = document.createElement("code");
     code.className = "deepyweb-url";
     code.textContent = r.url;
@@ -7347,14 +7479,29 @@ function renderDeepyWebIpList(urls) {
 }
 $("deepyWebStartBtn")?.addEventListener("click", deepyWebStartFlow);
 $("deepyWebStopBtn")?.addEventListener("click", deepyWebStopFlow);
+$("deepyWebOutputsBtn")?.addEventListener("click", async () => {
+  try {
+    const r = await window.w2gp.deepyWebOpenOutputs().catch(() => null);
+    if (r && r.ok) showToast("✓ Outputs folder: " + (r.path || ""));
+    else showToast("✗ Outputs folder: " + ((r && r.error) || "failed"));
+  } catch (e) {
+    showToast("✗ " + errText(e));
+  }
+});
 $("deepyWebSamePcCopy")?.addEventListener("click", () =>
   deepyWebCopy("same-pc"),
 );
 $("deepyWebPhoneCopy")?.addEventListener("click", () => deepyWebCopy("phone"));
+$("deepyWebExternalCopy")?.addEventListener("click", () =>
+  deepyWebCopy("external"),
+);
+$("deepyWebExternalQr")?.addEventListener("click", () =>
+  deepyWebQr("external"),
+);
 $("deepyWebSamePcQr")?.addEventListener("click", () => deepyWebQr("same-pc"));
 $("deepyWebPhoneQr")?.addEventListener("click", () => deepyWebQr("phone"));
 function deepyWebGenPassphrase(len) {
-  const n = Math.min(64, Math.max(8, parseInt(len, 10) || 16));
+  const n = Math.min(64, Math.max(4, parseInt(len, 10) || 16));
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
   const rnd = new Uint32Array(n);
   crypto.getRandomValues(rnd);

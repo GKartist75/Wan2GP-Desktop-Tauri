@@ -284,7 +284,8 @@ pub fn run() {
             deepy_web::deepy_web_stop,
             deepy_web::deepy_web_status,
             deepy_web::deepy_web_cert,
-            deepy_web::deepy_web_tailscale
+            deepy_web::deepy_web_tailscale,
+            deepy_web::deepy_web_open_outputs
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
