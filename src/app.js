@@ -1415,7 +1415,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       // renderer-side timers re-poll and re-flag the green dot + changelog.
       startWangpPolling();
       startDesktopPolling();
-      // immediate Desktop check removed — main.js does the 5s launch check (single API hit)
+      // (Wan2GP polls immediately at boot; Desktop does its early check
+      // 8s after boot inside startDesktopPolling.)
       // D1: silent settings auto-scan (issue #7 class) — out-of-range dropdown
       // values make Wan2GP reject the whole settings form on save; repair them
       // in the background so the user never hits the "can't save" wall. Writes
@@ -1842,11 +1843,12 @@ function startDesktopPolling() {
   };
   window.__desktopPollTimer = setInterval(poll, DESKTOP_POLL_MS);
   // One early check shortly after boot — the 5h interval alone means a fresh
-  // release sits unknown for hours (seen with v0.1.3). Delayed, not immediate,
-  // so backend/network are up and the boot sequence stays undisturbed.
+  // release sits unknown for hours (seen with v0.1.3). Slightly delayed (not
+  // immediate) so backend/network are up and the boot sequence stays
+  // undisturbed; this timer is the only boot-time self-check.
   if (!window.__desktopBootCheckDone) {
     window.__desktopBootCheckDone = true;
-    setTimeout(poll, 30000);
+    setTimeout(poll, 8000);
   }
   if (!window.__desktopVisBound) {
     window.__desktopVisBound = () => {
@@ -4767,6 +4769,19 @@ function setLaunchButtonsInstalled(installed) {
   if (hint) hint.style.display = installed ? "none" : "block";
 }
 
+// ── Yellow first-boot bar is shared by all 5 launch paths — refcount it so a
+// failed side-click during another pending boot can't hide it out from
+// under the real boot (stranded "Starting…" with no bar). Function
+// declarations hoist, so later handlers can call these.
+let __launchBarRefs = 0;
+function showLaunchInfo() {
+  __launchBarRefs += 1;
+  $("launchInfo")?.classList.remove("hidden");
+}
+function hideLaunchInfo() {
+  __launchBarRefs = Math.max(0, __launchBarRefs - 1);
+  if (__launchBarRefs === 0) $("launchInfo")?.classList.add("hidden");
+}
 // ── Launch in Browser (uses the user's chosen default browser) ──
 // Opens the browser once the server is up (immediately if already running,
 // otherwise when the backend reports ready — never a dead URL first).
@@ -4798,7 +4813,7 @@ async function openBrowserView(url, noGpu) {
     $("browserNoGpuBtn").style.display = "none";
     $("termNoGpuBtn").style.display = "none";
   }
-  $("launchInfo").classList.add("hidden");
+  hideLaunchInfo();
 }
 $("browserBtn").addEventListener("click", async () => {
   // Already running in browser mode → just re-open the URL (don't re-spawn the server).
@@ -4809,7 +4824,7 @@ $("browserBtn").addEventListener("click", async () => {
   const btn = $("browserBtn");
   btn.disabled = true;
   btn.textContent = "Starting...";
-  $("launchInfo").classList.remove("hidden");
+  showLaunchInfo();
   appendLog("[*] Starting Wan2GP — watch the console below…\n");
   try {
     const result = await window.w2gp.launch();
@@ -4823,7 +4838,7 @@ $("browserBtn").addEventListener("click", async () => {
     armPendingTimeout();
   } catch (e) {
     appendLog(`[LAUNCH ERROR] ${errText(e)}`);
-    $("launchInfo").classList.add("hidden");
+    hideLaunchInfo();
     btn.disabled = false;
     if (!browserRunning) btn.textContent = "Browser";
   }
@@ -4840,7 +4855,7 @@ $("browserNoGpuBtn").addEventListener("click", async () => {
   const btn = $("browserNoGpuBtn");
   btn.disabled = true;
   btn.textContent = "Starting...";
-  $("launchInfo").classList.remove("hidden");
+  showLaunchInfo();
   try {
     const result = await window.w2gp.launch();
     currentUrl = result.url;
@@ -4853,7 +4868,7 @@ $("browserNoGpuBtn").addEventListener("click", async () => {
     armPendingTimeout();
   } catch (e) {
     appendLog(`[LAUNCH ERROR] ${errText(e)}`);
-    $("launchInfo").classList.add("hidden");
+    hideLaunchInfo();
     btn.disabled = false;
     if (!browserRunning) btn.textContent = "Browser No-GPU";
   }
@@ -4868,7 +4883,7 @@ $("termBtn").addEventListener("click", async () => {
   const btn = $("termBtn");
   btn.disabled = true;
   btn.textContent = "Starting...";
-  $("launchInfo").classList.remove("hidden");
+  showLaunchInfo();
   try {
     const result = await window.w2gp.launch("terminal");
     currentUrl = result.url;
@@ -4881,10 +4896,10 @@ $("termBtn").addEventListener("click", async () => {
     $("browserBtn").style.display = "none";
     $("browserNoGpuBtn").style.display = "none";
     $("termNoGpuBtn").style.display = "none";
-    $("launchInfo").classList.add("hidden");
+    hideLaunchInfo();
   } catch (e) {
     appendLog(`[LAUNCH ERROR] ${errText(e)}`);
-    $("launchInfo").classList.add("hidden");
+    hideLaunchInfo();
   } finally {
     $("termBtn").disabled = false;
     if (!browserRunning) $("termBtn").textContent = "Terminal";
@@ -4904,7 +4919,7 @@ $("termNoGpuBtn").addEventListener("click", async () => {
   const btn = $("termNoGpuBtn");
   btn.disabled = true;
   btn.textContent = "Starting...";
-  $("launchInfo").classList.remove("hidden");
+  showLaunchInfo();
   try {
     const result = await window.w2gp.launch("terminal-nogpu");
     currentUrl = result.url;
@@ -4917,10 +4932,10 @@ $("termNoGpuBtn").addEventListener("click", async () => {
     $("browserBtn").style.display = "none";
     $("browserNoGpuBtn").style.display = "none";
     $("termBtn").style.display = "none";
-    $("launchInfo").classList.add("hidden");
+    hideLaunchInfo();
   } catch (e) {
     appendLog(`[LAUNCH ERROR] ${errText(e)}`);
-    $("launchInfo").classList.add("hidden");
+    hideLaunchInfo();
   } finally {
     $("termNoGpuBtn").disabled = false;
     if (!browserRunning) $("termNoGpuBtn").textContent = "Terminal No-GPU";
@@ -4982,6 +4997,7 @@ function armPendingTimeout() {
       appendLog(
         "[!] Wan2GP did not report ready — check the console above for errors.",
       );
+      hideLaunchInfo();
       $("appBtn").disabled = false;
       setAppLaunchLabel();
       ["browserBtn", "browserNoGpuBtn", "termNoGpuBtn"].forEach((id) => {
@@ -5052,7 +5068,7 @@ async function openDesktopView(url, fresh) {
       if (_nativeAlive) reshowNativeView();
       $("dashBody").style.display = "none";
       $("webviewContainer").classList.remove("hidden");
-      $("launchInfo").classList.add("hidden");
+      hideLaunchInfo();
       showWebviewUI();
       updateLed("running");
       updateFtStatus("running");
@@ -5076,7 +5092,7 @@ async function openDesktopView(url, fresh) {
     );
     $("dashBody").style.display = "none";
     $("webviewContainer").classList.remove("hidden");
-    $("launchInfo").classList.add("hidden");
+    hideLaunchInfo();
     showWebviewUI();
     updateLed("running");
     updateFtStatus("running");
@@ -5119,7 +5135,7 @@ $("appBtn").addEventListener("click", async () => {
   }
   $("appBtn").disabled = true;
   $("appBtn").textContent = "Starting...";
-  $("launchInfo").classList.remove("hidden");
+  showLaunchInfo();
   appendLog("[*] Starting Wan2GP — watch the console below…\n");
   try {
     const result = await window.w2gp.launchWebview();
@@ -5133,7 +5149,7 @@ $("appBtn").addEventListener("click", async () => {
     $("appBtn").textContent = "Starting… (see console)";
     armPendingTimeout();
   } catch (e) {
-    $("launchInfo").classList.add("hidden");
+    hideLaunchInfo();
     appendLog(`[LAUNCH ERROR] ${errText(e)}`);
     $("appBtn").disabled = false;
     setAppLaunchLabel();
@@ -7617,6 +7633,12 @@ window.w2gp.onUpdateStatus((status) => {
     case "up-to-date":
       setDesktopUpdateIndicator(false);
       $("updateText").textContent = "Up to date ✓";
+      // Console trace so the background boot check (30s + every 5h) leaves
+      // evidence instead of a 3s banner flash that is easy to miss.
+      try {
+        const vv = $("appVersionTag")?.textContent?.trim();
+        appendLog("[*] Launcher " + (vv ? vv + " " : "") + "is up to date.");
+      } catch {}
       $("updateDownloadBtn").classList.add("hidden");
       $("updateActions").classList.remove("hidden");
       $("updateProgress").classList.add("hidden");
