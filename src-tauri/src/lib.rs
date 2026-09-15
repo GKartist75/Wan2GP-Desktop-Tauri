@@ -1,6 +1,7 @@
 mod amd;
 mod base;
 mod config;
+mod deepy_web;
 mod electron;
 mod features;
 mod hw;
@@ -277,7 +278,14 @@ pub fn run() {
             troubleshoot::troubleshoot_triton_test,
             troubleshoot::troubleshoot_triton_clear,
             troubleshoot::troubleshoot_gpu_compute,
-            install::preflight_check
+            install::preflight_check,
+            deepy_web::deepy_web_preflight,
+            deepy_web::deepy_web_start,
+            deepy_web::deepy_web_stop,
+            deepy_web::deepy_web_status,
+            deepy_web::deepy_web_cert,
+            deepy_web::deepy_web_tailscale,
+            deepy_web::deepy_web_open_outputs
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

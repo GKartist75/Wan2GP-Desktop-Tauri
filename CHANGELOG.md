@@ -4,6 +4,15 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+## [0.6.9] — 2026-09-15
+
+- Deepy panel gains a Sessions section (mirrors Ask Deepy → Settings → Sessions): multisessions mode (Disabled / selectable / dedicated workspace), reset behavior, gallery media (keep links vs copy into session) — saved via Apply into `wgp_config.json`; the launcher default is now the selectable shared workspace (one outputs folder) instead of dedicated
+- Deepy Web Addresses gains an External row: the Tailscale IPv4 URL (e.g. `http://100.112.0.220:7862`) with Copy + QR for off-LAN access — shown only while Tailscale is active, and the per-IP list no longer duplicates it; address rows share one grid so labels/URLs/buttons align in columns
+- Phone URL now prefers the real LAN address (it picked the Tailscale IP when that enumerated first); Tailscale-only setups still fall back to it
+- Deepy and Deepy Web actions leave `[Deepy]` traces in the Console (start/stop/preflight/cert/apply); backend lifecycle lines retagged `[Deepy]`
+- Passphrase generator minimum is 4 characters (was 8)
+- Deepy Web no longer outlives the launcher: deepyPort joins the app-close sweep and fast shutdown cleanup; Outputs-folder opener command added
+
 ## [0.6.8] — 2026-09-15
 
 - Dependency drift after update is now unmissable (issue #23): a toast plus a persistent dashboard banner with a working Restore-now action, instead of a single log line that was easy to miss

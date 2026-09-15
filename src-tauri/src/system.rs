@@ -1546,6 +1546,7 @@ pub fn on_system_theme_change() -> serde_json::Value {
 // launcher opened.
 pub(crate) fn shutdown_cleanup_fast() {
     crate::launch::stop_wangp_fast();
+    crate::deepy_web::stop_deepy_fast();
     crate::features::stop_opencode_fast();
 }
 pub(crate) fn shutdown_cleanup_full(app: &tauri::AppHandle) {

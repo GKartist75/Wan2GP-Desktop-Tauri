@@ -64,6 +64,17 @@ The home screen. Top to bottom:
 
 **Deepy card** — the WanGP assistant. *LLM Engines* lists backends (Claude Code CLI,
 OpenCode, …) with *↻ Refresh* to re-check status; pick one and press *Apply*.
+*Sessions* below it mirrors Ask Deepy → Settings → Sessions: multisessions mode
+(Disabled / selectable Workspace / dedicated Workspace — selectable is the
+launcher default, one shared outputs folder), reset behavior, gallery media
+(keep links vs copy into session). Per-session workspace choice stays inside WanGP.
+
+**Deepy Web card** — phone-friendly Deepy in a second process. *1 · Addresses*:
+Same-PC, Phone (same Wi-Fi), plus an *External* row with the Tailscale IPv4 URL
+(Copy + QR) for off-LAN access — needs Tailscale on both ends and Phone-LAN mode
+to serve it. *2 · Auth*: fixed passphrase (generator allows length 4–64, remember
+30 days optional). *3 · Connection*: port + LAN HTTPS (bring/create cert, CA guide).
+All actions log `[Deepy]` lines to the Console.
 
 **DLSS 5 card** — optional NVIDIA upsampler runtimes. *Install DLSS 5…* opens a
 confirmation (Cancel / Install).

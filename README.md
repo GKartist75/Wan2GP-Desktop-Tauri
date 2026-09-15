@@ -209,6 +209,10 @@ Configure without editing JSON: **Settings → Deepy** or the Dashboard card.
 
 Switching live-re-renders the selector; **Apply** writes a consistent `wgp_config.json` (with backup). Also editable inside WanGP: *Configuration → Prompt Enhancer / Deepy*.
 
+**Sessions** (same card, below the engine picker): multisessions mode — *Disabled* (one temporary chat), *selectable Workspace* (sessions share one workspace/outputs folder, the launcher default), *dedicated Workspace* (each session owns its gallery) — plus reset behavior and gallery media (keep links vs copy files into the session). Saved via the same **Apply**; per-session workspace choice stays inside WanGP.
+
+**Deepy Web** card: Same-PC / Phone-LAN addresses plus an **External** row (Tailscale IPv4 URL with Copy + QR) for off-LAN access — Tailscale on both ends, Phone-LAN mode serves it. Auth passphrase generator now allows length 4–64. All Deepy actions log `[Deepy]` lines to the Console.
+
 ![Deepy Prime — local Qwen3.8 + remote LLM engines with install and server controls](screenshots/deepy-prime-engines.png)
 
 ![Deepy Zero — local Qwen model picker (Prompt Enhancer)](screenshots/deepy-zero-models.png)
@@ -243,7 +247,9 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.6.8**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.8) *(latest)* — dependency drift after update is unmissable (toast + persistent banner with Restore, issue #23), hover tooltips on all 150 buttons, live uninstall progress, GPU Kernel Wheels split into Update (upstream + launcher fixes) vs Restore (pure upstream set), faster boot update checks with console traces, refcounted first-boot bar.
+- [**v0.6.9**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.9) *(latest)* — Deepy Sessions section (multisessions/reset/gallery-media, selectable-workspace default), Deepy Web External (Tailscale IPv4) URL row with Copy + QR, Phone URL prefers real LAN, `[Deepy]` console traces, passphrase minimum 4, Deepy Web cleaned up on app close.
+
+- [**v0.6.8**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.8) — dependency drift after update is unmissable (toast + persistent banner with Restore, issue #23), hover tooltips on all 150 buttons, live uninstall progress, GPU Kernel Wheels split into Update (upstream + launcher fixes) vs Restore (pure upstream set), faster boot update checks with console traces, refcounted first-boot bar.
 
 - [**v0.6.7**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.7) — updater no longer dies when an untracked file collides with an incoming upstream add (byte-identical strays are removed so the merge lands them tracked, differing ones move aside to `.launcher-update-backup/` — nothing deleted; the pull error now names this cause).
 

@@ -556,8 +556,26 @@
         configSave: (cfg) => call("config_save", { cfg }),
         deepyStatus: () => call("deepy_status"),
         deepyActivate: (e) => call("deepy_activate", { engine: e }),
-        deepySet: (mode, engine, enhancer) =>
-            call("deepy_set", { mode, engine, enhancer }),
+        deepySet: (mode, engine, enhancer, sessions) =>
+            call("deepy_set", { mode, engine, enhancer, sessions }),
+        deepyWebPreflight: (mode) => call("deepy_web_preflight", { mode }),
+        deepyWebStart: (mode, deepyPort, authMode, authFixed, https) =>
+            call("deepy_web_start", {
+                mode,
+                deepyPort,
+                authMode,
+                authFixed,
+                httpsEnabled: !!(https && https.enabled),
+                httpsCert: (https && https.cert) || "",
+                httpsKey: (https && https.key) || "",
+                httpsPort: (https && https.port) || null,
+            }),
+        deepyWebStop: (deepyPort) => call("deepy_web_stop", { deepyPort }),
+        deepyWebStatus: (deepyPort) => call("deepy_web_status", { deepyPort }),
+        deepyWebCert: (action, certPath, keyPath) =>
+            call("deepy_web_cert", { action, certPath, keyPath }),
+        deepyWebTailscale: () => call("deepy_web_tailscale"),
+        deepyWebOpenOutputs: () => call("deepy_web_open_outputs", {}),
         llmEnginesList: () => call("llm_engines_list"),
         llmEngineInstall: (e) => call("llm_engine_install", { engine: e }),
         llmEngineUninstall: (e) => call("llm_engine_uninstall", { engine: e }),

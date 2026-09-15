@@ -517,6 +517,12 @@ body {
 .deepy-enhancer-note { font-size: 0.5rem; color: var(--text-tertiary); font-style: italic; }
 .deepy-enhancer-label { font-weight: 600; color: var(--text-primary); }
 .deepy-actions { display: flex; gap: 8px; margin-top: 10px; }
+.deepyweb-urls { display: flex; flex-direction: column; gap: 6px; }
+/* Address rows share one grid so labels / URLs / buttons line up in columns
+   across Same-PC, Phone, External and the per-IP list rows. */
+.deepyweb-url-row { display: grid; grid-template-columns: 78px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; }
+.deepyweb-url-row .deepy-sub-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.deepyweb-url { font-size: 0.62rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; word-break: break-all; min-width: 0; }
 
 /* ── DLSS consent box (outer overlay comes from the shared .modal-overlay
    system below — hidden via the `hidden` class like migrationModal). ── */

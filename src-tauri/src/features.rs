@@ -800,13 +800,81 @@ pub fn deepy_status() -> serde_json::Value {
         .and_then(|x| x.as_object())
         .map(|o| o.keys().cloned().collect())
         .unwrap_or_default();
-    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines})
+    // Sessions section (upstream shared/deepy/config.py keys) — normalized
+    // with upstream defaults so the launcher panel can pre-select.
+    let session_mode =
+        normalize_session_mode(v.get("deepy_multi_session").and_then(|x| x.as_str()));
+    let reset_mode = v
+        .get("deepy_session_reset_mode")
+        .and_then(|x| x.as_str())
+        .map(normalize_session_reset_mode)
+        .unwrap_or_else(|| "new_session".into());
+    let gallery_mode = v
+        .get("deepy_session_gallery_media_mode")
+        .and_then(|x| x.as_str())
+        .map(normalize_session_gallery_mode)
+        .unwrap_or_else(|| "link".into());
+    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode})
+}
+/// Upstream `normalize_deepy_session_mode` (shared/deepy/config.py):
+/// disabled/selectable/dedicated, anything else falls back to disabled.
+fn normalize_session_mode(value: Option<&str>) -> String {
+    match value.map(|s| s.trim().to_lowercase()).as_deref() {
+        Some("disabled" | "selectable" | "dedicated") => value
+            .map(|s| s.trim().to_lowercase())
+            .unwrap_or_else(|| "disabled".into()),
+        _ => "disabled".into(),
+    }
+}
+/// Upstream `normalize_deepy_session_reset_mode`: reset_session or new_session.
+fn normalize_session_reset_mode(value: &str) -> String {
+    if value.trim().to_lowercase() == "reset_session" {
+        "reset_session".into()
+    } else {
+        "new_session".into()
+    }
+}
+/// Upstream `normalize_deepy_session_gallery_media_mode`: copy or link.
+fn normalize_session_gallery_mode(value: &str) -> String {
+    if value.trim().to_lowercase() == "copy" {
+        "copy".into()
+    } else {
+        "link".into()
+    }
+}
+/// Resolve a session pref: an explicitly provided valid value wins, then the
+/// existing config value, then the launcher default. `None` (field absent)
+/// always preserves existing config so an engine-only Apply never clobbers
+/// the Sessions section.
+fn resolve_session_pref(
+    provided: Option<&str>,
+    existing: Option<&str>,
+    normalize: fn(&str) -> String,
+    upstream_default: &str,
+    launcher_default: Option<&str>,
+) -> String {
+    if let Some(p) = provided {
+        let n = normalize(p);
+        // A provided value that normalizes away from itself is invalid —
+        // fall through to existing/default instead of writing garbage.
+        if p.trim().to_lowercase() == n || (n == upstream_default && p.trim().is_empty()) {
+            return n;
+        }
+    }
+    if let Some(e) = existing {
+        let n = normalize(e);
+        if e.trim().to_lowercase() == n {
+            return n;
+        }
+    }
+    launcher_default.unwrap_or(upstream_default).into()
 }
 #[tauri::command]
 pub fn deepy_set(
     mode: String,
     engine: Option<String>,
     enhancer: Option<serde_json::Value>,
+    sessions: Option<serde_json::Value>,
 ) -> serde_json::Value {
     eprintln!("[deepy_set] mode={mode} engine={engine:?} enhancer={enhancer:?}");
     let m = mode.trim().to_lowercase();
@@ -842,6 +910,33 @@ pub fn deepy_set(
     };
     v["deepy_enabled"] = serde_json::json!(enabled);
     v["deepy_type"] = serde_json::json!(dtype);
+    // Sessions section: explicit choice wins, otherwise keep the existing
+    // config value, otherwise the launcher default (selectable workspace —
+    // one shared outputs folder; upstream default is disabled).
+    let sess = sessions.as_ref();
+    let sess_str = |key: &str| sess.and_then(|s| s.get(key)).and_then(|x| x.as_str());
+    let cfg_str = |key: &str| v.get(key).and_then(|x| x.as_str());
+    let multi = resolve_session_pref(
+        sess_str("multi_session"),
+        cfg_str("deepy_multi_session"),
+        |s| normalize_session_mode(Some(s)),
+        "disabled",
+        Some("selectable"),
+    );
+    let reset = resolve_session_pref(
+        sess_str("reset_mode"),
+        cfg_str("deepy_session_reset_mode"),
+        normalize_session_reset_mode,
+        "new_session",
+        None,
+    );
+    let gallery = resolve_session_pref(
+        sess_str("gallery_media_mode"),
+        cfg_str("deepy_session_gallery_media_mode"),
+        normalize_session_gallery_mode,
+        "link",
+        None,
+    );
     // enhancer id — JS sends number (3) or null, handle both string/number.
     // Enforce valid mode↔id pairs like Electron's resolveEnhancerId: Zero only
     // runs on Qwen (3/4/5) — a Llama id (1/2) with Zero is the tokenizer-crash
@@ -940,12 +1035,12 @@ pub fn deepy_set(
             ("deepy_read_everywhere", serde_json::json!(false)),
             ("deepy_auto_cancel_queue_tasks", serde_json::json!(true)),
             ("deepy_separate_requests_with_empty_line", serde_json::json!(true)),
-            // v12.72 sessions feature (shared/deepy/config.py defaults) — write
-            // them so pre-existing configs can't skew-missing when wgp.py
-            // expects the keys.
-            ("deepy_session_reset_mode", serde_json::json!("new_session")),
-            ("deepy_session_gallery_media_mode", serde_json::json!("link")),
-            ("deepy_multi_session", serde_json::json!(false)),
+            // v12.72 sessions feature — resolved above (explicit choice >
+            // existing config > launcher default) so pre-existing configs
+            // can't skew-missing when wgp.py expects the keys.
+            ("deepy_session_reset_mode", serde_json::json!(reset)),
+            ("deepy_session_gallery_media_mode", serde_json::json!(gallery)),
+            ("deepy_multi_session", serde_json::json!(multi)),
         ] { v[k] = val; }
     } else {
         let eid = enh_id.unwrap_or(1);
@@ -991,13 +1086,13 @@ pub fn deepy_set(
                     "deepy_separate_requests_with_empty_line",
                     serde_json::json!(true),
                 ),
-                // v12.72 sessions feature — same defaults as the Prime preset.
-                ("deepy_session_reset_mode", serde_json::json!("new_session")),
+                // v12.72 sessions feature — same resolution as Prime preset.
+                ("deepy_session_reset_mode", serde_json::json!(reset)),
                 (
                     "deepy_session_gallery_media_mode",
-                    serde_json::json!("link"),
+                    serde_json::json!(gallery),
                 ),
-                ("deepy_multi_session", serde_json::json!(false)),
+                ("deepy_multi_session", serde_json::json!(multi)),
             ] {
                 v[k] = val;
             }
@@ -1021,7 +1116,7 @@ pub fn deepy_set(
 }
 #[tauri::command]
 pub fn deepy_activate(engine: String) -> serde_json::Value {
-    deepy_set("prime".into(), Some(engine), None)
+    deepy_set("prime".into(), Some(engine), None, None)
 }
 // Auto-start via the per-user Run key (no admin needed). Returns success, like the UI checks.
 #[tauri::command]
@@ -1397,7 +1492,16 @@ mod deepy_roundtrip_tests {
         } // no Wan2GP install on CI — nothing to verify
         let original = std::fs::read(&p).unwrap();
         // zero + Qwen 9B
-        let r = deepy_set("zero".into(), None, Some(serde_json::json!(4)));
+        let r = deepy_set(
+            "zero".into(),
+            None,
+            Some(serde_json::json!(4)),
+            Some(serde_json::json!({
+                "multi_session": "dedicated",
+                "reset_mode": "reset_session",
+                "gallery_media_mode": "copy",
+            })),
+        );
         assert!(
             r.get("ok").and_then(|v| v.as_bool()).unwrap(),
             "zero apply failed: {r}"
@@ -1410,29 +1514,30 @@ mod deepy_roundtrip_tests {
         assert_eq!(c["deepy_vram_mode"], "unload");
         assert_eq!(c["deepy_context_tokens"], 16386);
         assert_eq!(c["deepy_tool_gen_image"], "Krea 2 Turbo (8 Steps)");
-        // v12.72 session keys written with upstream defaults
-        assert_eq!(c["deepy_session_reset_mode"], "new_session");
-        assert_eq!(c["deepy_session_gallery_media_mode"], "link");
-        assert_eq!(c["deepy_multi_session"], false);
+        // explicit session prefs stick
+        assert_eq!(c["deepy_session_reset_mode"], "reset_session");
+        assert_eq!(c["deepy_session_gallery_media_mode"], "copy");
+        assert_eq!(c["deepy_multi_session"], "dedicated");
         // zero + Llama id must fall back to 3 (tokenizer-crash combo)
-        let r = deepy_set("zero".into(), None, Some(serde_json::json!(1)));
+        let r = deepy_set("zero".into(), None, Some(serde_json::json!(1)), None);
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
         let c = read_cfg();
         assert_eq!(c["enhancer_enabled"], 3);
         assert_eq!(c["llm_engines"]["deepy"], "qwen35_4b");
         // prime + codex
-        let r = deepy_set("prime".into(), Some("codex".into()), None);
+        let r = deepy_set("prime".into(), Some("codex".into()), None, None);
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
         let c = read_cfg();
         assert_eq!(c["deepy_type"], "prime");
         assert_eq!(c["llm_engines"]["deepy"], "codex");
         assert_eq!(c["llm_engines"]["profiles"]["codex"]["executable"], "codex");
         assert!(c.get("deepy_prime_mcp_servers").is_some());
-        // v12.72 session keys written in prime mode too
-        assert_eq!(c["deepy_session_reset_mode"], "new_session");
-        assert_eq!(c["deepy_multi_session"], false);
+        // sessions=None preserves the existing session prefs
+        assert_eq!(c["deepy_session_reset_mode"], "reset_session");
+        assert_eq!(c["deepy_session_gallery_media_mode"], "copy");
+        assert_eq!(c["deepy_multi_session"], "dedicated");
         // disabled + Florence
-        let r = deepy_set("disabled".into(), None, Some(serde_json::json!(2)));
+        let r = deepy_set("disabled".into(), None, Some(serde_json::json!(2)), None);
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
         let c = read_cfg();
         assert_eq!(c["deepy_enabled"], 0);
