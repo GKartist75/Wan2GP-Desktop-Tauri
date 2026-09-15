@@ -3939,6 +3939,7 @@ function refreshEnvUnlink(hasRepo) {
         var r = await window.w2gp.restoreRequirements();
         if (r && r.success) {
           appendLog("[*] Requirements restored.");
+          hideDriftBanner();
           setTimeout(refreshDashboard, 2000);
         } else showToast((r && r.error) || "Failed");
       } catch (e) {
@@ -4149,16 +4150,38 @@ $("checkPkgUpdatesBtn").addEventListener("click", async function () {
 $("syncKernelsBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   this.disabled = true;
-  this.textContent = "Syncing...";
+  this.textContent = "Updating…";
   try {
     const r = await window.w2gp.syncKernels();
-    if (r && r.success) showToast("✓ Kernel wheels synced");
-    else showToast("✗ Sync failed: " + (r && r.error ? r.error : "unknown"));
+    if (r && r.success) showToast("✓ GPU wheels updated");
+    else showToast("✗ Update failed: " + (r && r.error ? r.error : "unknown"));
   } catch (e) {
-    showToast("✗ Sync failed: " + e.message);
+    showToast("✗ Update failed: " + e.message);
   } finally {
     this.disabled = false;
-    this.textContent = "↻ Sync";
+    this.textContent = "↻ Update GPU Wheels";
+    setTimeout(refreshDashboard, 1500);
+  }
+});
+$("restoreKernelsBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  if (
+    !confirm(
+      "Reinstall deepbeepmeep's original wheels? This downgrades launcher overrides (sage safe build → post4, GGUF floor off).",
+    )
+  )
+    return;
+  this.disabled = true;
+  this.textContent = "Restoring…";
+  try {
+    const r = await window.w2gp.restoreKernels();
+    if (r && r.success) showToast("✓ GPU wheels restored to upstream set");
+    else showToast("✗ Restore failed: " + (r && r.error ? r.error : "unknown"));
+  } catch (e) {
+    showToast("✗ Restore failed: " + e.message);
+  } finally {
+    this.disabled = false;
+    this.textContent = "Restore GPU Wheels";
     setTimeout(refreshDashboard, 1500);
   }
 });
@@ -5862,6 +5885,48 @@ function updateFtStatus(state) {
   }
 }
 
+// ── Dependency-drift banner (issue #23): post-update drift is warn-only
+// backend-side, so the dashboard makes it unmissable here — toast for
+// attention plus a persistent banner with a working Restore action.
+// All text via textContent (XSS-safe). Banner stays until Restore
+// succeeds or the user dismisses it.
+function showDriftBanner(drift) {
+  const b = $("driftBanner");
+  const t = $("driftBannerText");
+  if (!b || !t) return;
+  const list = drift.slice(0, 5).join(", ");
+  const more = drift.length > 5 ? " (+" + (drift.length - 5) + " more)" : "";
+  t.textContent =
+    "[!] Dependency drift: " + list + more + " — generation may crash. ";
+  b.style.display = "";
+}
+function hideDriftBanner() {
+  const b = $("driftBanner");
+  if (b) b.style.display = "none";
+}
+$("driftRestoreBtn")?.addEventListener("click", async () => {
+  if (
+    !confirm(
+      "Reinstall all packages from requirements.txt? This will restore pinned versions.",
+    )
+  )
+    return;
+  const btn = $("driftRestoreBtn");
+  if (btn) btn.disabled = true;
+  appendLog("[*] Restoring packages from requirements.txt...");
+  try {
+    const rr = await window.w2gp.restoreRequirements();
+    if (rr && rr.success) {
+      appendLog("[*] Requirements restored.");
+      hideDriftBanner();
+      setTimeout(refreshDashboard, 2000);
+    } else showToast("✗ Restore failed: " + ((rr && rr.error) || "unknown"));
+  } catch (e) {
+    showToast("✗ " + errText(e));
+  }
+  if (btn) btn.disabled = false;
+});
+$("driftDismissBtn")?.addEventListener("click", hideDriftBanner);
 // ── Event Wiring: Dashboard ──
 $("updateBtn").addEventListener("click", async () => {
   $("updateBtn").disabled = true;
@@ -5877,10 +5942,24 @@ $("updateBtn").addEventListener("click", async () => {
       appendLog(
         "[!] requirements reinstall failed — see the console output above; the git pull itself stays applied.",
       );
-    if (r && r.depCheck === "drift" && Array.isArray(r.drift) && r.drift.length)
+    if (
+      r &&
+      r.depCheck === "drift" &&
+      Array.isArray(r.drift) &&
+      r.drift.length
+    ) {
       appendLog(
         "[!] dependency drift: " + r.drift.join(", ") + " — use restore",
       );
+      showToast(
+        "[!] Dependency drift — packages missing or outdated. See the red banner.",
+      );
+      showDriftBanner(r.drift);
+    } else {
+      // Clean update (or no drift info) clears any stale banner from an
+      // earlier drift run — otherwise Restore/Dismiss linger confusingly.
+      hideDriftBanner();
+    }
     refreshDashboard();
   } catch (e) {
     appendLog("[!] Update failed: " + errText(e));
