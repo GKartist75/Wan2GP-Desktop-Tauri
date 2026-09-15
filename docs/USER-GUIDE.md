@@ -38,6 +38,7 @@ The home screen. Top to bottom:
 **Banners** (appear only when relevant):
 
 - **Update available** — *Full Download* (complete ~93 MB package, always works, fixes corrupted installs), *Install & Restart* (incremental update), ✕ dismiss.
+- **Dependency drift** — packages missing or outdated after a Wan2GP update (first few named); *Restore now* reinstalls the pinned set, *Dismiss* snoozes it until the next update.
 - **Sync Kernels** — your GPU kernel wheels are out of sync; *Sync Kernels* reinstalls them, *Dismiss* hides it.
 - **Models location warning** — your data sits inside the roaming AppData profile; *Migrate to new location* moves it out.
 
@@ -211,7 +212,7 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **Server Port** — port conflict detection / override.
 - **Debug Bundle** — copies full diagnostics (hardware, paths, checks, log tail).
 - **Triton / SageAttention** — attention-backend controls.
-- **SageAttention 3** — deliberately not installed by Sync and not offered: it needs
+- **SageAttention 3** — deliberately not installed by ↻ Update GPU Wheels and not offered: it needs
   a Blackwell GPU *and* Python ≥ 3.12 (launcher envs are 3.10/3.11), and it refuses
   older cards at runtime even when imported. Verify reports a stray `sageattn3`
   install as inert-but-harmless instead of failing. Sage 2.2.0 stays the synced wheel —
