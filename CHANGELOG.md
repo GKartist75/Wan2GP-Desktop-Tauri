@@ -2,6 +2,30 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.7.0] — 2026-09-16
+
+- Appearance: 5 full themes (Mono default + Blue Sky + Orca + Cyber + Matrix) —
+  every dot click-to-apply, double-click to edit 3 colors (accent/background/text)
+  with live preview, Save theme / Set as default / Reset to shipped colors;
+  palette-cycles from the topbar, Text size (85–130%) + Terminal size (85–150%)
+  sliders in Manage → Appearance (persisted, console window follows)
+- Dashboard info text raised to readable minimums (spec rows, hints, metrics,
+  micro-labels — nothing below 0.625rem except table micro-notes)
+- Save-As dialogs show real file-type filters (issue #29: ZIP/JSON no longer
+  `All Files`, extension preserved on rename) in both embed paths + log export
+- Wan2GP update ends with a one-line verdict (upstream commit + local-edit count
+  - untouched personal files) so users can tell at a glance the checkout is
+  100% original git
+- Deepy Web URLs are click-to-open in the real browser (login must happen in a
+  tab — embedded views 403); QR captions/tooltips say what works where
+  (same-Wi-Fi vs off-LAN Tailscale/VPN); LAN HTTPS tucked under Advanced
+- Deepy Web Assistant selector (Zero/Prime per start, applied via deepy_set);
+  local-Prime-without-27B no longer silently downgrades to Zero (fail-closed
+  error instead) and the enhancer-fix maps stored profile ids to UI ids
+- Standing rule: Wan2GP originals never modified — the retired `web.py`
+  Referrer-Policy patch was reverted to pristine upstream (Chrome login fixed
+  upstream in 38d4a64 instead); companion login-fix plugin removed entirely
+
 ## [Unreleased]
 
 ## [0.6.9] — 2026-09-15

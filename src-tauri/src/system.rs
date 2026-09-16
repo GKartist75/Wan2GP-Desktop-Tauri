@@ -466,6 +466,49 @@ pub async fn move_folder(
 ) -> Result<serde_json::Value, String> {
     move_path_inner(&app, &PathBuf::from(&src), &PathBuf::from(&dst)).await
 }
+/// File-type filter for a Save-As dialog, mirroring what the browser offers
+/// natively (issue #29): derive a single-type filter from the source
+/// filename so the dialog shows e.g. `ZIP archive (*.zip)` instead of
+/// `All Files (*.*)` — Windows then preserves/appends the extension when
+/// the user renames, exactly like the browser download shelf does.
+fn save_dialog_filter(file_name: &str) -> (String, String) {
+    let ext = Path::new(file_name)
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let label = match ext.as_str() {
+        "zip" => "ZIP archive",
+        "json" => "JSON",
+        "lset" => "LSet preset",
+        "png" => "PNG image",
+        "jpg" | "jpeg" => "JPEG image",
+        "webp" => "WebP image",
+        "gif" => "GIF image",
+        "bmp" => "BMP image",
+        "mp4" => "MP4 video",
+        "webm" => "WebM video",
+        "mp3" => "MP3 audio",
+        "wav" => "WAV audio",
+        "srt" => "SubRip subtitles",
+        "vtt" => "WebVTT subtitles",
+        "txt" | "log" => "Text file",
+        "" => return ("All Files".to_string(), String::new()),
+        _ => return (format!("{} file", ext.to_uppercase()), ext),
+    };
+    (label.to_string(), ext)
+}
+/// Browser parity (issue #29): if the user retyped a bare stem with no
+/// extension at all, re-attach the source extension — the browser download
+/// shelf always lands with the correct ext. An explicitly typed extension
+/// is respected (never force-replaced).
+fn ensure_save_extension(mut dst: PathBuf, ext: &str) -> PathBuf {
+    if ext.is_empty() || dst.extension().is_some() {
+        return dst;
+    }
+    dst.set_extension(ext);
+    dst
+}
 /// Move a just-downloaded gallery file out of ~/Downloads via a native
 /// Save-As dialog (filename prefilled, location/folder chosen by the user).
 /// The download click itself is untouchable (cross-origin Gradio iframe +
@@ -488,10 +531,12 @@ pub fn save_downloaded_file(
     if !src.is_file() {
         return Err("file is no longer in Downloads (moved or deleted?)".into());
     }
-    let mut dlg = app
-        .dialog()
-        .file()
-        .set_file_name(safe.to_string_lossy().as_ref());
+    let safe_name = safe.to_string_lossy().to_string();
+    let (filter_label, filter_ext) = save_dialog_filter(&safe_name);
+    let mut dlg = app.dialog().file().set_file_name(&safe_name);
+    if !filter_ext.is_empty() {
+        dlg = dlg.add_filter(filter_label, &[filter_ext.as_str()]);
+    }
     if let Some(d) = dir.filter(|d| !d.trim().is_empty()) {
         let dp = PathBuf::from(&d);
         if dp.is_dir() {
@@ -499,7 +544,10 @@ pub fn save_downloaded_file(
         }
     }
     let dst = match dlg.blocking_save_file() {
-        Some(p) => p.into_path().map_err(|e| e.to_string())?,
+        Some(p) => {
+            let raw = p.into_path().map_err(|e| e.to_string())?;
+            ensure_save_extension(raw, &filter_ext)
+        }
         None => return Ok(serde_json::json!({"ok": true, "cancelled": true})),
     };
     if dst == src {
@@ -535,6 +583,7 @@ pub fn save_downloaded_file(
 /// - gallery media must carry Wan2GP's timestamp (`-YYYY-MM-DD-HHhMMmSSs`)
 ///   or `_seedNNNN` marker (generated outputs, e.g.
 ///   `2026-08-22-17h51m35s_seed494753204_...jpg`).
+///
 /// Windows collision copies (`name (1).ext`) are unwrapped for matching;
 /// the real on-disk name is still what gets reported.
 fn is_wangp_download(file_name: &str) -> bool {
@@ -1302,6 +1351,7 @@ pub fn export_logs(
         .dialog()
         .file()
         .set_file_name("wan2gp-console.log")
+        .add_filter("Text file", &["log"])
         .blocking_save_file()
     {
         Some(p) => p.into_path().map_err(|e| e.to_string())?,
@@ -1386,7 +1436,11 @@ pub fn save_staged_download(
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "wan2gp-download".into());
+    let (staged_label, staged_ext) = save_dialog_filter(&fname);
     let mut dlg = app.dialog().file().set_file_name(&fname);
+    if !staged_ext.is_empty() {
+        dlg = dlg.add_filter(staged_label, &[staged_ext.as_str()]);
+    }
     if let Some(d) = dir.filter(|d| !d.trim().is_empty()) {
         let dp = PathBuf::from(&d);
         if dp.is_dir() {
@@ -1394,7 +1448,10 @@ pub fn save_staged_download(
         }
     }
     let dst = match dlg.blocking_save_file() {
-        Some(p) => p.into_path().map_err(|e| e.to_string())?,
+        Some(p) => {
+            let raw = p.into_path().map_err(|e| e.to_string())?;
+            ensure_save_extension(raw, &staged_ext)
+        }
         None => {
             let dst = unique_in(&home_dir().join("Downloads"), &fname);
             move_file_verified(&canon_src, &dst)?;

@@ -33,6 +33,7 @@ The home screen. Top to bottom:
 | ⏹ Stop All | Stops Wan2GP + OpenCode servers (also kills the port listener) |
 | Task Manager | Opens Windows Task Manager |
 | ☀/☾ | Toggles dark / light theme |
+| 🎨 (palette) | Cycles the 5 Appearance themes (Mono → Sky → Orca → Cyber → Matrix) |
 | ⚙ (gear) | Opens the Manage panel |
 
 **Banners** (appear only when relevant):
@@ -69,12 +70,16 @@ OpenCode, …) with *↻ Refresh* to re-check status; pick one and press *Apply*
 launcher default, one shared outputs folder), reset behavior, gallery media
 (keep links vs copy into session). Per-session workspace choice stays inside WanGP.
 
-**Deepy Web card** — phone-friendly Deepy in a second process. *1 · Addresses*:
-Same-PC, Phone (same Wi-Fi), plus an *External* row with the Tailscale IPv4 URL
-(Copy + QR) for off-LAN access — needs Tailscale on both ends and Phone-LAN mode
-to serve it. *2 · Auth*: fixed passphrase (generator allows length 4–64, remember
-30 days optional). *3 · Connection*: port + LAN HTTPS (bring/create cert, CA guide).
-All actions log `[Deepy]` lines to the Console.
+**Deepy Web card** — phone-friendly Deepy in a second process. *Assistant*:
+Zero or Prime per start (applied via Apply — fixes the external-process-boots-Zero
+issue). *1 · Addresses*: Same-PC, Phone (same Wi-Fi), plus an *External* row
+with the Tailscale IPv4 URL (Copy + QR) for off-LAN access — needs Tailscale on
+both ends and Phone-LAN mode to serve it. Address URLs are click-to-open in the
+real browser (login must happen in a tab — embedded views 403). Topbar shows a
+persistent Deepy Web LED (green = running, red = stopped) next to the Wan2GP LED.
+*2 · Auth*: fixed passphrase (generator allows length 4–64, remember
+30 days optional). *3 · Connection*: port + LAN HTTPS under Advanced
+(bring/create cert, CA guide). All actions log `[Deepy]` lines to the Console.
 
 **DLSS 5 card** — optional NVIDIA upsampler runtimes. *Install DLSS 5…* opens a
 confirmation (Cancel / Install).
@@ -91,7 +96,9 @@ copy button for the equivalent command.
 | Browser No-GPU | Launches Chrome with GPU disabled to free VRAM for generation |
 | Terminal | Real Windows Terminal / cmd window |
 
-**Action row** — *Wan2GP Updates* (upstream version management), *Verify / Repair
+**Action row** — *Wan2GP Updates* (upstream version management, ends with a
+one-line verdict: upstream commit + local-edit count + untouched personal files,
+proving the checkout is 100% original git), *Verify / Repair
 Wan2GP files* (read-only drift check against upstream, then tracked-only
 repair — settings/models/envs untouched, Pinokio refused), *Check updates*
 (launcher version), *Desktop shortcut*, *Roll back Wan2GP update* (one-click
@@ -171,7 +178,8 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - Drag & drop image/video/audio files from Explorer straight into Gradio inputs
   (reference images, etc.).
 - New gallery arrivals pop a **Save / Save As…** prompt — Save keeps the file in
-  Downloads, Save As… opens the native dialog (reopens at the last-used folder).
+  Downloads, Save As… opens the native dialog with the real file-type filter
+  (`*.zip`/`*.json`/… — issue #29) and reopens at the last-used folder.
 - Reload, zoom 25–200%, hide/show keeps the session alive.
 
 ---
@@ -183,6 +191,10 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **Claude / Anthropic API Key** — for Deepy/Claude paths.
 - **Default Browser** — which browser Browser-mode opens.
 - **Floating Terminal Default** — where the console docks (bottom/left/top/right/minimised).
+- **Appearance** — 5 themes (Mono default, Blue Sky, Orca, Cyber, Matrix):
+  click to apply, double-click to edit 3 colors (accent/background/text) with
+  live preview, Save theme / Set as default / Reset to shipped colors. Text size
+  (85–130%) + Terminal size (85–150%) sliders; console window follows.
 - **Desktop** — desktop shortcut + start options.
 - **Queue Notifier** — optional ping (via Apprise) when generations finish.
 - **Xet Storage (hf_xet)** — fast HuggingFace downloads toggle.

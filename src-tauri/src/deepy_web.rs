@@ -350,14 +350,17 @@ pub(crate) fn clash_notice(main_bound: bool, deepy_free: bool) -> Option<String>
 }
 
 /// Auto-config decision (pure, unit-tested). Disabled → Zero + Qwen3.5-4B;
-/// stale enhancer 1/2 → fix to 3; Prime-local without 27B weights → fall back
-/// to the Zero path; anything healthy stays untouched.
+/// stale enhancer 1/2 → fix to 3; Prime-local without 27B weights → BLOCK
+/// (fail-closed: never silently rewrite Prime to Zero — the starter owns
+/// truth about where weights live, and a wrong guess would clobber the
+/// user's explicit Prime choice on every boot); anything healthy stays
+/// untouched.
 #[derive(Debug, PartialEq)]
 pub(crate) enum AutoPlan {
     Keep,
     ZeroPlusQwen4B,
     FixEnhancerTo3,
-    FallbackZero,
+    BlockMissing27B,
 }
 
 pub(crate) fn auto_config_plan(
@@ -373,7 +376,7 @@ pub(crate) fn auto_config_plan(
     let local_prime = deepy_type == "prime"
         && (current_engine.contains("qwen") || current_engine.contains("local"));
     if local_prime && !engine_path_exists {
-        return AutoPlan::FallbackZero;
+        return AutoPlan::BlockMissing27B;
     }
     if matches!(enhancer, Some(1) | Some(2)) {
         return AutoPlan::FixEnhancerTo3;
@@ -572,7 +575,7 @@ fn ensure_deepy_config_for_web() -> Result<String, String> {
     );
     let mut label = match plan {
         AutoPlan::Keep => Ok("kept".to_string()),
-        AutoPlan::ZeroPlusQwen4B | AutoPlan::FallbackZero => {
+        AutoPlan::ZeroPlusQwen4B => {
             let r = crate::features::deepy_set(
                 "zero".to_string(),
                 None,
@@ -580,11 +583,7 @@ fn ensure_deepy_config_for_web() -> Result<String, String> {
                 None,
             );
             if r.get("ok").and_then(|x| x.as_bool()) == Some(true) {
-                Ok(if plan == AutoPlan::FallbackZero {
-                    "fallback-zero".to_string()
-                } else {
-                    "zero+qwen35-4b".to_string()
-                })
+                Ok("zero+qwen35-4b".to_string())
             } else {
                 Err(r
                     .get("error")
@@ -593,9 +592,21 @@ fn ensure_deepy_config_for_web() -> Result<String, String> {
                     .to_string())
             }
         }
+        // Fail-closed: local Prime without visible 27B weights must NEVER
+        // be silently rewritten to Zero (that clobbers an explicit user
+        // choice on every boot, and our own deepy_set writes no profiles
+        // path for the presence check to find). Block the start with an
+        // actionable error instead — the file stays exactly as the user
+        // left it.
+        AutoPlan::BlockMissing27B => Err("Deepy Prime (local Qwen 27B) is configured but no 27B weights were found — refusing to downgrade you to Zero. Install the Qwen3.8 VL 27B model, switch to a remote Prime engine (OpenCode/Claude/Codex), or press Apply on Deepy Zero.".to_string()),
         AutoPlan::FixEnhancerTo3 => {
+            // deepy_set validates Prime engines by UI id (opencode /
+            // claude-code / codex / local-qwen38) but the stored config
+            // carries profile ids (opencode / claude / codex / qwen38_27b /
+            // qwen35_*). Map profile → UI id first, or Prime starts here
+            // fail outright with "Prime requires an engine".
             let eng_arg = if dtype == "prime" {
-                Some(engine.clone())
+                Some(crate::features::prime_profile_to_ui_id(&engine).to_string())
             } else {
                 None
             };
@@ -1790,10 +1801,10 @@ mod tests {
     }
 
     #[test]
-    fn tri_auto_config_prime_local_without_27b_falls_back() {
+    fn tri_auto_config_prime_local_without_27b_blocks() {
         assert_eq!(
             auto_config_plan(1, "prime", "local-qwen38", Some(5), false),
-            AutoPlan::FallbackZero
+            AutoPlan::BlockMissing27B
         );
     }
 

@@ -42,13 +42,21 @@
 
 No Python, no CUDA toolkit, no `pip`, no Node needed beforehand — the installer fetches what it needs. (WebView2 itself ships with Windows 10/11.)
 
-### Launch modes
+### Launch buttons
 
-- **Desktop** — Wan2GP embedded in the launcher, with reload, zoom 25–200%, hide/show switching that keeps your session, and console-first boot (watch the dashboard log, view opens when ready). Browser-parity media flow: drag & drop files into Gradio dropzones works, and new gallery arrivals pop a Save / Save As… prompt.
+![Launch buttons — Desktop hero, Browser/No-GPU, Terminal/No-GPU, update/verify/rollback actions](screenshots/launch-buttons.png)
+
+- **Desktop** — Wan2GP embedded in the launcher, with reload, zoom 25–200%, hide/show switching that keeps your session, and console-first boot (watch the dashboard log, view opens when ready). Browser-parity media flow: drag & drop files into Gradio dropzones works, and new gallery arrivals pop a Save / Save As… prompt (with real file-type filters — issue #29).
 - **Browser** — visible console + auto-opens your browser when ready.
 - **External Terminal** — real Windows Terminal / cmd via generated script; in-app LED + Stop.
 - **No-GPU Chrome** — launch Chrome with GPU disabled to free VRAM for generation.
 - **Browser picker** — detects Chrome, Edge, Firefox, Brave, Opera, Vivaldi.
+
+### Gallery viewer
+
+![Gallery workspace viewer — select, reorder, copy/move, ZIP, media details](screenshots/gallery-viewer.png)
+
+Full workspace viewer: multi-select, reorder, eject, copy/move across workspaces, ZIP download, import, delete (confirmed), media-details pane with prompt/model/settings. New arrivals pop Save / Save As… with proper `*.zip`/`*.json` filters.
 
 ### Where is everything? (defaults)
 
@@ -131,6 +139,12 @@ Same launcher, same Wan2GP, same features — new shell. The Electron edition sh
 - 🎯 **Always the right kernels** — per-GPU wheels from WanGP's `setup_config.json`, re-synced on install and every update.
 - 📂 **Clean data layout** — `C:\Wan2GP` (app) + `C:\Wan2GP-Models` (models), both editable to any drive/folder; migrate later via Dashboard → Paths.
 - 🖥️ **Flexible launch** — Desktop embed, Browser, or External Terminal; pop-out, zoom, browser picker.
+- 🎨 **5 themes + text sizing** — Mono (default), Blue Sky, Orca, Cyber, Matrix; every theme editable (accent/background/text, live preview, Save/Set-as-default/Reset), topbar palette quick-switch, Text + Terminal size sliders in Manage → Appearance.
+
+![Appearance — 5 themes, Mono default, click to apply](screenshots/appearance-themes.png)
+
+![Appearance editor — 3 colors per theme, Save/Set-as-default/Reset](screenshots/appearance-editor.png)
+
 - 🔄 **Safe updates** — manual-only, version-aware, from Dashboard / Manage → Updates.
 - 🛡️ **Crash-proof UI** — crash recovery restores your session.
 - 🧩 **Pinokio coexistence** — Pinokio installs detected and left untouched; one click reuses their model library, no re-downloads.
@@ -211,11 +225,17 @@ Switching live-re-renders the selector; **Apply** writes a consistent `wgp_confi
 
 **Sessions** (same card, below the engine picker): multisessions mode — *Disabled* (one temporary chat), *selectable Workspace* (sessions share one workspace/outputs folder, the launcher default), *dedicated Workspace* (each session owns its gallery) — plus reset behavior and gallery media (keep links vs copy files into the session). Saved via the same **Apply**; per-session workspace choice stays inside WanGP.
 
-**Deepy Web** card: Same-PC / Phone-LAN addresses plus an **External** row (Tailscale IPv4 URL with Copy + QR) for off-LAN access — Tailscale on both ends, Phone-LAN mode serves it. Auth passphrase generator now allows length 4–64. All Deepy actions log `[Deepy]` lines to the Console.
+**Deepy Web** card: Assistant selector (Zero/Prime per start, applied via Apply — fixes the external-process-boots-Zero issue), Same-PC / Phone-LAN addresses plus an **External** row (Tailscale IPv4 URL with Copy + QR) for off-LAN access — Tailscale on both ends, Phone-LAN mode serves it. Address URLs are click-to-open in the real browser (login must happen in a tab — embedded views 403). Topbar shows a persistent Deepy Web LED (green = running, red = stopped) next to the Wan2GP LED. Auth passphrase generator now allows length 4–64. All Deepy actions log `[Deepy]` lines to the Console.
 
-![Deepy Prime — local Qwen3.8 + remote LLM engines with install and server controls](screenshots/deepy-prime-engines.png)
+![Deepy Web on a phone — Prime session generating an image](screenshots/deepy-web-phone-app.jpg)
 
-![Deepy Zero — local Qwen model picker (Prompt Enhancer)](screenshots/deepy-zero-models.png)
+![Deepy Web on desktop — Prime multi-turn session with follow-up edit](screenshots/deepy-web-desktop-prime.png)
+
+![Deepy Web card — addresses, auth, connection, start](screenshots/deepy-web-settings.png)
+
+![Deepy Prime panel — engine picker, LLM engines, sessions](screenshots/deepy-prime-panel.png)
+
+![Deepy Zero panel — local Qwen model picker](screenshots/deepy-zero-panel.png)
 
 > New to this? Start with **OpenCode** — the only zero-cost option.
 
@@ -247,7 +267,7 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.6.9**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.9) *(latest)* — Deepy Sessions section (multisessions/reset/gallery-media, selectable-workspace default), Deepy Web External (Tailscale IPv4) URL row with Copy + QR, Phone URL prefers real LAN, `[Deepy]` console traces, passphrase minimum 4, Deepy Web cleaned up on app close.
+- [**v0.7.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.0) *(latest)* — 5 editable themes + text/terminal sizing, Deepy Web Assistant selector + click-to-open URLs + persistent topbar LED, Save-As file-type filters (issue #29), one-line update verdict (100% original git proof), dashboard text raised to readable minimums, LAN HTTPS under Advanced.
 
 - [**v0.6.8**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.8) — dependency drift after update is unmissable (toast + persistent banner with Restore, issue #23), hover tooltips on all 150 buttons, live uninstall progress, GPU Kernel Wheels split into Update (upstream + launcher fixes) vs Restore (pure upstream set), faster boot update checks with console traces, refcounted first-boot bar.
 

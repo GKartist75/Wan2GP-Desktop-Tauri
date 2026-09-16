@@ -406,6 +406,7 @@ pub(crate) fn load_config_value() -> serde_json::Value {
     }
     serde_json::json!({
         "githubToken": "", "hfToken": "", "claudeApiKey": "", "theme": "dark",
+        "themeAccent": "mono", "uiScale": 100, "termScale": 100,
         "serverPort": 7861, "serverName": "localhost", "defaultBrowser": "system", // ponytail: 7861 for side-by-side with Electron 7860
 
         "termDockDefault": "bottom", "electronGpu": true, "launcherGpu": "auto", "sageSafe": true, "share": false,
