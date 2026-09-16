@@ -4116,13 +4116,48 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         }
         .into());
     }
-    if stashed {
-        if !run_logged(&app, "git", &["stash", "pop"], Some(&repo), emit).await {
-            mutating_done();
-            return Err("Update pulled, but your stashed changes CONFLICT with it — the stash is KEPT (git stash list: launcher-update-autostash). Resolve the conflicts by hand, then drop the stash.".into());
-        }
-        emit("[*] Local changes restored on top of the update.\n");
+    if stashed && !run_logged(&app, "git", &["stash", "pop"], Some(&repo), emit).await {
+        mutating_done();
+        return Err("Update pulled, but your stashed changes CONFLICT with it — the stash is KEPT (git stash list: launcher-update-autostash). Resolve the conflicts by hand, then drop the stash.".into());
     }
+    // Quiet success summary (one line, always): users should be able to
+    // tell at a glance the checkout is now exactly upstream + their own
+    // restored edits. The detailed git transcript stays above in the log.
+    let head_short = silent_command("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(&repo)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "?".to_string());
+    let status_short = silent_command("git")
+        .args(["status", "--porcelain=v1"])
+        .current_dir(&repo)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let (tracked_edits, untracked) = {
+        let mut t = 0;
+        let mut u = 0;
+        for line in status_short.lines() {
+            if line.len() < 2 {
+                continue;
+            }
+            if line.starts_with("??") {
+                u += 1;
+            } else {
+                t += 1;
+            }
+        }
+        (t, u)
+    };
+    emit(&format!(
+        "[✓] Wan2GP update complete — now at upstream {head_short} (100% original git) with your {tracked_edits} local file edit(s) restored on top; {untracked} personal file(s) (settings, envs, workspaces) left untouched.\n",
+    ));
     // Upstream bumps (e.g. mmgp 3.7.14 → 3.8.0 with a wgp.py hard-exit on
     // mismatch) only take effect once the pinned packages are reinstalled.
     // Reinstall on change only — a slow no-op pip run on every update.

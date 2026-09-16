@@ -869,6 +869,22 @@ fn resolve_session_pref(
     }
     launcher_default.unwrap_or(upstream_default).into()
 }
+/// Stored Prime profile id (`llm_engines.deepy`: opencode / claude / codex /
+/// qwen38_27b / qwen35_*) → `deepy_set` UI engine id (opencode / claude-code /
+/// codex / local-qwen38). The auto-config enhancer-fix path reads the stored
+/// profile but must call `deepy_set` with the UI id, or Prime starts fail
+/// outright with "Prime requires an engine".
+pub(crate) fn prime_profile_to_ui_id(profile: &str) -> &str {
+    match profile.trim().to_lowercase().as_str() {
+        "opencode" => "opencode",
+        "claude" | "claude-code" => "claude-code",
+        "codex" => "codex",
+        s if s.contains("27b") || s.contains("qwen38") => "local-qwen38",
+        // qwen35_* local profiles are Zero engines, not Prime ones — fall
+        // back to the default remote engine rather than failing the start.
+        _ => "opencode",
+    }
+}
 #[tauri::command]
 pub fn deepy_set(
     mode: String,

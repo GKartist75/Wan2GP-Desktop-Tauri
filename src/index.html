@@ -84,6 +84,51 @@
           </div>
         </div>
         <div class="settings-section">
+          <h3>Appearance</h3>
+          <p class="token-hint">5 themes, Mono is the default. Click a dot to apply — double-click any dot to edit its 3 colors. The full palette derives automatically.</p>
+          <div class="accent-row" id="themeRow" role="radiogroup" aria-label="Themes">
+            <button class="accent-dot" data-dot="mono" title="Mono — click to apply, double-click to edit" role="radio" aria-label="Mono"></button>
+            <button class="accent-dot" data-dot="sky" title="Blue Sky — click to apply, double-click to edit" role="radio" aria-label="Blue Sky"></button>
+            <button class="accent-dot" data-dot="orca" title="Orca — click to apply, double-click to edit" role="radio" aria-label="Orca"></button>
+            <button class="accent-dot" data-dot="cyber" title="Cyber — click to apply, double-click to edit" role="radio" aria-label="Cyber"></button>
+            <button class="accent-dot" data-dot="matrix" title="Matrix — click to apply, double-click to edit" role="radio" aria-label="Matrix"></button>
+          </div>
+          <p class="token-hint" id="customThemeHint" style="margin-top:4px">Every theme is editable and persists. Reset restores shipped colors.</p>
+          <div id="customEditor" style="display:none;margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-secondary)">
+            <div class="appear-slider">
+              <label class="token-hint" for="customAccentInput" style="min-width:88px">Accent</label>
+              <input type="color" id="customAccentInput" value="#4bd4a1" style="width:44px;height:24px;padding:0;border:1px solid var(--border);border-radius:4px;background:none;cursor:pointer">
+              <input type="text" id="customAccentHex" value="#4bd4a1" maxlength="7" spellcheck="false" style="width:74px" class="input" title="Hex color, e.g. #4bd4a1">
+            </div>
+            <div class="appear-slider">
+              <label class="token-hint" for="customBgInput" style="min-width:88px">Background</label>
+              <input type="color" id="customBgInput" value="#142d26" style="width:44px;height:24px;padding:0;border:1px solid var(--border);border-radius:4px;background:none;cursor:pointer">
+              <input type="text" id="customBgHex" value="#142d26" maxlength="7" spellcheck="false" style="width:74px" class="input" title="Hex color, e.g. #142d26">
+            </div>
+            <div class="appear-slider">
+              <label class="token-hint" for="customTextInput" style="min-width:88px">Text</label>
+              <input type="color" id="customTextInput" value="#e0f8eb" style="width:44px;height:24px;padding:0;border:1px solid var(--border);border-radius:4px;background:none;cursor:pointer">
+              <input type="text" id="customTextHex" value="#e0f8eb" maxlength="7" spellcheck="false" style="width:74px" class="input" title="Hex color, e.g. #e0f8eb">
+            </div>
+            <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <button class="btn btn-primary small" id="customSaveBtn" title="Save these 3 colors into the selected theme">Save theme</button>
+              <button class="btn btn-ghost small" id="customDefaultBtn" title="Make this theme the startup default">Set as default</button>
+              <button class="btn btn-ghost small" id="customResetBtn" title="Restore this theme's shipped colors">Reset</button>
+              <span class="token-hint" id="customEditorLabel">Editing Mono</span>
+            </div>
+          </div>
+          <div class="appear-slider">
+            <label class="token-hint" for="uiScaleInput" style="min-width:88px">Text size</label>
+            <input type="range" id="uiScaleInput" min="85" max="130" step="5" value="100">
+            <span class="appear-val" id="uiScaleVal">100%</span>
+          </div>
+          <div class="appear-slider">
+            <label class="token-hint" for="termScaleInput" style="min-width:88px">Terminal size</label>
+            <input type="range" id="termScaleInput" min="85" max="150" step="5" value="100">
+            <span class="appear-val" id="termScaleVal">100%</span>
+          </div>
+        </div>
+        <div class="settings-section">
           <h3>Desktop</h3>
           <label class="toggle-row"><input type="checkbox" id="autoStartToggle"> <span>Auto-start with Windows</span></label>
           <p class="token-hint">Launch Wan2GP Desktop automatically when you log in.</p>
@@ -522,6 +567,10 @@
           <span class="led-dot" id="ledDot"></span>
           <span class="led-text" id="ledText">Running</span>
         </span>
+        <span id="deepyWebLed" class="running-led" style="display:none" title="Deepy Web process status">
+          <span class="led-dot" id="deepyWebLedDot"></span>
+          <span class="led-text" id="deepyWebLedText">Deepy Web</span>
+        </span>
       </div>
       <div class="topbar-right">
         <span class="embed-top-wrap" title="Desktop renderer — switch while stopped, applies on launch">Renderer:
@@ -557,6 +606,11 @@
           <svg viewBox="0 0 24 24" class="sun-icon"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
           <svg viewBox="0 0 24 24" class="moon-icon" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
         </button>
+        <span class="topbar-appear" title="Theme switcher (Manage → Appearance for editor)">
+          <button class="btn-icon" id="appearPaletteBtn" title="Cycle theme (Mono → Sky → Orca → Cyber → Matrix)">
+            <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="10" r="1.4" fill="currentColor"/><circle cx="12" cy="7.5" r="1.4" fill="currentColor"/><circle cx="15.5" cy="10" r="1.4" fill="currentColor"/><path d="M12 21c-1 0-1-1-1-2 0-1.5 1-2 1-3.5 0-1-1-1.5-1-1.5S9 14.5 7 14c-1-.3-1.5-1-1-1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+          </button>
+        </span>
 <button class="btn btn-ghost small" id="settingsBtn" title="Open settings: tokens, launch, system, auto-tune, plugins">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
           Manage
@@ -777,6 +831,15 @@
               </div>
               <p class="path-hint">Phone-friendly Deepy chat in a second process beside the main server. Start it here, open the Same-PC URL on this PC or scan the Phone URL from your phone (same Wi-Fi).</p>
               <div id="deepyWebStatus" class="pip-advanced-hint" style="margin-top:4px">Checking…</div>
+              <!-- Assistant level for THIS Deepy Web process (mirrors the Deepy panel above).
+                   The standalone process reads the same wgp_config.json, but selecting here
+                   applies immediately to this start — no separate Apply round-trip. -->
+              <div class="deepy-sub-label" style="margin-top:8px">Assistant</div>
+              <div class="deepy-mode-row" style="margin-top:6px" id="deepyWebAssistantRow">
+                <label class="deepy-mode-opt" title="Fast, lightweight — runs on the local Qwen model"><input type="radio" name="deepyWebAssistant" value="zero"> Deepy Zero</label>
+                <label class="deepy-mode-opt" title="Planning + multi-step work — needs a Prime engine (see Deepy panel above)"><input type="radio" name="deepyWebAssistant" value="prime"> Deepy Prime</label>
+              </div>
+              <p class="path-hint" id="deepyWebAssistantHint" style="margin-top:4px">Uses the saved Deepy config. Pick Zero or Prime for this start — applied when you press Start (also saved for next time).</p>
               <!-- Step 1 · Addresses -->
               <div class="deepy-sub-label" style="margin-top:8px">1 · Addresses</div>
               <div class="deepy-mode-row" style="margin-top:6px">
@@ -786,19 +849,19 @@
               <div class="deepyweb-urls" style="margin-top:8px">
                 <div class="deepyweb-url-row">
                   <span class="deepy-sub-label">Same-PC</span>
-                  <code id="deepyWebSamePcUrl" class="deepyweb-url">—</code>
+                  <button class="deepyweb-url deepyweb-open" id="deepyWebSamePcOpen" title="Open Same-PC URL in your browser (use this for login — embedded views are rejected)">—</button>
                   <button class="btn btn-ghost small" id="deepyWebSamePcCopy" title="Copy Same-PC URL">Copy</button>
                   <button class="btn btn-ghost small" id="deepyWebSamePcQr" title="Show Same-PC URL as QR">QR</button>
                 </div>
                 <div class="deepyweb-url-row">
                   <span class="deepy-sub-label">Phone</span>
-                  <code id="deepyWebPhoneUrl" class="deepyweb-url">—</code>
+                  <button class="deepyweb-url deepyweb-open" id="deepyWebPhoneOpen" title="Open Phone URL in your browser. Phone must be on the same Wi-Fi — scan the QR from your phone camera">—</button>
                   <button class="btn btn-ghost small" id="deepyWebPhoneCopy" title="Copy Phone URL">Copy</button>
-                  <button class="btn btn-ghost small" id="deepyWebPhoneQr" title="Show Phone URL as QR">QR</button>
+                  <button class="btn btn-ghost small" id="deepyWebPhoneQr" title="Show Phone URL as QR — scan from your phone">QR</button>
                 </div>
                 <div class="deepyweb-url-row" id="deepyWebExternalRow" style="display:none">
                   <span class="deepy-sub-label">External</span>
-                  <code id="deepyWebExternalUrl" class="deepyweb-url">—</code>
+                  <button class="deepyweb-url deepyweb-open" id="deepyWebExternalOpen" title="Open External URL in your browser. Works off-LAN over Tailscale/VPN — open from anywhere">—</button>
                   <button class="btn btn-ghost small" id="deepyWebExternalCopy" title="Copy External URL">Copy</button>
                   <button class="btn btn-ghost small" id="deepyWebExternalQr" title="Show External URL as QR">QR</button>
                 </div>
@@ -811,9 +874,9 @@
                         <div id="deepyWebTailscaleStatus" class="pip-advanced-hint" style="margin-top:4px">Checking…</div>
                         <div class="deepyweb-url-row" id="deepyWebTailscaleRow" style="display:none;margin-top:4px">
                           <span class="deepy-sub-label">Tailnet</span>
-                          <code id="deepyWebTailnetUrl" class="deepyweb-url">—</code>
+                          <button class="deepyweb-url deepyweb-open" id="deepyWebTailnetOpen" title="Open tailnet URL in your browser. Works off-LAN from anywhere — phone on mobile data included">—</button>
                           <button class="btn btn-ghost small" id="deepyWebTailnetCopy" title="Copy tailnet URL">Copy</button>
-                          <button class="btn btn-ghost small" id="deepyWebTailnetQr" title="Show tailnet URL as QR">QR</button>
+                          <button class="btn btn-ghost small" id="deepyWebTailnetQr" title="Show tailnet URL as QR — scan from your phone anywhere">QR</button>
                         </div>
                         <p class="path-hint" style="margin-top:4px">Public-NAT rule: public exposure needs Auth + trusted HTTPS — forward the HTTPS port only, never plain HTTP.</p>
                       </div>
@@ -851,28 +914,30 @@
                       <label class="path-hint" for="deepyWebPortInput">Deepy Web port (default: server port + 1)</label>
                       <input id="deepyWebPortInput" type="number" min="1" max="65535" step="1" style="width:90px" placeholder="auto">
                       <button class="btn btn-ghost small" id="deepyWebPortSave">Save</button>
+                    </div>
+                    <details style="margin-top:8px">
+                      <summary class="deepy-sub-label" style="cursor:pointer">Advanced · LAN HTTPS (mic / voice needs trusted HTTPS)</summary>
+                      <div style="margin-top:8px">
+                        <div class="deepy-mode-row" style="margin-top:4px">
+                          <label class="deepy-mode-opt"><input type="radio" name="deepyWebHttps" value="off" checked> Off</label>
+                          <label class="deepy-mode-opt"><input type="radio" name="deepyWebHttps" value="on"> On</label>
                         </div>
-                          <div style="margin-top:8px">
-                            <div class="deepy-sub-label">LAN HTTPS (mic / voice needs trusted HTTPS)</div>
-                            <div class="deepy-mode-row" style="margin-top:4px">
-                              <label class="deepy-mode-opt"><input type="radio" name="deepyWebHttps" value="off" checked> Off</label>
-                              <label class="deepy-mode-opt"><input type="radio" name="deepyWebHttps" value="on"> On</label>
-                            </div>
-                            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                              <label class="path-hint" for="deepyWebCertInput">Cert .pem</label>
-                              <input id="deepyWebCertInput" type="text" style="width:220px" placeholder="C:\certs\lan-cert.pem">
-                            </div>
-                            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                              <label class="path-hint" for="deepyWebKeyInput">Key .key</label>
-                              <input id="deepyWebKeyInput" type="text" style="width:220px" placeholder="C:\certs\lan-cert-key.pem">
-                            </div>
-                            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                              <button class="btn btn-ghost small" id="deepyWebCertBring">Use these files</button>
-                              <button class="btn btn-ghost small" id="deepyWebCertCreate">Create LAN cert (mkcert)</button>
-                            </div>
-                            <p class="path-hint" id="deepyWebHttpsHint" style="margin-top:4px">HTTPS serves a trusted URL with your cert. Mic/voice stays blocked on plain HTTP.</p>
-                          </div>
+                        <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                          <label class="path-hint" for="deepyWebCertInput">Cert .pem</label>
+                          <input id="deepyWebCertInput" type="text" style="width:220px" placeholder="C:\certs\lan-cert.pem">
+                        </div>
+                        <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                          <label class="path-hint" for="deepyWebKeyInput">Key .key</label>
+                          <input id="deepyWebKeyInput" type="text" style="width:220px" placeholder="C:\certs\lan-cert-key.pem">
+                        </div>
+                        <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                          <button class="btn btn-ghost small" id="deepyWebCertBring">Use these files</button>
+                          <button class="btn btn-ghost small" id="deepyWebCertCreate">Create LAN cert (mkcert)</button>
+                        </div>
+                        <p class="path-hint" id="deepyWebHttpsHint" style="margin-top:4px">HTTPS is served directly on the Deepy Web port with your cert — open the https:// URL. The cert must cover the exact address your phone opens (IP or hostname); a cert for another name fails with a browser error even when the files are valid. Create LAN cert covers this PC's current LAN IPs automatically. Mic/voice stays blocked on plain HTTP — even over Tailscale/VPN.</p>
+                      </div>
                       <div id="deepyWebMicGate" class="pip-advanced-hint" style="margin-top:6px;display:none"></div>
+                    </details>
                   </div>
 <!-- Step 4 · Start -->
               <div class="deepy-sub-label" style="margin-top:10px">4 · Start</div>
@@ -914,7 +979,7 @@
                           <li>Android: Settings → Security → Install certificate (CA) → pick <code>rootCA.pem</code>.</li>
                           <li>Reopen the HTTPS phone URL — the lock icon must show, then voice input is allowed.</li>
                         </ol>
-                        <p class="path-hint">Bring-own certs need their own CA installed instead. Nothing is installed silently — every step is an explicit tap.</p>
+                        <p class="path-hint">mkcert/self-signed: install that CA on the phone (steps above) — nothing installs silently, every step is an explicit tap. Public-CA certs (e.g. Let's Encrypt for your own domain) are already trusted: no phone install needed, just open the https:// URL.</p>
                       </details>
                           <details style="margin-top:6px">
                             <summary class="deepy-sub-label" style="cursor:pointer">Install mkcert on this PC (needed for Create-LAN-cert)</summary>
