@@ -144,6 +144,7 @@ Same launcher, same Wan2GP, same features — new shell. The Electron edition sh
 ![Appearance — 5 themes, Mono default, click to apply](screenshots/appearance-themes.png)
 
 ![Appearance editor — 3 colors per theme, Save/Set-as-default/Reset](screenshots/appearance-editor.png)
+
 - 🔄 **Safe updates** — manual-only, version-aware, from Dashboard / Manage → Updates.
 - 🛡️ **Crash-proof UI** — crash recovery restores your session.
 - 🧩 **Pinokio coexistence** — Pinokio installs detected and left untouched; one click reuses their model library, no re-downloads.
