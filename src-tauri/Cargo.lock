@@ -5080,7 +5080,7 @@ dependencies = [
 
 [[package]]
 name = "wan2gp-desktop-launcher-tauri"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -5098,6 +5098,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-shell",
  "tauri-plugin-updater",
+ "tempfile",
  "tokio",
  "windows 0.62.2",
 ]

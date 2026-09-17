@@ -26,6 +26,19 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   Referrer-Policy patch was reverted to pristine upstream (Chrome login fixed
   upstream in 38d4a64 instead); companion login-fix plugin removed entirely
 
+## [0.7.1] — 2026-09-17
+
+- Deepy Web no longer overwrites a saved Deepy Prime engine with OpenCode: a
+  Prime per-start override now keeps the saved engine (Qwen3.8 27B local,
+  Claude, Codex), falls back to the first installed engine only when nothing
+  is saved, and blocks with an actionable error when the saved engine is not
+  installed — instead of booting into `opencode serve` FileNotFoundError
+- Local Prime 27B weights probe mirrors upstream: checks the
+  `Qwen3_8_27B_Uncensored` assets folder under `checkpoints_paths` for a
+  known text GGUF (Q4_K_M / IQ3_S / IQ2_M) instead of only scanning
+  `llm_engines.profiles` paths the launcher never writes — installed 27B
+  weights are now recognized at Deepy Web start
+
 ## [Unreleased]
 
 ## [0.6.9] — 2026-09-15
