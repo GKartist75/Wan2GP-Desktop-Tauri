@@ -7322,10 +7322,68 @@ function deepyWebAssistantHintSync() {
   const a = deepyWebAssistant();
   hint.textContent =
     a === "prime"
-      ? "Prime for this start — needs a Prime engine (see Deepy panel above). Applied when you press Start (also saved for next time)."
+      ? "Prime for this start — uses your saved Prime engine (or the first installed one). Applied when you press Start (also saved for next time)."
       : a === "zero"
         ? "Zero for this start — fast, local Qwen model. Applied when you press Start (also saved for next time)."
         : "Uses the saved Deepy config. Pick Zero or Prime for this start — applied when you press Start (also saved for next time).";
+}
+
+// Stored Prime profile id (wgp_config llm_engines.deepy) -> Deepy panel UI id.
+// Must match the panel's profileToUi in refreshDeepy + Rust prime_profile_to_ui_id.
+function deepyWebProfileToUi(profile) {
+  return (
+    {
+      opencode: "opencode",
+      claude: "claude-code",
+      codex: "codex",
+      qwen38_27b: "local-qwen38",
+    }[profile] || null
+  );
+}
+
+// Resolve which Prime engine a Deepy Web start should boot: the SAVED Prime
+// engine when one is configured (never silently switched to OpenCode), else
+// the panel default (OpenCode) when installed, else any installed remote,
+// else local Qwen3.8 27B (the boot verifies weights fail-closed). Returns
+// { engine } or { error } — the caller blocks the start on error instead of
+// writing a broken config.
+async function resolveDeepyWebPrimeEngine() {
+  let status = {};
+  try {
+    const s = await window.w2gp.deepyStatus();
+    if (s && s.ok) status = s;
+  } catch {}
+  let engines = [];
+  try {
+    const d = await getLLMEngines();
+    engines = (d && d.engines) || [];
+  } catch {}
+  const engineReady = (id) => {
+    // Local weights live in Wan2GP — installedness is verified at boot
+    // (fail-closed), nothing for the launcher to probe here.
+    if (id === "local-qwen38") return true;
+    const e = engines.find((x) => x.id === id);
+    if (!e) return false;
+    if (id === "claude-code") return !!(e.cliOnPath || e.claudeApiKeySet);
+    return !!e.cliOnPath;
+  };
+  const savedUi = deepyWebProfileToUi(status.currentEngine);
+  if (status.mode === "prime" && savedUi) {
+    if (engineReady(savedUi)) return { engine: savedUi };
+    return {
+      error:
+        "Saved Deepy Prime engine (" +
+        status.currentEngine +
+        ") is not installed — pick an installed engine in the Deepy panel above and press Apply first.",
+    };
+  }
+  if (engineReady("opencode")) return { engine: "opencode" };
+  for (const id of ["claude-code", "codex"]) {
+    if (engineReady(id)) return { engine: id };
+  }
+  // Last resort: local Prime — deepy_web_start verifies the 27B weights and
+  // blocks with an actionable error when they are missing.
+  return { engine: "local-qwen38" };
 }
 function deepyWebPortArg() {
   const raw = ($("deepyWebPortInput") || {}).value;
@@ -7765,18 +7823,28 @@ async function deepyWebStartFlow() {
     window.__deepyWebStarting = true; // light poll stands down until boot resolves
     // Assistant override (Zero/Prime radio): applied to the saved config BEFORE
     // the backend reads it, so this Deepy Web process boots the chosen level.
-    // Unchecked = follow the Deepy panel config untouched.
+    // Unchecked = follow the Deepy panel config untouched. Prime preserves the
+    // SAVED Prime engine (never forced to OpenCode) — see resolveDeepyWebPrimeEngine.
     if (assistant === "zero" || assistant === "prime") {
       try {
+        let primeEngine = null;
+        if (assistant === "prime") {
+          const resolved = await resolveDeepyWebPrimeEngine();
+          if (resolved.error) throw new Error(resolved.error);
+          primeEngine = resolved.engine;
+        }
         const ar = await window.w2gp.deepySet(
           assistant,
-          assistant === "prime" ? "opencode" : null,
+          primeEngine,
           null,
           null,
         );
         if (ar && ar.ok) {
           appendLog(
-            "[Deepy] Assistant for this start: " + assistant + " (saved). ",
+            "[Deepy] Assistant for this start: " +
+              assistant +
+              (primeEngine ? " (" + primeEngine + ")" : "") +
+              " (saved). ",
           );
         } else {
           throw new Error((ar && ar.error) || "assistant apply failed");

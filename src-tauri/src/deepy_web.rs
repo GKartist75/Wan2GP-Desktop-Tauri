@@ -384,8 +384,54 @@ pub(crate) fn auto_config_plan(
     AutoPlan::Keep
 }
 
-/// True when a `qwen38_27b`-style profile entry points at an existing path.
-fn prime_local_27b_present(v: &serde_json::Value) -> bool {
+/// Upstream Qwen3.8 27B text-GGUF checkpoints the local Prime engine can run
+/// on (shared/prompt_enhancer/assets.py: `QWEN38_27B_TEXT_GGUF_*`). Any one of
+/// them counts as "weights present" — the Q4_K_M / IQ3_S / IQ2_M quant menu.
+const QWEN38_27B_WEIGHT_FILES: &[&str] = &[
+    "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+    "Qwen3.8-27B-Uncensored-noMTP-IQ3_S.gguf",
+    "Qwen3.8-27B-Uncensored-IQ2_M.gguf",
+];
+/// Upstream assets folder holding the 27B weights
+/// (shared/prompt_enhancer/assets.py: `assets_dir_name`).
+const QWEN38_27B_ASSETS_DIR: &str = "Qwen3_8_27B_Uncensored";
+
+/// Checkpoint roots to probe for the 27B folder: `wgp_config.json`
+/// `checkpoints_paths` (absolute entries as-is; relative ones resolved against
+/// the repo root, mirroring upstream `files_locator` which runs with the repo
+/// as CWD; `"."` entries skipped), falling back to `<repo>/ckpts` when the
+/// key is missing. Pure over (config, repo) so it stays unit-tested.
+pub(crate) fn qwen27b_search_roots(
+    cfg: &serde_json::Value,
+    repo: &std::path::Path,
+) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    if let Some(arr) = cfg.get("checkpoints_paths").and_then(|v| v.as_array()) {
+        for entry in arr {
+            if let Some(s) = entry
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && *s != ".")
+            {
+                let p = std::path::Path::new(s);
+                out.push(if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    repo.join(p)
+                });
+            }
+        }
+    }
+    if out.is_empty() {
+        out.push(repo.join("ckpts"));
+    }
+    out
+}
+
+/// True when an explicit `llm_engines` profile entry for a 27B-style engine
+/// points at an existing path (hand-configured setups). Legacy branch of the
+/// weights probe — the launcher itself never writes such entries.
+fn profile_points_at_existing_path(v: &serde_json::Value) -> bool {
     let profiles = v
         .get("llm_engines")
         .and_then(|l| l.get("profiles"))
@@ -412,6 +458,23 @@ fn prime_local_27b_present(v: &serde_json::Value) -> bool {
             }
         }
         paths.iter().any(|p| std::path::Path::new(p).exists())
+    })
+}
+
+/// True when the Qwen3.8 27B weights are on disk: either an explicit profile
+/// path (legacy, see above) or — the layout upstream actually uses — the
+/// `Qwen3_8_27B_Uncensored` assets folder under a checkpoint root holding one
+/// of the known text GGUF checkpoints. A bare folder without weights does NOT
+/// count. Pure over (config, repo); the only impurity is the fs probe.
+pub(crate) fn qwen27b_weights_present(cfg: &serde_json::Value, repo: &std::path::Path) -> bool {
+    if profile_points_at_existing_path(cfg) {
+        return true;
+    }
+    qwen27b_search_roots(cfg, repo).iter().any(|root| {
+        let dir = root.join(QWEN38_27B_ASSETS_DIR);
+        QWEN38_27B_WEIGHT_FILES
+            .iter()
+            .any(|f| dir.join(f).is_file())
     })
 }
 
@@ -543,7 +606,8 @@ fn last_deepy_mode() -> String {
 /// Apply the Slice 0 auto-config contract through `deepy_set` (backup +
 /// literal-exe-name rules live there). Returns the plan label.
 fn ensure_deepy_config_for_web() -> Result<String, String> {
-    let p = get_repo_dir().join("wgp_config.json");
+    let repo = get_repo_dir();
+    let p = repo.join("wgp_config.json");
     let s = std::fs::read_to_string(&p)
         .map_err(|_| "wgp_config.json not found — install Wan2GP first.".to_string())?;
     let v: serde_json::Value =
@@ -571,7 +635,7 @@ fn ensure_deepy_config_for_web() -> Result<String, String> {
         &dtype,
         &engine.to_lowercase(),
         enh,
-        prime_local_27b_present(&v),
+        qwen27b_weights_present(&v, &repo),
     );
     let mut label = match plan {
         AutoPlan::Keep => Ok("kept".to_string()),
@@ -594,8 +658,7 @@ fn ensure_deepy_config_for_web() -> Result<String, String> {
         }
         // Fail-closed: local Prime without visible 27B weights must NEVER
         // be silently rewritten to Zero (that clobbers an explicit user
-        // choice on every boot, and our own deepy_set writes no profiles
-        // path for the presence check to find). Block the start with an
+        // choice on every boot). Block the start with an
         // actionable error instead — the file stays exactly as the user
         // left it.
         AutoPlan::BlockMissing27B => Err("Deepy Prime (local Qwen 27B) is configured but no 27B weights were found — refusing to downgrade you to Zero. Install the Qwen3.8 VL 27B model, switch to a remote Prime engine (OpenCode/Claude/Codex), or press Apply on Deepy Zero.".to_string()),
@@ -1802,10 +1865,15 @@ mod tests {
 
     #[test]
     fn tri_auto_config_prime_local_without_27b_blocks() {
-        assert_eq!(
-            auto_config_plan(1, "prime", "local-qwen38", Some(5), false),
-            AutoPlan::BlockMissing27B
-        );
+        // Gerard's exact failure mode: Prime+local data saved (e.g. after the
+        // old JS override or a profile-id/enhancer mismatch), weights absent.
+        for profile in ["local-qwen38", "qwen38_27b", "qwen38"] {
+            assert_eq!(
+                auto_config_plan(1, "prime", profile, Some(5), false),
+                AutoPlan::BlockMissing27B,
+                "profile {profile} must block, not rewrite"
+            );
+        }
     }
 
     #[test]
@@ -1814,6 +1882,84 @@ mod tests {
             auto_config_plan(1, "prime", "opencode", Some(3), true),
             AutoPlan::Keep
         );
+    }
+
+    #[test]
+    fn tri_qwen27b_roots_read_checkpoints_paths() {
+        let repo = std::path::Path::new("C:/Wan2GP");
+        // Gerard's real config: absolute ckpts root + "." entry (skipped).
+        let cfg = serde_json::json!({"checkpoints_paths": ["C:\\Wan2GP-Models\\ckpts", "."]});
+        let roots = qwen27b_search_roots(&cfg, repo);
+        assert_eq!(roots.len(), 1);
+        assert!(roots[0].ends_with("ckpts"));
+        // Missing key falls back to <repo>/ckpts; relative entries resolve
+        // against the repo (upstream files_locator runs with repo as CWD).
+        let fallback = qwen27b_search_roots(&serde_json::json!({}), repo);
+        assert_eq!(fallback, vec![repo.join("ckpts")]);
+        let rel = qwen27b_search_roots(&serde_json::json!({"checkpoints_paths": ["ckpts"]}), repo);
+        assert_eq!(rel, vec![repo.join("ckpts")]);
+    }
+
+    // Weights probe: temp-tree fixtures (no dependency on the dev machine).
+    fn qwen_fixture(with_weight: bool, bare_dir_only: bool) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("fixture dir");
+        let dir = tmp.path().join("ckpts").join("Qwen3_8_27B_Uncensored");
+        std::fs::create_dir_all(&dir).expect("fixture assets dir");
+        if with_weight && !bare_dir_only {
+            std::fs::write(dir.join("Qwen3.8-27B-Uncensored-Q4_K_M.gguf"), b"x")
+                .expect("fixture weight");
+        }
+        tmp
+    }
+    fn qwen_cfg_for(tmp: &tempfile::TempDir) -> serde_json::Value {
+        serde_json::json!({"checkpoints_paths": [tmp.path().join("ckpts").to_string_lossy().to_string()]})
+    }
+
+    #[test]
+    fn tri_qwen27b_weights_detected_per_quant() {
+        for file in [
+            "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+            "Qwen3.8-27B-Uncensored-noMTP-IQ3_S.gguf",
+            "Qwen3.8-27B-Uncensored-IQ2_M.gguf",
+        ] {
+            let tmp = tempfile::tempdir().expect("fixture dir");
+            let dir = tmp.path().join("ckpts").join("Qwen3_8_27B_Uncensored");
+            std::fs::create_dir_all(&dir).expect("fixture assets dir");
+            std::fs::write(dir.join(file), b"x").expect("fixture weight");
+            let repo = tmp.path().join("repo");
+            assert!(
+                qwen27b_weights_present(&qwen_cfg_for(&tmp), &repo),
+                "{file} must count as weights present"
+            );
+        }
+    }
+
+    #[test]
+    fn tri_qwen27b_bare_dir_does_not_count() {
+        let tmp = qwen_fixture(false, true);
+        let repo = tmp.path().join("repo");
+        assert!(!qwen27b_weights_present(&qwen_cfg_for(&tmp), &repo));
+    }
+
+    #[test]
+    fn tri_qwen27b_missing_dir_blocks() {
+        let tmp = tempfile::tempdir().expect("fixture dir");
+        let repo = tmp.path().join("repo");
+        let cfg = qwen_cfg_for(&tmp); // ckpts/ exists? no — nothing created
+        assert!(!qwen27b_weights_present(&cfg, &repo));
+        assert_eq!(
+            auto_config_plan(1, "prime", "qwen38_27b", Some(5), false),
+            AutoPlan::BlockMissing27B
+        );
+    }
+
+    #[test]
+    fn tri_prime_profile_to_ui_id_stays_in_sync() {
+        // The JS override maps stored profiles through the same table — every
+        // local-style id must resolve to the local UI id, never opencode.
+        for p in ["qwen38_27b", "qwen38", "27b-local"] {
+            assert_eq!(crate::features::prime_profile_to_ui_id(p), "local-qwen38");
+        }
     }
 
     // Slice 1 Auth RED — env-only password (must FAIL before GREEN).
