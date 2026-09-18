@@ -53,6 +53,46 @@ pub async fn check_package_updates(
     }
     Ok(serde_json::json!([]))
 }
+/// Required version specifier for a distribution as pinned in the Wan2GP
+/// repo's requirements.txt (`hf_xet>=1.5.2` -> `Some(">=1.5.2")`, bare
+/// `tqdm` -> `Some("")`). Unlike `parse_requirement_pins` (exact `==` only)
+/// this keeps any single PEP 440 operator so cards can verdict `>=` floors.
+/// Skips comments, options, URLs, and marker-only mismatches; name match is
+/// case-insensitive with `-`/`_` equivalent. Pure + unit-tested.
+pub(crate) fn required_spec_in_requirements(text: &str, dist: &str) -> Option<String> {
+    let want = dist.to_ascii_lowercase().replace('_', "-");
+    for raw_line in text.lines() {
+        let mut line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('-') {
+            continue;
+        }
+        if let Some(i) = line.find('#') {
+            line = line[..i].trim();
+        }
+        if let Some(i) = line.find(';') {
+            line = line[..i].trim();
+        }
+        if line.is_empty() || line.contains("://") {
+            continue;
+        }
+        let cut = line.find(|c: char| "<>=!~".contains(c) || c.is_whitespace());
+        let (mut name, spec) = match cut {
+            Some(i) => (line[..i].trim(), line[i..].trim()),
+            None => (line, ""),
+        };
+        if let Some(b) = name.find('[') {
+            name = name[..b].trim();
+        }
+        if name.to_ascii_lowercase().replace('_', "-") != want {
+            continue;
+        }
+        if spec.is_empty() {
+            return Some(String::new());
+        }
+        return Some(spec.split_whitespace().next().unwrap_or("").to_string());
+    }
+    None
+}
 #[tauri::command]
 pub fn check_package(pkg: String) -> serde_json::Value {
     // Real probe: importlib version from the active env (aliases map import names to dist names).
@@ -63,6 +103,15 @@ pub fn check_package(pkg: String) -> serde_json::Value {
         "opencv" | "opencv-python" => "opencv-python",
         other => other,
     };
+    // Live upstream pin from the repo's requirements.txt (e.g. hf_xet>=1.5.2
+    // -> ">=1.5.2") so cards can show installed-vs-required. Null when the
+    // repo or pin is missing — the card degrades to installed-only.
+    let required: serde_json::Value =
+        std::fs::read_to_string(get_repo_dir().join("requirements.txt"))
+            .ok()
+            .and_then(|text| required_spec_in_requirements(&text, dist))
+            .map(serde_json::Value::from)
+            .unwrap_or(serde_json::Value::Null);
     let py = env_python_bin();
     if let Some(p) = py {
         if p.exists() {
@@ -71,13 +120,13 @@ pub fn check_package(pkg: String) -> serde_json::Value {
                 if o.status.success() {
                     let v = String::from_utf8_lossy(&o.stdout).trim().to_string();
                     if !v.is_empty() {
-                        return serde_json::json!({"name": pkg, "installed": true, "version": v});
+                        return serde_json::json!({"name": pkg, "installed": true, "version": v, "required": required});
                     }
                 }
             }
         }
     }
-    serde_json::json!({"name": pkg, "installed": false, "version": null})
+    serde_json::json!({"name": pkg, "installed": false, "version": null, "required": required})
 }
 #[tauri::command]
 pub fn memory_profile_read() -> serde_json::Value {
@@ -351,6 +400,44 @@ pub async fn install_package(
         return Err(format!("pip install {pkg} failed — see console output"));
     }
     Ok(serde_json::json!({"ok": true, "success": true}))
+}
+#[cfg(test)]
+mod required_spec_tests {
+    use super::required_spec_in_requirements;
+    #[test]
+    fn finds_ge_floor_and_bare_and_exact() {
+        let text = "# comment\nhf_xet>=1.5.2\ntqdm\nmmgp==3.8.0\n";
+        assert_eq!(
+            required_spec_in_requirements(text, "hf_xet").as_deref(),
+            Some(">=1.5.2")
+        );
+        assert_eq!(
+            required_spec_in_requirements(text, "tqdm").as_deref(),
+            Some("")
+        );
+        assert_eq!(
+            required_spec_in_requirements(text, "mmgp").as_deref(),
+            Some("==3.8.0")
+        );
+    }
+    #[test]
+    fn name_match_ignores_case_underscore_and_extras() {
+        let text = "HuggingFace_Hub[hf_xet]>=0.36.2\n";
+        assert_eq!(
+            required_spec_in_requirements(text, "huggingface-hub").as_deref(),
+            Some(">=0.36.2")
+        );
+    }
+    #[test]
+    fn skips_urls_options_markers_and_missing() {
+        let text = "-r other.txt\ninsightface @ https://example.com/x.whl\nrembg==2.0.65; python_version < \"3.11\"\n";
+        assert_eq!(
+            required_spec_in_requirements(text, "rembg").as_deref(),
+            Some("==2.0.65")
+        );
+        assert_eq!(required_spec_in_requirements(text, "insightface"), None);
+        assert_eq!(required_spec_in_requirements(text, "nope"), None);
+    }
 }
 #[cfg(test)]
 mod amd_package_gate_tests {

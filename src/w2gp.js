@@ -559,7 +559,7 @@
         deepySet: (mode, engine, enhancer, sessions) =>
             call("deepy_set", { mode, engine, enhancer, sessions }),
         deepyWebPreflight: (mode) => call("deepy_web_preflight", { mode }),
-        deepyWebStart: (mode, deepyPort, authMode, authFixed, https) =>
+        deepyWebStart: (mode, deepyPort, authMode, authFixed, https, publicUrl) =>
             call("deepy_web_start", {
                 mode,
                 deepyPort,
@@ -569,6 +569,7 @@
                 httpsCert: (https && https.cert) || "",
                 httpsKey: (https && https.key) || "",
                 httpsPort: (https && https.port) || null,
+                publicUrl: (typeof publicUrl === "string" ? publicUrl : "") || "",
             }),
         deepyWebStop: (deepyPort) => call("deepy_web_stop", { deepyPort }),
         deepyWebStatus: (deepyPort) => call("deepy_web_status", { deepyPort }),
@@ -670,6 +671,10 @@
         },
         onWangpExit: (cb) => {
             listen("wangp-exit", cb);
+            return () => {};
+        },
+        onDeepyExit: (cb) => {
+            listen("deepy-exit", cb);
             return () => {};
         },
         onAppClosing: (cb) => {

@@ -315,6 +315,67 @@ pub(crate) fn https_url(host: &str, https_port: u64) -> String {
     format!("https://{}:{}", host.trim(), https_port)
 }
 
+/// Upstream `--public-url` (WanGP 13.11+, reverse-proxy support): an exact
+/// HTTP(S) origin — scheme + host + optional port, no path/query/fragment/
+/// credentials. Pure port of upstream `parse_public_url` (no pydantic here);
+/// returns the normalized origin (no trailing slash) or a fail-closed error.
+pub(crate) fn validate_public_url(raw: &str) -> Result<String, String> {
+    let v = raw.trim();
+    let err = || {
+        Err("--public-url must be an HTTP(S) origin, e.g. https://wangp.example.com, without a path, query, fragment or credentials.".to_string())
+    };
+    let after_scheme = if let Some(rest) = v.strip_prefix("https://") {
+        rest
+    } else if let Some(rest) = v.strip_prefix("http://") {
+        rest
+    } else {
+        return err();
+    };
+    if after_scheme.is_empty() {
+        return err();
+    }
+    if v.chars()
+        .any(|c| c.is_whitespace() || (c as u32) < 32 || "?#\\*".contains(c) || c == '@')
+    {
+        return err();
+    }
+    // Authority is up to the first '/'; anything beyond a single trailing
+    // slash is a path and is rejected.
+    let (authority, rest) = match after_scheme.find('/') {
+        Some(i) => (&after_scheme[..i], &after_scheme[i..]),
+        None => (after_scheme, ""),
+    };
+    if !(rest.is_empty() || rest == "/") || authority.is_empty() {
+        return err();
+    }
+    // Optional :port must be numeric 1-65535 (mirror upstream url.port check).
+    if let Some(colon) = authority.rfind(':') {
+        let host_part = &authority[..colon];
+        let port_part = &authority[colon + 1..];
+        if host_part.is_empty() {
+            return err();
+        }
+        match port_part.parse::<u64>() {
+            Ok(p) if (1..=65535).contains(&p) => {}
+            _ => return err(),
+        }
+    }
+    let scheme = if v.starts_with("https://") {
+        "https"
+    } else {
+        "http"
+    };
+    Ok(format!("{scheme}://{authority}"))
+}
+
+/// Verbatim upstream `--public-url` composer for the start-arg chain.
+#[allow(dead_code)]
+pub(crate) fn build_public_url_args(mut args: Vec<String>, public_url: &str) -> Vec<String> {
+    args.push("--public-url".to_string());
+    args.push(public_url.to_string());
+    args
+}
+
 pub(crate) fn should_stop_deepy_process(cmdline: &str, deepy_port: u64) -> bool {
     let cl = cmdline.to_lowercase();
     cl.contains("wgp.py") && cl.contains("--deepy-server") && cl.contains(&deepy_port.to_string())
@@ -325,7 +386,7 @@ pub(crate) fn should_stop_deepy_process(cmdline: &str, deepy_port: u64) -> bool 
 pub(crate) fn flag_drift_hint(stderr: &str) -> Option<String> {
     if stderr.to_lowercase().contains("unrecognized argument") {
         Some(
-            "Upstream wgp.py rejected a launch flag (expected --deepy-server / --listen). \
+            "Upstream wgp.py rejected a launch flag (expected --deepy-server / --listen / --auth / --public-url). \
              Update Wan2GP to a version with Deepy Web support, then retry."
                 .to_string(),
         )
@@ -813,6 +874,7 @@ pub async fn deepy_web_start(
     https_cert: Option<String>,
     https_key: Option<String>,
     https_port: Option<u64>,
+    public_url: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let lan = match mode.as_deref() {
         Some("lan") => true,
@@ -870,6 +932,33 @@ pub async fn deepy_web_start(
                 );
             }
         }
+    }
+    // Reverse-proxy origin (upstream 13.11+ `--public-url`): explicit opt-in
+    // only; resolved from the start call or persisted `deepyPublicUrl`.
+    // Upstream rejects `--public-url` + `--https-port` together (proxy-managed
+    // HTTPS vs WanGP redirect are exclusive) — fail closed here as well.
+    let public_url_raw = public_url
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            cfg_https
+                .get("deepyPublicUrl")
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.trim().is_empty())
+                .map(|v| v.to_string())
+        })
+        .unwrap_or_default();
+    let public_url_norm = if public_url_raw.trim().is_empty() {
+        None
+    } else {
+        match validate_public_url(&public_url_raw) {
+            Ok(u) => Some(u),
+            Err(e) => return Ok(serde_json::json!({"ok": false, "error": e})),
+        }
+    };
+    if public_url_norm.is_some() && https_on && https_port.is_some() {
+        return Ok(
+            serde_json::json!({"ok": false, "error": "Use --public-url for proxy-managed HTTPS or the HTTPS redirect port, not both (upstream rejects the combination)."}),
+        );
     }
     let repo = get_repo_dir();
     if !repo.join("wgp.py").exists() {
@@ -956,6 +1045,9 @@ pub async fn deepy_web_start(
             args.push("--https-port".to_string());
             args.push(hp.to_string());
         }
+    }
+    if let Some(ref pu) = public_url_norm {
+        args = build_public_url_args(args, pu);
     }
     debug_assert!(
         auth_secret
@@ -1048,6 +1140,7 @@ runpy.run_path(sys.argv[0], run_name='__main__')
         None
     });
     // Forward logs + collect early stderr for flag-drift diagnosis.
+    let deepy_exit_port = port;
     let app2 = app.clone();
     let stderr_buf = std::sync::Arc::new(Mutex::new(String::new()));
     let stderr_buf2 = stderr_buf.clone();
@@ -1072,7 +1165,7 @@ runpy.run_path(sys.argv[0], run_name='__main__')
                     }
                 }
                 CommandEvent::Terminated(s) => {
-                    let _ = app2.emit("wangp-exit", serde_json::json!({"code": s.code}));
+                    let _ = app2.emit("deepy-exit", serde_json::json!({"source": "deepy", "code": s.code, "port": deepy_exit_port}));
                     break;
                 }
                 _ => {}
@@ -1119,6 +1212,7 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             "httpsCertPath": if https_on { serde_json::Value::String(https_cert_path.clone()) } else { serde_json::Value::Null },
             "httpsKeyPath": if https_on { serde_json::Value::String(https_key_path.clone()) } else { serde_json::Value::Null },
             "httpsPort": if https_on { https_port.map(serde_json::Value::from).unwrap_or(serde_json::Value::Null) } else { serde_json::Value::Null },
+            "publicUrl": public_url_norm.clone().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null),
         }))
     } else {
         // Fail-closed: stop what we spawned (whole process tree) plus a
@@ -2095,6 +2189,65 @@ mod tests {
         );
         assert!(a.contains(&"--https-port".to_string()));
         assert!(a.contains(&"7861".to_string()));
+    }
+
+    #[test]
+    fn public_url_accepts_origins() {
+        assert_eq!(
+            validate_public_url("https://wangp.example.com").as_deref(),
+            Ok("https://wangp.example.com")
+        );
+        assert_eq!(
+            validate_public_url("https://wangp.example.com:8443").as_deref(),
+            Ok("https://wangp.example.com:8443")
+        );
+        assert_eq!(
+            validate_public_url("https://abc123xyz-7860.proxy.runpod.net").as_deref(),
+            Ok("https://abc123xyz-7860.proxy.runpod.net")
+        );
+        // Trailing slash is normalized away (upstream accepts it).
+        assert_eq!(
+            validate_public_url("https://wangp.example.com/").as_deref(),
+            Ok("https://wangp.example.com")
+        );
+        assert_eq!(
+            validate_public_url("  http://127.0.0.1:7861  ").as_deref(),
+            Ok("http://127.0.0.1:7861")
+        );
+    }
+
+    #[test]
+    fn public_url_rejects_non_origins() {
+        for bad in [
+            "wangp.example.com",
+            "ftp://wangp.example.com",
+            "https://wangp.example.com/deepy/",
+            "https://wangp.example.com/deepy",
+            "https://wangp.example.com?x=1",
+            "https://wangp.example.com#frag",
+            "https://user:pass@wangp.example.com",
+            "https://wangp.example.com:99999",
+            "https://wangp.example.com:abc",
+            "https://",
+            "",
+            "https://wangp.example.com/a b",
+            "https://wangp.example.com\\evil",
+        ] {
+            assert!(validate_public_url(bad).is_err(), "must reject: {bad:?}");
+        }
+    }
+
+    #[test]
+    fn public_url_args_compose_verbatim() {
+        let a = build_public_url_args(vec!["wgp.py".to_string()], "https://wangp.example.com");
+        assert_eq!(
+            a,
+            vec![
+                "wgp.py".to_string(),
+                "--public-url".to_string(),
+                "https://wangp.example.com".to_string()
+            ]
+        );
     }
 
     // Slice 3 Tailscale RED — status-parse (must FAIL before GREEN).

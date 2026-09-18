@@ -5578,6 +5578,7 @@ async function openDesktopView(url, fresh) {
     $("dashBody").style.display = "";
     $("webviewContainer").classList.add("hidden");
     hideWebviewUI();
+    $("runningLed").style.display = "none";
     appendLog(`[LAUNCH ERROR] ${errText(e)}`);
   } finally {
     $("appBtn").disabled = false;
@@ -5669,7 +5670,6 @@ function syncEmbedSwitchLocks() {
 
 function showWebviewUI() {
   $("wvControls").style.display = "flex";
-  $("runningLed").style.display = "inline-flex";
   // Topbar renderer switch (permanent, always visible): shows the active
   // renderer (gray iframe / green native). Locked while a session runs.
   try {
@@ -5684,8 +5684,7 @@ function showWebviewUI() {
 
 function hideWebviewUI() {
   $("wvControls").style.display = "none";
-  $("runningLed").style.display = "none";
-}
+  }
 
 async function closeWebview(silent) {
   if (window.__viewBusy) {
@@ -5703,6 +5702,9 @@ async function closeWebview(silent) {
     $("webviewContainer").classList.add("hidden");
     $("dashBody").style.display = "";
     hideWebviewUI();
+    // LED follows the server, not the view: Back-to-Dashboard keeps it visible.
+    if (appRunning) updateLed("running");
+    else $("runningLed").style.display = "none";
     serverMode = null; // webview UI is gone; a later server exit must not re-close it
     window.w2gp.uiModeSet(null);
     // Server is still running behind the dashboard → the launch button becomes "Back to…"
@@ -5809,6 +5811,7 @@ async function checkCrashRecovery() {
       $("dashBody").style.display = "";
       $("webviewContainer").classList.add("hidden");
       hideWebviewUI();
+      $("runningLed").style.display = "none";
       serverMode = null;
       try {
         await window.w2gp.destroyBrowserView();
@@ -6230,6 +6233,7 @@ $("stopAllBtn").addEventListener("click", async () => {
         $("dashBody").style.display = "";
       } catch {}
       hideWebviewUI();
+      $("runningLed").style.display = "none";
       hideNativeHiddenNote();
       try {
         window.w2gp.uiModeSet(null);
@@ -6272,6 +6276,7 @@ window.w2gp.onAppClosing(() => {
   } catch {}
 });
 window.w2gp.onWangpExit(async (c) => {
+  if (c && typeof c === "object" && c.source === "deepy") return;
   // Payload shapes: {code: n|null} on process end, {stopped:true} on manual stop.
   // (Was interpolating the whole object → "exited (code [object Object])".)
   const code =
@@ -6327,6 +6332,12 @@ window.w2gp.onWangpExit(async (c) => {
       }
     } catch {}
   }
+});
+window.w2gp.onDeepyExit(async (c) => {
+    const code = c && typeof c === "object" ? (c.code ?? "?") : c;
+  appendLog(`[*] Deepy Web stopped (code ${code}).`);
+  try { refreshDeepyWeb(); } catch {}
+  try { updateDeepyWebLed(false); } catch {}
 });
 
 async function offerConfigReset(missingKey, mode) {
@@ -7438,6 +7449,10 @@ function deepyWebHttpsPaths() {
     key: typeof k === "string" ? k.trim() : "",
   };
 }
+function deepyWebPublicUrl() {
+  const v = ($("deepyWebPublicUrlInput") || {}).value;
+  return typeof v === "string" ? v.trim() : "";
+}
 async function deepyWebCertFlow(action) {
   const p = deepyWebHttpsPaths();
   try {
@@ -7502,6 +7517,8 @@ async function refreshDeepyWeb(light = false) {
           $("deepyWebCertInput").value = cfg.deepyCertPath;
         if ($("deepyWebKeyInput") && cfg.deepyKeyPath)
           $("deepyWebKeyInput").value = cfg.deepyKeyPath;
+        if ($("deepyWebPublicUrlInput") && typeof cfg.deepyPublicUrl === "string" && !$("deepyWebPublicUrlInput").value)
+          $("deepyWebPublicUrlInput").value = cfg.deepyPublicUrl;
         if (cfg.deepyCertPath || cfg.deepyKeyPath) {
           const httpsOn = document.querySelector(
             'input[name=deepyWebHttps][value="on"]',
@@ -7752,6 +7769,7 @@ async function deepyWebStartFlow() {
   }
   const httpsPaths = deepyWebHttpsPaths();
   const httpsOn = deepyWebHttpsOn();
+  const publicUrl = deepyWebPublicUrl();
   const assistant = deepyWebAssistant();
   if (httpsOn && (!httpsPaths.cert || !httpsPaths.key)) {
     showToast("HTTPS needs both .pem and .key — use Bring or Create first.");
@@ -7773,6 +7791,8 @@ async function deepyWebStartFlow() {
       cfg.deepyAuthMode = authMode;
       cfg.deepyCertPath = httpsPaths.cert;
       cfg.deepyKeyPath = httpsPaths.key;
+      if (publicUrl) cfg.deepyPublicUrl = publicUrl;
+      else delete cfg.deepyPublicUrl;
       if (authMode === "fixed" && rememberPw && authFixed) {
         cfg.deepySavedPassword = authFixed;
         cfg.deepyPasswordExpiry = Date.now() + DEEPY_SAVED_DAYS * 864e5;
@@ -7799,6 +7819,7 @@ async function deepyWebStartFlow() {
       " auth=" +
       authMode +
       (httpsOn ? " https=on" : "") +
+      (publicUrl ? " public-url=" + publicUrl : "") +
       "…",
   );
   try {
@@ -7861,7 +7882,7 @@ async function deepyWebStartFlow() {
       enabled: httpsOn,
       cert: httpsPaths.cert,
       key: httpsPaths.key,
-    });
+    }, publicUrl);
     if (r && r.ok) {
       showToast("✓ Deepy Web running on :" + r.port);
       const extUrl = (r.urls && r.urls.external) || "";
@@ -8150,6 +8171,7 @@ document.querySelectorAll("input[name=deepyWebAssistant]").forEach((r) =>
 );
 $("deepyWebStartBtn")?.addEventListener("click", deepyWebStartFlow);
 $("deepyWebStopBtn")?.addEventListener("click", deepyWebStopFlow);
+$("stopDeepyBtn")?.addEventListener("click", deepyWebStopFlow);
 $("deepyWebOutputsBtn")?.addEventListener("click", async () => {
   try {
     const r = await window.w2gp.deepyWebOpenOutputs().catch(() => null);
@@ -9489,18 +9511,71 @@ $("autotuneFailsafeChk").addEventListener("change", async () => {
 });
 
 // ── Xet Storage (hf_xet) ──
+// Minimal PEP 440 subset for dotted numeric releases (1.6.0 vs >=1.5.2).
+// True when the requirement is empty/unparseable (display only, no verdict).
+function versionSatisfies(installed, required) {
+  if (!installed || !required) return true;
+  const m = String(required).match(
+    /^(==|>=|<=|~=|!=|>|<)\s*([0-9][0-9A-Za-z.\-_]*)/,
+  );
+  if (!m) return true;
+  const num = (v) =>
+    String(v).split(".").map((p) => {
+      const n = parseInt(p, 10);
+      return Number.isFinite(n) ? n : 0;
+    });
+  const a = num(installed);
+  const b = num(m[2]);
+  let cmp = 0;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] || 0;
+    const y = b[i] || 0;
+    if (x !== y) {
+      cmp = x < y ? -1 : 1;
+      break;
+    }
+  }
+  switch (m[1]) {
+    case "==":
+      return cmp === 0;
+    case "!=":
+      return cmp !== 0;
+    case ">=":
+    case "~=":
+      return cmp >= 0;
+    case "<=":
+      return cmp <= 0;
+    case ">":
+      return cmp > 0;
+    case "<":
+      return cmp < 0;
+    default:
+      return true;
+  }
+}
 async function updateXetStatus() {
   const btn = $("xetInstallBtn");
   const status = $("xetStatus");
   if (!btn || !status) return;
   try {
     const r = await window.w2gp.checkPackage("hf_xet");
+    const ver = (r && r.version) || "";
+    const req = (r && r.required) || "";
+    const reqNote = req ? " (requires " + req + ")" : "";
     if (r && r.installed) {
-      status.textContent = "installed";
-      status.style.color = "var(--signal-green)";
-      btn.textContent = "Uninstall hf_xet";
+      if (versionSatisfies(ver, req)) {
+        status.textContent =
+          "installed" + (ver ? " " + ver : "") + reqNote;
+        status.style.color = "var(--signal-green)";
+        btn.textContent = "Uninstall hf_xet";
+      } else {
+        status.textContent =
+          "installed " + ver + " — outdated" + reqNote;
+        status.style.color = "var(--signal-red)";
+        btn.textContent = "Update hf_xet";
+      }
     } else {
-      status.textContent = "not installed";
+      status.textContent = "not installed" + reqNote;
       status.style.color = "var(--text-tertiary)";
       btn.textContent = "Install hf_xet";
     }
@@ -9519,7 +9594,14 @@ $("xetInstallBtn")?.addEventListener("click", async function () {
     if (this.textContent.startsWith("Uninstall")) {
       r = await window.w2gp.uninstallPackage("hf_xet");
     } else {
-      r = await window.w2gp.installPackage("hf_xet");
+      // Install/Update to the live upstream pin from requirements.txt
+      // (e.g. hf_xet>=1.5.2) — never a hardcoded floor.
+      let spec = "hf_xet";
+      try {
+        const c = await window.w2gp.checkPackage("hf_xet");
+        if (c && c.required) spec = "hf_xet" + c.required;
+      } catch {}
+      r = await window.w2gp.installPackage(spec);
     }
     if (r && r.success) {
       updateXetStatus();
