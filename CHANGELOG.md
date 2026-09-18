@@ -2,6 +2,23 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.7.2] — 2026-09-18
+
+- Deepy Web and Wan2GP exits are now independent events: the backend emits
+  `deepy-exit {source, code, port}` instead of reusing `wangp-exit`, so
+  stopping one server no longer tears down the other's view; new Stop-Deepy-only
+  button (keeps Wan2GP running) and the topbar LED follows the server, not the view
+- Upstream Wan2GP 13.11 reverse-proxy support: Deepy Web card gains an Advanced ·
+  Reverse proxy field (`--public-url` exact origin, validated fail-closed,
+  persisted to config, rejected together with the HTTPS redirect port —
+  proxy-managed HTTPS vs WanGP redirect are exclusive upstream too)
+- Xet Storage card is version-aware: shows installed vs the live
+  `requirements.txt` pin (e.g. `installed 1.6.0 (requires >=1.5.2)`), turns red
+  with an Update action when below the floor, and Install/Update always resolves
+  the live pin instead of a hardcoded floor
+- Housekeeping: retired the stale `reference/` snapshot (20 files, diverged
+  pre-Tauri copy) and the checked-in `.vscode` config
+
 ## [0.7.0] — 2026-09-16
 
 - Appearance: 5 full themes (Mono default + Blue Sky + Orca + Cyber + Matrix) —

@@ -12,3 +12,4 @@ relnotes-*.md
 .pi/
 build-local.log
 build-*.log
+.empryo
