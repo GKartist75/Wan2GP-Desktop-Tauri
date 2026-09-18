@@ -267,7 +267,9 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.7.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.0) *(latest)* — 5 editable themes + text/terminal sizing, Deepy Web Assistant selector + click-to-open URLs + persistent topbar LED, Save-As file-type filters (issue #29), one-line update verdict (100% original git proof), dashboard text raised to readable minimums, LAN HTTPS under Advanced.
+- [**v0.7.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.2) *(latest)* — Deepy Web + Wan2GP exits split (independent stop, Stop-Deepy-only button, server-following LED), upstream 13.11 reverse-proxy origin (`--public-url` card field, validated + persisted), version-aware Xet Storage card (installed vs requirements pin, Update when outdated), stale `reference/` snapshot retired.
+
+- [**v0.7.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.0) — 5 editable themes + text/terminal sizing, Deepy Web Assistant selector + click-to-open URLs + persistent topbar LED, Save-As file-type filters (issue #29), one-line update verdict (100% original git proof), dashboard text raised to readable minimums, LAN HTTPS under Advanced.
 
 - [**v0.6.8**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.8) — dependency drift after update is unmissable (toast + persistent banner with Restore, issue #23), hover tooltips on all 150 buttons, live uninstall progress, GPU Kernel Wheels split into Update (upstream + launcher fixes) vs Restore (pure upstream set), faster boot update checks with console traces, refcounted first-boot bar.
 
