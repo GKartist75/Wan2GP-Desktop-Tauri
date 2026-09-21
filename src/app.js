@@ -1044,7 +1044,6 @@ function renderPlugins() {
       fav.className = "btn btn-ghost small";
       fav.textContent = _pluginFavs.includes(p.url) ? "★" : "☆";
       fav.title = "Favourite — auto-install on fresh setup";
-      fav.style.marginLeft = "6px";
       fav.addEventListener("click", async () => {
         const cfg = await window.w2gp.configLoad();
         let favs = cfg.favoritePlugins || [];
@@ -1068,7 +1067,6 @@ function renderPlugins() {
       const ins = document.createElement("button");
       ins.className = "btn btn-primary small";
       ins.textContent = "Install";
-      ins.style.marginLeft = "6px";
       ins.addEventListener("click", async () => {
         ins.disabled = true;
         ins.textContent = "Installing…";

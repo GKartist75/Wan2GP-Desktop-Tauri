@@ -2970,6 +2970,17 @@ table.args-table.lib-table.compact td:first-child {
 #pluginList .browser-row {
  border-bottom: 1px solid var(--border);
  padding: 7px 0;
+ display: flex;
+ align-items: center;
+ gap: 6px;
+}
+#pluginList .browser-row .browser-opt {
+ flex: 1;
+ min-width: 0;
+}
+#pluginList .browser-row .btn {
+ flex-shrink: 0;
+ margin-left: 0;
 }
 #pluginList .browser-row:last-child {
  border-bottom: none;
