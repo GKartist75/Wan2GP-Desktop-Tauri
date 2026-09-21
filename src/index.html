@@ -36,6 +36,7 @@
       <button class="settings-tab" data-tab="system" title="System: updates, troubleshooting, cache, uninstall">System</button>
       <button class="settings-tab" data-tab="autotune" title="Auto-Tune: hardware-calibrated performance settings">⚡ Auto-Tune</button>
       <button class="settings-tab" data-tab="plugins" title="Plugins: enable and install Wan2GP plugins">🧩 Plugins</button>
+      <button class="settings-tab" data-tab="guide" title="Guide: what to make, which model and settings to pick">🧭 Guide</button>
     </div>
     <div class="settings-scroll">
       <div class="settings-tab-content active" data-tab="general">
@@ -433,6 +434,25 @@
             <button class="btn btn-primary small" id="pluginInstallBtn" title="Clone and install the plugin from the URL above">Install</button>
           </div>
           <p class="token-hint">Clones into <code>plugins/</code>, installs any <code>requirements.txt</code>, and enables it. Progress shows in the console.</p>
+        </div>
+      </div>
+
+      <!-- ═══════ Guide Tab (F1 model recommender) ═══════ -->
+      <div class="settings-tab-content" data-tab="guide">
+        <div class="settings-section">
+          <h3>🧭 What do you want to make?</h3>
+          <p class="token-hint">Pick a goal — the launcher suggests which WanGP model to load, with starter settings. Full walkthroughs live in <code>docs/WAN2GP-GUIDE.md</code>. Suggestions never change anything; you still pick the model inside WanGP.</p>
+          <div class="token-field" style="margin-top:8px">
+            <select id="guideGoalSelect" class="input" style="max-width:360px">
+              <option value="">— Choose a goal —</option>
+            </select>
+            <span class="token-hint" id="guideStatus" style="margin-left:8px"></span>
+          </div>
+        </div>
+        <div id="guideResults"><p class="token-hint">Pick a goal above to get model picks.</p></div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>Profiles first</h3>
+          <p class="token-hint">Before generating: run <strong>⚡ Auto-Tune</strong> so video/image/audio profiles match your VRAM. Accelerator LoRAs always want guidance <code>1</code> — forgetting this is the #1 bad-quality cause.</p>
         </div>
       </div>
 
@@ -1568,6 +1588,8 @@
   <script src="qrcodegen.js" defer></script>
   <script src="services/escape.js" defer></script>
   <script src="services/pip-spec.js" defer></script>
+  <script src="services/guide-catalog.js" defer></script>
   <script src="app.js" defer></script>
+  <script src="guide-tab.js" defer></script>
 </body>
 </html>
