@@ -116,7 +116,7 @@
 
   function init() {
     if (!$('libLorasBox')) return
-    $('libRefreshBtn')?.addEventListener('click', async () => { await refreshLoras(); await refreshFinetunes() })
+    $('libRefreshBtn')?.addEventListener('click', async () => { await refreshLoras(); await refreshFinetunes(); await refreshWorkspaces() })
     $('libImportBtn')?.addEventListener('click', async () => {
       const status = $('libFinetunesStatus')
       const src = ($('libImportInput')?.value || '').trim().replace(/^"|"$/g, '')
@@ -132,6 +132,75 @@
     })
     refreshLoras()
     refreshFinetunes()
+    refreshWorkspaces()
+    initWsBackupOnce()
+  }
+
+  function fmtDate(ts) {
+    const t = Number(ts) || 0
+    if (!t) return '—'
+    const d = new Date(t * 1000)
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+
+  async function refreshWorkspaces() {
+    const box = $('wsBox')
+    const status = $('wsStatus')
+    if (!box) return
+    box.innerHTML = '<p class="token-hint">Loading…</p>'
+    try {
+      const r = await window.w2gp.workspaceList()
+      if (!r || r.ok === false) {
+        box.innerHTML = '<p class="token-hint">No workspaces folder yet.</p>'
+        return
+      }
+      if (!r.items.length) {
+        box.innerHTML = '<p class="token-hint">No workspaces.</p>'
+        return
+      }
+      box.innerHTML = '<table class="args-table">' +
+        '<tr><td><strong>Workspace</strong></td><td><strong>Media</strong></td><td><strong>Size</strong></td><td><strong>Last activity</strong></td><td><strong></strong></td></tr>' +
+        r.items.map((it) => (
+          '<tr><td><code>' + esc(it.name || it.id) + '</code>' +
+          (it.error ? '<br><span class="token-hint">' + esc(it.error) + '</span>' : '') +
+          (it.missing ? '<br><span class="token-hint">' + esc(it.missing) + ' file(s) moved/missing</span>' : '') +
+          (it.truncated ? '<br><span class="token-hint">first 2000 files counted</span>' : '') +
+          '</td><td>' + esc(it.files || 0) + ' + ' + esc(it.audio || 0) + ' audio</td>' +
+          '<td>' + esc(fmtBytes(it.bytes)) + '</td>' +
+          '<td>' + esc(fmtDate(it.last_activity)) + '</td>' +
+          '<td><button class="btn btn-ghost small" data-ws-lock="' + esc(it.id) + '" data-locked="' + (it.archive_protected ? '1' : '0') + '" title="Toggle auto-archive protection">' +
+          (it.archive_protected ? 'Locked' : 'Lock') + '</button></td></tr>'
+        )).join('') + '</table>' +
+        (r.archived ? '<p class="token-hint">' + esc(r.archived) + ' archived workspace(s) hidden at startup (media files kept).</p>' : '')
+      box.querySelectorAll('[data-ws-lock]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const id = btn.getAttribute('data-ws-lock')
+          const to = btn.getAttribute('data-locked') !== '1'
+          try {
+            await window.w2gp.workspaceProtect(id, to)
+            refreshWorkspaces()
+          } catch (e) {
+            if (status) status.textContent = 'Lock failed: ' + ((e && e.message) || e)
+          }
+        })
+      })
+      if (status) status.textContent = r.items.length + ' workspace(s)'
+    } catch (e) {
+      box.innerHTML = '<p class="token-hint">Failed: ' + esc((e && e.message) || e) + '</p>'
+    }
+  }
+
+  function initWsBackupOnce() {
+    $('wsBackupBtn')?.addEventListener('click', async () => {
+      const status = $('wsStatus')
+      if (status) status.textContent = 'Zipping…'
+      try {
+        const r = await window.w2gp.workspaceBackup()
+        if (status) status.textContent = 'Saved ' + ((r && r.zip) || 'backup')
+      } catch (e) {
+        if (status) status.textContent = 'Backup failed: ' + ((e && e.message) || e)
+      }
+    })
   }
 
   if (document.readyState === 'loading') {

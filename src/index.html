@@ -604,6 +604,15 @@
           </div>
           <p class="token-hint">Copies a shared <code>.json</code> into <code>finetunes/</code> after validating the filename and the <code>model</code> object — existing files are never overwritten. Then Refresh Model List in WanGP (or restart).</p>
         </div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>Workspaces</h3>
+          <p class="token-hint">Gallery collections per project (references, not copies). <strong>Lock</strong> protects from auto-archiving; <strong>Backup</strong> zips the definitions — back up your outputs folders too for a portable archive.</p>
+          <div class="token-field" style="margin-top:8px">
+            <button class="btn btn-ghost small" id="wsBackupBtn" title="ZIP the workspaces folder">Backup workspaces</button>
+            <span class="token-hint" id="wsStatus" style="margin-left:8px"></span>
+          </div>
+          <div id="wsBox" style="margin-top:8px"><p class="token-hint">Loading…</p></div>
+        </div>
       </div>
 
       <!-- ═══════ Auto-Tune Tab ═══════ -->

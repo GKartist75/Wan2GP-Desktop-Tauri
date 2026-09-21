@@ -624,6 +624,10 @@
         libraryFinetuneDelete: (id) => call("library_finetune_delete", { id }),
         libraryFinetuneContent: (id) =>
             call("library_finetune_content", { id }),
+        workspaceList: () => call("workspace_list"),
+        workspaceProtect: (id, prot) =>
+            call("workspace_protect", { id, protected: !!prot }),
+        workspaceBackup: () => call("workspace_backup"),
         setAutoStart: (e) => call("set_auto_start", { enabled: e }),
         setThemeFollowSystem: (e) =>
             call("set_theme_follow_system", { enabled: e }),

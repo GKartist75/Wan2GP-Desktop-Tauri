@@ -398,6 +398,126 @@ pub fn library_finetune_content(id: String) -> Result<serde_json::Value, String>
     Ok(serde_json::json!({"ok": true, "id": id, "content": text}))
 }
 
+// ── F7 workspaces: backup + disk usage ──
+
+/// Summarize one workspace definition. Referenced files are stat'ed (capped)
+/// so the UI can show real disk use and spot moved/deleted media.
+pub(crate) fn summarize_workspace(id: &str, v: &serde_json::Value) -> serde_json::Value {
+    let g = v.get("gallery");
+    let files: Vec<String> = g
+        .and_then(|g| g.get("file_list"))
+        .and_then(|l| l.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    let audio: usize = g
+        .and_then(|g| g.get("audio_file_list"))
+        .and_then(|l| l.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let mut bytes = 0u64;
+    let mut missing = 0usize;
+    for f in files.iter().take(2000) {
+        match std::fs::metadata(f) {
+            Ok(m) if m.is_file() => bytes += m.len(),
+            _ => missing += 1,
+        }
+    }
+    serde_json::json!({
+        "id": id,
+        "name": v.get("name").and_then(|n| n.as_str()).unwrap_or(id),
+        "files": files.len(),
+        "audio": audio,
+        "bytes": bytes,
+        "missing": missing,
+        "truncated": files.len() > 2000,
+        "last_activity": v.get("last_activity").and_then(|t| t.as_f64()).unwrap_or(0.0),
+        "archive_protected": v.get("archive_protected").and_then(|p| p.as_bool()).unwrap_or(false),
+    })
+}
+
+#[tauri::command]
+pub fn workspace_list() -> serde_json::Value {
+    let dir = get_repo_dir().join("workspaces");
+    let mut items = vec![];
+    let mut archived = 0usize;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.filter_map(|x| x.ok()) {
+            let p = e.path();
+            if p.is_dir() {
+                if p.file_name().and_then(|n| n.to_str()) == Some("archives") {
+                    archived = std::fs::read_dir(&p).map(|r| r.filter_map(|x| x.ok()).count()).unwrap_or(0);
+                }
+                continue;
+            }
+            if p.extension().and_then(|x| x.to_str()) != Some("json") {
+                continue;
+            }
+            let id = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            if !finetune_id_valid(&id) {
+                continue;
+            }
+            let text = std::fs::read_to_string(&p).unwrap_or_default();
+            match serde_json::from_str::<serde_json::Value>(&text) {
+                Ok(v) => items.push(summarize_workspace(&id, &v)),
+                Err(_) => items.push(serde_json::json!({"id": id, "error": "not valid JSON"})),
+            }
+        }
+    }
+    items.sort_by(|a, b| {
+        let ta = a.get("last_activity").and_then(|t| t.as_f64()).unwrap_or(0.0);
+        let tb = b.get("last_activity").and_then(|t| t.as_f64()).unwrap_or(0.0);
+        tb.partial_cmp(&ta).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    serde_json::json!({"ok": true, "dir": dir.to_string_lossy().to_string(), "items": items, "archived": archived})
+}
+
+#[tauri::command]
+pub fn workspace_protect(id: String, protected: bool) -> Result<serde_json::Value, String> {
+    if !finetune_id_valid(&id) {
+        return Err("Invalid workspace id".into());
+    }
+    let p = get_repo_dir().join("workspaces").join(format!("{id}.json"));
+    let text = std::fs::read_to_string(&p).map_err(|_| "Workspace not found".to_string())?;
+    let mut v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|_| "Workspace is not valid JSON".to_string())?;
+    if let Some(m) = v.as_object_mut() {
+        m.insert("archive_protected".into(), serde_json::Value::Bool(protected));
+    }
+    let out = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
+    std::fs::write(&p, out).map_err(|e| format!("Cannot write ({e})"))?;
+    Ok(serde_json::json!({"ok": true, "id": id, "archive_protected": protected}))
+}
+
+#[tauri::command]
+pub fn workspace_backup() -> Result<serde_json::Value, String> {
+    use crate::base::get_data_dir;
+    let dir = get_repo_dir().join("workspaces");
+    if !dir.is_dir() {
+        return Err("No workspaces folder — nothing to back up".into());
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let dest = get_data_dir().join(format!("backup-workspaces-{stamp}.zip"));
+    let ok = crate::base::silent_command("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "Compress-Archive -Path '{}' -DestinationPath '{}' -Force",
+                dir.display(),
+                dest.display()
+            ),
+        ])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !ok {
+        return Err("ZIP failed".into());
+    }
+    Ok(serde_json::json!({"ok": true, "zip": dest.to_string_lossy().to_string()}))
+}
+
 // ── Phase 2 stubs + real logic as needed ──
 #[tauri::command]
 pub fn install_plan() -> serde_json::Value {
@@ -703,7 +823,7 @@ pub fn uv_cache_clean(action: Option<String>) -> serde_json::Value {
 
 #[cfg(test)]
 mod library_tests {
-    use super::{finetune_id_valid, lora_cache_hits, summarize_finetune};
+    use super::{finetune_id_valid, lora_cache_hits, summarize_finetune, summarize_workspace};
     use std::collections::HashMap;
 
     #[test]
@@ -745,5 +865,32 @@ mod library_tests {
         let files = vec!["a.safetensors".to_string(), "b.safetensors".to_string()];
         assert_eq!(lora_cache_hits(&cache, "D:\\L", &files), 1);
         assert_eq!(lora_cache_hits(&cache, "D:\\Other", &files), 0);
+    }
+
+    #[test]
+    fn workspace_summary_counts_and_missing() {
+        let v = serde_json::json!({
+            "name": "Shoot",
+            "gallery": {
+                "file_list": ["C:\\definitely-not-here-wgp\\a.mp4", "C:\\definitely-not-here-wgp\\b.png"],
+                "audio_file_list": ["x.wav"]
+            },
+            "last_activity": 123.0,
+            "archive_protected": true
+        });
+        let s = summarize_workspace("abc123", &v);
+        assert_eq!(s["name"], serde_json::json!("Shoot"));
+        assert_eq!(s["files"], serde_json::json!(2));
+        assert_eq!(s["audio"], serde_json::json!(1));
+        assert_eq!(s["missing"], serde_json::json!(2));
+        assert_eq!(s["bytes"], serde_json::json!(0));
+        assert_eq!(s["archive_protected"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn workspace_summary_tolerates_garbage() {
+        let s = summarize_workspace("x", &serde_json::json!({"nope": 1}));
+        assert_eq!(s["files"], serde_json::json!(0));
+        assert_eq!(s["archive_protected"], serde_json::json!(false));
     }
 }
