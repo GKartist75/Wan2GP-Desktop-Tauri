@@ -611,6 +611,13 @@
         pluginUpdate: (id) => call("plugin_update", { id }),
         pluginUninstall: (id) => call("plugin_uninstall", { id }),
         pluginRefreshCatalog: () => call("plugin_refresh_catalog"),
+        libraryLoras: () => call("library_loras"),
+        libraryFinetunes: () => call("library_finetunes"),
+        libraryFinetuneImport: (source) =>
+            call("library_finetune_import", { source }),
+        libraryFinetuneDelete: (id) => call("library_finetune_delete", { id }),
+        libraryFinetuneContent: (id) =>
+            call("library_finetune_content", { id }),
         setAutoStart: (e) => call("set_auto_start", { enabled: e }),
         setThemeFollowSystem: (e) =>
             call("set_theme_follow_system", { enabled: e }),

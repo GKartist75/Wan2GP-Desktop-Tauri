@@ -37,6 +37,7 @@
       <button class="settings-tab" data-tab="autotune" title="Auto-Tune: hardware-calibrated performance settings">⚡ Auto-Tune</button>
       <button class="settings-tab" data-tab="plugins" title="Plugins: enable and install Wan2GP plugins">🧩 Plugins</button>
       <button class="settings-tab" data-tab="guide" title="Guide: what to make, which model and settings to pick">🧭 Guide</button>
+      <button class="settings-tab" data-tab="library" title="Library: LoRA families and finetune definitions">📚 Library</button>
     </div>
     <div class="settings-scroll">
       <div class="settings-tab-content active" data-tab="general">
@@ -488,6 +489,35 @@
         <div class="settings-section" style="margin-top:12px">
           <h3>Profiles first</h3>
           <p class="token-hint">Before generating: run <strong>⚡ Auto-Tune</strong> so video/image/audio profiles match your VRAM. Accelerator LoRAs always want guidance <code>1</code> — forgetting this is the #1 bad-quality cause.</p>
+        </div>
+      </div>
+
+      <!-- ═══════ Library Tab (F4 librarians) ═══════ -->
+      <div class="settings-tab-content" data-tab="library">
+        <div class="settings-section">
+          <h3>📚 LoRA &amp; Finetune Library</h3>
+          <p class="token-hint">What lives in your LoRA families and <code>finetunes/</code> — read-only except import/delete below. Full how-to: <code>docs/WAN2GP-GUIDE.md</code> (LoRAs + finetunes).</p>
+          <div class="token-field" style="margin-top:8px">
+            <button class="btn btn-ghost small" id="libRefreshBtn" title="Reload LoRA and finetune lists">↻ Refresh library</button>
+          </div>
+        </div>
+        <div class="settings-section">
+          <h3>LoRA families</h3>
+          <span class="token-hint" id="libLorasStatus" style="margin-left:8px"></span>
+          <div id="libLorasBox" style="margin-top:8px"><p class="token-hint">Loading…</p></div>
+        </div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>Finetunes</h3>
+          <span class="token-hint" id="libFinetunesStatus" style="margin-left:8px"></span>
+          <div id="libFinetunesBox" style="margin-top:8px"><p class="token-hint">Loading…</p></div>
+        </div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>Import finetune</h3>
+          <div class="token-field">
+            <input type="text" id="libImportInput" class="input" placeholder="C:\path\to\shared-finetune.json" style="max-width:420px">
+            <button class="btn btn-primary small" id="libImportBtn" title="Validate and copy this JSON into finetunes/">Import</button>
+          </div>
+          <p class="token-hint">Copies a shared <code>.json</code> into <code>finetunes/</code> after validating the filename and the <code>model</code> object — existing files are never overwritten. Then Refresh Model List in WanGP (or restart).</p>
         </div>
       </div>
 
@@ -1628,5 +1658,6 @@
   <script src="app.js" defer></script>
   <script src="guide-tab.js" defer></script>
   <script src="launch-builder.js" defer></script>
+  <script src="library-tab.js" defer></script>
 </body>
 </html>
