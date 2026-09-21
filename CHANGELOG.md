@@ -2,6 +2,33 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [Unreleased]
+
+- Guide topbar tab (was a Manage tab): goal-based model recommender (13
+  goals, 23 curated picks with starters + copy-full-model-name for toolbar
+  search), 6 prompt templates with line modes, offline `[/...]`
+  window-command checker, VACE pre-flight checklist, post-processing
+  at-a-glance; opens as its own side panel next to Manage
+- Manage → Library: LoRA family inventory (files/size/known URLs),
+  downloaded checkpoint inventory with kind tags, finetune
+  list/import/export/delete (validated, never overwrites), workspace
+  sizes with missing-file flags, archive-lock toggle, definitions backup
+- Manage → Launch: Balanced/Low VRAM/Max perf/Emergency presets plus a
+  token-aware flag builder (attention/profile/teacache/compile/fp16),
+  Agent-API (MCP) command/URL builder, headless queue runner
+  (`--process` with console streaming + exit codes)
+- Manage → System: issue bundle gains torch/CUDA + triton/sage probes,
+  staged launch args and redacted `wgp_config.json`; config snapshots on
+  every Apply (newest 5, undoable restore) + upstream changelog viewer;
+  Deepy engine checks, `--public-url` validator, TLS flag staging
+- Side panels (Manage/Guide) shrink the native view beside them instead
+  of detaching to black; panels widened to 600px; Library tables use one
+  readable size with fixed checkpoint columns; Manage opens instantly
+  (probes deferred past paint, plugins list lazy)
+- Docs: new `docs/WAN2GP-GUIDE.md` (goal flowchart, 7 guided paths, all
+  232 models / 116 settings / full processor + 44-flag inventory, 10
+  Mermaid infographics) linked from README + USER-GUIDE
+
 ## [0.7.3] — 2026-09-21
 
 - Upstream Wan2GP v13.13 (Sep 20-21): GGUF kernel floor 1.0.21 → 1.0.22

@@ -27,6 +27,7 @@
 - [🔧 GPU kernels](#-gpu-kernels--what-gets-installed-per-gpu)
 - [Deepy — your offline agent](#deepy--your-offline-agent)
 - [🧩 Plugin Manager & ✨ DLSS5](#-plugin-manager)
+- [🧭 Guide & 📚 Library](#-guide--library)
 - [🔥 What's New](#-whats-new)
 - [🛠 Build from source](#-build-from-source)
 - [⭐ Star History](#-star-history)
@@ -264,9 +265,21 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 ---
 
+## 🧭 Guide & 📚 Library
+
+**Guide** (topbar tab, next to Manage) answers *what to make and with what*: goal picker with curated model picks + starter settings (copy the full model name into WanGP's toolbar search), 6 prompt templates with the line mode each needs, offline `[/...]` window-command checker, VACE pre-flight checklist, post-processing at a glance. Read-only — nothing changes until you pick inside WanGP. Full walkthroughs: [docs/WAN2GP-GUIDE.md](docs/WAN2GP-GUIDE.md) (10 infographics, all 232 models / 116 settings).
+
+**Manage → Library** inventories what's on disk: downloaded checkpoints (sizes + kind tags), LoRA families (files/size/known URLs), finetunes (import validated JSON, export to share, delete), workspaces (real sizes, missing-file flags, archive lock, definitions backup).
+
+**Manage → Launch** adds presets (Balanced / Low VRAM / Max perf / Emergency) + flag builder, an MCP command/URL helper, and a headless queue runner (`--process` with console streaming). **Manage → System** adds torch/CUDA probes to the issue bundle, config snapshots on every Apply (undoable restore), upstream changelog viewer, and Deepy engine checks.
+
+---
+
 ## 🔥 What's New
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
+
+- **Unreleased** — Guide topbar tab, Library tab, launch presets/builder, MCP helper, headless batch runner, workspace backup, config snapshots + restore, engine checks, support-bundle probes, 10-guide infographics. Details in [CHANGELOG](CHANGELOG.md).
 
 - [**v0.7.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.4) *(latest)* — standalone Prompt enhancement card (Enhance Prompt button by default, Automatic optional, works with Deepy off), all local models selectable when Deepy is Disabled, existing enhancement choice preserved on Apply, Disabled message fix. Details in [CHANGELOG](CHANGELOG.md).
 - [**v0.7.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.3) — upstream WanGP v13.13 wave: GGUF floor 1.0.22, post-install override sync (fresh installs land on safe wheels), Deepy Qwen quantization picker with Bonsai PTQ1 + Automatic prompting, memory panel tracks `int8_kernels`/`kernel_precision`, VAE presets relabeled, startup drift self-check, marker-aware update diff, +1px panel text. Details in [CHANGELOG](CHANGELOG.md); upstream PR [deepbeepmeep/Wan2GP#2355](https://github.com/deepbeepmeep/Wan2GP/pull/2355) (Enhance button + Deepy template defaults).
