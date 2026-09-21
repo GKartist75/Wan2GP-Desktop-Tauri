@@ -2,7 +2,17 @@
 
 Every screen, tab and button, and what it does. The launcher has three screens
 (**Splash → Dashboard → Installer**) plus the **Manage** panel and the embedded
-**Viewer**.
+**Viewer**. Companion: [WanGP Guidance](WAN2GP-GUIDE.md) — which model and
+settings to pick for your goal.
+
+```mermaid
+flowchart TD
+  S["Splash: install check"] --> D["Dashboard: health, launch, updates"]
+  D --> I["Installer: GPU plan, preflight, progress"]
+  D --> V["Viewer: WanGP embedded with console and gallery"]
+  D --> M["Manage: tokens, launch args, system, plugins, library"]
+  D --> G["Guide (topbar): model picks, prompt tools, checklists"]
+```
 
 ## Contents
 
@@ -14,6 +24,8 @@ Every screen, tab and button, and what it does. The launcher has three screens
 - [Manage → System](#manage--system)
 - [Manage → Plugins](#manage--plugins)
 - [Manage → Auto-Tune](#manage--auto-tune)
+- [Manage → Library](#manage--library)
+- [Guide (topbar)](#guide-topbar)
 - [Console & logs](#console--logs)
 - [Typical workflows](#typical-workflows)
 
@@ -222,6 +234,9 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 ## Manage → Launch
 
 - **Share Link** — Gradio public tunnel (only if localhost isn't reachable; your server becomes internet-visible).
+- **Presets & flag builder** — Balanced / Low VRAM / Max perf / Emergency preset buttons stage a known-good arg string; attention/profile/teacache dropdowns + compile/fp16 toggles patch single flags. The Extra Launch Args field below updates — press **Save**.
+- **Agent API (MCP server)** — transport/host/port/version picker shows the exact launch command + client URL, with copy. stdio = local spawn; HTTP needs `--mcp-auth` + HTTPS off-localhost.
+- **Headless batch** — queue `.zip`/settings `.json` path + optional output dir + dry-run → runs `wgp.py --process` with console streaming; exit 0 = done, 1 = error.
 - **Extra Launch Args** — appended to `wgp.py` verbatim.
 - **Server Port** — default 7860.
 - **GPU Device** — `auto` or a pinned `cuda:N` for generation.
@@ -245,6 +260,10 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   actually *import*, naming the broken dist — run after AV restores, driver
   updates, or env surgery), GPU report, emergency fallback torch probe.
   Links out to upstream `TROUBLESHOOTING.md` (plus `INSTALLATION.md`).
+- **🐞 Report an issue…** — support ZIP: system info, torch/CUDA + triton/sage probes, staged launch args, redacted `wgp_config.json`, boot log, crash queue. Opened in Explorer next to a pre-filled GitHub issue.
+- **Config backups & changelog** — every Apply snapshots `wgp_config.json` (newest 5); restore re-snapshots first so it is undoable. Upstream changelog head viewer.
+- **Deepy engine checks** — OpenCode/Claude/Codex binary presence + `claude-agent-sdk==0.1.66` pin check.
+- **Network & TLS flags** — `--public-url` origin validator + cert/key/https-port staging into Extra Launch Args.
 - **Emergency Failsafe** — last-resort recovery when nothing launches.
 - **Server Port** — port conflict detection / override.
 - **Debug Bundle** — copies full diagnostics (hardware, paths, checks, log tail).
@@ -270,6 +289,32 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 
 ⚡ **Performance Auto-Tune** — one click: detects your GPU and applies the right
 profile (precision, attention backend, memory knobs). Re-run after GPU/driver changes.
+
+## Guide (topbar)
+
+🧭 **Guide button (topbar, next to Manage)** — opens its own side panel, not a
+Manage tab: pick a goal, get curated WanGP model picks with starter settings
+and a copy-model-id button. Read-only: nothing changes until you pick the
+model inside WanGP. Full walkthroughs: `docs/WAN2GP-GUIDE.md`.
+
+✍️ **Prompt tools** — 6 starter templates (scene/motion/edit/dialogue/lyrics/
+window beats) with the WanGP line-mode each needs, copy button, and an offline
+`[/duration /overlap /new_shot /loras_mult]` checker.
+
+✅ **VACE pre-flight + post at a glance** — static checklists: control/mask/
+reference setup, Skip-Layer-Guidance rule, reference roles, upsampler/audio
+method syntax with hardware requirements.
+
+## Manage → Library
+
+📚 **LoRA & Finetune Library** — per-family LoRA file counts, sizes and known
+download URLs (`loras_url_cache_v2.json`); finetune list with base architecture
+and URL/LoRA counts, plus import (validated, never overwrites), export
+(download JSON to share) and delete. Refresh Model List in WanGP afterwards.
+
+**Workspaces** — per-project media counts, real on-disk sizes, moved/missing
+file flags, archive-lock toggle, definitions backup ZIP (back up outputs too
+for a portable archive).
 
 ---
 

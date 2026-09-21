@@ -241,6 +241,12 @@
         repairSettings: () => call("repair_settings"),
         getStatus: () => call("get_status"),
         launch: (mode) => call("launch", { mode }),
+        batchProcess: (queue, outputDir, dryRun) =>
+            call("batch_process", {
+                queue,
+                outputDir: outputDir || null,
+                dryRun: !!dryRun,
+            }),
         launchWebview: () => call("launch_webview"),
         stopWangp: () => call("stop_wangp"),
         stopAllServers: () => call("stop_all_servers"),
@@ -611,6 +617,18 @@
         pluginUpdate: (id) => call("plugin_update", { id }),
         pluginUninstall: (id) => call("plugin_uninstall", { id }),
         pluginRefreshCatalog: () => call("plugin_refresh_catalog"),
+        libraryLoras: () => call("library_loras"),
+        libraryModels: () => call("library_models"),
+        libraryFinetunes: () => call("library_finetunes"),
+        libraryFinetuneImport: (source) =>
+            call("library_finetune_import", { source }),
+        libraryFinetuneDelete: (id) => call("library_finetune_delete", { id }),
+        libraryFinetuneContent: (id) =>
+            call("library_finetune_content", { id }),
+        workspaceList: () => call("workspace_list"),
+        workspaceProtect: (id, prot) =>
+            call("workspace_protect", { id, protected: !!prot }),
+        workspaceBackup: () => call("workspace_backup"),
         setAutoStart: (e) => call("set_auto_start", { enabled: e }),
         setThemeFollowSystem: (e) =>
             call("set_theme_follow_system", { enabled: e }),
@@ -627,6 +645,10 @@
         uninstallElectron: () => call("uninstall_electron"),
         getWangpVersion: () => call("get_wangp_version"),
         reportIssue: () => call("report_issue"),
+        configBackupsList: () => call("config_backups_list"),
+        configBackupRestore: (name) =>
+            call("config_backup_restore", { name }),
+        upstreamChangelog: () => call("upstream_changelog"),
         createDesktopShortcut: () => call("create_desktop_shortcut"),
         checkPackageUpdates: (v) =>
             call("check_package_updates", { versions: v }),

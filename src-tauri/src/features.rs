@@ -1050,6 +1050,8 @@ pub fn deepy_set(
     };
     let bak = p.with_file_name("wgp_config.json.deepy-bak");
     let _ = std::fs::copy(&p, &bak);
+    // F11: timestamped snapshot alongside the legacy single backup.
+    let _ = snapshot_wgp_config();
     let (enabled, dtype) = match m.as_str() {
         "disabled" => (0, "zero"),
         "prime" => (1, "prime"),
@@ -1405,10 +1407,12 @@ pub fn memory_profile_apply(settings: serde_json::Value) -> serde_json::Value {
     if applied.is_empty() {
         return serde_json::json!({"ok": true, "success": true, "applied": applied, "unchanged": true});
     }
+    // F11: snapshot before overwriting so every Apply is restorable.
+    let snapshot = snapshot_wgp_config();
     if atomic_write(&p, &serde_json::to_string_pretty(&cfg).unwrap_or_default()).is_err() {
         return serde_json::json!({"ok": false, "success": false, "error": "write failed"});
     }
-    serde_json::json!({"ok": true, "success": true, "applied": applied})
+    serde_json::json!({"ok": true, "success": true, "applied": applied, "snapshot": snapshot})
 }
 // ── Queue Notifier (Apprise) ──
 // Config lives in desktop-config.json under "notifier". Events are classified

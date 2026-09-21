@@ -36,6 +36,7 @@
       <button class="settings-tab" data-tab="system" title="System: updates, troubleshooting, cache, uninstall">System</button>
       <button class="settings-tab" data-tab="autotune" title="Auto-Tune: hardware-calibrated performance settings">⚡ Auto-Tune</button>
       <button class="settings-tab" data-tab="plugins" title="Plugins: enable and install Wan2GP plugins">🧩 Plugins</button>
+      <button class="settings-tab" data-tab="library" title="Library: LoRA families and finetune definitions">📚 Library</button>
     </div>
     <div class="settings-scroll">
       <div class="settings-tab-content active" data-tab="general">
@@ -202,6 +203,41 @@
           <p class="token-hint">If you see the error "<em>When localhost is not accessible, a shareable link must be created</em>" when launching, that is Gradio's IPv4/IPv6 self-check failing — fix it first with <strong>Bind Address &rarr; localhost</strong> (below) or by adding <code>--server-name localhost</code> to Extra Launch Args. Only if that does not help, enable this to create a public Gradio tunnel (your server becomes reachable from the internet).</p>
         </div>
         <div class="settings-section">
+          <h3>Presets &amp; flag builder</h3>
+          <p class="token-hint">Stage a known-good set, or tweak single flags — the Extra Launch Args field below updates. Press <strong>Save</strong> to apply on next launch.</p>
+          <div class="token-field" style="margin-top:8px">
+            <button class="btn btn-ghost small" data-launch-preset="balanced" title="Everyday default: sage2 attention, P4 profile">Balanced</button>
+            <button class="btn btn-ghost small" data-launch-preset="lowvram" title="Small VRAM: SDPA, P5 failsafe profile, fp16">Low VRAM</button>
+            <button class="btn btn-ghost small" data-launch-preset="maxperf" title="Fast GPU: compile, sage2, P3, teacache 2.0">Max perf</button>
+            <button class="btn btn-primary small" data-launch-preset="emergency" title="Upstream absolute minimum that boots almost anywhere">Emergency</button>
+            <span class="token-hint" id="launchBuilderStatus" style="margin-left:8px"></span>
+          </div>
+          <div class="token-field" style="margin-top:8px">
+            <select id="lbAttention" class="input" style="max-width:170px" title="Patch --attention">
+              <option value="">Attention: (keep)</option>
+              <option value="sdpa">sdpa (GTX 10 / fallback)</option>
+              <option value="sage">sage (RTX 20)</option>
+              <option value="sage2">sage2 (RTX 30+)</option>
+              <option value="flash">flash (RTX 30+)</option>
+            </select>
+            <select id="lbProfile" class="input" style="max-width:150px" title="Patch --profile">
+              <option value="">Profile: (keep)</option>
+              <option value="3">3 (24 GB+)</option>
+              <option value="4">4 (default)</option>
+              <option value="5">5 (failsafe)</option>
+            </select>
+            <select id="lbTeacache" class="input" style="max-width:150px" title="Patch --teacache">
+              <option value="">TeaCache: (keep)</option>
+              <option value="0">0 (off)</option>
+              <option value="1.5">1.5</option>
+              <option value="2.0">2.0</option>
+              <option value="2.5">2.5 (lossy)</option>
+            </select>
+            <label class="toggle-row" title="Patch --compile"><input type="checkbox" id="lbCompile"> <span>compile</span></label>
+            <label class="toggle-row" title="Patch --fp16"><input type="checkbox" id="lbFp16"> <span>fp16</span></label>
+          </div>
+        </div>
+        <div class="settings-section">
           <h3>Extra Launch Args</h3>
           <div class="token-field">
             <input type="text" id="launchArgsInput" class="input" placeholder="--profile 4 --attention sage2 --perc-reserved-mem-max 0.3">
@@ -281,6 +317,41 @@
             <p class="token-hint">Address Wan2GP binds and connects to. <code>localhost</code> resolves to whatever your PC uses (IPv4 or IPv6) and matches Gradio's own startup check — use it if you saw "When localhost is not accessible…". <code>127.0.0.1</code> is a strict-IPv4 fallback for proxy/VPN setups. Changes apply on next launch.</p>
           </div>
           <p class="token-hint">Arguments passed to <code>wgp.py</code> on launch. See <a href="#" id="cliDocsLink">CLI docs</a> for all options. Changes apply on next launch.</p>
+          <div class="settings-section" style="margin-top:12px">
+            <h3>Agent API (MCP server)</h3>
+            <p class="token-hint">Run WanGP as a tool server for Claude/OpenCode agents (v2 default; v1 for old clients). Browser login never authorizes MCP — network use needs OAuth (<code>--mcp-auth</code>). Gallery media IDs work without filesystem access; direct paths need <code>--mcp-allow-read-file-system</code>.</p>
+            <div class="token-field" style="margin-top:8px">
+              <select id="mcpTransport" class="input" style="max-width:170px" title="MCP transport">
+                <option value="stdio">stdio (local)</option>
+                <option value="streamable-http">streamable-http</option>
+                <option value="sse">sse (legacy)</option>
+              </select>
+              <input type="text" id="mcpHost" class="input" value="127.0.0.1" style="max-width:150px" title="MCP host">
+              <input type="number" id="mcpPort" class="input" value="7866" min="1024" max="65535" style="width:100px" title="MCP port">
+              <select id="mcpApi" class="input" style="max-width:110px" title="API version">
+                <option value="2">API v2</option>
+                <option value="1">API v1</option>
+              </select>
+            </div>
+            <div class="token-field" style="margin-top:8px">
+              <input type="text" id="mcpCommand" class="input" readonly style="max-width:640px" title="Launch command">
+              <button class="btn btn-ghost small" id="mcpCopyBtn" title="Copy launch command">Copy</button>
+            </div>
+            <p class="token-hint" id="mcpUrlHint" style="margin-top:6px"></p>
+          </div>
+          <div class="settings-section" style="margin-top:12px">
+            <h3>Headless batch (queue runner)</h3>
+            <p class="token-hint">Process a saved queue without the web UI — overnight renders. Save the queue in WanGP first (<em>Save Queue</em> → <code>.zip</code>) or export settings (<code>.json</code>). Progress streams to the console; exit <code>0</code> = done, <code>1</code> = error.</p>
+            <div class="token-field" style="margin-top:8px">
+              <input type="text" id="batchQueueInput" class="input" placeholder="C:\path\to\saved_queue.zip" style="max-width:420px" title="Saved queue (.zip) or settings (.json)">
+              <input type="text" id="batchOutputInput" class="input" placeholder="Output folder (optional)" style="max-width:280px" title="Override output directory">
+            </div>
+            <div class="token-field" style="margin-top:8px">
+              <label class="toggle-row" title="Validate without generating"><input type="checkbox" id="batchDryRun"> <span>Dry run</span></label>
+              <button class="btn btn-primary small" id="batchRunBtn" title="Run wgp.py --process on this file">Run batch</button>
+              <span class="token-hint" id="batchStatus" style="margin-left:8px"></span>
+            </div>
+          </div>
           <details class="launch-args-help">
             <summary>Common launch arguments</summary>
             <table class="args-table">
@@ -306,7 +377,7 @@
           <p class="token-hint">Version <span id="settingsVersionNum">—</span></p>
           <p class="token-hint">Desktop launcher for Wan2GP — the video generation AI toolkit.</p>
           <button class="btn btn-ghost small" id="reportIssueBtn" style="margin-top:8px" title="Bundle diagnostics and open a pre-filled GitHub issue">🐞 Report an issue…</button>
-          <p class="token-hint" style="margin-top:6px">Bundles your system info, launch log, and crash diagnostics (if any) into a zip, opens it in Explorer, and opens a pre-filled GitHub issue.</p>
+          <p class="token-hint" style="margin-top:6px">Bundles your system info, torch/CUDA + triton/sage probes, staged launch args, a redacted <code>wgp_config.json</code>, launch log, and crash diagnostics (if any) into a zip, opens it in Explorer, and opens a pre-filled GitHub issue.</p>
         </div>
         <div class="settings-section" id="electronSection" style="display:none">
           <h3>Legacy Electron Launcher</h3>
@@ -376,6 +447,41 @@
           </div>
         </div>
         <div class="settings-section" style="margin-top:12px">
+          <h3>Config backups &amp; changelog</h3>
+          <p class="token-hint">Every launcher Apply snapshots <code>wgp_config.json</code> first (newest 5 kept). Restore re-snapshots, so it is undoable. WanGP picks up a restore on next launch.</p>
+          <div class="token-field" style="margin-top:8px">
+            <button class="btn btn-ghost small" id="cfgBackupsRefreshBtn" title="Reload the backup list">↻ Refresh backups</button>
+            <button class="btn btn-ghost small" id="cfgChangelogBtn" title="Show the upstream changelog head">Upstream changelog</button>
+            <span class="token-hint" id="cfgBackupsStatus" style="margin-left:8px"></span>
+          </div>
+          <div id="cfgBackupsBox" style="margin-top:8px"><p class="token-hint">Loading…</p></div>
+          <pre id="cfgChangelogBox" class="token-hint" style="margin-top:8px;max-height:300px;overflow:auto;white-space:pre-wrap"></pre>
+        </div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>Deepy engine checks</h3>
+          <p class="token-hint">Prerequisites for remote Deepy engines (Dashboard → Deepy does the configuring). Local Qwen needs nothing here.</p>
+          <div class="token-field" style="margin-top:8px">
+            <button class="btn btn-ghost small" id="deepyChecksRunBtn" title="Probe engine binaries and the Claude bridge pin">Run checks</button>
+            <span class="token-hint" id="deepyChecksStatus" style="margin-left:8px"></span>
+          </div>
+          <div id="deepyChecksBox" style="margin-top:8px"></div>
+        </div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>Network &amp; TLS flags</h3>
+          <p class="token-hint">Validate a reverse-proxy origin and stage <code>--public-url</code> / TLS flags into Extra Launch Args (press <strong>Save</strong> in Manage → Launch). Auth itself lives in the Deepy Web card.</p>
+          <div class="token-field" style="margin-top:8px">
+            <input type="text" id="netPublicUrlInput" class="input" placeholder="https://wangp.example.com" style="max-width:320px" title="Exact origin: scheme + host + optional port, no path">
+            <button class="btn btn-ghost small" id="netUrlValidateBtn" title="Validate and stage --public-url">Validate &amp; stage</button>
+          </div>
+          <div class="token-field" style="margin-top:8px">
+            <input type="text" id="netCertInput" class="input" placeholder="C:\certs\wangp.pem" style="max-width:320px" title="TLS certificate file">
+            <input type="text" id="netKeyInput" class="input" placeholder="C:\certs\wangp-key.pem" style="max-width:320px" title="TLS private key file">
+            <input type="number" id="netHttpsPortInput" class="input" placeholder="HTTPS port (optional)" min="1024" max="65535" style="width:170px" title="Serve HTTPS here and redirect HTTP">
+            <button class="btn btn-ghost small" id="netTlsStageBtn" title="Stage --ssl-certfile/--ssl-keyfile/--https-port">Stage TLS</button>
+          </div>
+          <p class="token-hint" id="netStatus" style="margin-top:6px"></p>
+        </div>
+        <div class="settings-section" style="margin-top:12px">
           <h3>Triton / SageAttention</h3>
           <p class="token-hint">Upstream Sage diagnostic: test the Triton import, clear a stale <code>%USERPROFILE%\.triton</code> cache (renamed to backup, never deleted blind), optionally fall back to <code>--attention sdpa</code>.</p>
           <div class="token-field" style="margin-top:8px">
@@ -433,6 +539,50 @@
             <button class="btn btn-primary small" id="pluginInstallBtn" title="Clone and install the plugin from the URL above">Install</button>
           </div>
           <p class="token-hint">Clones into <code>plugins/</code>, installs any <code>requirements.txt</code>, and enables it. Progress shows in the console.</p>
+        </div>
+      </div>
+
+      <!-- ═══════ Library Tab (F4 librarians) ═══════ -->
+      <div class="settings-tab-content" data-tab="library">
+        <div class="settings-section">
+          <h3>📚 LoRA &amp; Finetune Library</h3>
+          <p class="token-hint">What lives in your LoRA families and <code>finetunes/</code> — read-only except import/delete below. Full how-to: <code>docs/WAN2GP-GUIDE.md</code> (LoRAs + finetunes).</p>
+          <div class="token-field" style="margin-top:8px">
+            <button class="btn btn-ghost small" id="libRefreshBtn" title="Reload LoRA and finetune lists">↻ Refresh library</button>
+          </div>
+        </div>
+        <div class="settings-section">
+          <h3>Downloaded models (checkpoints)</h3>
+          <p class="token-hint">Weights actually on disk — the gigabytes. Kind tags come from filenames (display only).</p>
+          <span class="token-hint" id="libModelsStatus" style="margin-left:8px"></span>
+          <div id="libModelsBox" style="margin-top:8px"><p class="token-hint">Loading…</p></div>
+        </div>
+        <div class="settings-section">
+          <h3>LoRA families</h3>
+          <span class="token-hint" id="libLorasStatus" style="margin-left:8px"></span>
+          <div id="libLorasBox" style="margin-top:8px"><p class="token-hint">Loading…</p></div>
+        </div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>Finetunes</h3>
+          <span class="token-hint" id="libFinetunesStatus" style="margin-left:8px"></span>
+          <div id="libFinetunesBox" style="margin-top:8px"><p class="token-hint">Loading…</p></div>
+        </div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>Import finetune</h3>
+          <div class="token-field">
+            <input type="text" id="libImportInput" class="input" placeholder="C:\path\to\shared-finetune.json" style="max-width:420px">
+            <button class="btn btn-primary small" id="libImportBtn" title="Validate and copy this JSON into finetunes/">Import</button>
+          </div>
+          <p class="token-hint">Copies a shared <code>.json</code> into <code>finetunes/</code> after validating the filename and the <code>model</code> object — existing files are never overwritten. Then Refresh Model List in WanGP (or restart).</p>
+        </div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>Workspaces</h3>
+          <p class="token-hint">Gallery collections per project (references, not copies). <strong>Lock</strong> protects from auto-archiving; <strong>Backup</strong> zips the definitions — back up your outputs folders too for a portable archive.</p>
+          <div class="token-field" style="margin-top:8px">
+            <button class="btn btn-ghost small" id="wsBackupBtn" title="ZIP the workspaces folder">Backup workspaces</button>
+            <span class="token-hint" id="wsStatus" style="margin-left:8px"></span>
+          </div>
+          <div id="wsBox" style="margin-top:8px"><p class="token-hint">Loading…</p></div>
         </div>
       </div>
 
@@ -567,6 +717,72 @@
   </div>
   </div>
 
+  <!-- Guide Panel (topbar tab — model picks, prompt tools, checklists) -->
+  <div id="guidePanel" class="settings-panel">
+    <div class="settings-topbar">
+      <button class="btn-icon" id="guideBackBtn" aria-label="Close guide" title="Close guide">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <h2>Guide</h2>
+    </div>
+    <div class="settings-scroll">
+      <div class="settings-section">
+        <h3>What do you want to make?</h3>
+        <p class="token-hint">Pick a goal — the launcher suggests which WanGP model to load, with starter settings. Full walkthroughs live in <code>docs/WAN2GP-GUIDE.md</code>. Suggestions never change anything; you still pick the model inside WanGP.</p>
+        <div class="token-field" style="margin-top:8px">
+          <select id="guideGoalSelect" class="input" style="max-width:360px">
+            <option value="">— Choose a goal —</option>
+          </select>
+          <span class="token-hint" id="guideStatus" style="margin-left:8px"></span>
+        </div>
+      </div>
+      <div id="guideResults"><p class="token-hint">Pick a goal above to get model picks.</p></div>
+      <div class="settings-section" style="margin-top:12px">
+        <h3>Profiles first</h3>
+        <p class="token-hint">Before generating: run <strong>⚡ Auto-Tune</strong> (Manage panel) so video/image/audio profiles match your VRAM. Accelerator LoRAs always want guidance <code>1</code> — forgetting this is the #1 bad-quality cause.</p>
+      </div>
+      <div class="settings-section" style="margin-top:12px">
+        <h3>✍️ Prompt tools</h3>
+        <p class="token-hint">Starter templates + sliding-window <code>[/...]</code> checker. Copy into WanGP's prompt box; line-mode (<code>G/PG/W/PW/FG</code>) is chosen in WanGP per generation.</p>
+        <div class="token-field" style="margin-top:8px">
+          <select id="promptTemplateSelect" class="input" style="max-width:360px">
+            <option value="">— Choose a template —</option>
+          </select>
+          <button class="btn btn-ghost small" id="promptCopyBtn" title="Copy the template text">Copy text</button>
+        </div>
+        <p class="token-hint" id="promptTemplateMode" style="margin-top:6px"></p>
+        <div class="token-field" style="margin-top:8px">
+          <textarea id="promptCheckInput" class="input" rows="4" style="width:100%;max-width:640px" placeholder="Paste a sliding-window prompt to check [/duration] [/overlap] [/new_shot] commands…"></textarea>
+        </div>
+        <div class="token-field" style="margin-top:6px">
+          <button class="btn btn-ghost small" id="promptCheckBtn" title="Validate [/...] window commands">Check commands</button>
+          <span class="token-hint" id="promptCheckStatus" style="margin-left:8px"></span>
+        </div>
+        <div id="promptCheckResults" style="margin-top:6px"></div>
+      </div>
+      <div class="settings-section" style="margin-top:12px">
+        <h3>✅ VACE pre-flight checklist</h3>
+        <p class="token-hint">Tick through before a replace/inpaint/outpaint run. Nothing here changes settings — it keeps you from wasting a generation.</p>
+        <table class="args-table">
+          <tr><td>Control Video = <strong>original</strong> clip (not pre-annotated)</td><td>Process picked: pose / depth / inpaint / keep-unchanged</td></tr>
+          <tr><td>Area matches intent: whole / masked / non-masked</td><td>Video Mask built in Matanyone, exported to both inputs</td></tr>
+          <tr><td>Reference image = who/what to inject, <strong>named in the prompt</strong></td><td>Grey 127 = replace · pose wireframe = animate a person</td></tr>
+          <tr><td>Skip Layer Guidance ON for CFG VACE (off for Fusionix/CausVid)</td><td>15 steps min, 30+ for best; preview thumbs checked</td></tr>
+        </table>
+      </div>
+      <div class="settings-section" style="margin-top:12px">
+        <h3>🖼️ Reference roles + post-processing at a glance</h3>
+        <p class="token-hint"><strong>Start image</strong> fixes the opening frame · <strong>reference</strong> guides identity without fixing the frame · <strong>injected frames</strong> land at positions (<code>1</code> = first, <code>L</code> = window end, <code>X</code> = skip).</p>
+        <table class="args-table">
+          <tr><td><code>lanczos*2</code> / <code>vae*2</code> / <code>dlss5*1…*3</code></td><td>Spatial upscale + refine (DLSS5 needs Win11 + RTX 30/40 + HAGS)</td></tr>
+          <tr><td><code>rife*2…*4</code> / <code>dlssg*2…*6</code></td><td>Temporal interpolation (x5/x6 RTX 50 only)</td></tr>
+          <tr><td><code>mmaudio</code> / <code>prismaudio</code> / <code>seedvc_*</code></td><td>Soundtrack / voice swap after generation</td></tr>
+        </table>
+        <p class="token-hint">Don't regenerate a good scene — late-postprocess it. Originals stay untouched.</p>
+      </div>
+    </div>
+  </div>
+
   <!-- Dashboard -->
   <div id="dashboard" class="screen">
     <div class="topbar">
@@ -626,7 +842,10 @@
             <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="10" r="1.4" fill="currentColor"/><circle cx="12" cy="7.5" r="1.4" fill="currentColor"/><circle cx="15.5" cy="10" r="1.4" fill="currentColor"/><path d="M12 21c-1 0-1-1-1-2 0-1.5 1-2 1-3.5 0-1-1-1.5-1-1.5S9 14.5 7 14c-1-.3-1.5-1-1-1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
           </button>
         </span>
-<button class="btn btn-ghost small" id="settingsBtn" title="Open settings: tokens, launch, system, auto-tune, plugins">
+<button class="btn btn-ghost small" id="guideBtn" title="Open the Guide: what to make, which model and settings to pick">
+          Guide
+        </button>
+        <button class="btn btn-ghost small" id="settingsBtn" title="Open settings: tokens, launch, system, auto-tune, plugins">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
           Manage
         </button>
@@ -1222,7 +1441,8 @@
 
     <!-- Wan2GP embed for in-app launch. Rendered via Electron BrowserView (a compositor
          layer above the DOM), so no DOM element lives here. The floating terminal and
-         Manage panel temporarily hide the BrowserView while open (see app.js). -->
+         the Manage/Guide side panels shrink it beside them while open (see app.js) —
+         Wan2GP stays visible instead of going black. -->
     <div id="webviewContainer" class="webview-container hidden"></div>
 
   </div>
@@ -1568,6 +1788,15 @@
   <script src="qrcodegen.js" defer></script>
   <script src="services/escape.js" defer></script>
   <script src="services/pip-spec.js" defer></script>
+  <script src="services/guide-catalog.js" defer></script>
+  <script src="services/launch-args.js" defer></script>
+  <script src="services/prompt-tools.js" defer></script>
   <script src="app.js" defer></script>
+  <script src="guide-tab.js" defer></script>
+  <script src="launch-builder.js" defer></script>
+  <script src="library-tab.js" defer></script>
+  <script src="services/net-validate.js" defer></script>
+  <script src="safety-tab.js" defer></script>
+  <script src="deepy-checks.js" defer></script>
 </body>
 </html>

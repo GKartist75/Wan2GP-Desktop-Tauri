@@ -463,6 +463,13 @@ function syncNativeBoundsAdjusted() {
         w = Math.max(0, w - l);
       } else if (dock === "right") w = Math.max(0, w - ft.offsetWidth);
     }
+    // Side panels (Manage/Guide) dock right: shrink the native child beside
+    // them instead of detaching it, so Wan2GP stays visible instead of black.
+    // offsetWidth is layout width (unaffected by the slide transform), and 0
+    // when closed — every caller (terminal, reshow, resize) inherits this.
+    try {
+      w = Math.max(0, w - sidePanelWidth());
+    } catch (e) {}
     // Same topbar clamp as __syncNativeBounds: the child must never cover metrics.
     try {
       const tb = document.querySelector(".topbar");
@@ -492,6 +499,17 @@ function syncNativeBoundsAdjusted() {
       } catch {}
     }
   } catch {}
+}
+// Width of the currently open right-docked side panel (Manage/Guide), else 0.
+function sidePanelWidth() {
+  var w = 0;
+  try {
+    var sp = $("settingsPanel");
+    if (sp && sp.classList.contains("open")) w = Math.max(w, sp.offsetWidth || 0);
+    var gp = $("guidePanel");
+    if (gp && gp.classList.contains("open")) w = Math.max(w, gp.offsetWidth || 0);
+  } catch (e) {}
+  return w;
 }
 // Re-show the native child with settle re-syncs: measuring right after unhide
 // can catch a stale rect, leaving the child at the wrong size with Gradio
@@ -643,15 +661,20 @@ function initSettingsToggles() {
 }
 
 function openSettings() {
+  // Mutual exclusion with the Guide panel — only one side panel at a time.
+  if ($("guidePanel") && $("guidePanel").classList.contains("open")) {
+    $("guidePanel").classList.remove("open");
+  }
   initSettingsToggles();
   $("settingsPanel").classList.add("open");
   $("settingsOverlay").classList.add("visible");
-  // In webview (desktop) mode a BrowserView always composites above DOM, so it can't be
-  // covered — detach it while Manage is open so the panel renders in front of the viewer.
-  // The opaque backdrop class replaces the viewer area (no black flash).
+  // Side-by-side: keep Wan2GP visible beside the panel (the bounds sync above
+  // auto-trims the open panel width) instead of detaching it to black. The
+  // translucent overlay stays click-to-close; no opaque blackout.
   if ($("dashBody").style.display === "none") {
-    window.w2gp.detachBrowserView();
-    $("settingsOverlay").classList.add("opaque");
+    try {
+      reshowNativeView();
+    } catch (e) {}
   }
   window.w2gp.configLoad().then((cfg) => {
     if ($("launchArgsInput")) $("launchArgsInput").value = cfg.launchArgs || "";
@@ -722,14 +745,24 @@ function openSettings() {
     const db = $("debugBoundsChk");
     if (db) db.checked = cfg.debugBounds === true;
   });
-  loadBrowserList();
-  refreshPlugins();
-  // Check hf_xet install status
-  updateXetStatus();
-  // Show current uv wheel cache size
-  refreshUvCacheInfo();
-  // Legacy Electron launcher: show removal section only when detected
-  refreshElectronSection();
+  // Heavy probes deferred past paint: the panel opens instantly (like Guide),
+  // then fills in without janking the slide transition. The plugins list
+  // additionally loads lazily on its tab (30s stale guard).
+  setTimeout(() => {
+    try {
+      loadBrowserList();
+    } catch (e) {}
+    try {
+      updateXetStatus();
+    } catch (e) {}
+    try {
+      refreshUvCacheInfo();
+    } catch (e) {}
+    try {
+      refreshElectronSection();
+    } catch (e) {}
+  }, 60);
+  refreshPluginsLazy();
 }
 // ponytail: one-shot detect per Manage open — registry read, no polling
 async function refreshElectronSection() {
@@ -783,19 +816,88 @@ $("removeElectronBtn")?.addEventListener("click", async function () {
 });
 function closeSettings() {
   $("settingsPanel").classList.remove("open");
-  $("settingsOverlay").classList.remove("visible");
-  // Restore the BrowserView (re-attach the still-alive view) when leaving Manage in webview mode.
-  if ($("dashBody").style.display === "none") {
+  var guideOpen = $("guidePanel") && $("guidePanel").classList.contains("open");
+  // Only hide the overlay when the Guide panel isn't open either.
+  if (!guideOpen) {
+    $("settingsOverlay").classList.remove("visible");
+  }
+  // Restore full viewer bounds when leaving Manage in webview mode
+  // (skipped while the Guide panel stays open — it keeps its trim).
+  if ($("dashBody").style.display === "none" && !guideOpen) {
     $("settingsOverlay").classList.remove("opaque");
     // Don't reattach over an open terminal — restore the correct view state instead.
     if (_ftVisible) showTerminal();
-    else window.w2gp.reattachBrowserView();
+    else {
+      try {
+        reshowNativeView();
+      } catch (e) {}
+    }
   }
 }
+// ── Guide panel (topbar tab — same overlay/BrowserView rules as Manage) ──
+function openGuide() {
+  closeSettings();
+  if (!$("guidePanel")) return;
+  $("guidePanel").classList.add("open");
+  $("settingsOverlay").classList.add("visible");
+  // Side-by-side like Manage: keep Wan2GP visible beside the panel instead of
+  // detaching it to black. Translucent overlay stays click-to-close.
+  if ($("dashBody").style.display === "none") {
+    try {
+      reshowNativeView();
+    } catch (e) {}
+  }
+}
+function closeGuide() {
+  if ($("guidePanel")) $("guidePanel").classList.remove("open");
+  var manageOpen =
+    $("settingsPanel") && $("settingsPanel").classList.contains("open");
+  // Only hide the overlay when the Manage panel isn't open either.
+  if (!manageOpen) {
+    $("settingsOverlay").classList.remove("visible");
+  }
+  if ($("dashBody").style.display === "none" && !manageOpen) {
+    $("settingsOverlay").classList.remove("opaque");
+    if (_ftVisible) showTerminal();
+    else {
+      try {
+        reshowNativeView();
+      } catch (e) {}
+    }
+  }
+}
+$("guideBtn")?.addEventListener("click", () => {
+  if ($("guidePanel") && $("guidePanel").classList.contains("open")) closeGuide();
+  else openGuide();
+});
+$("guideBackBtn")?.addEventListener("click", closeGuide);
+// Window resize while a side panel is open: the native child keeps absolute
+// bounds, so re-trim it to the new viewport (debounced, panel-open only).
+var __sideResizeT = null;
+window.addEventListener("resize", () => {
+  try {
+    if (sidePanelWidth() <= 0) return;
+    if (__sideResizeT) clearTimeout(__sideResizeT);
+    __sideResizeT = setTimeout(() => {
+      try {
+        syncNativeBoundsAdjusted();
+      } catch (e) {}
+    }, 150);
+  } catch (e) {}
+});
 // ── Plugins (Wan2GP plugin manager parity: enable + install/update/uninstall + favourites) ──
 let _pluginFavs = [];
 let _pluginData = [];
 let _pluginUpdates = {};
+let _pluginLoadedAt = 0;
+// Biggest Manage DOM write — load once, then only when stale or explicitly
+// refreshed, so opening Manage never waits on the plugin disk walk.
+function refreshPluginsLazy() {
+  try {
+    if (_pluginData.length && Date.now() - _pluginLoadedAt < 30000) return;
+  } catch (e) {}
+  refreshPlugins();
+}
 let _pluginQuery = "";
 let _pluginSort = { key: "name", dir: 1 };
 $("pluginSearchInput")?.addEventListener("input", (e) => {
@@ -844,6 +946,7 @@ async function refreshPlugins() {
     _pluginFavs = [];
   }
   _pluginData = r.plugins || [];
+  _pluginLoadedAt = Date.now();
   renderPlugins();
 }
 function renderPlugins() {
@@ -941,7 +1044,6 @@ function renderPlugins() {
       fav.className = "btn btn-ghost small";
       fav.textContent = _pluginFavs.includes(p.url) ? "★" : "☆";
       fav.title = "Favourite — auto-install on fresh setup";
-      fav.style.marginLeft = "6px";
       fav.addEventListener("click", async () => {
         const cfg = await window.w2gp.configLoad();
         let favs = cfg.favoritePlugins || [];
@@ -965,7 +1067,6 @@ function renderPlugins() {
       const ins = document.createElement("button");
       ins.className = "btn btn-primary small";
       ins.textContent = "Install";
-      ins.style.marginLeft = "6px";
       ins.addEventListener("click", async () => {
         ins.disabled = true;
         ins.textContent = "Installing…";
@@ -3732,7 +3833,11 @@ $("manageRunSetupBtn")?.addEventListener("click", async () => {
   await openInstallerFresh();
 });
 
-$("settingsOverlay").addEventListener("click", closeSettings);
+$("settingsOverlay").addEventListener("click", () => {
+  closeSettings();
+  // closeGuide is defined below the overlay wiring — guard for load order.
+  if (typeof closeGuide === "function") closeGuide();
+});
 
 // ── Dashboard ──
 let _dashRefreshing = false,
@@ -6617,6 +6722,15 @@ function switchSettingsTab(tabName) {
   );
   if (tabContent) tabContent.classList.add("active");
 
+  // Plugins tab: fill on demand (openSettings no longer preloads the walk).
+  if (tabName === "plugins") {
+    setTimeout(() => {
+      try {
+        refreshPluginsLazy();
+      } catch (e) {}
+    }, 30);
+  }
+
   // Auto-Tune: check if Wan2GP is installed — disable if not
   if (tabName === "autotune") {
     checkAutoTuneInstalled();
@@ -8852,10 +8966,19 @@ function _resizeEnd() {
 // ── Keyboard shortcuts ──
 document.addEventListener("keydown", (e) => {
   if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
-  // Escape closes the Manage panel first — it can be open in webview mode too,
-  // where the webview Escape branch below would otherwise fire instead.
+  // Escape closes the Manage or Guide panel first — either can be open in
+  // webview mode too, where the webview Escape branch below would otherwise fire instead.
   if (e.key === "Escape" && $("settingsPanel").classList.contains("open")) {
     closeSettings();
+    return;
+  }
+  if (
+    e.key === "Escape" &&
+    $("guidePanel") &&
+    $("guidePanel").classList.contains("open") &&
+    typeof closeGuide === "function"
+  ) {
+    closeGuide();
     return;
   }
   // Ctrl+` toggles floating terminal

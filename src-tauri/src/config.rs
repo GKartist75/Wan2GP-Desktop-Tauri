@@ -178,6 +178,455 @@ pub fn detect_model_folders() -> serde_json::Value {
     serde_json::Value::Object(out)
 }
 
+// ── F4 library: LoRA + finetune librarians ──
+
+/// Resolve the LoRA root: wgp_config (any key spelling) → desktop-config
+/// modelLorasPath → repo/loras. Mirrors get_model_paths() precedence.
+pub(crate) fn resolve_loras_root() -> Option<PathBuf> {
+    let repo = get_repo_dir();
+    if let Ok(s) = std::fs::read_to_string(repo.join("wgp_config.json")) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+            for k in ["loras_root", "lorasRoot", "lora_dir"] {
+                if let Some(p) = v.get(k).and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
+                    return Some(PathBuf::from(p));
+                }
+            }
+        }
+    }
+    let dc = load_config_value();
+    if let Some(p) = dc
+        .get("modelLorasPath")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(PathBuf::from(p));
+    }
+    let fallback = repo.join("loras");
+    if fallback.exists() {
+        Some(fallback)
+    } else {
+        None
+    }
+}
+
+fn is_lora_file(name: &str) -> bool {
+    let l = name.to_lowercase();
+    l.ends_with(".safetensors") || l.ends_with(".sft")
+}
+
+/// Count cache hits for one folder. Cache keys are `"<dir>|<file>"`
+/// (see loras_url_cache_v2.json) — exact match, no guessing.
+pub(crate) fn lora_cache_hits(
+    cache: &std::collections::HashMap<String, String>,
+    dir: &str,
+    files: &[String],
+) -> usize {
+    files
+        .iter()
+        .filter(|f| cache.contains_key(&format!("{dir}|{f}")))
+        .count()
+}
+
+/// Finetune file-stem allowlist: `[A-Za-z0-9_-]{1,64}`, no separators, no ext.
+/// Rejects path traversal and hidden files alike.
+pub(crate) fn finetune_id_valid(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Summarize one finetune definition (never fails — unparsable files report
+/// an error string so one bad file can't hide the whole library).
+pub(crate) fn summarize_finetune(id: &str, text: &str, bytes: u64) -> serde_json::Value {
+    let parsed: Result<serde_json::Value, _> = serde_json::from_str(text);
+    let Ok(v) = parsed else {
+        return serde_json::json!({"id": id, "error": "not valid JSON", "bytes": bytes});
+    };
+    let m = v.get("model");
+    let str_list = |key: &str| m.and_then(|m| m.get(key)).and_then(|u| u.as_array()).map(|a| a.len()).unwrap_or(0);
+    let desc = m
+        .and_then(|m| m.get("description"))
+        .and_then(|d| d.as_str())
+        .unwrap_or("");
+    let mut short: String = desc.chars().take(200).collect();
+    if desc.chars().count() > 200 {
+        short.push('…');
+    }
+    serde_json::json!({
+        "id": id,
+        "name": m.and_then(|m| m.get("name")).and_then(|n| n.as_str()).unwrap_or(id),
+        "architecture": m.and_then(|m| m.get("architecture")).and_then(|a| a.as_str()).unwrap_or("?"),
+        "urls": str_list("URLs"),
+        "urls2": str_list("URLs2"),
+        "loras": str_list("loras"),
+        "description": short,
+        "bytes": bytes,
+    })
+}
+
+#[tauri::command]
+pub fn library_loras() -> serde_json::Value {
+    let Some(root) = resolve_loras_root() else {
+        return serde_json::json!({"ok": false, "error": "No LoRA root configured"});
+    };
+    let repo = get_repo_dir();
+    let mut cache = std::collections::HashMap::new();
+    for name in ["loras_url_cache_v2.json", "loras_url_cache.json"] {
+        if let Ok(s) = std::fs::read_to_string(repo.join(name)) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+                if let Some(o) = v.as_object() {
+                    for (k, val) in o {
+                        if let Some(u) = val.as_str() {
+                            cache.insert(k.clone(), u.to_string());
+                        }
+                    }
+                }
+            }
+            break;
+        }
+    }
+    let mut folders = vec![];
+    let entries = std::fs::read_dir(&root).map(|r| r.filter_map(|e| e.ok()).collect::<Vec<_>>()).unwrap_or_default();
+    for e in entries {
+        let p = e.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let name = e.file_name().to_string_lossy().to_string();
+        let mut files = vec![];
+        let mut bytes = 0u64;
+        if let Ok(inner) = std::fs::read_dir(&p) {
+            for f in inner.filter_map(|x| x.ok()) {
+                let fp = f.path();
+                if !fp.is_file() {
+                    continue;
+                }
+                let fn_ = f.file_name().to_string_lossy().to_string();
+                if is_lora_file(&fn_) {
+                    bytes += f.metadata().map(|m| m.len()).unwrap_or(0);
+                    files.push(fn_);
+                }
+            }
+        }
+        files.sort();
+        let dir_key = p.to_string_lossy().to_string();
+        let hits = lora_cache_hits(&cache, &dir_key, &files);
+        let truncated = files.len() > 200;
+        let sample: Vec<String> = files.iter().take(200).cloned().collect();
+        folders.push(serde_json::json!({
+            "name": name,
+            "files": files.len(),
+            "bytes": bytes,
+            "urls_known": hits,
+            "truncated": truncated,
+            "sample": sample,
+        }));
+    }
+    folders.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    serde_json::json!({"ok": true, "root": root.to_string_lossy().to_string(), "folders": folders})
+}
+
+#[tauri::command]
+pub fn library_finetunes() -> serde_json::Value {
+    let dir = get_repo_dir().join("finetunes");
+    let mut items = vec![];
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.filter_map(|x| x.ok()) {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) != Some("json") {
+                continue;
+            }
+            let id = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            if !finetune_id_valid(&id) {
+                continue;
+            }
+            let bytes = e.metadata().map(|m| m.len()).unwrap_or(0);
+            let text = std::fs::read_to_string(&p).unwrap_or_default();
+            items.push(summarize_finetune(&id, &text, bytes));
+        }
+    }
+    items.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+    serde_json::json!({"ok": true, "dir": dir.to_string_lossy().to_string(), "items": items})
+}
+
+#[tauri::command]
+pub fn library_finetune_import(source: String) -> Result<serde_json::Value, String> {
+    let src = PathBuf::from(&source);
+    if !src.is_absolute() || !src.is_file() {
+        return Err("Source must be an existing .json file".into());
+    }
+    if src.extension().and_then(|x| x.to_str()) != Some("json") {
+        return Err("Source must be a .json file".into());
+    }
+    let id = src.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    if !finetune_id_valid(&id) {
+        return Err("Filename must be [A-Za-z0-9_-], max 64 chars".into());
+    }
+    let text = std::fs::read_to_string(&src).map_err(|e| format!("Cannot read source ({e})"))?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|_| "Source is not valid JSON".to_string())?;
+    if v.get("model").is_none() {
+        return Err("Not a finetune definition (no \"model\" object)".into());
+    }
+    let dest = get_repo_dir().join("finetunes").join(format!("{id}.json"));
+    if dest.exists() {
+        return Err(format!("{id}.json already exists — delete it first to replace"));
+    }
+    std::fs::write(&dest, text).map_err(|e| format!("Cannot write ({e})"))?;
+    Ok(serde_json::json!({"ok": true, "id": id}))
+}
+
+#[tauri::command]
+pub fn library_finetune_delete(id: String) -> Result<serde_json::Value, String> {
+    if !finetune_id_valid(&id) {
+        return Err("Invalid finetune id".into());
+    }
+    let p = get_repo_dir().join("finetunes").join(format!("{id}.json"));
+    if !p.is_file() {
+        return Err("Finetune not found".into());
+    }
+    std::fs::remove_file(&p).map_err(|e| format!("Cannot delete ({e})"))?;
+    Ok(serde_json::json!({"ok": true, "id": id}))
+}
+
+/// F4-models: crude kind tag from a checkpoint filename (display only —
+/// never authoritative about precision, the loader decides that).
+pub(crate) fn model_kind_tag(name: &str) -> &'static str {
+    let l = name.to_lowercase();
+    if l.contains("gguf") {
+        "GGUF"
+    } else if l.contains("nvfp4") {
+        "NVFP4"
+    } else if l.contains("nunchaku") || l.contains("svdq") || l.contains("nf4") {
+        "Nunchaku/NF4"
+    } else if l.contains("quanto") || l.contains("int8") {
+        "INT8"
+    } else if l.contains("fp8") {
+        "FP8"
+    } else if l.contains("bf16") {
+        "BF16"
+    } else if l.contains("fp16") {
+        "FP16"
+    } else {
+        "—"
+    }
+}
+
+fn is_ckpt_file(name: &str) -> bool {
+    let l = name.to_lowercase();
+    l.ends_with(".safetensors")
+        || l.ends_with(".gguf")
+        || l.ends_with(".pt")
+        || l.ends_with(".pth")
+        || l.ends_with(".bin")
+        || l.ends_with(".ckpt")
+}
+
+/// Resolve the checkpoints dir: wgp_config checkpoints_paths[0] (any key
+/// spelling, mirrors get_model_paths) → desktop-config modelCkptsPath →
+/// repo/ckpts.
+pub(crate) fn resolve_ckpts_dir() -> Option<PathBuf> {
+    let repo = get_repo_dir();
+    if let Ok(s) = std::fs::read_to_string(repo.join("wgp_config.json")) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+            for k in ["checkpoints_paths", "checkpointsPaths", "ckpt_dir"] {
+                if let Some(p) = v
+                    .get(k)
+                    .and_then(|x| x.as_array().and_then(|a| a.first()).or(Some(x)))
+                    .and_then(|x| x.as_str())
+                    .filter(|s| !s.is_empty())
+                {
+                    return Some(PathBuf::from(p));
+                }
+            }
+        }
+    }
+    let dc = load_config_value();
+    if let Some(p) = dc
+        .get("modelCkptsPath")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(PathBuf::from(p));
+    }
+    let fallback = repo.join("ckpts");
+    if fallback.exists() {
+        Some(fallback)
+    } else {
+        None
+    }
+}
+
+/// F4-models: downloaded checkpoint inventory (names, sizes, kind tags).
+/// Reads file metadata only — never opens weights.
+#[tauri::command]
+pub fn library_models() -> serde_json::Value {
+    let Some(root) = resolve_ckpts_dir() else {
+        return serde_json::json!({"ok": false, "error": "No checkpoints folder configured"});
+    };
+    let mut files = vec![];
+    let mut bytes = 0u64;
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for e in entries.filter_map(|x| x.ok()) {
+            let p = e.path();
+            if !p.is_file() {
+                continue;
+            }
+            let name = e.file_name().to_string_lossy().to_string();
+            if !is_ckpt_file(&name) {
+                continue;
+            }
+            let b = e.metadata().map(|m| m.len()).unwrap_or(0);
+            bytes += b;
+            files.push(serde_json::json!({
+                "name": name,
+                "bytes": b,
+                "kind": model_kind_tag(&e.file_name().to_string_lossy()),
+            }));
+        }
+    }
+    files.sort_by(|a, b| b["bytes"].as_u64().cmp(&a["bytes"].as_u64()));
+    let truncated = files.len() > 300;
+    let sample: Vec<serde_json::Value> = files.iter().take(300).cloned().collect();
+    serde_json::json!({
+        "ok": true,
+        "root": root.to_string_lossy().to_string(),
+        "files": files.len(),
+        "bytes": bytes,
+        "truncated": truncated,
+        "sample": sample,
+    })
+}
+
+#[tauri::command]
+pub fn library_finetune_content(id: String) -> Result<serde_json::Value, String> {
+    if !finetune_id_valid(&id) {
+        return Err("Invalid finetune id".into());
+    }
+    let p = get_repo_dir().join("finetunes").join(format!("{id}.json"));
+    let text = std::fs::read_to_string(&p).map_err(|_| "Finetune not found".to_string())?;
+    Ok(serde_json::json!({"ok": true, "id": id, "content": text}))
+}
+
+// ── F7 workspaces: backup + disk usage ──
+
+/// Summarize one workspace definition. Referenced files are stat'ed (capped)
+/// so the UI can show real disk use and spot moved/deleted media.
+pub(crate) fn summarize_workspace(id: &str, v: &serde_json::Value) -> serde_json::Value {
+    let g = v.get("gallery");
+    let files: Vec<String> = g
+        .and_then(|g| g.get("file_list"))
+        .and_then(|l| l.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    let audio: usize = g
+        .and_then(|g| g.get("audio_file_list"))
+        .and_then(|l| l.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let mut bytes = 0u64;
+    let mut missing = 0usize;
+    for f in files.iter().take(2000) {
+        match std::fs::metadata(f) {
+            Ok(m) if m.is_file() => bytes += m.len(),
+            _ => missing += 1,
+        }
+    }
+    serde_json::json!({
+        "id": id,
+        "name": v.get("name").and_then(|n| n.as_str()).unwrap_or(id),
+        "files": files.len(),
+        "audio": audio,
+        "bytes": bytes,
+        "missing": missing,
+        "truncated": files.len() > 2000,
+        "last_activity": v.get("last_activity").and_then(|t| t.as_f64()).unwrap_or(0.0),
+        "archive_protected": v.get("archive_protected").and_then(|p| p.as_bool()).unwrap_or(false),
+    })
+}
+
+#[tauri::command]
+pub fn workspace_list() -> serde_json::Value {
+    let dir = get_repo_dir().join("workspaces");
+    let mut items = vec![];
+    let mut archived = 0usize;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.filter_map(|x| x.ok()) {
+            let p = e.path();
+            if p.is_dir() {
+                if p.file_name().and_then(|n| n.to_str()) == Some("archives") {
+                    archived = std::fs::read_dir(&p).map(|r| r.filter_map(|x| x.ok()).count()).unwrap_or(0);
+                }
+                continue;
+            }
+            if p.extension().and_then(|x| x.to_str()) != Some("json") {
+                continue;
+            }
+            let id = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            if !finetune_id_valid(&id) {
+                continue;
+            }
+            let text = std::fs::read_to_string(&p).unwrap_or_default();
+            match serde_json::from_str::<serde_json::Value>(&text) {
+                Ok(v) => items.push(summarize_workspace(&id, &v)),
+                Err(_) => items.push(serde_json::json!({"id": id, "error": "not valid JSON"})),
+            }
+        }
+    }
+    items.sort_by(|a, b| {
+        let ta = a.get("last_activity").and_then(|t| t.as_f64()).unwrap_or(0.0);
+        let tb = b.get("last_activity").and_then(|t| t.as_f64()).unwrap_or(0.0);
+        tb.partial_cmp(&ta).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    serde_json::json!({"ok": true, "dir": dir.to_string_lossy().to_string(), "items": items, "archived": archived})
+}
+
+#[tauri::command]
+pub fn workspace_protect(id: String, protected: bool) -> Result<serde_json::Value, String> {
+    if !finetune_id_valid(&id) {
+        return Err("Invalid workspace id".into());
+    }
+    let p = get_repo_dir().join("workspaces").join(format!("{id}.json"));
+    let text = std::fs::read_to_string(&p).map_err(|_| "Workspace not found".to_string())?;
+    let mut v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|_| "Workspace is not valid JSON".to_string())?;
+    if let Some(m) = v.as_object_mut() {
+        m.insert("archive_protected".into(), serde_json::Value::Bool(protected));
+    }
+    let out = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
+    std::fs::write(&p, out).map_err(|e| format!("Cannot write ({e})"))?;
+    Ok(serde_json::json!({"ok": true, "id": id, "archive_protected": protected}))
+}
+
+#[tauri::command]
+pub fn workspace_backup() -> Result<serde_json::Value, String> {
+    use crate::base::get_data_dir;
+    let dir = get_repo_dir().join("workspaces");
+    if !dir.is_dir() {
+        return Err("No workspaces folder — nothing to back up".into());
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let dest = get_data_dir().join(format!("backup-workspaces-{stamp}.zip"));
+    let ok = crate::base::silent_command("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "Compress-Archive -Path '{}' -DestinationPath '{}' -Force",
+                dir.display(),
+                dest.display()
+            ),
+        ])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !ok {
+        return Err("ZIP failed".into());
+    }
+    Ok(serde_json::json!({"ok": true, "zip": dest.to_string_lossy().to_string()}))
+}
+
 // ── Phase 2 stubs + real logic as needed ──
 #[tauri::command]
 pub fn install_plan() -> serde_json::Value {
@@ -479,4 +928,89 @@ pub async fn uninstall_env(
 pub fn uv_cache_clean(action: Option<String>) -> serde_json::Value {
     let _ = action;
     serde_json::json!({"success": true})
+}
+
+#[cfg(test)]
+mod library_tests {
+    use super::{finetune_id_valid, lora_cache_hits, summarize_finetune, summarize_workspace};
+    use std::collections::HashMap;
+
+    #[test]
+    fn id_allows_safe_stems_rejects_traversal() {
+        assert!(finetune_id_valid("hunyuan_t2v_fast"));
+        assert!(finetune_id_valid("my-finetune-01"));
+        assert!(!finetune_id_valid(""));
+        assert!(!finetune_id_valid("../evil"));
+        assert!(!finetune_id_valid("a/b"));
+        assert!(!finetune_id_valid("x.json"));
+        assert!(!finetune_id_valid(".hidden"));
+        assert!(!finetune_id_valid(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn summary_extracts_model_fields() {
+        let text = r#"{"model": {"name": "N", "architecture": "t2v",
+            "description": "d", "URLs": ["a", "b"], "URLs2": ["c"],
+            "loras": ["l"]}, "prompt": "hi"}"#;
+        let s = summarize_finetune("n", text, 10);
+        assert_eq!(s["name"], serde_json::json!("N"));
+        assert_eq!(s["architecture"], serde_json::json!("t2v"));
+        assert_eq!(s["urls"], serde_json::json!(2));
+        assert_eq!(s["urls2"], serde_json::json!(1));
+        assert_eq!(s["loras"], serde_json::json!(1));
+    }
+
+    #[test]
+    fn summary_never_fails_on_garbage() {
+        let s = summarize_finetune("bad", "{oops", 5);
+        assert_eq!(s["error"], serde_json::json!("not valid JSON"));
+        assert_eq!(s["id"], serde_json::json!("bad"));
+    }
+
+    #[test]
+    fn cache_hits_match_exact_dir_file_keys() {
+        let mut cache = HashMap::new();
+        cache.insert("D:\\L|a.safetensors".to_string(), "http://x".to_string());
+        let files = vec!["a.safetensors".to_string(), "b.safetensors".to_string()];
+        assert_eq!(lora_cache_hits(&cache, "D:\\L", &files), 1);
+        assert_eq!(lora_cache_hits(&cache, "D:\\Other", &files), 0);
+    }
+
+    #[test]
+    fn kind_tags_quant_families() {
+        use super::model_kind_tag;
+        assert_eq!(model_kind_tag("m_qwen38_Q4.gguf"), "GGUF");
+        assert_eq!(model_kind_tag("x_quanto_bf16_int8.safetensors"), "INT8");
+        assert_eq!(model_kind_tag("x_fp8.safetensors"), "FP8");
+        assert_eq!(model_kind_tag("x_nvfp4.safetensors"), "NVFP4");
+        assert_eq!(model_kind_tag("x_bf16.safetensors"), "BF16");
+        assert_eq!(model_kind_tag("readme.txt"), "—");
+    }
+
+    #[test]
+    fn workspace_summary_counts_and_missing() {
+        let v = serde_json::json!({
+            "name": "Shoot",
+            "gallery": {
+                "file_list": ["C:\\definitely-not-here-wgp\\a.mp4", "C:\\definitely-not-here-wgp\\b.png"],
+                "audio_file_list": ["x.wav"]
+            },
+            "last_activity": 123.0,
+            "archive_protected": true
+        });
+        let s = summarize_workspace("abc123", &v);
+        assert_eq!(s["name"], serde_json::json!("Shoot"));
+        assert_eq!(s["files"], serde_json::json!(2));
+        assert_eq!(s["audio"], serde_json::json!(1));
+        assert_eq!(s["missing"], serde_json::json!(2));
+        assert_eq!(s["bytes"], serde_json::json!(0));
+        assert_eq!(s["archive_protected"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn workspace_summary_tolerates_garbage() {
+        let s = summarize_workspace("x", &serde_json::json!({"nope": 1}));
+        assert_eq!(s["files"], serde_json::json!(0));
+        assert_eq!(s["archive_protected"], serde_json::json!(false));
+    }
 }

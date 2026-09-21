@@ -2212,6 +2212,44 @@ button.deepyweb-open:disabled {
  color: var(--text-secondary);
  width: 100%;
 }
+/* Library tables (LoRAs, finetunes, workspaces): 4-5 data columns need one
+   readable size — the base 2-col key/desc styling would shrink first/last. */
+table.args-table.lib-table td {
+ font-size: 0.75rem;
+ color: var(--text-primary);
+ font-family: "Geist", sans-serif;
+}
+table.args-table.lib-table td:first-child {
+ font-family: "Geist Mono", monospace;
+ color: var(--text-primary);
+ white-space: nowrap;
+}
+/* Data columns size to content (Files, Size, URLs, dates, buttons) instead
+   of wrapping mid-value ("7.7 / GB"); the name column absorbs the slack. */
+table.args-table.lib-table td:not(:first-child) {
+ white-space: nowrap;
+ padding-left: 10px;
+}
+/* Compact: checkpoint filenames are ~50 chars — smaller text plus wrapping
+   so the Size column never clips off the panel edge. Fixed layout pins the
+   Kind/Size widths so the name column can't collapse to a char per line. */
+table.args-table.lib-table.compact {
+ table-layout: fixed;
+ width: 100%;
+}
+table.args-table.lib-table.compact td {
+ font-size: 0.6875rem;
+}
+table.args-table.lib-table.compact td:first-child {
+ white-space: normal;
+ word-break: break-all;
+}
+table.args-table.lib-table.compact td:nth-child(2) {
+ width: 96px;
+}
+table.args-table.lib-table.compact td:nth-child(3) {
+ width: 76px;
+}
 
 /* ── Settings Panel ── */
 .settings-overlay {
@@ -2237,7 +2275,8 @@ button.deepyweb-open:disabled {
  top: 0;
  right: 0;
  bottom: 0;
- width: 420px;
+ width: 600px;
+ max-width: 94vw;
  background: var(--surface);
  border-left: 1px solid var(--border);
  z-index: 150;
@@ -2942,6 +2981,17 @@ button.deepyweb-open:disabled {
 #pluginList .browser-row {
  border-bottom: 1px solid var(--border);
  padding: 7px 0;
+ display: flex;
+ align-items: center;
+ gap: 6px;
+}
+#pluginList .browser-row .browser-opt {
+ flex: 1;
+ min-width: 0;
+}
+#pluginList .browser-row .btn {
+ flex-shrink: 0;
+ margin-left: 0;
 }
 #pluginList .browser-row:last-child {
  border-bottom: none;

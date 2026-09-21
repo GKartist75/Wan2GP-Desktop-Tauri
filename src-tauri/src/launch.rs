@@ -2032,3 +2032,183 @@ cmd,
         let _ = std::fs::remove_dir_all(&d);
     }
 }
+
+/// F6: validate headless-batch inputs. Pure: returns the argv tail
+/// (`-u wgp.py --process …`) or a user-facing error.
+pub(crate) fn batch_argv(
+    queue: &str,
+    output_dir: Option<&str>,
+    dry_run: bool,
+) -> Result<Vec<String>, String> {
+    let q = std::path::Path::new(queue);
+    if !q.is_absolute() {
+        return Err("Queue path must be absolute".into());
+    }
+    if !q.is_file() {
+        return Err("Queue file not found".into());
+    }
+    match q
+        .extension()
+        .and_then(|x| x.to_str())
+        .map(|x| x.to_lowercase())
+        .as_deref()
+    {
+        Some("zip") | Some("json") => {}
+        _ => return Err("Queue must be a .zip (saved queue) or .json (settings)".into()),
+    }
+    let mut args = vec![
+        "-u".to_string(),
+        "wgp.py".to_string(),
+        "--process".to_string(),
+        queue.to_string(),
+    ];
+    if dry_run {
+        args.push("--dry-run".to_string());
+    }
+    if let Some(d) = output_dir.map(str::trim).filter(|d| !d.is_empty()) {
+        args.push("--output-dir".to_string());
+        args.push(d.to_string());
+    }
+    Ok(args)
+}
+
+fn batch_python() -> Result<String, String> {
+    let env = get_active_env();
+    let raw = env.get("path").and_then(|p| p.as_str()).ok_or_else(|| {
+        "No Python environment is installed — finish or repair the install first".to_string()
+    })?;
+    let rel = raw
+        .trim_start_matches(".\\")
+        .trim_start_matches("./");
+    let base = if Path::new(raw).is_absolute() {
+        PathBuf::from(raw)
+    } else {
+        get_repo_dir().join(rel)
+    };
+    let legacy = if cfg!(windows) {
+        base.join("Scripts\\python.exe")
+    } else {
+        base.join("bin/python3")
+    };
+    let py = resolve_env_python(&get_repo_dir(), raw)
+        .unwrap_or(legacy)
+        .to_string_lossy()
+        .to_string();
+    let torch_ok = silent_command(&py)
+        .args(["-c", "import torch"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !torch_ok {
+        return Err("The environment's Python can't import torch — repair the environment first".into());
+    }
+    Ok(py)
+}
+
+/// F6: run a saved queue headless (`wgp.py --process …`), streaming lines to
+/// the console log bus. Returns the process exit code (0 = all tasks done,
+/// 1 = error, 130 = interrupted).
+#[tauri::command]
+pub async fn batch_process(
+    app: tauri::AppHandle,
+    queue: String,
+    output_dir: Option<String>,
+    dry_run: bool,
+) -> Result<serde_json::Value, String> {
+    use tauri::Emitter;
+    let repo = get_repo_dir();
+    if !repo.join("wgp.py").exists() {
+        return Err("Wan2GP not installed — run Install first".into());
+    }
+    let argv = batch_argv(&queue, output_dir.as_deref(), dry_run)?;
+    let py = batch_python()?;
+    mutating_try("batch")?;
+    let app2 = app.clone();
+    let emit = |msg: &str| {
+        crate::base::push_log(msg, "launch");
+        let _ = app.emit("launch-log", msg.to_string());
+    };
+    emit(&format!(
+        "[*] Batch {} {queue}{}\n",
+        if dry_run { "validating" } else { "processing" },
+        output_dir.as_deref().filter(|d| !d.trim().is_empty()).map(|d| format!(" → {d}")).unwrap_or_default()
+    ));
+    let code = tauri::async_runtime::spawn_blocking(move || {
+        let mut child = std::process::Command::new(&py)
+            .args(&argv)
+            .current_dir(&repo)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Could not start batch ({e})"))?;
+        if let Some(out) = child.stdout.take() {
+            for line in std::io::BufRead::lines(std::io::BufReader::new(out)).map_while(Result::ok) {
+                let msg = format!("[batch] {line}\n");
+                crate::base::push_log(&msg, "launch");
+                let _ = app2.emit("launch-log", msg);
+            }
+        }
+        let mut err_tail = String::new();
+        if let Some(err) = child.stderr.take() {
+            use std::io::Read;
+            let mut buf = String::new();
+            if std::io::BufReader::new(err).read_to_string(&mut buf).is_ok() {
+                let t = buf.trim();
+                if t.len() > 2000 {
+                    err_tail = format!("…{}", &t[t.len() - 2000..]);
+                } else {
+                    err_tail = t.to_string();
+                }
+            }
+        }
+        let code = child.wait().map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
+        if code != 0 && !err_tail.is_empty() {
+            let msg = format!("[batch:stderr] {err_tail}\n");
+            crate::base::push_log(&msg, "launch");
+            let _ = app2.emit("launch-log", msg);
+        }
+        Ok::<i32, String>(code)
+    })
+    .await
+    .map_err(|e| format!("Batch task failed ({e})"))??;
+    mutating_done();
+    emit(&format!("[*] Batch finished with exit code {code} (0 = done, 1 = error, 130 = interrupted)\n"));
+    Ok(serde_json::json!({"ok": code == 0, "code": code}))
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::batch_argv;
+
+    fn fixture(ext: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("wgp-batch-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        let p = d.join(format!("queue.{ext}"));
+        let _ = std::fs::write(&p, b"{}");
+        p
+    }
+
+    #[test]
+    fn accepts_zip_and_json_shapes_argv() {
+        let z = fixture("zip");
+        let argv = batch_argv(z.to_str().unwrap(), Some("C:\\out"), false).unwrap();
+        assert_eq!(
+            argv,
+            vec!["-u", "wgp.py", "--process", z.to_str().unwrap(), "--output-dir", "C:\\out"]
+        );
+        let j = fixture("json");
+        let argv = batch_argv(j.to_str().unwrap(), None, true).unwrap();
+        assert!(argv.contains(&"--dry-run".to_string()));
+        assert!(!argv.iter().any(|a| a == "--output-dir"));
+    }
+
+    #[test]
+    fn rejects_relative_missing_and_wrong_extension() {
+        assert!(batch_argv("relative/queue.zip", None, false).is_err());
+        #[cfg(windows)]
+        let exe = "C:\\Windows\\System32\\notepad.exe";
+        #[cfg(not(windows))]
+        let exe = "/bin/sh";
+        assert!(batch_argv(exe, None, false).unwrap_err().contains(".zip"));
+        assert!(batch_argv(env!("CARGO_MANIFEST_DIR"), None, false).is_err());
+    }
+}
