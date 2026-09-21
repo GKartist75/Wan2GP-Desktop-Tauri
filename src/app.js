@@ -745,14 +745,24 @@ function openSettings() {
     const db = $("debugBoundsChk");
     if (db) db.checked = cfg.debugBounds === true;
   });
-  loadBrowserList();
-  refreshPlugins();
-  // Check hf_xet install status
-  updateXetStatus();
-  // Show current uv wheel cache size
-  refreshUvCacheInfo();
-  // Legacy Electron launcher: show removal section only when detected
-  refreshElectronSection();
+  // Heavy probes deferred past paint: the panel opens instantly (like Guide),
+  // then fills in without janking the slide transition. The plugins list
+  // additionally loads lazily on its tab (30s stale guard).
+  setTimeout(() => {
+    try {
+      loadBrowserList();
+    } catch (e) {}
+    try {
+      updateXetStatus();
+    } catch (e) {}
+    try {
+      refreshUvCacheInfo();
+    } catch (e) {}
+    try {
+      refreshElectronSection();
+    } catch (e) {}
+  }, 60);
+  refreshPluginsLazy();
 }
 // ponytail: one-shot detect per Manage open — registry read, no polling
 async function refreshElectronSection() {
@@ -879,6 +889,15 @@ window.addEventListener("resize", () => {
 let _pluginFavs = [];
 let _pluginData = [];
 let _pluginUpdates = {};
+let _pluginLoadedAt = 0;
+// Biggest Manage DOM write — load once, then only when stale or explicitly
+// refreshed, so opening Manage never waits on the plugin disk walk.
+function refreshPluginsLazy() {
+  try {
+    if (_pluginData.length && Date.now() - _pluginLoadedAt < 30000) return;
+  } catch (e) {}
+  refreshPlugins();
+}
 let _pluginQuery = "";
 let _pluginSort = { key: "name", dir: 1 };
 $("pluginSearchInput")?.addEventListener("input", (e) => {
@@ -927,6 +946,7 @@ async function refreshPlugins() {
     _pluginFavs = [];
   }
   _pluginData = r.plugins || [];
+  _pluginLoadedAt = Date.now();
   renderPlugins();
 }
 function renderPlugins() {
@@ -6703,6 +6723,15 @@ function switchSettingsTab(tabName) {
     '.settings-tab-content[data-tab="' + tabName + '"]',
   );
   if (tabContent) tabContent.classList.add("active");
+
+  // Plugins tab: fill on demand (openSettings no longer preloads the walk).
+  if (tabName === "plugins") {
+    setTimeout(() => {
+      try {
+        refreshPluginsLazy();
+      } catch (e) {}
+    }, 30);
+  }
 
   // Auto-Tune: check if Wan2GP is installed — disable if not
   if (tabName === "autotune") {
