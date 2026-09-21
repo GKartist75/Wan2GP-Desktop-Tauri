@@ -230,7 +230,10 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   switches the launcher's own log-driven sender off (no double pings);
   turning all native events off re-arms it. Older Wan2GP checkouts without
   native support fall back to the launcher sender (single Apprise URL,
-  completion/failure/progress).
+  completion/failure/progress). Quickest destination (per upstream README):
+  open `https://ntfy.sh/your-topic` in a browser, then use
+  `ntfys://your-topic` — WhatsApp, Discord, Telegram etc. work via any
+  [Apprise URL](https://appriseit.com/services/).
 - **Xet Storage (hf_xet)** — fast HuggingFace downloads toggle.
 - **GGUF CUDA Kernel** — llama.cpp CUDA offload switch.
 - **Repair Settings** — resets launcher settings to defaults.
