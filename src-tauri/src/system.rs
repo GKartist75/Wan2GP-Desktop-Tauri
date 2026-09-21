@@ -1,6 +1,6 @@
 //! Folders, dialogs, data-dir management, reports, shortcuts, view shims.
 use crate::base::*;
-use crate::{hw::get_gpu_info_sync, status::get_active_env};
+use crate::{hw::get_gpu_info_sync, status::{get_active_env, resolve_env_python}};
 use std::path::{Path, PathBuf};
 
 #[tauri::command]
@@ -1688,39 +1688,41 @@ pub fn migrate_choose() -> serde_json::Value {
 }
 #[tauri::command]
 pub fn notifier_ensure() -> serde_json::Value {
-    // Make sure `apprise` is importable in the active env (needed for delivery).
-    let probe = (|| {
-        let env = get_active_env();
-        let raw = env.get("path")?.as_str()?;
-        let base = if std::path::Path::new(raw).is_absolute() {
-            PathBuf::from(raw)
-        } else {
-            get_repo_dir().join(raw.trim_start_matches(".\\").trim_start_matches("./"))
-        };
-        let py = if cfg!(windows) {
-            base.join("Scripts\\python.exe")
-        } else {
-            base.join("bin/python")
-        };
-        if !py.exists() {
-            return None;
-        }
-        let has = silent_command(&py)
-            .args(["-c", "import apprise"])
-            .output()
-            .is_ok_and(|o| o.status.success());
-        Some((py, has))
-    })();
-    let Some((py, has)) = probe else {
+    // Probe the SAME entry delivery uses (console-script binary first, `-m`
+    // fallback). Issue #35: `import apprise` passed while
+    // `python -m apprise` failed ("No module named apprise.__main__"), so the
+    // button said "already present" and delivery still failed.
+    let py = get_active_env()
+        .get("path")
+        .and_then(|p| p.as_str())
+        .and_then(|raw| resolve_env_python(&get_repo_dir(), raw));
+    let Some(py) = py else {
         return serde_json::json!({"ok": false, "error": "No active Python environment"});
     };
-    if has {
+    #[cfg(windows)]
+    let bin = py.parent().map(|d| d.join("apprise.exe"));
+    #[cfg(not(windows))]
+    let bin = py.parent().map(|d| d.join("apprise"));
+    if bin.as_ref().is_some_and(|b| b.is_file()) {
         return serde_json::json!({"ok": true, "already": true});
     }
-    match silent_command(&py)
-        .args(["-m", "pip", "install", "apprise"])
-        .output()
-    {
+    let runnable = |args: &[&str]| {
+        silent_command(&py)
+            .args(args)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    if runnable(&["-c", "import apprise.__main__"]) {
+        return serde_json::json!({"ok": true, "already": true});
+    }
+    // Library present but no CLI (the #35 state): reinstall scripts without
+    // touching deps; fully missing: plain install.
+    let args: &[&str] = if runnable(&["-c", "import apprise"]) {
+        &["-m", "pip", "install", "--force-reinstall", "--no-deps", "apprise"]
+    } else {
+        &["-m", "pip", "install", "apprise"]
+    };
+    match silent_command(&py).args(args).output() {
         Ok(o) if o.status.success() => serde_json::json!({"ok": true, "already": false}),
         Ok(o) => {
             serde_json::json!({"ok": false, "error": format!("pip install apprise failed: {}", String::from_utf8_lossy(&o.stderr).trim())})
