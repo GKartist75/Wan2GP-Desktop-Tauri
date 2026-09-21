@@ -4,8 +4,8 @@
  * Detect hardware → recommend optimal settings → apply to wgp_config.json.
  *
  * Reworked 2026-08: tiers/coefficient/audio-profile aligned with Wan2GP's own
- * calibrations, verified against wgp.py thresholds and the vae2_2 VAE tiling
- * table. Detection is fully async — nothing blocks the Electron main process
+ * calibrations, verified against wgp.py thresholds and upstream VAE tiling
+ * tables (Wan vae2_2, Qwen Image 2.1 presets). Detection is fully async — nothing blocks the Electron main process
  * (previously up to ~30s of frozen UI from execSync probes).
  *
  * Pure functions — no side effects in detect()/recommend(). apply() writes
@@ -388,11 +388,13 @@ function quantForProfile(profile) {
 /**
  * VAE config — always recommend Auto (0).
  *
- * Auto defers the tiling decision to Wan2GP's runtime
- * (models/wan/modules/vae2_2.py get_VAE_tile_size(): ≥24GB → 1, ≥8GB → 2,
- * else 3), evaluated against the REAL memory headroom at generation time.
+ * Auto defers the tiling decision to Wan2GP's runtime (e.g. Wan vae2_2
+ * thresholds, Qwen Image 2.1 presets 1=16GB+/1024px, 2=8GB+/512px,
+ * 3=6GB+/256px with 25% overlap and Auto GPU-capacity thresholds
+ * 16000/8000 MiB), evaluated against the REAL memory headroom at
+ * generation time.
  * A static per-tier picker is strictly worse: a "high" card busy decoding a
- * long video with other apps open can OOM on untiled VAE, while a "tight"
+ * long video with other apps open can OOM on an untiled VAE, while a "tight"
  * card generating a small image wastes time on aggressive tiling. Runtime
  * Auto picks correctly in both cases, so it is the recommendation for every
  * tier. The dropdown stays editable — users who know better can override.
@@ -508,7 +510,8 @@ function recommend(hw, opts) {
     if (profile === undefined) profile = 4
     coeff = vramCoefficientForTier(vramTier)
     // Detect leaves VAE on AUTO (0): the runtime picks tiling from actual VRAM
-    // (≥24GB → full, ≥8GB → 256, else 128). Avoids forcing a suboptimal fixed
+    // (Wan: high VRAM → full, else tiled; Qwen 2.1: 16GB+/1024px, 8GB+/512px,
+    // 6GB+/256px). Avoids forcing a suboptimal fixed
     // tiling that wastes VRAM or adds banding.
     vaeCfg = 0
   }

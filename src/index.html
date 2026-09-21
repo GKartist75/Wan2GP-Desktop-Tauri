@@ -6,7 +6,7 @@
 <title>Wan2GP Desktop Launcher</title>
 <!-- ponytail: self-hosted fonts removed external hop (~200ms FOIT on cold start); system fallback is ~0ms -->
 <link rel="stylesheet" href="style.css">
-<style>html,body{background:#1A1A1A}.screen{display:none;position:absolute;inset:0;flex-direction:column}.screen.active{display:flex}#splash{align-items:center;justify-content:center;background:#242424;gap:6px}.splash-error{margin-top:16px;padding:10px 16px;background:#FDEBEC;color:#9F2F2D;font-size:0.75rem;border-radius:6px;max-width:400px;text-align:left;white-space:pre-wrap;word-break:break-all;line-height:1.4;display:none}.splash-error:not(.hidden){display:block}#splash .brand-mark{font-family:'Instrument Serif','Georgia',serif;font-size:3.5rem;font-weight:400;line-height:1;letter-spacing:-0.04em;color:#E8E6E1}#splash .brand-mark span{color:#666}#splash .brand-sub{font-family:'Instrument Serif','Georgia',serif;font-size:.9375rem;color:#A0A0A0;letter-spacing:.15em;text-transform:uppercase;margin-bottom:36px}.splash-status{font-size:.6875rem;color:#666;font-family:'Geist Mono','SF Mono',monospace}.hidden{display:none!important}</style>
+<style>html,body{background:#1A1A1A}.screen{display:none;position:absolute;inset:0;flex-direction:column}.screen.active{display:flex}#splash{align-items:center;justify-content:center;background:#242424;gap:6px}.splash-error{margin-top:16px;padding:10px 16px;background:#FDEBEC;color:#9F2F2D;font-size:0.75rem;border-radius:6px;max-width:400px;text-align:left;white-space:pre-wrap;word-break:break-all;line-height:1.4;display:none}.splash-error:not(.hidden){display:block}#splash .brand-mark{font-family:'Instrument Serif','Georgia',serif;font-size:3.5rem;font-weight:400;line-height:1;letter-spacing:-0.04em;color:#E8E6E1}#splash .brand-mark span{color:#666}#splash .brand-sub{font-family:'Instrument Serif','Georgia',serif;font-size:.9375rem;color:#A0A0A0;letter-spacing:.15em;text-transform:uppercase;margin-bottom:36px}.splash-status{font-size:.75rem;color:#666;font-family:'Geist Mono','SF Mono',monospace}.hidden{display:none!important}</style>
 </head>
 <body>
 <div id="app">
@@ -446,7 +446,7 @@
         <!-- Not-installed banner (shown when Wan2GP repo is missing) -->
         <div id="autotuneNotInstalled" class="hidden" style="padding:14px;border-radius:8px;background:var(--signal-yellow-bg);border:1px solid var(--signal-yellow);margin-bottom:12px">
           <p style="font-size:0.75rem;color:var(--signal-yellow);margin:0"><strong>Wan2GP is not installed yet.</strong></p>
-          <p style="font-size:0.6875rem;color:var(--text-secondary);margin:6px 0 0">Auto-Tune requires a Wan2GP installation to detect your environment and save configuration. Please install Wan2GP first from the setup screen.</p>
+          <p style="font-size:0.75rem;color:var(--text-secondary);margin:6px 0 0">Auto-Tune requires a Wan2GP installation to detect your environment and save configuration. Please install Wan2GP first from the setup screen.</p>
         </div>
 
         <!-- Auto-Tune content (hidden when not installed) -->
@@ -473,7 +473,7 @@
             <button class="btn btn-primary small" id="memProfileApplyBtn" style="margin-left:auto" title="Write these performance settings to wgp_config.json">Apply Overrides</button>
           </div>
           <p class="token-hint" style="padding:4px 12px 0">Detect scans your hardware and calibrates these mmgp knobs in <code>wgp_config.json</code>. Each dropdown defaults to the <strong>recommended</strong> value — change any to override. <span class="tag-rec">rec</span> = recommended, <span class="tag-saved">saved</span> = currently written to disk.</p>
-          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px 0;font-size:0.6875rem;color:var(--text-secondary);cursor:pointer"
+          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px 0;font-size:0.75rem;color:var(--text-secondary);cursor:pointer"
                  title="Force the P5 minimum-compatibility profile — slower, but maximizes the chance generation works (e.g. a 10GB card that still crashes on P4+). Check and press Detect to re-seed these fields with P5 values.">
             <input type="checkbox" id="autotuneFailsafeChk" style="accent-color:var(--signal-yellow)">
             Prefer failsafe (P5 — maximum compatibility)
@@ -515,8 +515,8 @@
               <label class="token-hint">VAE Config</label>
               <select id="memVae" class="input">
                 <option value="">— unset —</option>
-                <option value="0">0 — auto</option><option value="1">1 — full/untiled</option>
-                <option value="2">2 — tiling 256</option><option value="3">3 — tiling 128</option>
+                <option value="0">0 — auto</option><option value="1">1 — 16GB+</option>
+                <option value="2">2 — 8GB+</option><option value="3">3 — 6GB+</option>
               </select>
               <div class="mem-hint"><span id="recVae" class="tag-rec">rec: —</span><span id="savedVae" class="tag-saved">saved: —</span></div>
             </div>
@@ -530,12 +530,24 @@
               <div class="mem-hint"><span id="recQuant" class="tag-rec">rec: —</span><span id="savedQuant" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
-              <label class="token-hint">Int8 Kernels (Experimental, ~10% faster, needs Triton)</label>
-              <select id="memInt8" class="input">
-                <option value="1">Enabled if Triton available (default)</option>
-                <option value="0">Disabled</option>
+              <label class="token-hint">INT8 Math Kernels (INT8 linear layers)</label>
+              <select id="memInt8Kernels" class="input">
+                <option value="">— unset —</option>
+                <option value="auto">Auto — Kitchen CUDA/HIP, then Triton, then PyTorch (default)</option>
+                <option value="kitchen">Comfy Kitchen kernels (needs R580+ driver)</option>
+                <option value="triton">Triton (needs Triton installed)</option>
+                <option value="disabled">Disabled — PyTorch/Quanto path</option>
               </select>
-              <div class="mem-hint"><span id="recInt8" class="tag-rec">rec: —</span><span id="savedInt8" class="tag-saved">saved: —</span></div>
+              <div class="mem-hint"><span id="recInt8Kernels" class="tag-rec">rec: —</span><span id="savedInt8Kernels" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint">Optimized Ops Precision (H3 VAE fusions)</label>
+              <select id="memKernelPrecision" class="input">
+                <option value="">— unset —</option>
+                <option value="fast">Allow faster approximate kernels (default)</option>
+                <option value="strict">Preserve precision</option>
+              </select>
+              <div class="mem-hint"><span id="recKernelPrecision" class="tag-rec">rec: —</span><span id="savedKernelPrecision" class="tag-saved">saved: —</span></div>
             </div>
           </div>
           <div class="mem-hint" style="padding:10px 12px 0">
@@ -686,7 +698,7 @@
             <span class="card-title">Paths &amp; Model Folders</span>
           </div>
           <div class="paths-grid">
-            <div class="spec-row spec-row-path"><span class="spec-label">Wan2GP install location</span><span class="spec-value path-val" id="pathAppData">—</span><span class="spec-value path-free" id="pathFreeSpace" style="font-size:0.6rem;color:var(--text-tertiary)"></span><button class="path-btn" id="openAppDataBtn" title="Open folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></svg></button><button class="path-btn" id="changeAppDataBtn" title="Move Wan2GP to another location"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button></div>
+            <div class="spec-row spec-row-path"><span class="spec-label">Wan2GP install location</span><span class="spec-value path-val" id="pathAppData">—</span><span class="spec-value path-free" id="pathFreeSpace" style="font-size:0.6625rem;color:var(--text-tertiary)"></span><button class="path-btn" id="openAppDataBtn" title="Open folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></svg></button><button class="path-btn" id="changeAppDataBtn" title="Move Wan2GP to another location"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button></div>
             <div class="spec-row spec-row-path"><span class="spec-label">Checkpoints</span><span class="spec-value path-val" id="dashCkptPath">—</span><button class="path-btn" id="openCkptBtn" title="Open folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></svg></button><button class="path-btn" id="dashBrowseCkpt" title="Change checkpoints folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button></div>
             <div class="spec-row spec-row-path"><span class="spec-label">LoRAs</span><span class="spec-value path-val" id="dashLoraPath">—</span><button class="path-btn" id="openLoraBtn" title="Open folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></svg></button><button class="path-btn" id="dashBrowseLora" title="Change LoRAs folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button></div>
             <div class="spec-row spec-row-path"><span class="spec-label">Output</span><span class="spec-value path-val" id="dashOutputPath">—</span><button class="path-btn" id="openOutputBtn" title="Open folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></svg></button><button class="path-btn" id="dashBrowseOutput" title="Change output folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button></div>
@@ -699,7 +711,7 @@
             <span class="card-title">GPU Kernel Wheels</span>
             <span class="env-type-tag" id="kernelProfileTag"></span>
             <button class="btn btn-ghost small" id="restoreKernelsBtn" title="Reinstall deepbeepmeep's setup_config wheels exactly — downgrades launcher overrides (sage safe build, GGUF floor). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
-                <button class="btn btn-ghost small" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.21 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
+                <button class="btn btn-ghost small" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.22 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
           </div>
           <div class="env-subsection" id="kernelWheelsSubsection" style="margin-top:0;border-top:none;padding-top:0">
             <div class="env-specs" id="kernelWheels">
@@ -715,7 +727,7 @@
             <button class="env-restore-btn" id="envRestoreBtn" title="Reinstall all packages from requirements.txt">restore</button>
             <button class="env-restore-btn" id="envReinstallBtn" title="Recreate the whole environment (Python, PyTorch, packages, kernels). Models & settings are kept.">reinstall</button>
             <button class="btn btn-ghost small" id="envSetupBtn" style="display:none" title="Open the installer to set up a fresh environment">🧭 Run Setup</button>
-            <button class="btn btn-ghost small" id="checkPkgUpdatesBtn" title="Check PyPI for package updates" style="margin-left:auto;padding:1px 6px;font-size:0.55rem;line-height:1.4">↻ Check Updates</button>
+            <button class="btn btn-ghost small" id="checkPkgUpdatesBtn" title="Check PyPI for package updates" style="margin-left:auto;padding:1px 6px;font-size:0.6125rem;line-height:1.4">↻ Check Updates</button>
           </div>
           <p class="token-hint" style="margin:6px 12px 0">↻ Check Updates queries PyPI for newer versions. Updating a single package (e.g. torch) can break the env (CUDA mismatch, black frames) — use <em>restore</em> to reinstall the tested <code>requirements.txt</code>.</p>
           <div class="env-detail">
@@ -774,11 +786,19 @@
             <p class="path-hint" id="deepyEnhancerHint" style="margin-top:6px"></p>
             <p class="path-hint" style="margin-top:4px"><em>You can also change these settings any time inside Wan2GP itself (Configuration → Prompt Enhancer / Deepy).</em></p>
           </div>
+          <!-- Qwen LLM Quantization — shown when a local Qwen engine is picked
+               (Zero + Qwen 3/4/5, or Prime + local Qwen3.8). Writes upstream's
+               prompt_enhancer_quantization so the next launch applies it. -->
+          <div id="deepyQuantWrap" style="margin-top:10px; display:none">
+            <div class="deepy-sub-label">Qwen LLM Quantization</div>
+            <select id="deepyQuantSelect" class="input" style="margin-top:4px;min-width:260px"></select>
+            <p class="path-hint" id="deepyQuantHint" style="margin-top:6px"></p>
+          </div>
           <div id="deepyPrimeOnly" style="display:none">
             <div class="deepy-cost-note">
               <span class="dot-ok">●</span> <strong>OpenCode</strong> — free, local models, no account.
               <span class="dot-bad">●</span> <strong>Claude Code / Codex</strong> — paid (subscription or API credits).
-              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 27B (local)</strong> — runs on your GPU; needs the 27B model + GGUF kernels 1.0.14 (Sync Kernels). Auto-sets 32k context + Summarize.
+              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 27B (local)</strong> — runs on your GPU; needs the 27B model + GGUF kernels 1.0.22 (Sync Kernels). Bonsai PTQ1 quant runs Prime on ~10 GB VRAM. Auto-sets 32k context + Summarize.
               <br>Prime plans advanced multi-step work and is required for every external LLM (it exposes WanGP's MCP tools). Zero is lightweight and local-only.
             </div>
             <div id="deepyEngineOptions" class="deepy-engine-options"></div>
@@ -1155,7 +1175,7 @@
         </div>
 
             <!-- Dependency-drift banner — pinned above Console so post-update warnings are unmissable -->
-            <div id="driftBanner" style="display:none;margin-top:8px;padding:8px 12px;border:1px solid #F87171;border-radius:6px;background:rgba(248,113,113,.08);font-size:13px">
+            <div id="driftBanner" style="display:none;margin-top:8px;padding:8px 12px;border:1px solid #F87171;border-radius:6px;background:rgba(248,113,113,.08);font-size:14px">
               <span id="driftBannerText"></span>
               <button class="btn btn-ghost small" id="driftRestoreBtn" style="margin-left:8px" title="Reinstall all pinned packages from requirements.txt to fix missing or outdated dependencies. Takes a few minutes — watch progress in the Console below.">Restore now</button>
               <button class="btn btn-ghost small" id="driftDismissBtn" title="Hide this warning for now. It will reappear on the next update if drift is still detected.">Dismiss</button>

@@ -50,8 +50,9 @@ The home screen. Top to bottom:
 - *Wan2GP install location* — repo + Python env + settings. Folder icon opens it in Explorer, pencil icon moves it.
 - *Checkpoints / LoRAs / Output* — model and output folders, each with open + change buttons.
 - Keep models OUT of AppData/Roaming (tens–hundreds of GB, roams with your profile).
+- New models are large (e.g. Qwen Image 2.1 ships bf16 + int8 safetensors plus encoder/VAE) and download on first use; the first H3 INT8 run also fetches its ConvRot VAE. Pre/post-processing checkpoints download on demand (upstream JIT), so the upfront footprint stays smaller than it looks.
 
-**GPU Kernel Wheels card** — per-GPU wheels (torch, triton, sage/flash attention, nunchaku/GGUF) with installed versions. *↻ Update GPU Wheels* installs upstream's wanted set plus launcher fixes, *Restore GPU Wheels* reinstalls deepbeepmeep's pure upstream set.
+**GPU Kernel Wheels card** — per-GPU wheels (torch, triton, sage/flash attention, nunchaku/GGUF) with installed versions. *↻ Update GPU Wheels* installs upstream's wanted set plus launcher fixes (sage safe build, GGUF 1.0.22 floor), *Restore GPU Wheels* reinstalls deepbeepmeep's pure upstream set. Sync follows your local checkout — if it is behind `origin/main`, the console warns you to update Wan2GP first, otherwise you install stale wheels.
 
 **Active Environment card** — the selected Python env (`uv`, `venv` or `conda`):
 
@@ -79,7 +80,9 @@ real browser (login must happen in a tab — embedded views 403). Topbar shows a
 persistent Deepy Web LED (green = running, red = stopped) next to the Wan2GP LED.
 *2 · Auth*: fixed passphrase (generator allows length 4–64, remember
 30 days optional). *3 · Connection*: port + LAN HTTPS under Advanced
-(bring/create cert, CA guide). All actions log `[Deepy]` lines to the Console.
+(bring/create cert, CA guide). Upstream reference:
+`docs/AUTHENTICATION.md` in the Wan2GP repo (web login, `--public-url`
+reverse-proxy origins, certificates, MCP OAuth). All actions log `[Deepy]` lines to the Console.
 
 **DLSS 5 card** — optional NVIDIA upsampler runtimes. *Install DLSS 5…* opens a
 confirmation (Cancel / Install).

@@ -246,7 +246,7 @@ html[data-theme="dark"][data-accent="rose"],
  cursor: pointer;
  padding: 0;
  flex-shrink: 0;
- font-size: 0.55rem;
+ font-size: 0.6125rem;
  font-weight: 600;
  color: #fff;
  text-shadow: 0 0 3px rgba(0, 0, 0, 0.7);
@@ -296,7 +296,7 @@ html[data-theme="dark"][data-accent="rose"],
 }
 .appear-slider .appear-val {
  font-family: "Geist Mono", monospace;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  color: var(--text-secondary);
  min-width: 42px;
 }
@@ -476,7 +476,7 @@ html[data-theme="dark"][data-accent="rose"],
  margin-bottom: 36px;
 }
 #splash .splash-status {
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  color: var(--text-tertiary);
  font-family: "Geist Mono", "SF Mono", monospace;
 }
@@ -567,7 +567,7 @@ html[data-theme="dark"][data-accent="rose"],
  text-overflow: ellipsis;
 }
 .app-version {
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  font-weight: 500;
  color: var(--text-tertiary);
  background: var(--surface-hover);
@@ -659,11 +659,11 @@ html[data-theme="dark"][data-accent="rose"],
 }
 .btn.small {
  padding: 5px 12px;
- font-size: 0.6875rem;
+ font-size: 0.75rem;
 }
 .paths-grid .btn.small {
  padding: 1px 6px;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  line-height: 1.4;
 }
 .path-btn {
@@ -691,7 +691,7 @@ html[data-theme="dark"][data-accent="rose"],
 }
 .spec-row-path .btn.small {
  padding: 1px 6px;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  line-height: 1.4;
 }
 
@@ -709,7 +709,7 @@ html[data-theme="dark"][data-accent="rose"],
  margin-bottom: 14px;
 }
 .card-title {
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  font-weight: 600;
  text-transform: uppercase;
  letter-spacing: 0.06em;
@@ -747,7 +747,7 @@ html[data-theme="dark"][data-accent="rose"],
  flex-shrink: 0;
 }
 .spec-row.spec-row-path .path-val {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  line-height: 1.35;
  overflow-wrap: anywhere;
  word-break: break-all;
@@ -772,7 +772,7 @@ html[data-theme="dark"][data-accent="rose"],
 .profile-matrix {
  width: 100%;
  border-collapse: collapse;
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  line-height: 1.35;
 }
 .profile-matrix th {
@@ -787,7 +787,7 @@ html[data-theme="dark"][data-accent="rose"],
  border-bottom: 1px solid var(--border-dim);
 }
 .profile-matrix .tier-range {
- font-size: 0.5rem;
+ font-size: 0.5625rem;
  color: var(--text-tertiary);
 }
 .profile-matrix tr:last-child td {
@@ -817,7 +817,7 @@ html[data-theme="dark"][data-accent="rose"],
 .mem-hint {
  display: flex;
  gap: 8px;
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  line-height: 1.4;
 }
 .tag-rec,
@@ -854,7 +854,7 @@ html[data-theme="dark"][data-accent="rose"],
  border: 1px solid var(--border-dim);
  border-radius: 4px;
  padding: 2px 6px;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  font-family: "Geist Mono", "SF Mono", monospace;
  color: var(--text-primary);
  line-height: 1.4;
@@ -864,7 +864,7 @@ html[data-theme="dark"][data-accent="rose"],
  font-family: inherit;
 }
 .spec-free {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  color: var(--text-tertiary);
  font-family: "Geist Mono", monospace;
  margin-left: 2px;
@@ -909,7 +909,7 @@ html[data-theme="dark"][data-accent="rose"],
  margin-top: 10px;
 }
 .env-detail .spec-row {
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  padding: 3px 6px;
  gap: 4px;
 }
@@ -920,17 +920,17 @@ html[data-theme="dark"][data-accent="rose"],
 .env-detail .spec-value {
  min-width: 0;
  overflow: visible;
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  flex: 1;
 }
 .spec-latest {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  color: var(--text-tertiary);
  margin-left: 2px;
  white-space: nowrap;
 }
 .spec-update-btn {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  padding: 1px 5px;
  margin-left: 2px;
  border: 1px solid var(--accent);
@@ -985,7 +985,7 @@ html[data-theme="dark"][data-accent="rose"],
 }
 .kernel-wheels-card .spec-row,
 .env-subsection .spec-row {
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  padding: 3px 8px;
  gap: 4px;
 }
@@ -996,7 +996,7 @@ html[data-theme="dark"][data-accent="rose"],
 /* Friendly empty/unknown states for the kernel wheels subsection */
 .kw-empty {
  color: var(--text-secondary);
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  padding: 4px 8px;
  font-style: italic;
 }
@@ -1012,7 +1012,7 @@ html[data-theme="dark"][data-accent="rose"],
  border: 1px solid rgba(239, 68, 68, 0.4);
  border-radius: 6px;
  padding: 6px 8px;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  margin: 6px 0;
 }
 
@@ -1028,7 +1028,7 @@ html[data-theme="dark"][data-accent="rose"],
  margin-bottom: 6px;
 }
 .subsection-title {
- font-size: 0.7rem;
+ font-size: 0.75rem;
  font-weight: 600;
  color: var(--text-secondary);
  text-transform: uppercase;
@@ -1049,7 +1049,7 @@ html[data-theme="dark"][data-accent="rose"],
  font-style: italic;
 }
 .env-type-tag {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  font-weight: 500;
  padding: 1px 6px;
  border-radius: 4px;
@@ -1067,7 +1067,7 @@ html[data-theme="dark"][data-accent="rose"],
  background: var(--accent);
  color: #ffffff;
  font-family: "Geist", -apple-system, sans-serif;
- font-size: 0.7rem;
+ font-size: 0.75rem;
  font-weight: 600;
  cursor: pointer;
  transition: all 0.15s ease;
@@ -1169,7 +1169,7 @@ html[data-theme="dark"][data-accent="rose"],
 }
 .launch-hint {
  display: none;
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  color: var(--text-secondary);
  line-height: 1.4;
  padding: 2px 4px;
@@ -1181,7 +1181,7 @@ html[data-theme="dark"][data-accent="rose"],
  overflow: hidden;
 }
 .launch-info .li-text {
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  color: var(--signal-yellow);
  line-height: 1.4;
  padding: 6px 10px;
@@ -1221,7 +1221,7 @@ html[data-theme="dark"][data-accent="rose"],
  cursor: pointer;
  transition: all 0.15s ease;
  font-family: "Geist", -apple-system, sans-serif;
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  font-weight: 500;
  color: var(--text-primary);
  text-align: center;
@@ -1307,7 +1307,7 @@ html[data-theme="dark"][data-accent="rose"],
  background: var(--canvas);
  color: var(--text-primary);
  font-family: "Geist Mono", monospace;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  outline: none;
 }
 .pip-input:focus {
@@ -1325,7 +1325,7 @@ html[data-theme="dark"][data-accent="rose"],
  color: var(--text-secondary);
  cursor: pointer;
  font-family: "Geist", sans-serif;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  font-weight: 500;
  white-space: nowrap;
  transition: all 0.15s;
@@ -1349,7 +1349,7 @@ html[data-theme="dark"][data-accent="rose"],
  border: 1px solid var(--border);
  border-radius: 4px;
  font-family: "Geist Mono", monospace;
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  color: var(--text-primary);
 }
 .pip-cmd-preview.pip-cmd-bad {
@@ -1363,7 +1363,7 @@ html[data-theme="dark"][data-accent="rose"],
 }
 .pip-copy-btn {
  white-space: nowrap;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  padding: 2px 7px;
  border: 1px solid var(--border);
  border-radius: 4px;
@@ -1407,32 +1407,32 @@ html[data-theme="dark"][data-accent="rose"],
  margin-bottom: 4px;
 }
 .llm-engine-title {
- font-size: 0.7rem;
+ font-size: 0.75rem;
  font-weight: 600;
  color: var(--text-primary);
 }
 .llm-install-btn {
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  padding: 3px 8px;
 }
 .llm-serve-row {
  margin-top: 6px;
 }
 .llm-serve-btn {
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  padding: 3px 8px;
 }
 .llm-external-hint {
  color: var(--text-tertiary);
 }
 .pip-advanced-label {
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  color: var(--text-secondary);
  margin-bottom: 4px;
  font-weight: 600;
 }
 .pip-advanced-hint {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  color: var(--text-tertiary);
  margin-top: 4px;
  line-height: 1.35;
@@ -1444,7 +1444,7 @@ html[data-theme="dark"][data-accent="rose"],
  color: var(--text-secondary);
 }
 .deepy-cost-note {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  color: var(--text-tertiary);
  margin: 6px 0;
  line-height: 1.5;
@@ -1481,7 +1481,7 @@ html[data-theme="dark"][data-accent="rose"],
 }
 .deepy-engine-cost {
  margin-left: auto;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  text-transform: uppercase;
  letter-spacing: 0.04em;
 }
@@ -1512,13 +1512,13 @@ html[data-theme="dark"][data-accent="rose"],
  border-color: var(--accent);
 }
 .deepy-mode-sub {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  color: var(--text-tertiary);
  text-transform: uppercase;
  letter-spacing: 0.04em;
 }
 .deepy-sub-label {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  color: var(--text-secondary);
  font-weight: 600;
  margin-bottom: 4px;
@@ -1551,7 +1551,7 @@ html[data-theme="dark"][data-accent="rose"],
  border-color: var(--border);
 }
 .deepy-enhancer-note {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  color: var(--text-tertiary);
  font-style: italic;
 }
@@ -1680,7 +1680,7 @@ button.deepyweb-open:disabled {
  color: #fff;
  padding: 2px 6px;
  border-radius: 3px;
- font-size: 0.5625rem;
+ font-size: 0.625rem;
  font-weight: 700;
  text-transform: uppercase;
  letter-spacing: 0.08em;
@@ -1714,7 +1714,7 @@ button.deepyweb-open:disabled {
  transition: width 0.3s;
 }
 .progress-text {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  color: var(--text-secondary);
  min-width: 35px;
  text-align: right;
@@ -1777,7 +1777,7 @@ button.deepyweb-open:disabled {
  color: var(--text-tertiary);
  cursor: pointer;
  font-family: "Geist", -apple-system, sans-serif;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  font-weight: 500;
  transition: all 0.15s;
  display: flex;
@@ -1798,7 +1798,7 @@ button.deepyweb-open:disabled {
  overflow-y: auto;
  padding: 6px 12px;
  font-family: "Geist Mono", "SF Mono", "Cascadia Code", "Fira Code", monospace;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  line-height: 1.6;
  color: var(--text-secondary);
  white-space: pre-wrap;
@@ -1861,7 +1861,7 @@ button.deepyweb-open:disabled {
  background: var(--surface);
 }
 .install-term-title {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  font-weight: 600;
  text-transform: uppercase;
  letter-spacing: 0.08em;
@@ -1906,7 +1906,7 @@ button.deepyweb-open:disabled {
  align-items: center;
  gap: 6px;
  margin-bottom: 3px;
- font-size: 0.6875rem;
+ font-size: 0.75rem;
 }
 .install-hw-row:last-child {
  margin-bottom: 0;
@@ -1919,7 +1919,7 @@ button.deepyweb-open:disabled {
  color: var(--text-primary);
  margin-right: 14px;
  font-family: "Geist Mono", monospace;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
 }
 
 /* ── Expected packages display ── */
@@ -1949,7 +1949,7 @@ button.deepyweb-open:disabled {
  gap: 4px;
 }
 .ipkg-item {
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  padding: 2px 8px;
  border-radius: 4px;
  background: var(--surface);
@@ -2001,7 +2001,7 @@ button.deepyweb-open:disabled {
  border: 1px solid var(--border);
 }
 .env-type-label {
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  color: var(--text-secondary);
  text-transform: uppercase;
  letter-spacing: 0.06em;
@@ -2019,7 +2019,7 @@ button.deepyweb-open:disabled {
  background: var(--surface);
  color: var(--text-secondary);
  cursor: pointer;
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  font-weight: 500;
  font-family: "Geist", -apple-system, sans-serif;
 }
@@ -2042,7 +2042,7 @@ button.deepyweb-open:disabled {
 .env-type-desc {
  font-weight: 400;
  color: var(--text-tertiary);
- font-size: 0.6rem;
+ font-size: 0.6625rem;
 }
 
 /* ── Prerequisite help card ── */
@@ -2196,7 +2196,7 @@ button.deepyweb-open:disabled {
 }
 .task-status {
  margin-left: auto;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  text-transform: uppercase;
  font-family: "Geist Mono", monospace;
 }
@@ -2204,11 +2204,11 @@ button.deepyweb-open:disabled {
 .args-table td:first-child {
  white-space: nowrap;
  font-family: "Geist Mono", monospace;
- font-size: 0.5625rem;
+ font-size: 0.625rem;
  color: var(--accent);
 }
 .args-table td:last-child {
- font-size: 0.5625rem;
+ font-size: 0.625rem;
  color: var(--text-secondary);
  width: 100%;
 }
@@ -2275,7 +2275,7 @@ button.deepyweb-open:disabled {
  background: transparent;
  color: var(--text-tertiary);
  font-family: "Geist", sans-serif;
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  font-weight: 500;
  cursor: pointer;
  transition: all 0.15s;
@@ -2307,7 +2307,7 @@ button.deepyweb-open:disabled {
  margin-bottom: 24px;
 }
 .settings-section h3 {
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  font-weight: 600;
  text-transform: uppercase;
  letter-spacing: 0.06em;
@@ -2336,7 +2336,7 @@ button.deepyweb-open:disabled {
  border-color: var(--accent);
 }
 .token-hint {
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  color: var(--text-tertiary);
  line-height: 1.5;
  margin-top: 6px;
@@ -2351,11 +2351,11 @@ button.deepyweb-open:disabled {
  padding: 1px 5px;
  border-radius: 3px;
  font-family: "Geist Mono", monospace;
- font-size: 0.5625rem;
+ font-size: 0.625rem;
 }
 .launch-args-help {
  margin-top: 10px;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  color: var(--text-secondary);
 }
 .launch-args-help summary {
@@ -2399,14 +2399,14 @@ button.deepyweb-open:disabled {
 .changelog-list {
  max-height: 180px;
  overflow-y: auto;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
 }
 .changelog-loading,
 .changelog-error {
  padding: 10px;
  text-align: center;
  color: var(--text-tertiary);
- font-size: 0.625rem;
+ font-size: 0.6875rem;
 }
 .cl-item {
  display: flex;
@@ -2423,7 +2423,7 @@ button.deepyweb-open:disabled {
  color: var(--text-tertiary);
  font-family: "Geist Mono", monospace;
  min-width: 50px;
- font-size: 0.5625rem;
+ font-size: 0.625rem;
 }
 .cl-msg {
  flex: 1;
@@ -2434,7 +2434,7 @@ button.deepyweb-open:disabled {
 }
 .local-commit {
  font-family: "Geist Mono", monospace;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  color: var(--text-tertiary);
  display: flex;
  align-items: center;
@@ -2446,7 +2446,7 @@ button.deepyweb-open:disabled {
  text-align: right;
 }
 .changelog-link {
- font-size: 0.5625rem;
+ font-size: 0.625rem;
  color: var(--text-secondary);
  text-decoration: none;
  cursor: pointer;
@@ -2458,7 +2458,7 @@ button.deepyweb-open:disabled {
 .changelog-sep {
  color: var(--border);
  margin: 0 4px;
- font-size: 0.5rem;
+ font-size: 0.5625rem;
 }
 /* Desktop links bar — relocated from the removed Desktop App info card */
 .links-bar {
@@ -2466,7 +2466,7 @@ button.deepyweb-open:disabled {
  text-align: right;
 }
 .links-bar .changelog-link {
- font-size: 0.5625rem;
+ font-size: 0.625rem;
 }
 .update-dot {
  display: inline-block;
@@ -2495,7 +2495,7 @@ button.deepyweb-open:disabled {
  align-items: center;
  gap: 6px;
  margin-bottom: 3px;
- font-size: 0.6875rem;
+ font-size: 0.75rem;
 }
 .ipath-label {
  color: var(--text-secondary);
@@ -2508,10 +2508,10 @@ button.deepyweb-open:disabled {
  text-overflow: ellipsis;
  white-space: nowrap;
  font-family: "Geist Mono", monospace;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
 }
 .path-hint {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  color: var(--text-tertiary);
  margin: -2px 0 6px 0;
  line-height: 1.3;
@@ -2536,7 +2536,7 @@ button.deepyweb-open:disabled {
  gap: 3px;
 }
 .path-val {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  overflow-wrap: anywhere;
  word-break: normal;
  min-width: 0;
@@ -2551,7 +2551,7 @@ button.deepyweb-open:disabled {
  border-radius: 8px;
  background: color-mix(in srgb, var(--warning, #d9a441) 12%, transparent);
  color: var(--warning, #d9a441);
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  line-height: 1.3;
 }
 .install-root-warn.hidden {
@@ -2616,7 +2616,7 @@ button.deepyweb-open:disabled {
  margin-bottom: 10px;
 }
 .migrate-row label {
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  color: var(--text-secondary);
 }
 .migrate-path {
@@ -2634,7 +2634,7 @@ button.deepyweb-open:disabled {
  font-family: "Geist Mono", monospace;
 }
 .migrate-note-text {
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  color: var(--text-tertiary);
  margin: 8px 0 14px;
  line-height: 1.4;
@@ -2667,7 +2667,7 @@ button.deepyweb-open:disabled {
  transition: width 0.2s ease;
 }
 .migrate-progress-text {
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  color: var(--text-secondary);
  white-space: nowrap;
 }
@@ -2681,7 +2681,7 @@ button.deepyweb-open:disabled {
  width: 18px;
  height: 18px;
  padding: 0;
- font-size: 0.5rem;
+ font-size: 0.5625rem;
  line-height: 1;
  color: var(--text-tertiary);
  border: none;
@@ -2694,7 +2694,7 @@ button.deepyweb-open:disabled {
 
 /* ── Package install button (missing packages) ── */
 .pkg-install-btn {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  padding: 1px 5px;
  margin-left: 4px;
  border: 1px solid var(--signal-blue);
@@ -2722,7 +2722,7 @@ button.deepyweb-open:disabled {
 
 /* ── Env unlink button (red text) ── */
 .env-unlink-btn {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  font-weight: 600;
  text-transform: uppercase;
  letter-spacing: 0.04em;
@@ -2745,7 +2745,7 @@ button.deepyweb-open:disabled {
  cursor: not-allowed;
 }
 .env-restore-btn {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  font-weight: 600;
  text-transform: uppercase;
  letter-spacing: 0.04em;
@@ -2821,13 +2821,13 @@ button.deepyweb-open:disabled {
  background: var(--text-primary);
 }
 .zoom-label {
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  font-family: "Geist Mono", monospace;
  color: var(--text-secondary);
  min-width: 32px;
 }
 .embed-badge {
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  font-family: "Geist Mono", monospace;
  color: var(--text-secondary);
  border: 1px solid var(--border);
@@ -2844,7 +2844,7 @@ button.deepyweb-open:disabled {
  align-items: center;
  gap: 6px;
  margin-top: 4px;
- font-size: 0.6875rem;
+ font-size: 0.75rem;
  color: var(--text-secondary);
  padding: 2px 4px;
 }
@@ -2861,7 +2861,7 @@ button.deepyweb-open:disabled {
  display: inline-flex;
  align-items: center;
  gap: 4px;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  font-family: "Geist Mono", monospace;
  color: var(--text-secondary);
  margin-right: 8px;
@@ -2875,7 +2875,7 @@ button.deepyweb-open:disabled {
  align-items: center;
  gap: 5px;
  margin-left: 10px;
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  font-weight: 500;
  font-family: "Geist Mono", monospace;
 }
@@ -2910,7 +2910,7 @@ button.deepyweb-open:disabled {
  background: transparent;
  color: var(--text-tertiary);
  cursor: pointer;
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  line-height: 1;
  display: flex;
  align-items: center;
@@ -3098,7 +3098,7 @@ button.deepyweb-open:disabled {
  align-items: center;
  gap: 4px;
  flex-shrink: 0;
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  color: var(--text-tertiary);
  font-family: "Geist Mono", monospace;
 }
@@ -3139,7 +3139,7 @@ button.deepyweb-open:disabled {
 }
 .lo-text {
  flex: 1;
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  color: var(--signal-yellow);
  line-height: 1.4;
 }
@@ -3228,7 +3228,7 @@ button.deepyweb-open:disabled {
  flex-shrink: 0;
 }
 .floating-term-title {
- font-size: 0.625rem;
+ font-size: 0.6875rem;
  font-weight: 600;
  text-transform: uppercase;
  letter-spacing: 0.06em;
@@ -3252,7 +3252,7 @@ button.deepyweb-open:disabled {
  display: flex;
  align-items: center;
  gap: 4px;
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  color: var(--text-tertiary);
 }
 .ft-status-dot {
@@ -3284,7 +3284,7 @@ button.deepyweb-open:disabled {
  background: var(--canvas);
  color: var(--text-primary);
  font-family: "Geist Mono", monospace;
- font-size: 0.6rem;
+ font-size: 0.6625rem;
  outline: none;
 }
 .ft-search:focus {
@@ -3321,11 +3321,11 @@ button.deepyweb-open:disabled {
 }
 .istack-k {
  color: var(--text-tertiary);
- font-size: 0.7rem;
+ font-size: 0.75rem;
 }
 .istack-v {
  color: var(--text-primary);
- font-size: 0.7rem;
+ font-size: 0.75rem;
  font-family: "Geist Mono", monospace;
 }
 .istack-warn {
@@ -3396,7 +3396,7 @@ button.deepyweb-open:disabled {
  display: flex;
  align-items: center;
  gap: 8px;
- font-size: 0.7rem;
+ font-size: 0.75rem;
  color: var(--text-secondary);
  margin-top: 6px;
  cursor: pointer;

@@ -1838,6 +1838,20 @@ document.addEventListener("DOMContentLoaded", async () => {
           const env = $("envName")?.textContent?.trim() || "—";
           const torch = $("specTorch")?.textContent?.trim() || "—";
           appendLog(`[*] Environment ready: ${env} · torch ${torch}`);
+          // One-time startup drift sync: the banner otherwise reflects only
+          // the last update's verdict — re-verify against the live env so a
+          // stale banner clears (or real drift names itself) unprompted.
+          window.w2gp
+            .depCheck()
+            .then((d) => {
+              if (d && Array.isArray(d.drift) && d.drift.length) {
+                appendLog(
+                  "[!] dependency drift: " + d.drift.join(", ") + " — use restore",
+                );
+                showDriftBanner(d.drift);
+              } else hideDriftBanner();
+            })
+            .catch(() => {});
         })
         .catch(() => {});
       startMetricsPolling();
@@ -6399,6 +6413,11 @@ function showDriftBanner(drift) {
   const b = $("driftBanner");
   const t = $("driftBannerText");
   if (!b || !t) return;
+  // Defensive: an empty list must hide, never render buttons with no text.
+  if (!Array.isArray(drift) || !drift.length) {
+    b.style.display = "none";
+    return;
+  }
   const list = drift.slice(0, 5).join(", ");
   const more = drift.length > 5 ? " (+" + (drift.length - 5) + " more)" : "";
   t.textContent =
@@ -6998,7 +7017,7 @@ const DEEPY_PANEL_ENGINES = [
   { id: "opencode", label: "OpenCode", paid: false },
   { id: "claude-code", label: "Claude Code", paid: true },
   { id: "codex", label: "OpenAI Codex", paid: true },
-  // ponytail: b71026f — local Prime runs on Qwen3.8 VL 27B (needs the 27B model + GGUF 1.0.14; backend auto-raises 32k context + Summarize)
+  // ponytail: b71026f — local Prime runs on Qwen3.8 VL 27B (needs the 27B model + GGUF 1.0.22; backend auto-raises 32k context + Summarize)
   { id: "local-qwen38", label: "Qwen3.8 VL 27B (local)", paid: false },
 ];
 
@@ -7018,6 +7037,75 @@ const DEEPY_PANEL_ENHANCERS = [
   { id: 4, label: "Qwen3.5 VL Abliterated 9B (local)", modes: ["zero"] },
   { id: 5, label: "Qwen3.8 VL Uncensored 27B (local)", modes: ["zero"] },
 ];
+
+// Qwen LLM Quantization choices per local engine id — mirrors upstream's
+// "Qwen LLM Quantization" dropdown (plugins/configuration/plugin.py
+// QWEN38_QUANTIZATION_CHOICES). Bonsai PTQ1 (gguf_ptq1) is the ~10 GB VRAM
+// checkpoint for Qwen3.8; Qwen3.5 offers Quanto Int8 or GGUF Q4.
+const DEEPY_QUANT_CHOICES = {
+  5: [
+    { id: "gguf", label: "GGUF Q4 (default, highest quality)" },
+    { id: "gguf_q3", label: "GGUF IQ3_S (middle, 16 GB VRAM)" },
+    { id: "gguf_q2", label: "GGUF Q2 (lowest memory)" },
+    { id: "gguf_ptq1", label: "Bonsai PTQ1 (~10 GB VRAM, needs kernels 1.0.22+)" },
+  ],
+  4: [
+    { id: "quanto_int8", label: "Quanto Int8 (recommended, better quality)" },
+    { id: "gguf", label: "GGUF Q4 (less VRAM, needs kernels)" },
+  ],
+  3: [
+    { id: "quanto_int8", label: "Quanto Int8 (recommended, better quality)" },
+    { id: "gguf", label: "GGUF Q4 (less VRAM, needs kernels)" },
+  ],
+};
+const DEEPY_QUANT_DEFAULT = { 5: "gguf", 4: "quanto_int8", 3: "quanto_int8" };
+// Last-rendered "enhancerId|savedQuant" key — options rebuild only when the
+// engine context changes so syncApply validation never resets a choice.
+let _deepyQuantCtx = "";
+// Render the quant selector for a local Qwen engine id (3/4/5), or hide it
+// (quant untouched) for remote engines / Florence / Disabled.
+function renderDeepyQuant(enhancerId, savedQuant) {
+  const wrap = $("deepyQuantWrap");
+  const sel = $("deepyQuantSelect");
+  const hint = $("deepyQuantHint");
+  if (!wrap || !sel) return;
+  const choices = (enhancerId && DEEPY_QUANT_CHOICES[enhancerId]) || null;
+  if (!choices) {
+    wrap.style.display = "none";
+    _deepyQuantCtx = "";
+    return;
+  }
+  const key = enhancerId + "|" + (savedQuant || "");
+  wrap.style.display = "block";
+  if (key !== _deepyQuantCtx) {
+    _deepyQuantCtx = key;
+    sel.textContent = "";
+    for (const c of choices) {
+      const o = document.createElement("option");
+      o.value = c.id;
+      o.textContent = c.label;
+      sel.append(o);
+    }
+    sel.value = choices.some((c) => c.id === savedQuant)
+      ? savedQuant
+      : DEEPY_QUANT_DEFAULT[enhancerId];
+  }
+  sel.dataset.enh = String(enhancerId);
+  if (hint)
+    updateDeepyQuantHint(sel.value, enhancerId);
+  sel.onchange = () => updateDeepyQuantHint(sel.value, enhancerId);
+}
+// Hint under the quant selector; Bonsai notes its companion defaults.
+function updateDeepyQuantHint(value, enhancerId) {
+  const hint = $("deepyQuantHint");
+  if (!hint) return;
+  hint.textContent =
+    value === "gguf_ptq1"
+      ? "Bonsai PTQ1 runs Prime on ~10 GB VRAM (Sync Kernels for 1.0.22+). Weights download on first WanGP launch. Apply also sets Automatic prompting + INT8 KV cache."
+      : Number(enhancerId) === 5
+        ? "GGUF Q4 is highest quality; Q3/Q2 trade quality for VRAM. Weights download on first WanGP launch."
+        : "Quanto Int8 preserves quality; GGUF Q4 uses less memory when kernels are installed.";
+}
 
 async function refreshDeepy() {
   const opts = $("deepyEngineOptions");
@@ -7062,6 +7150,11 @@ async function refreshDeepy() {
   const currentMode = status.mode || "disabled";
   const currentEnhancer =
     typeof status.enhancerEnabled === "number" ? status.enhancerEnabled : null;
+  // Saved quant backend (upstream prompt_enhancer_quantization) for preselect.
+  const savedQuant =
+    typeof status.promptEnhancerQuantization === "string"
+      ? status.promptEnhancerQuantization
+      : null;
   // Sessions section — pre-select from config (backend normalizes; missing
   // keys fall back to upstream defaults). Launcher default for a fresh
   // config is the selectable shared workspace.
@@ -7225,6 +7318,21 @@ async function refreshDeepy() {
         title = "Pick a local model (Prompt Enhancer)";
       }
     }
+    // Qwen quant selector follows the local engine: Zero + Qwen 3/4/5, or
+    // Prime + local Qwen3.8 (id 5). Hidden otherwise (quant untouched).
+    const qEnhRaw =
+      mode === "zero"
+        ? parseInt(
+            (enhancerOpts.querySelector("input[name=deepyEnhancer]:checked") || {})
+              .value,
+            10,
+          )
+        : mode === "prime" &&
+            ((opts.querySelector("input[name=deepyEngine]:checked") || {}).value ===
+              "local-qwen38")
+          ? 5
+          : NaN;
+    renderDeepyQuant([3, 4, 5].includes(qEnhRaw) ? qEnhRaw : null, savedQuant);
     applyBtn.disabled = !ok;
     applyBtn.title = title || "Set Deepy to " + mode;
   };
@@ -7263,11 +7371,20 @@ async function refreshDeepy() {
       reset_mode: ($("deepySessionReset") || {}).value || "new_session",
       gallery_media_mode: ($("deepySessionGallery") || {}).value || "link",
     };
+    // Quant only when its selector is visible (local Qwen engine) — hidden
+    // means preserve whatever WanGP already has.
+    const quantWrap = $("deepyQuantWrap");
+    const quantSel = $("deepyQuantSelect");
+    const quant =
+      quantWrap && quantWrap.style.display !== "none" && quantSel && quantSel.value
+        ? quantSel.value
+        : null;
     const r = await window.w2gp.deepySet(
       mode,
       eng,
       enh ? parseInt(enh, 10) : null,
       sessions,
+      quant,
     );
     applyBtn.textContent = "Apply";
     if (r && r.ok) {
@@ -7286,6 +7403,7 @@ async function refreshDeepy() {
           sessions.reset_mode +
           "/" +
           sessions.gallery_media_mode +
+          (quant ? "; quant: " + quant : "") +
           ")",
       );
     } else {
@@ -9311,8 +9429,10 @@ function memProfileCollect() {
   const co = $("memCoeff").value;
   const ve = $("memVae").value;
   const q = $("memQuant").value;
-  const i8 = $("memInt8") ? $("memInt8").value : "";
-  if (i8 !== "") s.enable_int8_kernels = Number(i8);
+  const i8k = $("memInt8Kernels") ? $("memInt8Kernels").value : "";
+  const kp = $("memKernelPrecision") ? $("memKernelPrecision").value : "";
+  if (i8k) s.int8_kernels = i8k;
+  if (kp) s.kernel_precision = kp;
   if (vp) s.video_profile = Number(vp);
   if (ip) s.image_profile = Number(ip);
   if (ap) s.audio_profile = Number(ap);
@@ -9364,13 +9484,34 @@ const MEM_FIELDS = {
     rec: "recQuant",
     saved: "savedQuant",
   },
-  enable_int8_kernels: { sel: "memInt8", rec: "recInt8", saved: "savedInt8" },
+  int8_kernels: {
+    sel: "memInt8Kernels",
+    rec: "recInt8Kernels",
+    saved: "savedInt8Kernels",
+  },
+  kernel_precision: {
+    sel: "memKernelPrecision",
+    rec: "recKernelPrecision",
+    saved: "savedKernelPrecision",
+  },
+};
+const INT8_KERNEL_LABELS = {
+  auto: "Auto (default)",
+  kitchen: "Comfy Kitchen",
+  triton: "Triton",
+  disabled: "Disabled (PyTorch)",
+};
+const KERNEL_PRECISION_LABELS = {
+  fast: "Approximate (default)",
+  strict: "Preserve precision",
 };
 function fmtVal(key, v) {
   if (v == null || v === "") return "—";
   if (key === "vae_config") return v + (Number(v) === 0 ? " (AUTO)" : "");
-  if (key === "enable_int8_kernels")
-    return Number(v) === 1 ? "Enabled (if Triton)" : "Disabled";
+  if (key === "int8_kernels")
+    return INT8_KERNEL_LABELS[v] || String(v);
+  if (key === "kernel_precision")
+    return KERNEL_PRECISION_LABELS[v] || String(v);
   return String(v);
 }
 
@@ -9409,8 +9550,12 @@ function memProfileFromRecommendation(rec) {
       vram_safety_coefficient: rec.vram_safety_coefficient,
       vae_config: rec.vae_config == null ? 0 : rec.vae_config, // AUTO unless Detect set a fixed value
       transformer_quantization: rec.transformer_quantization,
-      enable_int8_kernels:
-        rec.enable_int8_kernels == null ? 1 : rec.enable_int8_kernels,
+      // Upstream v13.13 string enums (legacy numeric enable_int8_kernels
+      // mapped defensively — the backend no longer sends it).
+      int8_kernels:
+        rec.int8_kernels ||
+        (rec.enable_int8_kernels === 0 ? "disabled" : "auto"),
+      kernel_precision: rec.kernel_precision || "fast",
     },
     { mode: "recommend" },
   );

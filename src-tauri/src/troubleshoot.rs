@@ -286,7 +286,7 @@ fn verify_kernels(
                 base["ok"] = serde_json::json!(false);
                 base["error"] = serde_json::json!(format!("GPU computes, but these wheels won't import: {}. Re-run Sync/Repair, check antivirus quarantine.", fails.join("; ")));
             }
-            // Stale-but-importable wheels (GGUF < 1.0.21: #2274) warn even
+            // Stale-but-importable wheels (GGUF < 1.0.22: #2274) warn even
             // when everything imports — slowness, not breakage.
             if !stale.is_empty() {
                 base["kernel_warning"] = serde_json::json!(stale.join(" "));

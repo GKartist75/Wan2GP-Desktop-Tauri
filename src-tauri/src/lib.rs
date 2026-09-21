@@ -182,6 +182,7 @@ pub fn run() {
             install::sync_kernels,
             install::restore_kernels,
             install::update,
+            install::dep_check,
             install::dlss5_status,
             install::install_dlss5,
             install::classify_target,
