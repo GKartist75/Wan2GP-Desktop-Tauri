@@ -39,7 +39,7 @@
         box.innerHTML = '<p class="token-hint">Empty — root: <code>' + esc(r.root) + '</code></p>'
         return
       }
-      box.innerHTML = '<table class="args-table">' +
+      box.innerHTML = '<table class="args-table lib-table">' +
         '<tr><td><strong>Family</strong></td><td><strong>Files</strong></td><td><strong>Size</strong></td><td><strong>URLs known</strong></td></tr>' +
         r.folders.map((f) => (
           '<tr><td><code>' + esc(f.name) + '</code>' +
@@ -69,7 +69,7 @@
         box.innerHTML = '<p class="token-hint">None yet — put shared <code>*.json</code> definitions in <code>' + esc(r.dir) + '</code> or import one below. Never edit <code>defaults/</code>.</p>'
         return
       }
-      box.innerHTML = '<table class="args-table">' +
+      box.innerHTML = '<table class="args-table lib-table">' +
         '<tr><td><strong>Id</strong></td><td><strong>Base</strong></td><td><strong>URLs / LoRAs</strong></td><td><strong></strong></td></tr>' +
         r.items.map((it) => (
           '<tr><td><code>' + esc(it.id) + '</code><br><span class="token-hint">' + esc(it.name || '') + '</span>' +
@@ -158,7 +158,7 @@
         box.innerHTML = '<p class="token-hint">No workspaces.</p>'
         return
       }
-      box.innerHTML = '<table class="args-table">' +
+      box.innerHTML = '<table class="args-table lib-table">' +
         '<tr><td><strong>Workspace</strong></td><td><strong>Media</strong></td><td><strong>Size</strong></td><td><strong>Last activity</strong></td><td><strong></strong></td></tr>' +
         r.items.map((it) => (
           '<tr><td><code>' + esc(it.name || it.id) + '</code>' +

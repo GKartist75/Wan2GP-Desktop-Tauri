@@ -2212,6 +2212,18 @@ button.deepyweb-open:disabled {
  color: var(--text-secondary);
  width: 100%;
 }
+/* Library tables (LoRAs, finetunes, workspaces): 4-5 data columns need one
+   readable size — the base 2-col key/desc styling would shrink first/last. */
+table.args-table.lib-table td {
+ font-size: 0.75rem;
+ color: var(--text-primary);
+ font-family: "Geist", sans-serif;
+}
+table.args-table.lib-table td:first-child {
+ font-family: "Geist Mono", monospace;
+ color: var(--text-primary);
+ white-space: nowrap;
+}
 
 /* ── Settings Panel ── */
 .settings-overlay {
