@@ -463,6 +463,13 @@ function syncNativeBoundsAdjusted() {
         w = Math.max(0, w - l);
       } else if (dock === "right") w = Math.max(0, w - ft.offsetWidth);
     }
+    // Side panels (Manage/Guide) dock right: shrink the native child beside
+    // them instead of detaching it, so Wan2GP stays visible instead of black.
+    // offsetWidth is layout width (unaffected by the slide transform), and 0
+    // when closed — every caller (terminal, reshow, resize) inherits this.
+    try {
+      w = Math.max(0, w - sidePanelWidth());
+    } catch (e) {}
     // Same topbar clamp as __syncNativeBounds: the child must never cover metrics.
     try {
       const tb = document.querySelector(".topbar");
@@ -492,6 +499,17 @@ function syncNativeBoundsAdjusted() {
       } catch {}
     }
   } catch {}
+}
+// Width of the currently open right-docked side panel (Manage/Guide), else 0.
+function sidePanelWidth() {
+  var w = 0;
+  try {
+    var sp = $("settingsPanel");
+    if (sp && sp.classList.contains("open")) w = Math.max(w, sp.offsetWidth || 0);
+    var gp = $("guidePanel");
+    if (gp && gp.classList.contains("open")) w = Math.max(w, gp.offsetWidth || 0);
+  } catch (e) {}
+  return w;
 }
 // Re-show the native child with settle re-syncs: measuring right after unhide
 // can catch a stale rect, leaving the child at the wrong size with Gradio
@@ -650,12 +668,13 @@ function openSettings() {
   initSettingsToggles();
   $("settingsPanel").classList.add("open");
   $("settingsOverlay").classList.add("visible");
-  // In webview (desktop) mode a BrowserView always composites above DOM, so it can't be
-  // covered — detach it while Manage is open so the panel renders in front of the viewer.
-  // The opaque backdrop class replaces the viewer area (no black flash).
+  // Side-by-side: keep Wan2GP visible beside the panel (the bounds sync above
+  // auto-trims the open panel width) instead of detaching it to black. The
+  // translucent overlay stays click-to-close; no opaque blackout.
   if ($("dashBody").style.display === "none") {
-    window.w2gp.detachBrowserView();
-    $("settingsOverlay").classList.add("opaque");
+    try {
+      reshowNativeView();
+    } catch (e) {}
   }
   window.w2gp.configLoad().then((cfg) => {
     if ($("launchArgsInput")) $("launchArgsInput").value = cfg.launchArgs || "";
@@ -787,18 +806,22 @@ $("removeElectronBtn")?.addEventListener("click", async function () {
 });
 function closeSettings() {
   $("settingsPanel").classList.remove("open");
+  var guideOpen = $("guidePanel") && $("guidePanel").classList.contains("open");
   // Only hide the overlay when the Guide panel isn't open either.
-  if (!$("guidePanel") || !$("guidePanel").classList.contains("open")) {
+  if (!guideOpen) {
     $("settingsOverlay").classList.remove("visible");
   }
-  // Restore the BrowserView (re-attach the still-alive view) when leaving Manage in webview mode.
-  if ($("dashBody").style.display === "none") {
-    if (!$("guidePanel") || !$("guidePanel").classList.contains("open")) {
-      $("settingsOverlay").classList.remove("opaque");
-    }
+  // Restore full viewer bounds when leaving Manage in webview mode
+  // (skipped while the Guide panel stays open — it keeps its trim).
+  if ($("dashBody").style.display === "none" && !guideOpen) {
+    $("settingsOverlay").classList.remove("opaque");
     // Don't reattach over an open terminal — restore the correct view state instead.
     if (_ftVisible) showTerminal();
-    else window.w2gp.reattachBrowserView();
+    else {
+      try {
+        reshowNativeView();
+      } catch (e) {}
+    }
   }
 }
 // ── Guide panel (topbar tab — same overlay/BrowserView rules as Manage) ──
@@ -807,24 +830,30 @@ function openGuide() {
   if (!$("guidePanel")) return;
   $("guidePanel").classList.add("open");
   $("settingsOverlay").classList.add("visible");
-  // Same native-webview rule as Manage: detach while open so the panel renders in front.
+  // Side-by-side like Manage: keep Wan2GP visible beside the panel instead of
+  // detaching it to black. Translucent overlay stays click-to-close.
   if ($("dashBody").style.display === "none") {
-    window.w2gp.detachBrowserView();
-    $("settingsOverlay").classList.add("opaque");
+    try {
+      reshowNativeView();
+    } catch (e) {}
   }
 }
 function closeGuide() {
   if ($("guidePanel")) $("guidePanel").classList.remove("open");
+  var manageOpen =
+    $("settingsPanel") && $("settingsPanel").classList.contains("open");
   // Only hide the overlay when the Manage panel isn't open either.
-  if (!$("settingsPanel") || !$("settingsPanel").classList.contains("open")) {
+  if (!manageOpen) {
     $("settingsOverlay").classList.remove("visible");
   }
-  if ($("dashBody").style.display === "none") {
-    if (!$("settingsPanel") || !$("settingsPanel").classList.contains("open")) {
-      $("settingsOverlay").classList.remove("opaque");
-    }
+  if ($("dashBody").style.display === "none" && !manageOpen) {
+    $("settingsOverlay").classList.remove("opaque");
     if (_ftVisible) showTerminal();
-    else window.w2gp.reattachBrowserView();
+    else {
+      try {
+        reshowNativeView();
+      } catch (e) {}
+    }
   }
 }
 $("guideBtn")?.addEventListener("click", () => {
@@ -832,6 +861,20 @@ $("guideBtn")?.addEventListener("click", () => {
   else openGuide();
 });
 $("guideBackBtn")?.addEventListener("click", closeGuide);
+// Window resize while a side panel is open: the native child keeps absolute
+// bounds, so re-trim it to the new viewport (debounced, panel-open only).
+var __sideResizeT = null;
+window.addEventListener("resize", () => {
+  try {
+    if (sidePanelWidth() <= 0) return;
+    if (__sideResizeT) clearTimeout(__sideResizeT);
+    __sideResizeT = setTimeout(() => {
+      try {
+        syncNativeBoundsAdjusted();
+      } catch (e) {}
+    }, 150);
+  } catch (e) {}
+});
 // ── Plugins (Wan2GP plugin manager parity: enable + install/update/uninstall + favourites) ──
 let _pluginFavs = [];
 let _pluginData = [];

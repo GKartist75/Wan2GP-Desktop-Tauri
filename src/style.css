@@ -2237,7 +2237,8 @@ button.deepyweb-open:disabled {
  top: 0;
  right: 0;
  bottom: 0;
- width: 420px;
+ width: 560px;
+ max-width: 94vw;
  background: var(--surface);
  border-left: 1px solid var(--border);
  z-index: 150;
