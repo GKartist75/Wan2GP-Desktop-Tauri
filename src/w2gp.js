@@ -241,6 +241,12 @@
         repairSettings: () => call("repair_settings"),
         getStatus: () => call("get_status"),
         launch: (mode) => call("launch", { mode }),
+        batchProcess: (queue, outputDir, dryRun) =>
+            call("batch_process", {
+                queue,
+                outputDir: outputDir || null,
+                dryRun: !!dryRun,
+            }),
         launchWebview: () => call("launch_webview"),
         stopWangp: () => call("stop_wangp"),
         stopAllServers: () => call("stop_all_servers"),

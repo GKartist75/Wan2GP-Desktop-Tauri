@@ -77,6 +77,29 @@
       } else { done(false) }
     })
     refresh()
+    initBatchRunner()
+  }
+
+  function initBatchRunner() {
+    if (!$('batchRunBtn')) return
+    $('batchRunBtn').addEventListener('click', async () => {
+      const status = $('batchStatus')
+      const btn = $('batchRunBtn')
+      const queue = ($('batchQueueInput')?.value || '').trim().replace(/^"|"$/g, '')
+      const out = ($('batchOutputInput')?.value || '').trim().replace(/^"|"$/g, '')
+      const dry = $('batchDryRun')?.checked === true
+      if (!queue) { if (status) status.textContent = 'Pick a saved queue (.zip) or settings (.json) first'; return }
+      btn.disabled = true
+      if (status) status.textContent = dry ? 'Validating…' : 'Running — watch the console…'
+      try {
+        const r = await window.w2gp.batchProcess(queue, out || null, dry)
+        if (status) status.textContent = (r && r.ok) ? 'Done — exit 0' : ('Finished with exit ' + ((r && r.code) ?? '?'))
+      } catch (e) {
+        if (status) status.textContent = 'Failed: ' + ((e && e.message) || e)
+      } finally {
+        btn.disabled = false
+      }
+    })
   }
 
   if (document.readyState === 'loading') {

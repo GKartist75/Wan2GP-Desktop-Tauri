@@ -340,6 +340,19 @@
             </div>
             <p class="token-hint" id="mcpUrlHint" style="margin-top:6px"></p>
           </div>
+          <div class="settings-section" style="margin-top:12px">
+            <h3>Headless batch (queue runner)</h3>
+            <p class="token-hint">Process a saved queue without the web UI — overnight renders. Save the queue in WanGP first (<em>Save Queue</em> → <code>.zip</code>) or export settings (<code>.json</code>). Progress streams to the console; exit <code>0</code> = done, <code>1</code> = error.</p>
+            <div class="token-field" style="margin-top:8px">
+              <input type="text" id="batchQueueInput" class="input" placeholder="C:\path\to\saved_queue.zip" style="max-width:420px" title="Saved queue (.zip) or settings (.json)">
+              <input type="text" id="batchOutputInput" class="input" placeholder="Output folder (optional)" style="max-width:280px" title="Override output directory">
+            </div>
+            <div class="token-field" style="margin-top:8px">
+              <label class="toggle-row" title="Validate without generating"><input type="checkbox" id="batchDryRun"> <span>Dry run</span></label>
+              <button class="btn btn-primary small" id="batchRunBtn" title="Run wgp.py --process on this file">Run batch</button>
+              <span class="token-hint" id="batchStatus" style="margin-left:8px"></span>
+            </div>
+          </div>
           <details class="launch-args-help">
             <summary>Common launch arguments</summary>
             <table class="args-table">

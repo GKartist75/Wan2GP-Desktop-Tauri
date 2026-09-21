@@ -264,6 +264,7 @@ pub fn run() {
             system::open_task_manager,
             system::get_crash_recovery_info,
             launch::launch_webview,
+            launch::batch_process,
             launch::popout_webview,
             system::hide_browser_view,
             system::detach_browser_view,
