@@ -2,7 +2,7 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
-## [Unreleased]
+## [0.7.5] — 2026-09-21
 
 - Guide topbar tab (was a Manage tab): goal-based model recommender (13
   goals, 23 curated picks with starters + copy-full-model-name for toolbar
