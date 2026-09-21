@@ -2,7 +2,7 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
-## Unreleased
+## [0.8.0] — 2026-09-21
 
 - Launch hardening (#36): the Python bootstrap shim now lives in an
   isolated `%TEMP%\wan2gp-bootstrap-<pid>-<ms>\boot.py` subdir (Deepy:
