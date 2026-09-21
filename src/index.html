@@ -203,6 +203,41 @@
           <p class="token-hint">If you see the error "<em>When localhost is not accessible, a shareable link must be created</em>" when launching, that is Gradio's IPv4/IPv6 self-check failing — fix it first with <strong>Bind Address &rarr; localhost</strong> (below) or by adding <code>--server-name localhost</code> to Extra Launch Args. Only if that does not help, enable this to create a public Gradio tunnel (your server becomes reachable from the internet).</p>
         </div>
         <div class="settings-section">
+          <h3>Presets &amp; flag builder</h3>
+          <p class="token-hint">Stage a known-good set, or tweak single flags — the Extra Launch Args field below updates. Press <strong>Save</strong> to apply on next launch.</p>
+          <div class="token-field" style="margin-top:8px">
+            <button class="btn btn-ghost small" data-launch-preset="balanced" title="Everyday default: sage2 attention, P4 profile">Balanced</button>
+            <button class="btn btn-ghost small" data-launch-preset="lowvram" title="Small VRAM: SDPA, P5 failsafe profile, fp16">Low VRAM</button>
+            <button class="btn btn-ghost small" data-launch-preset="maxperf" title="Fast GPU: compile, sage2, P3, teacache 2.0">Max perf</button>
+            <button class="btn btn-primary small" data-launch-preset="emergency" title="Upstream absolute minimum that boots almost anywhere">Emergency</button>
+            <span class="token-hint" id="launchBuilderStatus" style="margin-left:8px"></span>
+          </div>
+          <div class="token-field" style="margin-top:8px">
+            <select id="lbAttention" class="input" style="max-width:170px" title="Patch --attention">
+              <option value="">Attention: (keep)</option>
+              <option value="sdpa">sdpa (GTX 10 / fallback)</option>
+              <option value="sage">sage (RTX 20)</option>
+              <option value="sage2">sage2 (RTX 30+)</option>
+              <option value="flash">flash (RTX 30+)</option>
+            </select>
+            <select id="lbProfile" class="input" style="max-width:150px" title="Patch --profile">
+              <option value="">Profile: (keep)</option>
+              <option value="3">3 (24 GB+)</option>
+              <option value="4">4 (default)</option>
+              <option value="5">5 (failsafe)</option>
+            </select>
+            <select id="lbTeacache" class="input" style="max-width:150px" title="Patch --teacache">
+              <option value="">TeaCache: (keep)</option>
+              <option value="0">0 (off)</option>
+              <option value="1.5">1.5</option>
+              <option value="2.0">2.0</option>
+              <option value="2.5">2.5 (lossy)</option>
+            </select>
+            <label class="toggle-row" title="Patch --compile"><input type="checkbox" id="lbCompile"> <span>compile</span></label>
+            <label class="toggle-row" title="Patch --fp16"><input type="checkbox" id="lbFp16"> <span>fp16</span></label>
+          </div>
+        </div>
+        <div class="settings-section">
           <h3>Extra Launch Args</h3>
           <div class="token-field">
             <input type="text" id="launchArgsInput" class="input" placeholder="--profile 4 --attention sage2 --perc-reserved-mem-max 0.3">
@@ -1589,7 +1624,9 @@
   <script src="services/escape.js" defer></script>
   <script src="services/pip-spec.js" defer></script>
   <script src="services/guide-catalog.js" defer></script>
+  <script src="services/launch-args.js" defer></script>
   <script src="app.js" defer></script>
   <script src="guide-tab.js" defer></script>
+  <script src="launch-builder.js" defer></script>
 </body>
 </html>
