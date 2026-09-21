@@ -15,8 +15,8 @@ settings to pick for your goal.
 - [Manage → System](#manage--system)
 - [Manage → Plugins](#manage--plugins)
 - [Manage → Auto-Tune](#manage--auto-tune)
-- [Manage → Guide](#manage--guide)
 - [Manage → Library](#manage--library)
+- [Guide (topbar)](#guide-topbar)
 - [Console & logs](#console--logs)
 - [Typical workflows](#typical-workflows)
 
@@ -281,11 +281,12 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 ⚡ **Performance Auto-Tune** — one click: detects your GPU and applies the right
 profile (precision, attention backend, memory knobs). Re-run after GPU/driver changes.
 
-## Manage → Guide
+## Guide (topbar)
 
-🧭 **What do you want to make?** — pick a goal, get curated WanGP model picks
-with starter settings and a copy-model-id button. Read-only: nothing changes
-until you pick the model inside WanGP. Full walkthroughs: `docs/WAN2GP-GUIDE.md`.
+🧭 **Guide button (topbar, next to Manage)** — opens its own side panel, not a
+Manage tab: pick a goal, get curated WanGP model picks with starter settings
+and a copy-model-id button. Read-only: nothing changes until you pick the
+model inside WanGP. Full walkthroughs: `docs/WAN2GP-GUIDE.md`.
 
 ✍️ **Prompt tools** — 6 starter templates (scene/motion/edit/dialogue/lyrics/
 window beats) with the WanGP line-mode each needs, copy button, and an offline

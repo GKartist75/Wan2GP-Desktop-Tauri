@@ -36,7 +36,6 @@
       <button class="settings-tab" data-tab="system" title="System: updates, troubleshooting, cache, uninstall">System</button>
       <button class="settings-tab" data-tab="autotune" title="Auto-Tune: hardware-calibrated performance settings">⚡ Auto-Tune</button>
       <button class="settings-tab" data-tab="plugins" title="Plugins: enable and install Wan2GP plugins">🧩 Plugins</button>
-      <button class="settings-tab" data-tab="guide" title="Guide: what to make, which model and settings to pick">🧭 Guide</button>
       <button class="settings-tab" data-tab="library" title="Library: LoRA families and finetune definitions">📚 Library</button>
     </div>
     <div class="settings-scroll">
@@ -543,64 +542,6 @@
         </div>
       </div>
 
-      <!-- ═══════ Guide Tab (F1 model recommender) ═══════ -->
-      <div class="settings-tab-content" data-tab="guide">
-        <div class="settings-section">
-          <h3>🧭 What do you want to make?</h3>
-          <p class="token-hint">Pick a goal — the launcher suggests which WanGP model to load, with starter settings. Full walkthroughs live in <code>docs/WAN2GP-GUIDE.md</code>. Suggestions never change anything; you still pick the model inside WanGP.</p>
-          <div class="token-field" style="margin-top:8px">
-            <select id="guideGoalSelect" class="input" style="max-width:360px">
-              <option value="">— Choose a goal —</option>
-            </select>
-            <span class="token-hint" id="guideStatus" style="margin-left:8px"></span>
-          </div>
-        </div>
-        <div id="guideResults"><p class="token-hint">Pick a goal above to get model picks.</p></div>
-        <div class="settings-section" style="margin-top:12px">
-          <h3>Profiles first</h3>
-          <p class="token-hint">Before generating: run <strong>⚡ Auto-Tune</strong> so video/image/audio profiles match your VRAM. Accelerator LoRAs always want guidance <code>1</code> — forgetting this is the #1 bad-quality cause.</p>
-        </div>
-        <div class="settings-section" style="margin-top:12px">
-          <h3>✍️ Prompt tools</h3>
-          <p class="token-hint">Starter templates + sliding-window <code>[/...]</code> checker. Copy into WanGP's prompt box; line-mode (<code>G/PG/W/PW/FG</code>) is chosen in WanGP per generation.</p>
-          <div class="token-field" style="margin-top:8px">
-            <select id="promptTemplateSelect" class="input" style="max-width:360px">
-              <option value="">— Choose a template —</option>
-            </select>
-            <button class="btn btn-ghost small" id="promptCopyBtn" title="Copy the template text">Copy text</button>
-          </div>
-          <p class="token-hint" id="promptTemplateMode" style="margin-top:6px"></p>
-          <div class="token-field" style="margin-top:8px">
-            <textarea id="promptCheckInput" class="input" rows="4" style="width:100%;max-width:640px" placeholder="Paste a sliding-window prompt to check [/duration] [/overlap] [/new_shot] commands…"></textarea>
-          </div>
-          <div class="token-field" style="margin-top:6px">
-            <button class="btn btn-ghost small" id="promptCheckBtn" title="Validate [/...] window commands">Check commands</button>
-            <span class="token-hint" id="promptCheckStatus" style="margin-left:8px"></span>
-          </div>
-          <div id="promptCheckResults" style="margin-top:6px"></div>
-        </div>
-        <div class="settings-section" style="margin-top:12px">
-          <h3>✅ VACE pre-flight checklist</h3>
-          <p class="token-hint">Tick through before a replace/inpaint/outpaint run. Nothing here changes settings — it keeps you from wasting a generation.</p>
-          <table class="args-table">
-            <tr><td>Control Video = <strong>original</strong> clip (not pre-annotated)</td><td>Process picked: pose / depth / inpaint / keep-unchanged</td></tr>
-            <tr><td>Area matches intent: whole / masked / non-masked</td><td>Video Mask built in Matanyone, exported to both inputs</td></tr>
-            <tr><td>Reference image = who/what to inject, <strong>named in the prompt</strong></td><td>Grey 127 = replace · pose wireframe = animate a person</td></tr>
-            <tr><td>Skip Layer Guidance ON for CFG VACE (off for Fusionix/CausVid)</td><td>15 steps min, 30+ for best; preview thumbs checked</td></tr>
-          </table>
-        </div>
-        <div class="settings-section" style="margin-top:12px">
-          <h3>🖼️ Reference roles + post-processing at a glance</h3>
-          <p class="token-hint"><strong>Start image</strong> fixes the opening frame · <strong>reference</strong> guides identity without fixing the frame · <strong>injected frames</strong> land at positions (<code>1</code> = first, <code>L</code> = window end, <code>X</code> = skip).</p>
-          <table class="args-table">
-            <tr><td><code>lanczos*2</code> / <code>vae*2</code> / <code>dlss5*1…*3</code></td><td>Spatial upscale + refine (DLSS5 needs Win11 + RTX 30/40 + HAGS)</td></tr>
-            <tr><td><code>rife*2…*4</code> / <code>dlssg*2…*6</code></td><td>Temporal interpolation (x5/x6 RTX 50 only)</td></tr>
-            <tr><td><code>mmaudio</code> / <code>prismaudio</code> / <code>seedvc_*</code></td><td>Soundtrack / voice swap after generation</td></tr>
-          </table>
-          <p class="token-hint">Don't regenerate a good scene — late-postprocess it. Originals stay untouched.</p>
-        </div>
-      </div>
-
       <!-- ═══════ Library Tab (F4 librarians) ═══════ -->
       <div class="settings-tab-content" data-tab="library">
         <div class="settings-section">
@@ -770,6 +711,72 @@
   </div>
   </div>
 
+  <!-- Guide Panel (topbar tab — model picks, prompt tools, checklists) -->
+  <div id="guidePanel" class="settings-panel">
+    <div class="settings-topbar">
+      <button class="btn-icon" id="guideBackBtn" aria-label="Close guide" title="Close guide">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <h2>🧭 Guide</h2>
+    </div>
+    <div class="settings-scroll">
+      <div class="settings-section">
+        <h3>What do you want to make?</h3>
+        <p class="token-hint">Pick a goal — the launcher suggests which WanGP model to load, with starter settings. Full walkthroughs live in <code>docs/WAN2GP-GUIDE.md</code>. Suggestions never change anything; you still pick the model inside WanGP.</p>
+        <div class="token-field" style="margin-top:8px">
+          <select id="guideGoalSelect" class="input" style="max-width:360px">
+            <option value="">— Choose a goal —</option>
+          </select>
+          <span class="token-hint" id="guideStatus" style="margin-left:8px"></span>
+        </div>
+      </div>
+      <div id="guideResults"><p class="token-hint">Pick a goal above to get model picks.</p></div>
+      <div class="settings-section" style="margin-top:12px">
+        <h3>Profiles first</h3>
+        <p class="token-hint">Before generating: run <strong>⚡ Auto-Tune</strong> (Manage panel) so video/image/audio profiles match your VRAM. Accelerator LoRAs always want guidance <code>1</code> — forgetting this is the #1 bad-quality cause.</p>
+      </div>
+      <div class="settings-section" style="margin-top:12px">
+        <h3>✍️ Prompt tools</h3>
+        <p class="token-hint">Starter templates + sliding-window <code>[/...]</code> checker. Copy into WanGP's prompt box; line-mode (<code>G/PG/W/PW/FG</code>) is chosen in WanGP per generation.</p>
+        <div class="token-field" style="margin-top:8px">
+          <select id="promptTemplateSelect" class="input" style="max-width:360px">
+            <option value="">— Choose a template —</option>
+          </select>
+          <button class="btn btn-ghost small" id="promptCopyBtn" title="Copy the template text">Copy text</button>
+        </div>
+        <p class="token-hint" id="promptTemplateMode" style="margin-top:6px"></p>
+        <div class="token-field" style="margin-top:8px">
+          <textarea id="promptCheckInput" class="input" rows="4" style="width:100%;max-width:640px" placeholder="Paste a sliding-window prompt to check [/duration] [/overlap] [/new_shot] commands…"></textarea>
+        </div>
+        <div class="token-field" style="margin-top:6px">
+          <button class="btn btn-ghost small" id="promptCheckBtn" title="Validate [/...] window commands">Check commands</button>
+          <span class="token-hint" id="promptCheckStatus" style="margin-left:8px"></span>
+        </div>
+        <div id="promptCheckResults" style="margin-top:6px"></div>
+      </div>
+      <div class="settings-section" style="margin-top:12px">
+        <h3>✅ VACE pre-flight checklist</h3>
+        <p class="token-hint">Tick through before a replace/inpaint/outpaint run. Nothing here changes settings — it keeps you from wasting a generation.</p>
+        <table class="args-table">
+          <tr><td>Control Video = <strong>original</strong> clip (not pre-annotated)</td><td>Process picked: pose / depth / inpaint / keep-unchanged</td></tr>
+          <tr><td>Area matches intent: whole / masked / non-masked</td><td>Video Mask built in Matanyone, exported to both inputs</td></tr>
+          <tr><td>Reference image = who/what to inject, <strong>named in the prompt</strong></td><td>Grey 127 = replace · pose wireframe = animate a person</td></tr>
+          <tr><td>Skip Layer Guidance ON for CFG VACE (off for Fusionix/CausVid)</td><td>15 steps min, 30+ for best; preview thumbs checked</td></tr>
+        </table>
+      </div>
+      <div class="settings-section" style="margin-top:12px">
+        <h3>🖼️ Reference roles + post-processing at a glance</h3>
+        <p class="token-hint"><strong>Start image</strong> fixes the opening frame · <strong>reference</strong> guides identity without fixing the frame · <strong>injected frames</strong> land at positions (<code>1</code> = first, <code>L</code> = window end, <code>X</code> = skip).</p>
+        <table class="args-table">
+          <tr><td><code>lanczos*2</code> / <code>vae*2</code> / <code>dlss5*1…*3</code></td><td>Spatial upscale + refine (DLSS5 needs Win11 + RTX 30/40 + HAGS)</td></tr>
+          <tr><td><code>rife*2…*4</code> / <code>dlssg*2…*6</code></td><td>Temporal interpolation (x5/x6 RTX 50 only)</td></tr>
+          <tr><td><code>mmaudio</code> / <code>prismaudio</code> / <code>seedvc_*</code></td><td>Soundtrack / voice swap after generation</td></tr>
+        </table>
+        <p class="token-hint">Don't regenerate a good scene — late-postprocess it. Originals stay untouched.</p>
+      </div>
+    </div>
+  </div>
+
   <!-- Dashboard -->
   <div id="dashboard" class="screen">
     <div class="topbar">
@@ -829,7 +836,10 @@
             <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="10" r="1.4" fill="currentColor"/><circle cx="12" cy="7.5" r="1.4" fill="currentColor"/><circle cx="15.5" cy="10" r="1.4" fill="currentColor"/><path d="M12 21c-1 0-1-1-1-2 0-1.5 1-2 1-3.5 0-1-1-1.5-1-1.5S9 14.5 7 14c-1-.3-1.5-1-1-1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
           </button>
         </span>
-<button class="btn btn-ghost small" id="settingsBtn" title="Open settings: tokens, launch, system, auto-tune, plugins">
+<button class="btn btn-ghost small" id="guideBtn" title="Open the Guide: what to make, which model and settings to pick">
+          🧭 Guide
+        </button>
+        <button class="btn btn-ghost small" id="settingsBtn" title="Open settings: tokens, launch, system, auto-tune, plugins">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
           Manage
         </button>

@@ -643,6 +643,10 @@ function initSettingsToggles() {
 }
 
 function openSettings() {
+  // Mutual exclusion with the Guide panel — only one side panel at a time.
+  if ($("guidePanel") && $("guidePanel").classList.contains("open")) {
+    $("guidePanel").classList.remove("open");
+  }
   initSettingsToggles();
   $("settingsPanel").classList.add("open");
   $("settingsOverlay").classList.add("visible");
@@ -783,15 +787,51 @@ $("removeElectronBtn")?.addEventListener("click", async function () {
 });
 function closeSettings() {
   $("settingsPanel").classList.remove("open");
-  $("settingsOverlay").classList.remove("visible");
+  // Only hide the overlay when the Guide panel isn't open either.
+  if (!$("guidePanel") || !$("guidePanel").classList.contains("open")) {
+    $("settingsOverlay").classList.remove("visible");
+  }
   // Restore the BrowserView (re-attach the still-alive view) when leaving Manage in webview mode.
   if ($("dashBody").style.display === "none") {
-    $("settingsOverlay").classList.remove("opaque");
+    if (!$("guidePanel") || !$("guidePanel").classList.contains("open")) {
+      $("settingsOverlay").classList.remove("opaque");
+    }
     // Don't reattach over an open terminal — restore the correct view state instead.
     if (_ftVisible) showTerminal();
     else window.w2gp.reattachBrowserView();
   }
 }
+// ── Guide panel (topbar tab — same overlay/BrowserView rules as Manage) ──
+function openGuide() {
+  closeSettings();
+  if (!$("guidePanel")) return;
+  $("guidePanel").classList.add("open");
+  $("settingsOverlay").classList.add("visible");
+  // Same native-webview rule as Manage: detach while open so the panel renders in front.
+  if ($("dashBody").style.display === "none") {
+    window.w2gp.detachBrowserView();
+    $("settingsOverlay").classList.add("opaque");
+  }
+}
+function closeGuide() {
+  if ($("guidePanel")) $("guidePanel").classList.remove("open");
+  // Only hide the overlay when the Manage panel isn't open either.
+  if (!$("settingsPanel") || !$("settingsPanel").classList.contains("open")) {
+    $("settingsOverlay").classList.remove("visible");
+  }
+  if ($("dashBody").style.display === "none") {
+    if (!$("settingsPanel") || !$("settingsPanel").classList.contains("open")) {
+      $("settingsOverlay").classList.remove("opaque");
+    }
+    if (_ftVisible) showTerminal();
+    else window.w2gp.reattachBrowserView();
+  }
+}
+$("guideBtn")?.addEventListener("click", () => {
+  if ($("guidePanel") && $("guidePanel").classList.contains("open")) closeGuide();
+  else openGuide();
+});
+$("guideBackBtn")?.addEventListener("click", closeGuide);
 // ── Plugins (Wan2GP plugin manager parity: enable + install/update/uninstall + favourites) ──
 let _pluginFavs = [];
 let _pluginData = [];
@@ -3732,7 +3772,11 @@ $("manageRunSetupBtn")?.addEventListener("click", async () => {
   await openInstallerFresh();
 });
 
-$("settingsOverlay").addEventListener("click", closeSettings);
+$("settingsOverlay").addEventListener("click", () => {
+  closeSettings();
+  // closeGuide is defined below the overlay wiring — guard for load order.
+  if (typeof closeGuide === "function") closeGuide();
+});
 
 // ── Dashboard ──
 let _dashRefreshing = false,
@@ -8852,10 +8896,19 @@ function _resizeEnd() {
 // ── Keyboard shortcuts ──
 document.addEventListener("keydown", (e) => {
   if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
-  // Escape closes the Manage panel first — it can be open in webview mode too,
-  // where the webview Escape branch below would otherwise fire instead.
+  // Escape closes the Manage or Guide panel first — either can be open in
+  // webview mode too, where the webview Escape branch below would otherwise fire instead.
   if (e.key === "Escape" && $("settingsPanel").classList.contains("open")) {
     closeSettings();
+    return;
+  }
+  if (
+    e.key === "Escape" &&
+    $("guidePanel") &&
+    $("guidePanel").classList.contains("open") &&
+    typeof closeGuide === "function"
+  ) {
+    closeGuide();
     return;
   }
   // Ctrl+` toggles floating terminal
