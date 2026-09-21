@@ -490,6 +490,25 @@
           <h3>Profiles first</h3>
           <p class="token-hint">Before generating: run <strong>⚡ Auto-Tune</strong> so video/image/audio profiles match your VRAM. Accelerator LoRAs always want guidance <code>1</code> — forgetting this is the #1 bad-quality cause.</p>
         </div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>✍️ Prompt tools</h3>
+          <p class="token-hint">Starter templates + sliding-window <code>[/...]</code> checker. Copy into WanGP's prompt box; line-mode (<code>G/PG/W/PW/FG</code>) is chosen in WanGP per generation.</p>
+          <div class="token-field" style="margin-top:8px">
+            <select id="promptTemplateSelect" class="input" style="max-width:360px">
+              <option value="">— Choose a template —</option>
+            </select>
+            <button class="btn btn-ghost small" id="promptCopyBtn" title="Copy the template text">Copy text</button>
+          </div>
+          <p class="token-hint" id="promptTemplateMode" style="margin-top:6px"></p>
+          <div class="token-field" style="margin-top:8px">
+            <textarea id="promptCheckInput" class="input" rows="4" style="width:100%;max-width:640px" placeholder="Paste a sliding-window prompt to check [/duration] [/overlap] [/new_shot] commands…"></textarea>
+          </div>
+          <div class="token-field" style="margin-top:6px">
+            <button class="btn btn-ghost small" id="promptCheckBtn" title="Validate [/...] window commands">Check commands</button>
+            <span class="token-hint" id="promptCheckStatus" style="margin-left:8px"></span>
+          </div>
+          <div id="promptCheckResults" style="margin-top:6px"></div>
+        </div>
       </div>
 
       <!-- ═══════ Library Tab (F4 librarians) ═══════ -->
@@ -1655,6 +1674,7 @@
   <script src="services/pip-spec.js" defer></script>
   <script src="services/guide-catalog.js" defer></script>
   <script src="services/launch-args.js" defer></script>
+  <script src="services/prompt-tools.js" defer></script>
   <script src="app.js" defer></script>
   <script src="guide-tab.js" defer></script>
   <script src="launch-builder.js" defer></script>

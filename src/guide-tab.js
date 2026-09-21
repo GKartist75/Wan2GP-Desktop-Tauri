@@ -78,6 +78,49 @@
     })
     sel.addEventListener('change', () => renderGoal(sel.value))
     renderGoal(sel.value)
+    initPromptTools()
+  }
+
+  function initPromptTools() {
+    const tsel = $('promptTemplateSelect')
+    const templates = (typeof PROMPT_TEMPLATES !== 'undefined') ? PROMPT_TEMPLATES : []
+    if (tsel) {
+      templates.forEach((t) => {
+        const opt = document.createElement('option')
+        opt.value = t.id
+        opt.textContent = t.label
+        tsel.appendChild(opt)
+      })
+      tsel.addEventListener('change', () => {
+        const t = templates.find((x) => x.id === tsel.value)
+        const mode = $('promptTemplateMode')
+        if (mode) mode.textContent = t ? ('Line mode in WanGP: ' + t.mode) : ''
+      })
+    }
+    $('promptCopyBtn')?.addEventListener('click', () => {
+      const t = templates.find((x) => x.id === (tsel && tsel.value))
+      const status = $('promptCheckStatus')
+      if (!t) { if (status) status.textContent = 'Pick a template first'; return }
+      copyText(t.text, status, 'Template copied — paste into WanGP prompt box')
+    })
+    $('promptCheckBtn')?.addEventListener('click', () => {
+      const box = $('promptCheckResults')
+      const status = $('promptCheckStatus')
+      const text = $('promptCheckInput')?.value || ''
+      if (typeof validateWindowCommands !== 'function') return
+      const issues = validateWindowCommands(text)
+      if (!issues.length) {
+        if (status) status.textContent = text.includes('[/') ? 'Clean — no bad commands' : 'No [/...] commands found — nothing to check'
+        if (box) box.innerHTML = ''
+        return
+      }
+      if (status) status.textContent = issues.length + ' issue(s)'
+      if (box) {
+        box.innerHTML = '<table class="args-table">' +
+          issues.map((it) => '<tr><td>line ' + it.line + '</td><td>' + esc(it.message) + '</td></tr>').join('') +
+          '</table>'
+      }
+    })
   }
 
   if (document.readyState === 'loading') {
