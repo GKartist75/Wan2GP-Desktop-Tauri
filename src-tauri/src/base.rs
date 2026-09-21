@@ -423,6 +423,46 @@ pub(crate) fn atomic_write(path: &Path, content: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// F11: which backup names to delete, keeping the newest 5.
+/// Pure over file names (`wgp_config.backup-<epoch>.json` sorts chronologically).
+pub(crate) fn backups_to_delete(names: &[String]) -> Vec<String> {
+    let mut baks: Vec<&String> = names
+        .iter()
+        .filter(|n| n.starts_with("wgp_config.backup-") && n.ends_with(".json"))
+        .collect();
+    baks.sort();
+    let excess = baks.len().saturating_sub(5);
+    baks.into_iter().take(excess).cloned().collect()
+}
+
+/// F11: timestamped backup of wgp_config.json before any launcher write.
+/// Returns the backup file name, or None when there is nothing to back up.
+pub(crate) fn snapshot_wgp_config() -> Option<String> {
+    let repo = get_repo_dir();
+    let src = repo.join("wgp_config.json");
+    if !src.is_file() {
+        return None;
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let name = format!("wgp_config.backup-{stamp}.json");
+    if std::fs::copy(&src, repo.join(&name)).is_err() {
+        return None;
+    }
+    if let Ok(entries) = std::fs::read_dir(&repo) {
+        let names: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        for old in backups_to_delete(&names) {
+            let _ = std::fs::remove_file(repo.join(old));
+        }
+    }
+    Some(name)
+}
+
 pub(crate) fn reg_val(line: &str) -> Option<(String, String)> {
     let t = line.trim();
     if t.is_empty() || t.starts_with("HKEY_") {
@@ -666,4 +706,37 @@ pub(crate) async fn run_logged(
         }
     }
     code == Some(0)
+}
+
+#[cfg(test)]
+mod backup_tests {
+    use super::backups_to_delete;
+
+    fn names(n: u64) -> Vec<String> {
+        (1..=n).map(|i| format!("wgp_config.backup-{i}.json")).collect()
+    }
+
+    #[test]
+    fn keeps_five_newest() {
+        let all = names(8);
+        let del = backups_to_delete(&all);
+        assert_eq!(del, names(3));
+    }
+
+    #[test]
+    fn keeps_all_when_five_or_fewer() {
+        assert!(backups_to_delete(&names(5)).is_empty());
+        assert!(backups_to_delete(&names(1)).is_empty());
+        assert!(backups_to_delete(&[]).is_empty());
+    }
+
+    #[test]
+    fn ignores_non_backup_files() {
+        let mut all = names(7);
+        all.push("wgp_config.json".into());
+        all.push("wgp_config.json.deepy-bak".into());
+        let del = backups_to_delete(&all);
+        assert_eq!(del.len(), 2);
+        assert!(del.iter().all(|n| n.starts_with("wgp_config.backup-")));
+    }
 }

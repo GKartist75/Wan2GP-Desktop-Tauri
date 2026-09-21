@@ -435,6 +435,17 @@
           </div>
         </div>
         <div class="settings-section" style="margin-top:12px">
+          <h3>Config backups &amp; changelog</h3>
+          <p class="token-hint">Every launcher Apply snapshots <code>wgp_config.json</code> first (newest 5 kept). Restore re-snapshots, so it is undoable. WanGP picks up a restore on next launch.</p>
+          <div class="token-field" style="margin-top:8px">
+            <button class="btn btn-ghost small" id="cfgBackupsRefreshBtn" title="Reload the backup list">↻ Refresh backups</button>
+            <button class="btn btn-ghost small" id="cfgChangelogBtn" title="Show the upstream changelog head">Upstream changelog</button>
+            <span class="token-hint" id="cfgBackupsStatus" style="margin-left:8px"></span>
+          </div>
+          <div id="cfgBackupsBox" style="margin-top:8px"><p class="token-hint">Loading…</p></div>
+          <pre id="cfgChangelogBox" class="token-hint" style="margin-top:8px;max-height:300px;overflow:auto;white-space:pre-wrap"></pre>
+        </div>
+        <div class="settings-section" style="margin-top:12px">
           <h3>Triton / SageAttention</h3>
           <p class="token-hint">Upstream Sage diagnostic: test the Triton import, clear a stale <code>%USERPROFILE%\.triton</code> cache (renamed to backup, never deleted blind), optionally fall back to <code>--attention sdpa</code>.</p>
           <div class="token-field" style="margin-top:8px">
@@ -1721,5 +1732,6 @@
   <script src="guide-tab.js" defer></script>
   <script src="launch-builder.js" defer></script>
   <script src="library-tab.js" defer></script>
+  <script src="safety-tab.js" defer></script>
 </body>
 </html>

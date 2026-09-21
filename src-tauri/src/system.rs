@@ -846,8 +846,10 @@ pub fn write_wgp_config(cfg: serde_json::Value) -> Result<serde_json::Value, Str
         m.entry("clear_file_list").or_insert(serde_json::json!(5));
     }
     let s = serde_json::to_string_pretty(&cur).map_err(|e| e.to_string())?;
+    // F11: snapshot before overwriting so every Apply is restorable.
+    let snapshot = snapshot_wgp_config();
     atomic_write(&p, &s).map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({"ok": true, "success": true}))
+    Ok(serde_json::json!({"ok": true, "success": true, "snapshot": snapshot}))
 }
 /// F3: strip secret values from a wgp_config snapshot for support bundles.
 /// Keys containing password/secret/credential/api-key (case-insensitive), or a
@@ -992,6 +994,64 @@ pub fn report_issue() -> serde_json::Value {
         let _ = silent_command("explorer").arg(&open_path).spawn();
     }
     serde_json::json!({"ok": true, "success": true, "logLines": 0, "zipPath": zip_path, "bundleDir": bundle.to_string_lossy().to_string(), "hadErrorQueue": had})
+}
+
+/// F11: list wgp_config backups newest-first.
+#[tauri::command]
+pub fn config_backups_list() -> serde_json::Value {
+    let repo = get_repo_dir();
+    let mut items = vec![];
+    if let Ok(entries) = std::fs::read_dir(&repo) {
+        for e in entries.filter_map(|e| e.ok()) {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with("wgp_config.backup-") && name.ends_with(".json") {
+                items.push(serde_json::json!({
+                    "name": name,
+                    "bytes": e.metadata().map(|m| m.len()).unwrap_or(0)
+                }));
+            }
+        }
+    }
+    items.sort_by(|a, b| b["name"].as_str().cmp(&a["name"].as_str()));
+    serde_json::json!({"ok": true, "items": items})
+}
+
+fn valid_backup_name(name: &str) -> bool {
+    // Exact file name only — fixed affixes, epoch digits, no separators.
+    const PRE: &str = "wgp_config.backup-";
+    name.starts_with(PRE)
+        && name.ends_with(".json")
+        && !name.contains('/') && !name.contains('\\') && !name.contains("..")
+        && name.len() <= 64
+        && name[PRE.len()..name.len() - 5].chars().all(|c| c.is_ascii_digit())
+}
+
+/// F11: restore a backup (current config is snapshotted first, so restore
+/// itself is undoable by restoring the newest backup again).
+#[tauri::command]
+pub fn config_backup_restore(name: String) -> Result<serde_json::Value, String> {
+    if !valid_backup_name(&name) {
+        return Err("Invalid backup name".into());
+    }
+    let repo = get_repo_dir();
+    let src = repo.join(&name);
+    if !src.is_file() {
+        return Err("Backup not found".into());
+    }
+    let _ = snapshot_wgp_config();
+    std::fs::copy(&src, repo.join("wgp_config.json")).map_err(|e| format!("Restore failed ({e})"))?;
+    Ok(serde_json::json!({"ok": true, "restored": name}))
+}
+
+/// F11: upstream changelog head for the in-app viewer.
+#[tauri::command]
+pub fn upstream_changelog() -> serde_json::Value {
+    let p = get_repo_dir().join("docs").join("CHANGELOG.md");
+    let Ok(s) = std::fs::read_to_string(&p) else {
+        return serde_json::json!({"ok": false, "error": "docs/CHANGELOG.md not found — update Wan2GP first"});
+    };
+    let head: String = s.lines().take(150).collect::<Vec<_>>().join("\n");
+    serde_json::json!({"ok": true, "lines": head})
 }
 #[tauri::command]
 pub fn create_desktop_shortcut() -> serde_json::Value {
@@ -1746,5 +1806,16 @@ mod report_tests {
         let v = serde_json::json!({ "launchArgs": "--profile 4", "deepy_context_tokens": 32000 });
         let r = redact_config_secrets(&v);
         assert_eq!(r, v);
+    }
+
+    #[test]
+    fn backup_names_accept_epoch_reject_traversal() {
+        use super::valid_backup_name;
+        assert!(valid_backup_name("wgp_config.backup-1789986731.json"));
+        assert!(!valid_backup_name("wgp_config.backup-abc.json"));
+        assert!(!valid_backup_name("wgp_config.backup-123.json.bak"));
+        assert!(!valid_backup_name("../wgp_config.backup-123.json"));
+        assert!(!valid_backup_name("wgp_config.json"));
+        assert!(!valid_backup_name("wgp_config.backup-123.JSON"));
     }
 }

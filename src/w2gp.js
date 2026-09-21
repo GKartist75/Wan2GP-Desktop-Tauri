@@ -634,6 +634,10 @@
         uninstallElectron: () => call("uninstall_electron"),
         getWangpVersion: () => call("get_wangp_version"),
         reportIssue: () => call("report_issue"),
+        configBackupsList: () => call("config_backups_list"),
+        configBackupRestore: (name) =>
+            call("config_backup_restore", { name }),
+        upstreamChangelog: () => call("upstream_changelog"),
         createDesktopShortcut: () => call("create_desktop_shortcut"),
         checkPackageUpdates: (v) =>
             call("check_package_updates", { versions: v }),
