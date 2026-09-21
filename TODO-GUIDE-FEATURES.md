@@ -2,7 +2,7 @@
 
 Combined plan from the docs audit (`docs/WAN2GP-GUIDE.md`) and the launcher
 feature overview. Branch: `feature/docs-launcher-coverage`.
-No runtime code touched yet — docs only.
+P0 (F1–F4) implemented and committed locally — nothing pushed.
 
 ## A. Guidance doc (`docs/WAN2GP-GUIDE.md`)
 
@@ -16,15 +16,15 @@ No runtime code touched yet — docs only.
 - [x] A8. All 24 upstream `docs/` files + root README covered (see coverage table in chat)
 - [x] A9. Review pass: fix Contents anchors, proofread, confirm Mermaid renders on GitHub
 - [x] A10. Link from `README.md` + `docs/USER-GUIDE.md` so users find the guide
-- [ ] A11. Decide: commit guide (`git add docs/WAN2GP-GUIDE.md`) or drop branch
+- [x] A11. Committed locally (guide + todo + F1–F4); push only after user tests
 - [x] A12. Revert `src-tauri/Cargo.toml` line-ending noise (`git checkout -- src-tauri/Cargo.toml`)
 
 ## B. Launcher features — P0 (build first)
 
-- [ ] F1. Model recommender — goal picker → 2–3 `model_type` + distilled default + VRAM/ckpt notes; read-only over `defaults/*.json` + `profiles/`
-- [ ] F2. Launch-args builder + presets — `Manage → Launch` form for attention/profile/teacache/compile/preload/fp16/server/LoRA/folder flags; named presets + emergency `sdpa/P4/fp16`
-- [ ] F3. Diagnostics bundle — one-click support ZIP (`nvidia-smi`, torch/CUDA, triton/sage, driver, disk, `boot.log`, redacted config); clear `.triton`, kill `:7860`, port picker
-- [ ] F4. LoRA + finetune librarians — browse `loras_root/<family>/`, URL recovery via `loras_url_cache_v2.json`, `.lset` import/export, accelerator reminders; finetune list/import/export/backup + Refresh trigger
+- [x] F1. Model recommender — Manage → Guide: goal picker → curated picks (23 ids verified in `defaults/`), starters, copy-model-id
+- [x] F2. Launch-args builder + presets — Manage → Launch: Balanced/Low VRAM/Max perf/Emergency presets + token-aware attention/profile/teacache/compile/fp16 patcher, existing Save flow
+- [x] F3. Diagnostics bundle — report ZIP now adds torch/CUDA + triton/sage probes, staged launchArgs, redacted `wgp_config.json`; 3 new unit tests (171 green)
+- [x] F4. LoRA + finetune librarians — Manage → Library: per-family files/size/URL-known table, finetune list/import/delete/export; 5 new backend commands + 4 unit tests
 
 ## C. Launcher features — P1 (build second)
 

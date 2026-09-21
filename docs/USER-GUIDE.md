@@ -15,6 +15,8 @@ settings to pick for your goal.
 - [Manage → System](#manage--system)
 - [Manage → Plugins](#manage--plugins)
 - [Manage → Auto-Tune](#manage--auto-tune)
+- [Manage → Guide](#manage--guide)
+- [Manage → Library](#manage--library)
 - [Console & logs](#console--logs)
 - [Typical workflows](#typical-workflows)
 
@@ -223,6 +225,7 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 ## Manage → Launch
 
 - **Share Link** — Gradio public tunnel (only if localhost isn't reachable; your server becomes internet-visible).
+- **Presets & flag builder** — Balanced / Low VRAM / Max perf / Emergency preset buttons stage a known-good arg string; attention/profile/teacache dropdowns + compile/fp16 toggles patch single flags. The Extra Launch Args field below updates — press **Save**.
 - **Extra Launch Args** — appended to `wgp.py` verbatim.
 - **Server Port** — default 7860.
 - **GPU Device** — `auto` or a pinned `cuda:N` for generation.
@@ -246,6 +249,7 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   actually *import*, naming the broken dist — run after AV restores, driver
   updates, or env surgery), GPU report, emergency fallback torch probe.
   Links out to upstream `TROUBLESHOOTING.md` (plus `INSTALLATION.md`).
+- **🐞 Report an issue…** — support ZIP: system info, torch/CUDA + triton/sage probes, staged launch args, redacted `wgp_config.json`, boot log, crash queue. Opened in Explorer next to a pre-filled GitHub issue.
 - **Emergency Failsafe** — last-resort recovery when nothing launches.
 - **Server Port** — port conflict detection / override.
 - **Debug Bundle** — copies full diagnostics (hardware, paths, checks, log tail).
@@ -271,6 +275,19 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 
 ⚡ **Performance Auto-Tune** — one click: detects your GPU and applies the right
 profile (precision, attention backend, memory knobs). Re-run after GPU/driver changes.
+
+## Manage → Guide
+
+🧭 **What do you want to make?** — pick a goal, get curated WanGP model picks
+with starter settings and a copy-model-id button. Read-only: nothing changes
+until you pick the model inside WanGP. Full walkthroughs: `docs/WAN2GP-GUIDE.md`.
+
+## Manage → Library
+
+📚 **LoRA & Finetune Library** — per-family LoRA file counts, sizes and known
+download URLs (`loras_url_cache_v2.json`); finetune list with base architecture
+and URL/LoRA counts, plus import (validated, never overwrites), export
+(download JSON to share) and delete. Refresh Model List in WanGP afterwards.
 
 ---
 
