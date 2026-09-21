@@ -2,7 +2,8 @@
 
 Every screen, tab and button, and what it does. The launcher has three screens
 (**Splash → Dashboard → Installer**) plus the **Manage** panel and the embedded
-**Viewer**.
+**Viewer**. Companion: [WanGP Guidance](WAN2GP-GUIDE.md) — which model and
+settings to pick for your goal.
 
 ## Contents
 

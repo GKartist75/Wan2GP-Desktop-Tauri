@@ -17,6 +17,7 @@
 ## Contents
 
 - [User Guide — all screens, tabs & buttons](docs/USER-GUIDE.md)
+- [WanGP Guidance — what to make, which model & settings](docs/WAN2GP-GUIDE.md)
 - [Download & Install](#download--install)
 - [Screenshots](#screenshots)
 - [Why Tauri?](#why-tauri)
