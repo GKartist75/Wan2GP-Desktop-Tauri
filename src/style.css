@@ -2224,6 +2224,12 @@ table.args-table.lib-table td:first-child {
  color: var(--text-primary);
  white-space: nowrap;
 }
+/* Data columns size to content (Files, Size, URLs, dates, buttons) instead
+   of wrapping mid-value ("7.7 / GB"); the name column absorbs the slack. */
+table.args-table.lib-table td:not(:first-child) {
+ white-space: nowrap;
+ padding-left: 10px;
+}
 /* Compact: checkpoint filenames are ~50 chars — smaller text plus wrapping
    so the Size column never clips off the panel edge. */
 table.args-table.lib-table.compact td {
