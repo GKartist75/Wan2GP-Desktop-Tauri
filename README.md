@@ -19,7 +19,7 @@
 - [User Guide — all screens, tabs & buttons](docs/USER-GUIDE.md)
 - [Download & Install](#download--install)
 - [Screenshots](#screenshots)
-- [Why Tauri? (vs the Electron edition)](#why-tauri-vs-the-electron-edition)
+- [Why Tauri?](#why-tauri)
 - [What you get](#what-you-get)
 - [⚡ Auto-Tune](#-auto-tune--one-click-right-profile)
 - [📊 Monitoring & control](#-monitoring--control)
@@ -100,22 +100,20 @@ C:\Wan2GP-Models\               ← models library
 
 ---
 
-## Why Tauri? (vs the Electron edition)
+## Why Tauri?
 
-Same launcher, same Wan2GP, same features — new shell. The Electron edition ships its own Chromium + Node.js runtime inside every install. The Tauri edition uses the **WebView2 engine already built into Windows 10/11** and a compiled **Rust** backend. No bundled browser, no Node runtime.
+Same launcher, same Wan2GP, same features — lightweight native shell. It uses the **WebView2 engine already built into Windows 10/11** and a compiled **Rust** backend. No bundled browser, no Node runtime.
 
-| | Electron edition | **Tauri edition** |
-| --- | --- | --- |
-| Installer download | ≈ 93 MB | **≈ 3 MB (~30× smaller)** |
-| Installed app binary | ≈ 300+ MB (Chromium + Node) | **≈ 7 MB** |
-| Idle RAM (launcher shell) | ~200–400 MB (full Chromium per window) | **~30–80 MB (shared system WebView2)** |
-| Startup | Node + Chromium boot | **Near-instant native boot** |
-| Backend | JavaScript on Node | **Compiled Rust (memory-safe, no GC pauses)** |
-| Updates | Full 93 MB re-download | Small NSIS/MSI patch |
+- Installer download: **≈ 3 MB**
+- Installed app: **≈ 7 MB**
+- Idle RAM (launcher shell): **~30–80 MB (shared system WebView2)**
+- Startup: **near-instant native boot**
+- Backend: **compiled Rust (memory-safe, no GC pauses)**
+- Updates: **small NSIS/MSI patch**
 
 **What that means for generation:** the launcher is not the part that renders video — but every MB of RAM and VRAM it doesn't waste stays available for models. The Tauri shell idles at a fraction of the footprint, and the **Launcher GPU** setting (Integrated / Disabled-SwiftShader) can push the UI off your NVIDIA card entirely, freeing **1–5 GB VRAM** for Wan2GP.
 
-**What didn't change:** the entire frontend (dashboard, installer, Auto-Tune, Deepy panels, consoles) is the same HTML/CSS/JS. Your `C:\Wan2GP` install, `C:\Wan2GP-Models` library, `wgp_config.json` and `desktop-config.json` carry over untouched — the Tauri build even follows the Electron data-dir pointer automatically.
+**Your install carries over:** the entire frontend (dashboard, installer, Auto-Tune, Deepy panels, consoles) is the same HTML/CSS/JS. Your `C:\Wan2GP` install, `C:\Wan2GP-Models` library, `wgp_config.json` and `desktop-config.json` carry over untouched — a custom data-dir pointer is followed automatically.
 
 ---
 
