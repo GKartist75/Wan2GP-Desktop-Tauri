@@ -1692,6 +1692,8 @@ pub fn notifier_ensure() -> serde_json::Value {
     // fallback). Issue #35: `import apprise` passed while
     // `python -m apprise` failed ("No module named apprise.__main__"), so the
     // button said "already present" and delivery still failed.
+    // Also ensures `keyring`: native destinations default to the OS
+    // credential store, which needs it (upstream secure_store).
     let py = get_active_env()
         .get("path")
         .and_then(|p| p.as_str())
@@ -1703,32 +1705,45 @@ pub fn notifier_ensure() -> serde_json::Value {
     let bin = py.parent().map(|d| d.join("apprise.exe"));
     #[cfg(not(windows))]
     let bin = py.parent().map(|d| d.join("apprise"));
-    if bin.as_ref().is_some_and(|b| b.is_file()) {
-        return serde_json::json!({"ok": true, "already": true});
-    }
     let runnable = |args: &[&str]| {
         silent_command(&py)
             .args(args)
             .output()
             .is_ok_and(|o| o.status.success())
     };
-    if runnable(&["-c", "import apprise.__main__"]) {
-        return serde_json::json!({"ok": true, "already": true});
-    }
-    // Library present but no CLI (the #35 state): reinstall scripts without
-    // touching deps; fully missing: plain install.
-    let args: &[&str] = if runnable(&["-c", "import apprise"]) {
-        &["-m", "pip", "install", "--force-reinstall", "--no-deps", "apprise"]
-    } else {
-        &["-m", "pip", "install", "apprise"]
-    };
-    match silent_command(&py).args(args).output() {
-        Ok(o) if o.status.success() => serde_json::json!({"ok": true, "already": false}),
-        Ok(o) => {
-            serde_json::json!({"ok": false, "error": format!("pip install apprise failed: {}", String::from_utf8_lossy(&o.stderr).trim())})
+    let mut apprise_already = true;
+    if !bin.as_ref().is_some_and(|b| b.is_file()) && !runnable(&["-c", "import apprise.__main__"]) {
+        // Library present but no CLI (the #35 state): reinstall scripts without
+        // touching deps; fully missing: plain install.
+        apprise_already = false;
+        let args: &[&str] = if runnable(&["-c", "import apprise"]) {
+            &["-m", "pip", "install", "--force-reinstall", "--no-deps", "apprise"]
+        } else {
+            &["-m", "pip", "install", "apprise"]
+        };
+        match silent_command(&py).args(args).output() {
+            Ok(o) if !o.status.success() => {
+                return serde_json::json!({"ok": false, "error": format!("pip install apprise failed: {}", String::from_utf8_lossy(&o.stderr).trim())});
+            }
+            Err(e) => return serde_json::json!({"ok": false, "error": e.to_string()}),
+            _ => {}
         }
-        Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
     }
+    let mut keyring_already = true;
+    if !runnable(&["-c", "import keyring"]) {
+        keyring_already = false;
+        match silent_command(&py)
+            .args(["-m", "pip", "install", "keyring"])
+            .output()
+        {
+            Ok(o) if !o.status.success() => {
+                return serde_json::json!({"ok": false, "error": format!("pip install keyring failed: {}", String::from_utf8_lossy(&o.stderr).trim())});
+            }
+            Err(e) => return serde_json::json!({"ok": false, "error": e.to_string()}),
+            _ => {}
+        }
+    }
+    serde_json::json!({"ok": true, "already": apprise_already && keyring_already, "keyringAlready": keyring_already})
 }
 #[tauri::command]
 pub fn ui_mode_set(mode: Option<String>) -> serde_json::Value {

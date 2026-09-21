@@ -496,7 +496,7 @@ mod amd_package_gate_tests {
 }
 #[cfg(test)]
 mod apprise_argv_tests {
-    use super::apprise_argv;
+    use super::{apprise_argv, notifier_normalize};
     #[test]
     fn prefers_console_script_falls_back_to_module() {
         // Binary beside the interpreter wins (the #35 fix: `-m` may lack __main__).
@@ -531,6 +531,15 @@ mod apprise_argv_tests {
                 .collect::<Vec<_>>()
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn native_managed_defaults_off_and_survives_normalize() {
+        // Absent marker reads as legacy mode (old configs keep working).
+        let off = notifier_normalize(&serde_json::json!({"enabled": true}));
+        assert_eq!(off.get("nativeManaged").and_then(|v| v.as_bool()), Some(false));
+        // Present marker survives a round-trip (native save owns it).
+        let on = notifier_normalize(&serde_json::json!({"nativeManaged": true}));
+        assert_eq!(on.get("nativeManaged").and_then(|v| v.as_bool()), Some(true));
     }
 }
 #[tauri::command]
@@ -1475,7 +1484,10 @@ pub(crate) fn notifier_normalize(cfg: &serde_json::Value) -> serde_json::Value {
         "notifyOnComplete": cfg.get("notifyOnComplete").and_then(|v| v.as_bool()).unwrap_or(true),
         "notifyOnFail": cfg.get("notifyOnFail").and_then(|v| v.as_bool()).unwrap_or(true),
         "notifyOnProgress": cfg.get("notifyOnProgress").and_then(|v| v.as_bool()).unwrap_or(false),
-        "progressStep": step
+        "progressStep": step,
+        // Set by the native-notifications assistant once Wan2GP itself sends
+        // events: the log-driven launcher sender stays off (no double pings).
+        "nativeManaged": cfg.get("nativeManaged").and_then(|v| v.as_bool()).unwrap_or(false)
     })
 }
 fn notifier_saved() -> serde_json::Value {
@@ -1550,6 +1562,14 @@ fn apprise_send(url: &str, title: &str, body: &str) -> Result<(), String> {
 }
 pub(crate) fn notifier_fire(kind: &str, text: &str) {
     let cfg = notifier_saved();
+    // Native Wan2GP notifications active → stay silent (no double pings).
+    if cfg
+        .get("nativeManaged")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return;
+    }
     if !cfg
         .get("enabled")
         .and_then(|v| v.as_bool())
@@ -1720,7 +1740,16 @@ pub fn notifier_config() -> serde_json::Value {
 }
 #[tauri::command]
 pub fn notifier_set(cfg: serde_json::Value) -> serde_json::Value {
-    let clean = notifier_normalize(&cfg);
+    let mut clean = notifier_normalize(&cfg);
+    // The nativeManaged marker is owned by the native assistant — a legacy
+    // save must never clobber it (that would silently re-arm double pings).
+    let stored_managed = notifier_saved()
+        .get("nativeManaged")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if let Some(m) = clean.as_object_mut() {
+        m.insert("nativeManaged".into(), serde_json::json!(stored_managed));
+    }
     if clean
         .get("enabled")
         .and_then(|v| v.as_bool())
@@ -1732,6 +1761,17 @@ pub fn notifier_set(cfg: serde_json::Value) -> serde_json::Value {
             .is_empty()
     {
         return serde_json::json!({"ok": false, "error": "A delivery URL is required when notifications are enabled (Apprise URL, e.g. discord://, tgram://)"});
+    }
+    // Refuse re-enabling the legacy sender while native events are on —
+    // that would ping every destination twice. Turn the native events off
+    // in the Notifications section above first.
+    if clean
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        && stored_managed
+    {
+        return serde_json::json!({"ok": false, "error": "Native Wan2GP notifications are active — turn them off above before enabling the launcher sender, or you will get every notification twice."});
     }
     let mut full = load_config_value();
     if let Some(m) = full.as_object_mut() {

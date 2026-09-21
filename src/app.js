@@ -658,6 +658,84 @@ function initSettingsToggles() {
     e.preventDefault();
     window.w2gp.openExternal("https://github.com/caronc/apprise");
   });
+
+  // ── Native Wan2GP notifications (wgp_config.json via shared/notifications) ──
+  const nativeStatus = (msg, isErr) => {
+    const el = $("nativeNotifStatus");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.style.color = isErr ? "var(--signal-red)" : "var(--signal-green)";
+  };
+  const nativeCollect = () => ({
+    urls: ($("nativeNotifUrls")?.value || "").trim(),
+    secure: $("nativeNotifSecure")?.checked !== false,
+    onGeneration: $("nativeNotifOnGeneration")?.checked || false,
+    onQueueComplete: $("nativeNotifOnQueueComplete")?.checked || false,
+    onQueueInterrupted: $("nativeNotifOnQueueInterrupted")?.checked || false,
+  });
+  const nativeRefresh = async () => {
+    let st;
+    try {
+      st = await window.w2gp.notifierNativeStatus();
+    } catch {
+      return;
+    }
+    if (!st || !st.ok || !st.supported) {
+      // Older Wan2GP without shared/notifications → legacy sender UI.
+      if ($("nativeNotifBlock")) $("nativeNotifBlock").style.display = "none";
+      if ($("notifLegacyBlock")) $("notifLegacyBlock").style.display = "";
+      if (st && !st.ok) nativeStatus("✗ " + (st.error || "status failed"), true);
+      return;
+    }
+    if ($("notifLegacyBlock")) $("notifLegacyBlock").style.display = "none";
+    if ($("nativeNotifSecure")) $("nativeNotifSecure").checked = st.secure !== false;
+    if ($("nativeNotifOnGeneration")) $("nativeNotifOnGeneration").checked = !!st.onGeneration;
+    if ($("nativeNotifOnQueueComplete")) $("nativeNotifOnQueueComplete").checked = !!st.onQueueComplete;
+    if ($("nativeNotifOnQueueInterrupted")) $("nativeNotifOnQueueInterrupted").checked = !!st.onQueueInterrupted;
+    try {
+      const ld = await window.w2gp.notifierNativeLoad();
+      if (ld && ld.ok && $("nativeNotifUrls")) $("nativeNotifUrls").value = ld.urlsText || "";
+    } catch {}
+    const bits = [];
+    bits.push(st.urlsCount ? `${st.urlsCount} destination(s)` : "no destinations");
+    if (st.secure) bits.push(st.credentialSet ? "credential store" : "secure, nothing stored yet");
+    if (st.keyringError && st.secure) bits.push("keyring: " + st.keyringError);
+    if (st.onGeneration || st.onQueueComplete || st.onQueueInterrupted)
+      bits.push("native active — launcher sender off");
+    nativeStatus(bits.join(" · "), !!(st.keyringError && st.secure));
+  };
+  nativeRefresh().catch(() => {});
+  $("nativeNotifSaveBtn")?.addEventListener("click", async () => {
+    const r = await window.w2gp.notifierNativeSave(nativeCollect());
+    if (r && r.ok) {
+      nativeStatus(
+        r.nativeManaged
+          ? "✓ Saved — native notifications active, launcher sender off"
+          : "✓ Saved (no events selected — nothing will notify)",
+        false,
+      );
+      if (r.nativeManaged && $("notifEnabled")) $("notifEnabled").checked = false;
+    } else nativeStatus("✗ " + ((r && r.error) || "save failed"), true);
+  });
+  $("nativeNotifTestBtn")?.addEventListener("click", async () => {
+    const r = await window.w2gp.notifierNativeTest(nativeCollect());
+    if (r && r.ok) {
+      const n = r.destinations || 0;
+      nativeStatus(`✓ Test sent to ${n} destination(s)` + (r.warning ? " — " + r.warning : ""), false);
+    } else nativeStatus("✗ " + ((r && r.error) || "test failed"), true);
+  });
+  $("nativeNotifEnsureBtn")?.addEventListener("click", async () => {
+    nativeStatus("Installing Apprise + keyring…", false);
+    const r = await window.w2gp.notifierEnsure();
+    if (r && r.ok)
+      nativeStatus(
+        (r.already ? "Apprise already present" : "✓ Apprise installed") +
+          (r.keyringAlready === false ? " + ✓ keyring installed" : r.keyringAlready ? " + keyring present" : ""),
+        false,
+      );
+    else nativeStatus("✗ " + ((r && r.error) || "install failed"), true);
+    nativeRefresh().catch(() => {});
+  });
 }
 
 function openSettings() {
