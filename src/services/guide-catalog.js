@@ -117,13 +117,48 @@ const GUIDE_GOALS = [
 ]
 
 /**
- * Return the goal entry for an id, or null. Pure lookup.
- * @param {string} goalId
+ * Display names from WanGP defaults/*.json (model.name). The toolbar search
+ * matches these — copying the id (e.g. t2v_2_2) is useless there, so the UI
+ * copies the full name. Verified 2026-09-21.
  */
+const MODEL_NAMES = {
+  't2v_1.3B': 'Wan2.1 Text2video 1.3B',
+  t2v_2_2: 'Wan2.2 Text2video 14B',
+  i2v_2_2: 'Wan2.2 Image2video 14B',
+  minimax_h3_fl2va_pruned: 'MiniMax H3 FL2VA Pruned 20B',
+  ltx2_25_22B_distilled: 'LTX-2 2.5 Distilled 22B',
+  longcat_avatar_v1_5: 'LongCat Avatar 1.5 Distilled 13.6B',
+  infinitetalk: 'Infinitetalk Single Speaker 480p 14B',
+  vace_14B_fusionix: 'Vace FusioniX 14B',
+  vace_14B: 'Vace 14B',
+  lynx: 'Wan2.1 Lynx 14B',
+  animate2: 'Wan2.2 Animate 2 14B',
+  scail2_14B: 'SCAIL-2 14B',
+  z_image: 'Z-Image Turbo 6B',
+  krea2_turbo: 'Krea 2 Turbo',
+  qwen_image_edit_plus_20B: 'Qwen Image Edit Plus (2509) 20B',
+  krea2_turbo_edit: 'Krea 2 Turbo Identity Edit v1.2',
+  ideogram4: 'Ideogram v4 FP8 9.3B',
+  sensenova_u1_5_8b_mot: 'SenseNova U1.5 8B MoT',
+  qwen3_tts_base: 'TTS Qwen3 Base (12Hz) 1.7B',
+  index_tts2: 'TTS Index TTS 2',
+  ace_step_v1_5_xl: 'Music ACE-Step v1.5 XL Turbo 4B',
+  minimax_music3: 'Music MiniMax Music 3',
+  stable_audio3_small: 'Music Stable Audio 3 Small Music'
+}
+
+/**
+ * Full display name for a pick (falls back to the id when unmapped).
+ * @param {{model:string}} pick
+ */
+function pickName(pick) {
+  const n = MODEL_NAMES[pick.model]
+  return n ? n : pick.model
+}
 function guideGoal(goalId) {
   return GUIDE_GOALS.find((g) => g.id === goalId) || null
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { GUIDE_GOALS, guideGoal }
+  module.exports = { GUIDE_GOALS, MODEL_NAMES, guideGoal, pickName }
 }
