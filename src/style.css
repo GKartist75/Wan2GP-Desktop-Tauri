@@ -2264,7 +2264,7 @@ table.args-table.lib-table.compact td:first-child {
  top: 0;
  right: 0;
  bottom: 0;
- width: 560px;
+ width: 600px;
  max-width: 94vw;
  background: var(--surface);
  border-left: 1px solid var(--border);
