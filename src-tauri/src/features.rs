@@ -494,6 +494,54 @@ mod amd_package_gate_tests {
         );
     }
 }
+#[cfg(test)]
+mod apprise_argv_tests {
+    use super::{apprise_argv, notifier_normalize};
+    #[test]
+    fn prefers_console_script_falls_back_to_module() {
+        // Binary beside the interpreter wins (the #35 fix: `-m` may lack __main__).
+        let dir = std::env::temp_dir().join(format!(
+            "wgp-apprise-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        #[cfg(windows)]
+        let bin_name = "apprise.exe";
+        #[cfg(not(windows))]
+        let bin_name = "apprise";
+        let py = dir.join("python.exe");
+        std::fs::write(&py, b"").unwrap();
+        // No binary yet → module fallback.
+        let (cmd, args) = apprise_argv(&py, "T", "B", "discord://x");
+        assert_eq!(cmd, py);
+        assert_eq!(args[..2], vec!["-m".to_string(), "apprise".to_string()]);
+        assert_eq!(args.last().unwrap(), "discord://x");
+        // Binary appears → direct invocation, no `-m`.
+        std::fs::write(dir.join(bin_name), b"").unwrap();
+        let (cmd, args) = apprise_argv(&py, "T", "B", "discord://x");
+        assert_eq!(cmd, dir.join(bin_name));
+        assert_eq!(
+            args,
+            vec!["-t", "T", "-b", "B", "discord://x"]
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn native_managed_defaults_off_and_survives_normalize() {
+        // Absent marker reads as legacy mode (old configs keep working).
+        let off = notifier_normalize(&serde_json::json!({"enabled": true}));
+        assert_eq!(off.get("nativeManaged").and_then(|v| v.as_bool()), Some(false));
+        // Present marker survives a round-trip (native save owns it).
+        let on = notifier_normalize(&serde_json::json!({"nativeManaged": true}));
+        assert_eq!(on.get("nativeManaged").and_then(|v| v.as_bool()), Some(true));
+    }
+}
 #[tauri::command]
 pub async fn uninstall_package(
     app: tauri::AppHandle,
@@ -1417,8 +1465,8 @@ pub fn memory_profile_apply(settings: serde_json::Value) -> serde_json::Value {
 // ── Queue Notifier (Apprise) ──
 // Config lives in desktop-config.json under "notifier". Events are classified
 // from the launch-log stream (port of services/queue-notifier.js) and delivered
-// via the env's apprise (`python -m apprise`). Spawns a thread per delivery so
-// log streaming never blocks.
+// via the env's apprise console script (binary first, `python -m` fallback).
+// Spawns a thread per delivery so log streaming never blocks.
 static NOTIF_LAST_PCT: std::sync::OnceLock<std::sync::Mutex<Option<u8>>> =
     std::sync::OnceLock::new();
 static NOTIF_LAST_FIRE: std::sync::OnceLock<
@@ -1436,7 +1484,10 @@ pub(crate) fn notifier_normalize(cfg: &serde_json::Value) -> serde_json::Value {
         "notifyOnComplete": cfg.get("notifyOnComplete").and_then(|v| v.as_bool()).unwrap_or(true),
         "notifyOnFail": cfg.get("notifyOnFail").and_then(|v| v.as_bool()).unwrap_or(true),
         "notifyOnProgress": cfg.get("notifyOnProgress").and_then(|v| v.as_bool()).unwrap_or(false),
-        "progressStep": step
+        "progressStep": step,
+        // Set by the native-notifications assistant once Wan2GP itself sends
+        // events: the log-driven launcher sender stays off (no double pings).
+        "nativeManaged": cfg.get("nativeManaged").and_then(|v| v.as_bool()).unwrap_or(false)
     })
 }
 fn notifier_saved() -> serde_json::Value {
@@ -1453,10 +1504,51 @@ fn env_python_bin() -> Option<PathBuf> {
     let raw = env.get("path")?.as_str()?;
     resolve_env_python(&get_repo_dir(), raw)
 }
+/// Build the apprise invocation for the active env.
+/// Prefers the `pip install apprise` console script (Scripts\apprise.exe on
+/// Windows, bin/apprise elsewhere — the only entry upstream's pinned
+/// apprise==1.12.0 ships: `console_scripts apprise = apprise.cli:main`, no
+/// __main__.py) and falls back to `python -m apprise` for distributions that
+/// provide it. Issue #35: `-m` failed with
+/// "No module named apprise.__main__" while `import apprise` succeeded, so
+/// delivery must not assume `-m` works. Pure over an explicit path so it is
+/// unit-testable.
+pub(crate) fn apprise_argv(py: &PathBuf, title: &str, body: &str, url: &str) -> (PathBuf, Vec<String>) {
+    #[cfg(windows)]
+    let bin = py.parent().map(|d| d.join("apprise.exe"));
+    #[cfg(not(windows))]
+    let bin = py.parent().map(|d| d.join("apprise"));
+    if let Some(b) = bin.filter(|b| b.is_file()) {
+        (
+            b,
+            vec![
+                "-t".to_string(),
+                title.to_string(),
+                "-b".to_string(),
+                body.to_string(),
+                url.to_string(),
+            ],
+        )
+    } else {
+        (
+            py.clone(),
+            vec![
+                "-m".to_string(),
+                "apprise".to_string(),
+                "-t".to_string(),
+                title.to_string(),
+                "-b".to_string(),
+                body.to_string(),
+                url.to_string(),
+            ],
+        )
+    }
+}
 fn apprise_send(url: &str, title: &str, body: &str) -> Result<(), String> {
     let py = env_python_bin().ok_or_else(|| "No active Python environment".to_string())?;
-    let out = silent_command(&py)
-        .args(["-m", "apprise", "-t", title, "-b", body, url])
+    let (cmd, args) = apprise_argv(&py, title, body, url);
+    let out = silent_command(&cmd)
+        .args(&args)
         .output()
         .map_err(|e| e.to_string())?;
     if out.status.success() {
@@ -1470,6 +1562,14 @@ fn apprise_send(url: &str, title: &str, body: &str) -> Result<(), String> {
 }
 pub(crate) fn notifier_fire(kind: &str, text: &str) {
     let cfg = notifier_saved();
+    // Native Wan2GP notifications active → stay silent (no double pings).
+    if cfg
+        .get("nativeManaged")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return;
+    }
     if !cfg
         .get("enabled")
         .and_then(|v| v.as_bool())
@@ -1640,7 +1740,16 @@ pub fn notifier_config() -> serde_json::Value {
 }
 #[tauri::command]
 pub fn notifier_set(cfg: serde_json::Value) -> serde_json::Value {
-    let clean = notifier_normalize(&cfg);
+    let mut clean = notifier_normalize(&cfg);
+    // The nativeManaged marker is owned by the native assistant — a legacy
+    // save must never clobber it (that would silently re-arm double pings).
+    let stored_managed = notifier_saved()
+        .get("nativeManaged")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if let Some(m) = clean.as_object_mut() {
+        m.insert("nativeManaged".into(), serde_json::json!(stored_managed));
+    }
     if clean
         .get("enabled")
         .and_then(|v| v.as_bool())
@@ -1652,6 +1761,17 @@ pub fn notifier_set(cfg: serde_json::Value) -> serde_json::Value {
             .is_empty()
     {
         return serde_json::json!({"ok": false, "error": "A delivery URL is required when notifications are enabled (Apprise URL, e.g. discord://, tgram://)"});
+    }
+    // Refuse re-enabling the legacy sender while native events are on —
+    // that would ping every destination twice. Turn the native events off
+    // in the Notifications section above first.
+    if clean
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        && stored_managed
+    {
+        return serde_json::json!({"ok": false, "error": "Native Wan2GP notifications are active — turn them off above before enabling the launcher sender, or you will get every notification twice."});
     }
     let mut full = load_config_value();
     if let Some(m) = full.as_object_mut() {

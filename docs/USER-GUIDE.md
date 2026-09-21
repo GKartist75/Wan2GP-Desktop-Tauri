@@ -222,7 +222,18 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   live preview, Save theme / Set as default / Reset to shipped colors. Text size
   (85–130%) + Terminal size (85–150%) sliders; console window follows.
 - **Desktop** — desktop shortcut + start options.
-- **Queue Notifier** — optional ping (via Apprise) when generations finish.
+- **Queue Notifier** — now sets up Wan2GP's **native** notifications
+  (`wgp_config.json`, upstream `shared/notifications`): space-separated
+  Apprise destinations, OS-credential-store checkbox (needs `keyring`,
+  installed by the Install button), After-each-generation / Queue-completes /
+  Queue-interrupted toggles, Save + Send-test. Saving with any event on
+  switches the launcher's own log-driven sender off (no double pings);
+  turning all native events off re-arms it. Older Wan2GP checkouts without
+  native support fall back to the launcher sender (single Apprise URL,
+  completion/failure/progress). Quickest destination (per upstream README):
+  open `https://ntfy.sh/your-topic` in a browser, then use
+  `ntfys://your-topic` — WhatsApp, Discord, Telegram etc. work via any
+  [Apprise URL](https://appriseit.com/services/).
 - **Xet Storage (hf_xet)** — fast HuggingFace downloads toggle.
 - **GGUF CUDA Kernel** — llama.cpp CUDA offload switch.
 - **Repair Settings** — resets launcher settings to defaults.

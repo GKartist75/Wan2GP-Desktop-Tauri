@@ -7,6 +7,7 @@ mod features;
 mod hw;
 mod install;
 mod launch;
+mod notifier_native;
 mod plugins;
 mod status;
 mod system;
@@ -242,6 +243,10 @@ pub fn run() {
             features::notifier_config,
             features::notifier_set,
             features::notifier_test,
+            notifier_native::notifier_native_status,
+            notifier_native::notifier_native_load,
+            notifier_native::notifier_native_save,
+            notifier_native::notifier_native_test,
             plugins::plugins_list,
             plugins::plugin_install,
             plugins::plugin_check_update,

@@ -141,27 +141,46 @@
           <p class="token-hint">When on, the launcher quietly checks for a new version on startup and notifies you — it never downloads or installs anything automatically. Off = only check manually via "Check for updates".</p>
         </div>
         <div class="settings-section">
-          <h3>Queue Notifier</h3>
-          <p class="token-hint">Send Wan2GP generation events to Telegram, Discord, WhatsApp, IFTTT or Google Chat via <a href="#" id="notifAppriseLink">Apprise</a> — fired from the live launch log (no extra plugin needed).</p>
-          <label class="toggle-row"><input type="checkbox" id="notifEnabled"> <span>Enable notifier</span></label>
-          <label class="toggle-row" style="margin-top:6px"><input type="checkbox" id="notifOnComplete" checked> <span>On completion</span></label>
-          <label class="toggle-row" style="margin-top:6px"><input type="checkbox" id="notifOnFail" checked> <span>On failure</span></label>
-          <label class="toggle-row" style="margin-top:6px"><input type="checkbox" id="notifOnProgress"> <span>On progress (every N%)</span></label>
-          <div class="field-row" style="margin-top:6px">
-            <label class="field-label">Progress step</label>
-            <input type="number" id="notifProgressStep" min="1" max="100" value="25" class="input-small">
+          <h3>Notifications (Wan2GP native)</h3>
+          <p class="token-hint">Wan2GP notifies itself via <a href="#" id="notifAppriseLink">Apprise</a> — destinations live in <code>wgp_config.json</code> (optionally in the OS credential manager). The launcher sets this up for you; no extra plugin needed. Easiest start: open <code>https://ntfy.sh/your-topic</code> in a browser, then enter <code>ntfys://your-topic</code> below.</p>
+          <div id="nativeNotifBlock">
+            <div class="field-row" style="margin-top:6px">
+              <label class="field-label">Apprise Destinations</label>
+              <input type="password" id="nativeNotifUrls" class="input-wide" placeholder="ntfys://topic discord://webhook tgram://token:chatid … (space-separated)">
+            </div>
+            <label class="toggle-row" style="margin-top:6px"><input type="checkbox" id="nativeNotifSecure" checked> <span>Store destinations in OS Credential Manager (recommended)</span></label>
+            <label class="toggle-row" style="margin-top:6px"><input type="checkbox" id="nativeNotifOnGeneration"> <span>After each generation</span></label>
+            <label class="toggle-row" style="margin-top:6px"><input type="checkbox" id="nativeNotifOnQueueComplete"> <span>When queue completes</span></label>
+            <label class="toggle-row" style="margin-top:6px"><input type="checkbox" id="nativeNotifOnQueueInterrupted"> <span>When queue is interrupted</span></label>
+            <div style="margin-top:10px;display:flex;gap:8px">
+              <button class="btn btn-primary small" id="nativeNotifSaveBtn" title="Save native notification settings to wgp_config.json">Save</button>
+              <button class="btn btn-ghost small" id="nativeNotifTestBtn" title="Send a test notification to the entered destinations">Send test</button>
+              <button class="btn btn-ghost small" id="nativeNotifEnsureBtn" title="Install Apprise + keyring into the active environment">Install Apprise</button>
+            </div>
+            <p class="token-hint" id="nativeNotifStatus" style="margin-top:8px"></p>
           </div>
-          <div class="field-row" style="margin-top:8px">
-            <label class="field-label">Apprise URL</label>
-            <input type="text" id="notifUrl" class="input-wide" placeholder="discord://token / tgram://token:chatid / etc.">
+          <div id="notifLegacyBlock" style="display:none">
+            <p class="token-hint">Older Wan2GP without native notifications — the launcher sends from the live launch log instead.</p>
+            <label class="toggle-row"><input type="checkbox" id="notifEnabled"> <span>Enable notifier</span></label>
+            <label class="toggle-row" style="margin-top:6px"><input type="checkbox" id="notifOnComplete" checked> <span>On completion</span></label>
+            <label class="toggle-row" style="margin-top:6px"><input type="checkbox" id="notifOnFail" checked> <span>On failure</span></label>
+            <label class="toggle-row" style="margin-top:6px"><input type="checkbox" id="notifOnProgress"> <span>On progress (every N%)</span></label>
+            <div class="field-row" style="margin-top:6px">
+              <label class="field-label">Progress step</label>
+              <input type="number" id="notifProgressStep" min="1" max="100" value="25" class="input-small">
+            </div>
+            <div class="field-row" style="margin-top:8px">
+              <label class="field-label">Apprise URL</label>
+              <input type="text" id="notifUrl" class="input-wide" placeholder="discord://token / tgram://token:chatid / etc.">
+            </div>
+            <p class="token-hint">Examples: <code>discord://webhook</code>, <code>tgram://token:chatid</code>, <code>wx://</code> (WhatsApp), <code>ifttt://key/event</code>, <code>gchat://webhook</code>.</p>
+            <div style="margin-top:10px;display:flex;gap:8px">
+              <button class="btn btn-primary small" id="notifSaveBtn" title="Save notification settings">Save</button>
+              <button class="btn btn-ghost small" id="notifTestBtn" title="Send a test notification">Send test</button>
+              <button class="btn btn-ghost small" id="notifEnsureBtn" title="Install Apprise into the active environment">Install Apprise</button>
+            </div>
+            <p class="token-hint" id="notifStatus" style="margin-top:8px"></p>
           </div>
-          <p class="token-hint">Examples: <code>discord://webhook</code>, <code>tgram://token:chatid</code>, <code>wx://</code> (WhatsApp), <code>ifttt://key/event</code>, <code>gchat://webhook</code>.</p>
-          <div style="margin-top:10px;display:flex;gap:8px">
-            <button class="btn btn-primary small" id="notifSaveBtn" title="Save notification settings">Save</button>
-            <button class="btn btn-ghost small" id="notifTestBtn" title="Send a test notification">Send test</button>
-            <button class="btn btn-ghost small" id="notifEnsureBtn" title="Install Apprise into the active environment">Install Apprise</button>
-          </div>
-          <p class="token-hint" id="notifStatus" style="margin-top:8px"></p>
         </div>
         <div class="settings-section">
           <h3>Xet Storage (hf_xet)</h3>
