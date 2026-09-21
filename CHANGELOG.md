@@ -2,6 +2,24 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## Unreleased
+
+- Launch hardening (#36): the Python bootstrap shim now lives in an
+  isolated `%TEMP%\wan2gp-bootstrap-<pid>-<ms>\boot.py` subdir (Deepy:
+  `wan2gp-deepy-bootstrap-*`) instead of loose in `%TEMP%`, and scrubs its
+  own dir from `sys.path` — a stray `%TEMP%\grp.py` could previously shadow
+  stdlib (`tarfile → import grp`) and kill startup with
+  `IndexError: list index out of range`. Verified with a dummy `grp.py`
+  against the real env (old layout crashes, new layout imports torch fine)
+- Notifications are now native-first (#35): Manage → Notifications sets up
+  Wan2GP's own Apprise destinations in `wgp_config.json` (OS credential
+  store supported, test button, ntfy.sh quick-start), Install also covers
+  `keyring`; the status line shows `apprise`/`keyring` versions. Saving with
+  any native event on switches the launcher's log-driven sender off (no
+  double pings); older Wan2GP checkouts fall back to it (now via the
+  `apprise.exe` console script — `python -m apprise` never worked with the
+  pinned `apprise==1.12.0`, which ships no `__main__.py`)
+
 ## [0.7.5] — 2026-09-21
 
 - Guide topbar tab (was a Manage tab): goal-based model recommender (13

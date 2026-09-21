@@ -175,6 +175,7 @@ Same launcher, same Wan2GP, same features — lightweight native shell. It uses 
 - **Topbar sparklines** — CPU/GPU/RAM/VRAM mini real-time charts.
 - **Running LED & Stop** — status light + one-click server stop.
 - **Auto-start with Windows**, notifications on server ready/stop.
+- **Queue notifications** — sets up Wan2GP's native Apprise destinations (Telegram/Discord/ntfy.sh…) in `wgp_config.json`, Install covers `apprise` + `keyring`; legacy log-driven sender stays for older Wan2GP.
 - **Keyboard shortcuts** — <kbd>Esc</kbd>/<kbd>Ctrl+W</kbd> close webview.
 - **Maintenance** — update WanGP or the launcher from **Dashboard** or **Manage → Updates**, switch envs, or uninstall from the UI. **Dashboard → Paths** migrates installs between drives.
 
