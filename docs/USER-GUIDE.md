@@ -64,12 +64,23 @@ The home screen. Top to bottom:
 | 🧭 Run Setup | Shown when no env is active — opens the installer for a fresh setup |
 | ↻ Check Updates | Checks PyPI for package updates for this env |
 
-**Deepy card** — the WanGP assistant. *LLM Engines* lists backends (Claude Code CLI,
+**Deepy card** — the WanGP assistant. Modes: Disabled / Deepy Zero (local Qwen model)
+ / Deepy Prime (remote LLM or local Qwen3.8 27B). *Local model (Prompt Enhancer)*
+ offers all five local models — Florence 2 + Llama variants and Qwen3.5 4B/9B +
+ Qwen3.8 27B — in both Disabled and Zero (the enhancer runs standalone without
+ Deepy); Qwen engines show a *Quantization* picker (GGUF Q4 / IQ3_S / Q2 /
+ Bonsai PTQ1 for 27B, Quanto Int8 / GGUF Q4 for 3.5; Bonsai also sets INT8 KV
+ cache). *LLM Engines* lists backends (Claude Code CLI,
 OpenCode, …) with *↻ Refresh* to re-check status; pick one and press *Apply*.
 *Sessions* below it mirrors Ask Deepy → Settings → Sessions: multisessions mode
 (Disabled / selectable Workspace / dedicated Workspace — selectable is the
 launcher default, one shared outputs folder), reset behavior, gallery media
 (keep links vs copy into session). Per-session workspace choice stays inside WanGP.
+
+**Prompt enhancement card** (below Active Environment, above Deepy) — *Enhancement UI*:
+*Enhance Prompt button* (default) or *Automatic dropdown* on Wan2GP generation
+forms. Works with or without Deepy, with its own *Apply* (same coherent config
+write as the Deepy card).
 
 **Deepy Web card** — phone-friendly Deepy in a second process. *Assistant*:
 Zero or Prime per start (applied via Apply — fixes the external-process-boots-Zero

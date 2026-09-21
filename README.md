@@ -217,11 +217,13 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 
 Configure without editing JSON: **Settings → Deepy** or the Dashboard card.
 
-- **Disabled** — Deepy off; keeps local Prompt Enhancer.
+- **Disabled** — Deepy off; prompt enhancement keeps working with any local model (Florence or Qwen).
 - **Deepy Zero** — local, no account/key. Qwen VL models.
-- **Deepy Prime** — remote LLM via **OpenCode** (free, local models), **Claude Code** (`claude-agent-sdk==0.1.66` pinned bridge) or **Codex** (paid), or local **Qwen3.8 VL 27B** (needs the 27B model + GGUF 1.0.22; auto-sets 32k context + Summarize). Local Qwen3.8 offers a **Quantization** picker — GGUF Q4 / IQ3_S / Q2 / **Bonsai PTQ1** (~10 GB VRAM) — plus Automatic prompting and INT8 KV cache for Bonsai. Prime exposes WanGP's MCP tools.
+- **Deepy Prime** — remote LLM via **OpenCode** (free, local models), **Claude Code** (`claude-agent-sdk==0.1.66` pinned bridge) or **Codex** (paid), or local **Qwen3.8 VL 27B** (needs the 27B model + GGUF 1.0.22; auto-sets 32k context + Summarize). Local Qwen3.8 offers a **Quantization** picker — GGUF Q4 / IQ3_S / Q2 / **Bonsai PTQ1** (~10 GB VRAM) — plus INT8 KV cache for Bonsai. Prime exposes WanGP's MCP tools.
 
 Switching live-re-renders the selector; **Apply** writes a consistent `wgp_config.json` (with backup). Also editable inside WanGP: *Configuration → Prompt Enhancer / Deepy*.
+
+**Prompt enhancement** (own card, above Deepy): Enhancement UI picker — *Enhance Prompt button* (default) or *Automatic dropdown* — with its own **Apply**; works with or without Deepy and writes through the same coherent config path.
 
 **Sessions** (same card, below the engine picker): multisessions mode — *Disabled* (one temporary chat), *selectable Workspace* (sessions share one workspace/outputs folder, the launcher default), *dedicated Workspace* (each session owns its gallery) — plus reset behavior and gallery media (keep links vs copy files into the session). Saved via the same **Apply**; per-session workspace choice stays inside WanGP.
 
@@ -267,7 +269,8 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.7.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.3) *(latest)* — upstream WanGP v13.13 wave: GGUF floor 1.0.22, post-install override sync (fresh installs land on safe wheels), Deepy Qwen quantization picker with Bonsai PTQ1 + Automatic prompting, memory panel tracks `int8_kernels`/`kernel_precision`, VAE presets relabeled, startup drift self-check, marker-aware update diff, +1px panel text. Details in [CHANGELOG](CHANGELOG.md); upstream PR [deepbeepmeep/Wan2GP#2355](https://github.com/deepbeepmeep/Wan2GP/pull/2355) (Enhance button + Deepy template defaults).
+- [**v0.7.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.4) *(latest)* — standalone Prompt enhancement card (Enhance Prompt button by default, Automatic optional, works with Deepy off), all local models selectable when Deepy is Disabled, existing enhancement choice preserved on Apply, Disabled message fix. Details in [CHANGELOG](CHANGELOG.md).
+- [**v0.7.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.3) — upstream WanGP v13.13 wave: GGUF floor 1.0.22, post-install override sync (fresh installs land on safe wheels), Deepy Qwen quantization picker with Bonsai PTQ1 + Automatic prompting, memory panel tracks `int8_kernels`/`kernel_precision`, VAE presets relabeled, startup drift self-check, marker-aware update diff, +1px panel text. Details in [CHANGELOG](CHANGELOG.md); upstream PR [deepbeepmeep/Wan2GP#2355](https://github.com/deepbeepmeep/Wan2GP/pull/2355) (Enhance button + Deepy template defaults).
 
 - [**v0.7.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.2) — Deepy Web + Wan2GP exits split (independent stop, Stop-Deepy-only button, server-following LED), upstream 13.11 reverse-proxy origin (`--public-url` card field, validated + persisted), version-aware Xet Storage card (installed vs requirements pin, Update when outdated), stale `reference/` snapshot retired.
 

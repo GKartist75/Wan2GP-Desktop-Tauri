@@ -109,7 +109,12 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   `llm_engines.profiles` paths the launcher never writes — installed 27B
   weights are now recognized at Deepy Web start
 
-## [Unreleased]
+## [0.7.4] — 2026-09-21
+
+- Prompt enhancement is its own dashboard card (below Active Environment, above Deepy) with an Enhancement UI picker — **Enhance Prompt button** (new default) or **Automatic dropdown** — effective with or without Deepy; both Apply buttons share one coherent `wgp_config.json` write and enable/disable together
+- Local model selector unlocked for Deepy Disabled: all five models (Florence 2 + Qwen3.5 4B/9B + Qwen3.8 27B) selectable with the Qwen quantization picker included — the enhancer runs standalone without the assistant (Qwen was grayed out before)
+- Fresh Deepy applies default to the Enhance Prompt button (`enhancer_mode=1`) instead of forcing Automatic; an existing choice is preserved, and the toggle now applies in every mode (Disabled included)
+- Disabled apply message no longer tells you to click "Ask Deepy"
 
 ## [0.6.9] — 2026-09-15
 

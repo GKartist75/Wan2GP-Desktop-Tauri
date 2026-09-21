@@ -764,6 +764,29 @@
         </div>
         <div class="env-list" id="envList" style="margin-top:6px"></div>
 
+        <!-- Prompt enhancement (upstream enhancer_mode): standalone from Deepy —
+             the enhancer and its button run with or without the assistant.
+             Reads/writes only wgp_config.json, backs it up first. Shares the
+             Deepy Apply path (one coherent config write). -->
+        <div class="card" id="deepyPromptCard" style="margin-top:10px">
+          <div class="card-header">
+            <span class="card-title">Prompt enhancement</span>
+          </div>
+          <p class="path-hint">How Wan2GP enhances prompts on generation forms — applies on next Wan2GP launch, with or without Deepy.</p>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px">
+            <label class="path-hint">Enhancement UI<br>
+              <select id="deepyEnhancerMode" class="input" style="margin-top:4px;min-width:260px">
+                <option value="1">Enhance Prompt button</option>
+                <option value="0">Automatic (dropdown)</option>
+              </select>
+            </label>
+          </div>
+          <div class="deepy-actions">
+            <button class="btn btn-primary" id="deepyPromptApplyBtn" disabled title="Save the prompt-enhancement choice into Wan2GP config (applies on next launch)">Apply</button>
+          </div>
+          <div id="deepyPromptStatusMsg" class="pip-advanced-hint" style="margin-top:8px"></div>
+        </div>
+
         <!-- Deepy mode selector + one-click activation. Reads/writes only
              wgp_config.json (Wan2GP user data) — never Wan2GP source.
              Backs the file up first. -->
