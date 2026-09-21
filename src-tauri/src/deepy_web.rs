@@ -709,6 +709,7 @@ fn ensure_deepy_config_for_web() -> Result<String, String> {
                 Some(serde_json::json!(3)),
                 None,
                 None,
+                None,
             );
             if r.get("ok").and_then(|x| x.as_bool()) == Some(true) {
                 Ok("zero+qwen35-4b".to_string())
@@ -741,6 +742,7 @@ fn ensure_deepy_config_for_web() -> Result<String, String> {
                 dtype.clone(),
                 eng_arg,
                 Some(serde_json::json!(3)),
+                None,
                 None,
                 None,
             );

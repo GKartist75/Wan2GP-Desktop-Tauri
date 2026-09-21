@@ -918,7 +918,10 @@ pub fn deepy_status() -> serde_json::Value {
         .get("prompt_enhancer_quantization")
         .and_then(|x| x.as_str())
         .map(std::string::ToString::to_string);
-    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "promptEnhancerQuantization": quant, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode})
+    // Prompt-enhancement UI (upstream `enhancer_mode`: 0 = Automatic dropdown,
+    // 1 = on-demand Enhance Prompt button) so the panel can pre-select.
+    let enhancer_mode = v.get("enhancer_mode").and_then(serde_json::Value::as_i64);
+    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "promptEnhancerQuantization": quant, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode, "enhancerMode": enhancer_mode})
 }
 /// Upstream `normalize_deepy_session_mode` (shared/deepy/config.py):
 /// disabled/selectable/dedicated, anything else falls back to disabled.
@@ -1018,8 +1021,9 @@ pub fn deepy_set(
     enhancer: Option<serde_json::Value>,
     sessions: Option<serde_json::Value>,
     quant: Option<String>,
+    enhancer_mode: Option<serde_json::Value>,
 ) -> serde_json::Value {
-    eprintln!("[deepy_set] mode={mode} engine={engine:?} enhancer={enhancer:?} quant={quant:?}");
+    eprintln!("[deepy_set] mode={mode} engine={engine:?} enhancer={enhancer:?} quant={quant:?} enhancer_mode={enhancer_mode:?}");
     let m = mode.trim().to_lowercase();
     if !["disabled", "zero", "prime"].contains(&m.as_str()) {
         return serde_json::json!({"ok": false, "error": format!("Unknown Deepy mode: {}", mode)});
@@ -1083,7 +1087,8 @@ pub fn deepy_set(
     // enhancer id — JS sends number (3) or null, handle both string/number.
     // Enforce valid mode↔id pairs like Electron's resolveEnhancerId: Zero only
     // runs on Qwen (3/4/5) — a Llama id (1/2) with Zero is the tokenizer-crash
-    // combo, so fall back to the mode default instead of writing it.
+    // combo, so fall back to the mode default instead of writing it. Disabled
+    // runs the enhancer standalone, so any local model (1-5) is valid there.
     let raw_id: Option<i64> = enhancer.as_ref().and_then(|v| {
         if let Some(n) = v.as_i64() {
             Some(n)
@@ -1100,7 +1105,7 @@ pub fn deepy_set(
             _ => 3,
         }),
         _ => Some(match raw_id {
-            Some(1) | Some(2) => raw_id.unwrap(),
+            Some(1) | Some(2) | Some(3) | Some(4) | Some(5) => raw_id.unwrap(),
             _ => 1,
         }),
     };
@@ -1110,12 +1115,12 @@ pub fn deepy_set(
         }
     }
     // Qwen LLM quantization (upstream "Qwen LLM Quantization" dropdown):
-    // applies only with a local Qwen engine — Zero on 3/4/5, or Prime on
-    // local Qwen3.8 (id 5). Engine-inappropriate values normalize to the
-    // engine default; absent quant preserves existing config (e.g. the
+    // applies only with a local Qwen engine — Disabled/Zero on 3/4/5, or
+    // Prime on local Qwen3.8 (id 5). Engine-inappropriate values normalize to
+    // the engine default; absent quant preserves existing config (e.g. the
     // auto-config fix path must not clobber a chosen Bonsai backend).
     let quant_enhancer: Option<i64> = match m.as_str() {
-        "zero" => enh_id.filter(|id| [3, 4, 5].contains(id)),
+        "zero" | "disabled" => enh_id.filter(|id| [3, 4, 5].contains(id)),
         "prime" if engine.as_deref() == Some("local-qwen38") => Some(5),
         _ => None,
     };
@@ -1124,21 +1129,31 @@ pub fn deepy_set(
         if q == "gguf_ptq1" {
             // Bonsai companion: INT8 KV cache halves cache VRAM — what makes
             // Prime viable at ~10GB (GGUF 1.0.22+ carries the kernels).
-            // (Prompt enhancement mode is handled below with all Deepy
-            // enables: Automatic.)
+            // (Prompt enhancement mode is handled below from the panel choice.)
             v["deepy_kv_cache_quantization"] = serde_json::json!("int8");
         }
     }
-    // Prompt enhancement: Automatic for Deepy generation. enhancer_mode=0
-    // shows the Automatic dropdown on every generation form (Deepy tool
-    // templates carry no flags of their own, so they follow it); manual
-    // generations do too — there is no Deepy-only key upstream, and
-    // per-model/template prompt_enhancer flags stay "" as shipped.
-    // Upstream default when the key is missing is already 0; this makes it
-    // explicit whenever a Deepy config is applied. Disabled preserves it.
-    if m == "zero" || m == "prime" {
-        v["enhancer_mode"] = serde_json::json!(0);
-    }
+    // Prompt enhancement UI (upstream `enhancer_mode`: 0 = Automatic dropdown
+    // on every generation form, 1 = on-demand Enhance Prompt button).
+    // Explicit 0/1 wins; otherwise the existing config value sticks; a missing
+    // key defaults to 1 (button). Deepy tool templates carry no flags of their
+    // own, so they follow it; per-model/template prompt_enhancer flags stay ""
+    // as shipped. Applies in every mode — the enhancer (and its button) runs
+    // standalone when Deepy is disabled.
+    let raw_emode: Option<i64> = enhancer_mode.as_ref().and_then(|v| {
+        if let Some(n) = v.as_i64() {
+            Some(n)
+        } else if let Some(s) = v.as_str() {
+            s.parse::<i64>().ok()
+        } else {
+            None
+        }
+    });
+    let emode = match raw_emode {
+        Some(0) | Some(1) => raw_emode.unwrap(),
+        _ => v.get("enhancer_mode").and_then(serde_json::Value::as_i64).filter(|n| *n == 0 || *n == 1).unwrap_or(1),
+    };
+    v["enhancer_mode"] = serde_json::json!(emode);
     // llm_engines deepy
     let eng_map = |id: &str| match id {
         "opencode" => "opencode",
@@ -1279,17 +1294,19 @@ pub fn deepy_set(
         other => other.to_string(),
     };
     let msg = if m == "prime" {
-        format!("Deepy Prime set to {prime_label}")
+        format!(
+            "Deepy Prime set to {prime_label}. Launch Wan2GP and click \"Ask Deepy\"."
+        )
     } else if m == "zero" {
-        "Deepy Zero enabled (local model)".into()
+        "Deepy Zero enabled (local model). Launch Wan2GP and click \"Ask Deepy\".".into()
     } else {
-        "Deepy disabled".into()
+        "Deepy disabled. Prompt-enhancer settings saved — relaunch Wan2GP to apply.".into()
     };
-    serde_json::json!({"ok": true, "mode": m, "enhancerId": enh_id, "backup": bak.to_string_lossy().to_string(), "message": msg + ". Launch Wan2GP and click \"Ask Deepy\"."})
+    serde_json::json!({"ok": true, "mode": m, "enhancerId": enh_id, "backup": bak.to_string_lossy().to_string(), "message": msg})
 }
 #[tauri::command]
 pub fn deepy_activate(engine: String) -> serde_json::Value {
-    deepy_set("prime".into(), Some(engine), None, None, None)
+    deepy_set("prime".into(), Some(engine), None, None, None, None)
 }
 // Auto-start via the per-user Run key (no admin needed). Returns success, like the UI checks.
 #[tauri::command]
@@ -1703,6 +1720,7 @@ mod deepy_roundtrip_tests {
                 "gallery_media_mode": "copy",
             })),
             Some("gguf".into()),
+            None,
         );
         assert!(
             r.get("ok").and_then(|v| v.as_bool()).unwrap(),
@@ -1716,8 +1734,8 @@ mod deepy_roundtrip_tests {
         assert_eq!(c["deepy_vram_mode"], "unload");
         assert_eq!(c["deepy_context_tokens"], 16386);
         assert_eq!(c["deepy_tool_gen_image"], "Krea 2 Turbo (8 Steps)");
-        // Deepy enable (zero included) writes Automatic prompting.
-        assert_eq!(c["enhancer_mode"], 0);
+        // Deepy enable with no explicit choice defaults to the button (1).
+        assert_eq!(c["enhancer_mode"], 1);
         // explicit session prefs stick
         assert_eq!(c["deepy_session_reset_mode"], "reset_session");
         assert_eq!(c["deepy_session_gallery_media_mode"], "copy");
@@ -1731,17 +1749,32 @@ mod deepy_roundtrip_tests {
             Some(serde_json::json!(4)),
             None,
             Some("gguf_ptq1".into()),
+            None,
         );
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
         assert_eq!(read_cfg()["prompt_enhancer_quantization"], "quanto_int8");
+        // explicit Automatic (0) sticks; a later None apply preserves it
+        let r = deepy_set(
+            "zero".into(),
+            None,
+            Some(serde_json::json!(4)),
+            None,
+            None,
+            Some(serde_json::json!(0)),
+        );
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
+        assert_eq!(read_cfg()["enhancer_mode"], 0);
+        let r = deepy_set("zero".into(), None, Some(serde_json::json!(4)), None, None, None);
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
+        assert_eq!(read_cfg()["enhancer_mode"], 0);
         // zero + Llama id must fall back to 3 (tokenizer-crash combo)
-        let r = deepy_set("zero".into(), None, Some(serde_json::json!(1)), None, None);
+        let r = deepy_set("zero".into(), None, Some(serde_json::json!(1)), None, None, None);
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
         let c = read_cfg();
         assert_eq!(c["enhancer_enabled"], 3);
         assert_eq!(c["llm_engines"]["deepy"], "qwen35_4b");
         // prime + codex
-        let r = deepy_set("prime".into(), Some("codex".into()), None, None, None);
+        let r = deepy_set("prime".into(), Some("codex".into()), None, None, None, None);
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
         let c = read_cfg();
         assert_eq!(c["deepy_type"], "prime");
@@ -1759,22 +1792,49 @@ mod deepy_roundtrip_tests {
             None,
             None,
             Some("gguf_ptq1".into()),
+            Some(serde_json::json!(1)),
         );
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
         let c = read_cfg();
         assert_eq!(c["enhancer_enabled"], 5);
         assert_eq!(c["llm_engines"]["deepy"], "qwen38_27b");
         assert_eq!(c["prompt_enhancer_quantization"], "gguf_ptq1");
-        // Bonsai companions ride along: Automatic prompting + INT8 KV cache.
-        assert_eq!(c["enhancer_mode"], 0);
+        // Bonsai companions ride along: button kept + INT8 KV cache.
+        assert_eq!(c["enhancer_mode"], 1);
         assert_eq!(c["deepy_kv_cache_quantization"], "int8");
-        // disabled + Florence
-        let r = deepy_set("disabled".into(), None, Some(serde_json::json!(2)), None, None);
+        // disabled + Qwen: standalone enhancer — engine, quant and an
+        // explicit Automatic choice all stick
+        let r = deepy_set(
+            "disabled".into(),
+            None,
+            Some(serde_json::json!(3)),
+            None,
+            Some("gguf".into()),
+            Some(serde_json::json!(0)),
+        );
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
+        let c = read_cfg();
+        assert_eq!(c["deepy_enabled"], 0);
+        assert_eq!(c["enhancer_enabled"], 3);
+        assert_eq!(c["llm_engines"]["deepy"], "qwen35_4b");
+        assert_eq!(c["prompt_enhancer_quantization"], "gguf");
+        assert_eq!(c["enhancer_mode"], 0);
+        // disabled + Florence (explicit button)
+        let r = deepy_set(
+            "disabled".into(),
+            None,
+            Some(serde_json::json!(2)),
+            None,
+            None,
+            Some(serde_json::json!(1)),
+        );
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
         let c = read_cfg();
         assert_eq!(c["deepy_enabled"], 0);
         assert_eq!(c["enhancer_enabled"], 2);
         assert_eq!(c["llm_engines"]["deepy"], "local_florence_llamajoy");
+        // disabled leaves the prompt-enhancement UI choice untouched
+        assert_eq!(c["enhancer_mode"], 1);
         // restore byte-identical
         std::fs::write(&p, &original).unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), original);

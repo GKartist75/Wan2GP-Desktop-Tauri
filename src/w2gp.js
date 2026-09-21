@@ -557,8 +557,8 @@
         configSave: (cfg) => call("config_save", { cfg }),
         deepyStatus: () => call("deepy_status"),
         deepyActivate: (e) => call("deepy_activate", { engine: e }),
-        deepySet: (mode, engine, enhancer, sessions, quant) =>
-            call("deepy_set", { mode, engine, enhancer, sessions, quant }),
+        deepySet: (mode, engine, enhancer, sessions, quant, enhancerMode) =>
+            call("deepy_set", { mode, engine, enhancer, sessions, quant, enhancerMode }),
         deepyWebPreflight: (mode) => call("deepy_web_preflight", { mode }),
         deepyWebStart: (mode, deepyPort, authMode, authFixed, https, publicUrl) =>
             call("deepy_web_start", {

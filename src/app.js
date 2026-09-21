@@ -7027,15 +7027,15 @@ const DEEPY_PANEL_ENGINES = [
 // the UI (the non-applicable ones are shown disabled with an annotation), so
 // the user sees the full set of possible local models.
 const DEEPY_PANEL_ENHANCERS = [
-  { id: 1, label: "Florence 2 + Llama 3.2 3B (local)", modes: ["disabled"] },
-  { id: 2, label: "Florence 2 + Llama Joy 8B (local)", modes: ["disabled"] },
+  { id: 1, label: "Florence 2 + Llama 3.2 3B (local)", modes: ["disabled", "zero"] },
+  { id: 2, label: "Florence 2 + Llama Joy 8B (local)", modes: ["disabled", "zero"] },
   {
     id: 3,
     label: "Qwen3.5 VL Abliterated 4B (local, recommended)",
-    modes: ["zero"],
+    modes: ["disabled", "zero"],
   },
-  { id: 4, label: "Qwen3.5 VL Abliterated 9B (local)", modes: ["zero"] },
-  { id: 5, label: "Qwen3.8 VL Uncensored 27B (local)", modes: ["zero"] },
+  { id: 4, label: "Qwen3.5 VL Abliterated 9B (local)", modes: ["disabled", "zero"] },
+  { id: 5, label: "Qwen3.8 VL Uncensored 27B (local)", modes: ["disabled", "zero"] },
 ];
 
 // Qwen LLM Quantization choices per local engine id — mirrors upstream's
@@ -7101,7 +7101,7 @@ function updateDeepyQuantHint(value, enhancerId) {
   if (!hint) return;
   hint.textContent =
     value === "gguf_ptq1"
-      ? "Bonsai PTQ1 runs Prime on ~10 GB VRAM (Sync Kernels for 1.0.22+). Weights download on first WanGP launch. Apply also sets Automatic prompting + INT8 KV cache."
+      ? "Bonsai PTQ1 runs Prime on ~10 GB VRAM (Sync Kernels for 1.0.22+). Weights download on first WanGP launch. Apply also sets INT8 KV cache."
       : Number(enhancerId) === 5
         ? "GGUF Q4 is highest quality; Q3/Q2 trade quality for VRAM. Weights download on first WanGP launch."
         : "Quanto Int8 preserves quality; GGUF Q4 uses less memory when kernels are installed.";
@@ -7111,6 +7111,8 @@ async function refreshDeepy() {
   const opts = $("deepyEngineOptions");
   const statusMsg = $("deepyStatusMsg");
   const applyBtn = $("deepyApplyBtn");
+  const promptApplyBtn = $("deepyPromptApplyBtn");
+  const promptStatusMsg = $("deepyPromptStatusMsg");
   const docsLink = $("deepyDocsLink");
   const primeOnly = $("deepyPrimeOnly");
   const enhancerWrap = $("deepyEnhancerWrap");
@@ -7171,6 +7173,10 @@ async function refreshDeepy() {
   if ($("deepySessionMode")) $("deepySessionMode").value = curSessionMode;
   if ($("deepySessionReset")) $("deepySessionReset").value = curResetMode;
   if ($("deepySessionGallery")) $("deepySessionGallery").value = curGalleryMode;
+  // Prompt-enhancement UI — pre-select from config; missing key defaults to
+  // the Enhance Prompt button (1).
+  if ($("deepyEnhancerMode"))
+    $("deepyEnhancerMode").value = status.enhancerMode === 0 ? "0" : "1";
   // Default engine for Prime is OpenCode (universal providers / external, free).
   // Preserve an already-configured engine; otherwise fall back to OpenCode.
   const selectedEngine = currentUi || "opencode";
@@ -7200,7 +7206,7 @@ async function refreshDeepy() {
     const sub =
       mode === "zero"
         ? "Deepy Zero runs locally — pick the Qwen model Wan2GP will use."
-        : "Florence 2 + Llama 3.2 3B is the default local model when Deepy is off.";
+        : "Prompt enhancement runs without Deepy too — pick any local model.";
     if (enhancerHint) enhancerHint.textContent = sub;
     enhancerOpts.textContent = "";
     for (const o of DEEPY_PANEL_ENHANCERS) {
@@ -7318,10 +7324,10 @@ async function refreshDeepy() {
         title = "Pick a local model (Prompt Enhancer)";
       }
     }
-    // Qwen quant selector follows the local engine: Zero + Qwen 3/4/5, or
-    // Prime + local Qwen3.8 (id 5). Hidden otherwise (quant untouched).
+    // Qwen quant selector follows the local engine: Disabled/Zero + Qwen 3/4/5,
+    // or Prime + local Qwen3.8 (id 5). Hidden otherwise (quant untouched).
     const qEnhRaw =
-      mode === "zero"
+      mode === "zero" || mode === "disabled"
         ? parseInt(
             (enhancerOpts.querySelector("input[name=deepyEnhancer]:checked") || {})
               .value,
@@ -7333,8 +7339,13 @@ async function refreshDeepy() {
           ? 5
           : NaN;
     renderDeepyQuant([3, 4, 5].includes(qEnhRaw) ? qEnhRaw : null, savedQuant);
-    applyBtn.disabled = !ok;
-    applyBtn.title = title || "Set Deepy to " + mode;
+    // Both Apply buttons (Deepy card + Prompt enhancement card) share one
+    // coherent config write, so they enable/disable together.
+    for (const b of [applyBtn, promptApplyBtn]) {
+      if (!b) continue;
+      b.disabled = !ok;
+      b.title = title || "Set Deepy to " + mode;
+    }
   };
   modeRadios.forEach((r) =>
     r.addEventListener("change", () => {
@@ -7353,9 +7364,22 @@ async function refreshDeepy() {
   enhancerOpts
     .querySelectorAll("input[name=deepyEnhancer]")
     .forEach((r) => r.addEventListener("change", syncApply));
+  // Dropdowns have no validation of their own, but changing one is a pending
+  // change — enable both Apply buttons.
+  for (const id of [
+    "deepySessionMode",
+    "deepySessionReset",
+    "deepySessionGallery",
+    "deepyEnhancerMode",
+    "deepyQuantSelect",
+  ]) {
+    $(id)?.addEventListener("change", syncApply);
+  }
   syncApply();
 
-  applyBtn.onclick = async () => {
+  // One shared write for both cards: reads the whole panel state and applies
+  // it coherently. Each Apply button reports into its own card's message line.
+  const applyDeepy = async (btn, msgEl) => {
     const mode =
       (document.querySelector("input[name=deepyMode]:checked") || {}).value ||
       "disabled";
@@ -7364,8 +7388,8 @@ async function refreshDeepy() {
     const enh = (
       enhancerOpts.querySelector("input[name=deepyEnhancer]:checked") || {}
     ).value;
-    applyBtn.disabled = true;
-    applyBtn.textContent = "applying...";
+    btn.disabled = true;
+    btn.textContent = "applying...";
     const sessions = {
       multi_session: ($("deepySessionMode") || {}).value || "selectable",
       reset_mode: ($("deepySessionReset") || {}).value || "new_session",
@@ -7379,20 +7403,25 @@ async function refreshDeepy() {
       quantWrap && quantWrap.style.display !== "none" && quantSel && quantSel.value
         ? quantSel.value
         : null;
+    // Prompt-enhancement UI: "1" = Enhance Prompt button, "0" = Automatic.
+    const enhancerMode = ($("deepyEnhancerMode") || {}).value || "1";
     const r = await window.w2gp.deepySet(
       mode,
       eng,
       enh ? parseInt(enh, 10) : null,
       sessions,
       quant,
+      enhancerMode,
     );
-    applyBtn.textContent = "Apply";
+    btn.textContent = "Apply";
+    // No pending changes left — park both buttons until the next edit.
+    for (const b of [applyBtn, promptApplyBtn]) if (b) b.disabled = true;
     if (r && r.ok) {
       const s = document.createElement("span");
       s.style.color = "#4ADE80";
       s.textContent = "✓ " + (r.message || "Deepy updated");
-      statusMsg.textContent = "";
-      statusMsg.append(s);
+      msgEl.textContent = "";
+      msgEl.append(s);
       showToast("✓ " + (r.message || "Deepy updated"));
       appendLog(
         "[Deepy] ✓ " +
@@ -7404,21 +7433,27 @@ async function refreshDeepy() {
           "/" +
           sessions.gallery_media_mode +
           (quant ? "; quant: " + quant : "") +
+          "; prompt: " +
+          (enhancerMode === "0" ? "automatic" : "button") +
           ")",
       );
     } else {
       const s = document.createElement("span");
       s.style.color = "#F87171";
       s.textContent = "✗ " + ((r && r.error) || "update failed");
-      statusMsg.textContent = "";
-      statusMsg.append(s);
+      msgEl.textContent = "";
+      msgEl.append(s);
       showToast("✗ " + (r && r.error ? r.error : "update failed"));
       appendLog(
         "[Deepy] ✗ update failed: " + ((r && r.error) || "update failed"),
       );
-      applyBtn.disabled = false;
+      for (const b of [applyBtn, promptApplyBtn]) if (b) b.disabled = false;
     }
   };
+  applyBtn.onclick = () => applyDeepy(applyBtn, statusMsg);
+  if (promptApplyBtn)
+    promptApplyBtn.onclick = () =>
+      applyDeepy(promptApplyBtn, promptStatusMsg || statusMsg);
   if (docsLink)
     docsLink.onclick = async (ev) => {
       ev.preventDefault();
