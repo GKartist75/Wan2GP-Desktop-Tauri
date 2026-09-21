@@ -152,7 +152,7 @@
         box.innerHTML = '<p class="token-hint">Empty — models download on first use in WanGP.</p>'
         return
       }
-      box.innerHTML = '<table class="args-table lib-table">' +
+      box.innerHTML = '<table class="args-table lib-table compact">' +
         '<tr><td><strong>Checkpoint</strong></td><td><strong>Kind</strong></td><td><strong>Size</strong></td></tr>' +
         r.sample.map((f) => (
           '<tr><td><code>' + esc(f.name) + '</code></td><td>' + esc(f.kind || '—') + '</td><td>' + esc(fmtBytes(f.bytes)) + '</td></tr>'

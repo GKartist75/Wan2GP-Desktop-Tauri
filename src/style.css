@@ -2224,6 +2224,15 @@ table.args-table.lib-table td:first-child {
  color: var(--text-primary);
  white-space: nowrap;
 }
+/* Compact: checkpoint filenames are ~50 chars — smaller text plus wrapping
+   so the Size column never clips off the panel edge. */
+table.args-table.lib-table.compact td {
+ font-size: 0.6875rem;
+}
+table.args-table.lib-table.compact td:first-child {
+ white-space: normal;
+ word-break: break-all;
+}
 
 /* ── Settings Panel ── */
 .settings-overlay {
