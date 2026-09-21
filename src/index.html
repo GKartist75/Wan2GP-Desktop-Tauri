@@ -459,6 +459,30 @@
           <pre id="cfgChangelogBox" class="token-hint" style="margin-top:8px;max-height:300px;overflow:auto;white-space:pre-wrap"></pre>
         </div>
         <div class="settings-section" style="margin-top:12px">
+          <h3>Deepy engine checks</h3>
+          <p class="token-hint">Prerequisites for remote Deepy engines (Dashboard → Deepy does the configuring). Local Qwen needs nothing here.</p>
+          <div class="token-field" style="margin-top:8px">
+            <button class="btn btn-ghost small" id="deepyChecksRunBtn" title="Probe engine binaries and the Claude bridge pin">Run checks</button>
+            <span class="token-hint" id="deepyChecksStatus" style="margin-left:8px"></span>
+          </div>
+          <div id="deepyChecksBox" style="margin-top:8px"></div>
+        </div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>Network &amp; TLS flags</h3>
+          <p class="token-hint">Validate a reverse-proxy origin and stage <code>--public-url</code> / TLS flags into Extra Launch Args (press <strong>Save</strong> in Manage → Launch). Auth itself lives in the Deepy Web card.</p>
+          <div class="token-field" style="margin-top:8px">
+            <input type="text" id="netPublicUrlInput" class="input" placeholder="https://wangp.example.com" style="max-width:320px" title="Exact origin: scheme + host + optional port, no path">
+            <button class="btn btn-ghost small" id="netUrlValidateBtn" title="Validate and stage --public-url">Validate &amp; stage</button>
+          </div>
+          <div class="token-field" style="margin-top:8px">
+            <input type="text" id="netCertInput" class="input" placeholder="C:\certs\wangp.pem" style="max-width:320px" title="TLS certificate file">
+            <input type="text" id="netKeyInput" class="input" placeholder="C:\certs\wangp-key.pem" style="max-width:320px" title="TLS private key file">
+            <input type="number" id="netHttpsPortInput" class="input" placeholder="HTTPS port (optional)" min="1024" max="65535" style="width:170px" title="Serve HTTPS here and redirect HTTP">
+            <button class="btn btn-ghost small" id="netTlsStageBtn" title="Stage --ssl-certfile/--ssl-keyfile/--https-port">Stage TLS</button>
+          </div>
+          <p class="token-hint" id="netStatus" style="margin-top:6px"></p>
+        </div>
+        <div class="settings-section" style="margin-top:12px">
           <h3>Triton / SageAttention</h3>
           <p class="token-hint">Upstream Sage diagnostic: test the Triton import, clear a stale <code>%USERPROFILE%\.triton</code> cache (renamed to backup, never deleted blind), optionally fall back to <code>--attention sdpa</code>.</p>
           <div class="token-field" style="margin-top:8px">
@@ -1754,6 +1778,8 @@
   <script src="guide-tab.js" defer></script>
   <script src="launch-builder.js" defer></script>
   <script src="library-tab.js" defer></script>
+  <script src="services/net-validate.js" defer></script>
   <script src="safety-tab.js" defer></script>
+  <script src="deepy-checks.js" defer></script>
 </body>
 </html>

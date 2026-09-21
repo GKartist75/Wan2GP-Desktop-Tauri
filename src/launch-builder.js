@@ -18,6 +18,9 @@
     if (typeof applyPatch === 'function') set(applyPatch(current(), patchObj))
   }
 
+  // Hook for other cards (F8 network staging) to patch launch args.
+  try { window.w2gpLaunchPatch = patch } catch (e) {}
+
   function init() {
     if (!$('launchArgsInput')) return
     document.querySelectorAll('[data-launch-preset]').forEach((btn) => {
