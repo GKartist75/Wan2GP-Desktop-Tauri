@@ -388,6 +388,115 @@ pub fn library_finetune_delete(id: String) -> Result<serde_json::Value, String> 
     Ok(serde_json::json!({"ok": true, "id": id}))
 }
 
+/// F4-models: crude kind tag from a checkpoint filename (display only —
+/// never authoritative about precision, the loader decides that).
+pub(crate) fn model_kind_tag(name: &str) -> &'static str {
+    let l = name.to_lowercase();
+    if l.contains("gguf") {
+        "GGUF"
+    } else if l.contains("nvfp4") {
+        "NVFP4"
+    } else if l.contains("nunchaku") || l.contains("svdq") || l.contains("nf4") {
+        "Nunchaku/NF4"
+    } else if l.contains("quanto") || l.contains("int8") {
+        "INT8"
+    } else if l.contains("fp8") {
+        "FP8"
+    } else if l.contains("bf16") {
+        "BF16"
+    } else if l.contains("fp16") {
+        "FP16"
+    } else {
+        "—"
+    }
+}
+
+fn is_ckpt_file(name: &str) -> bool {
+    let l = name.to_lowercase();
+    l.ends_with(".safetensors")
+        || l.ends_with(".gguf")
+        || l.ends_with(".pt")
+        || l.ends_with(".pth")
+        || l.ends_with(".bin")
+        || l.ends_with(".ckpt")
+}
+
+/// Resolve the checkpoints dir: wgp_config checkpoints_paths[0] (any key
+/// spelling, mirrors get_model_paths) → desktop-config modelCkptsPath →
+/// repo/ckpts.
+pub(crate) fn resolve_ckpts_dir() -> Option<PathBuf> {
+    let repo = get_repo_dir();
+    if let Ok(s) = std::fs::read_to_string(repo.join("wgp_config.json")) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+            for k in ["checkpoints_paths", "checkpointsPaths", "ckpt_dir"] {
+                if let Some(p) = v
+                    .get(k)
+                    .and_then(|x| x.as_array().and_then(|a| a.first()).or(Some(x)))
+                    .and_then(|x| x.as_str())
+                    .filter(|s| !s.is_empty())
+                {
+                    return Some(PathBuf::from(p));
+                }
+            }
+        }
+    }
+    let dc = load_config_value();
+    if let Some(p) = dc
+        .get("modelCkptsPath")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(PathBuf::from(p));
+    }
+    let fallback = repo.join("ckpts");
+    if fallback.exists() {
+        Some(fallback)
+    } else {
+        None
+    }
+}
+
+/// F4-models: downloaded checkpoint inventory (names, sizes, kind tags).
+/// Reads file metadata only — never opens weights.
+#[tauri::command]
+pub fn library_models() -> serde_json::Value {
+    let Some(root) = resolve_ckpts_dir() else {
+        return serde_json::json!({"ok": false, "error": "No checkpoints folder configured"});
+    };
+    let mut files = vec![];
+    let mut bytes = 0u64;
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for e in entries.filter_map(|x| x.ok()) {
+            let p = e.path();
+            if !p.is_file() {
+                continue;
+            }
+            let name = e.file_name().to_string_lossy().to_string();
+            if !is_ckpt_file(&name) {
+                continue;
+            }
+            let b = e.metadata().map(|m| m.len()).unwrap_or(0);
+            bytes += b;
+            files.push(serde_json::json!({
+                "name": name,
+                "bytes": b,
+                "kind": model_kind_tag(&e.file_name().to_string_lossy()),
+            }));
+        }
+    }
+    files.sort_by(|a, b| b["bytes"].as_u64().cmp(&a["bytes"].as_u64()));
+    let truncated = files.len() > 300;
+    let sample: Vec<serde_json::Value> = files.iter().take(300).cloned().collect();
+    serde_json::json!({
+        "ok": true,
+        "root": root.to_string_lossy().to_string(),
+        "files": files.len(),
+        "bytes": bytes,
+        "truncated": truncated,
+        "sample": sample,
+    })
+}
+
 #[tauri::command]
 pub fn library_finetune_content(id: String) -> Result<serde_json::Value, String> {
     if !finetune_id_valid(&id) {
@@ -865,6 +974,17 @@ mod library_tests {
         let files = vec!["a.safetensors".to_string(), "b.safetensors".to_string()];
         assert_eq!(lora_cache_hits(&cache, "D:\\L", &files), 1);
         assert_eq!(lora_cache_hits(&cache, "D:\\Other", &files), 0);
+    }
+
+    #[test]
+    fn kind_tags_quant_families() {
+        use super::model_kind_tag;
+        assert_eq!(model_kind_tag("m_qwen38_Q4.gguf"), "GGUF");
+        assert_eq!(model_kind_tag("x_quanto_bf16_int8.safetensors"), "INT8");
+        assert_eq!(model_kind_tag("x_fp8.safetensors"), "FP8");
+        assert_eq!(model_kind_tag("x_nvfp4.safetensors"), "NVFP4");
+        assert_eq!(model_kind_tag("x_bf16.safetensors"), "BF16");
+        assert_eq!(model_kind_tag("readme.txt"), "—");
     }
 
     #[test]

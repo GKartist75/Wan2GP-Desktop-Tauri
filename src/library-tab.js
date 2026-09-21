@@ -116,7 +116,7 @@
 
   function init() {
     if (!$('libLorasBox')) return
-    $('libRefreshBtn')?.addEventListener('click', async () => { await refreshLoras(); await refreshFinetunes(); await refreshWorkspaces() })
+    $('libRefreshBtn')?.addEventListener('click', async () => { await refreshLoras(); await refreshFinetunes(); await refreshWorkspaces(); await refreshModels() })
     $('libImportBtn')?.addEventListener('click', async () => {
       const status = $('libFinetunesStatus')
       const src = ($('libImportInput')?.value || '').trim().replace(/^"|"$/g, '')
@@ -133,7 +133,36 @@
     refreshLoras()
     refreshFinetunes()
     refreshWorkspaces()
+    refreshModels()
     initWsBackupOnce()
+  }
+
+  async function refreshModels() {
+    const box = $('libModelsBox')
+    const status = $('libModelsStatus')
+    if (!box) return
+    box.innerHTML = '<p class="token-hint">Loading…</p>'
+    try {
+      const r = await window.w2gp.libraryModels()
+      if (!r || r.ok === false) {
+        box.innerHTML = '<p class="token-hint">' + esc((r && r.error) || 'No checkpoints folder found') + '</p>'
+        return
+      }
+      if (!r.files) {
+        box.innerHTML = '<p class="token-hint">Empty — models download on first use in WanGP.</p>'
+        return
+      }
+      box.innerHTML = '<table class="args-table lib-table">' +
+        '<tr><td><strong>Checkpoint</strong></td><td><strong>Kind</strong></td><td><strong>Size</strong></td></tr>' +
+        r.sample.map((f) => (
+          '<tr><td><code>' + esc(f.name) + '</code></td><td>' + esc(f.kind || '—') + '</td><td>' + esc(fmtBytes(f.bytes)) + '</td></tr>'
+        )).join('') + '</table>' +
+        (r.truncated ? '<p class="token-hint">First 300 of ' + esc(r.files) + ' shown (largest first).</p>' : '') +
+        '<p class="token-hint">Root: <code>' + esc(r.root) + '</code></p>'
+      if (status) status.textContent = r.files + ' files · ' + fmtBytes(r.bytes)
+    } catch (e) {
+      box.innerHTML = '<p class="token-hint">Failed: ' + esc((e && e.message) || e) + '</p>'
+    }
   }
 
   function fmtDate(ts) {

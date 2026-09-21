@@ -618,6 +618,7 @@
         pluginUninstall: (id) => call("plugin_uninstall", { id }),
         pluginRefreshCatalog: () => call("plugin_refresh_catalog"),
         libraryLoras: () => call("library_loras"),
+        libraryModels: () => call("library_models"),
         libraryFinetunes: () => call("library_finetunes"),
         libraryFinetuneImport: (source) =>
             call("library_finetune_import", { source }),

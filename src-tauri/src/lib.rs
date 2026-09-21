@@ -160,6 +160,7 @@ pub fn run() {
             config::uv_cache_size,
             config::manage_list,
             config::library_loras,
+            config::library_models,
             config::library_finetunes,
             config::library_finetune_import,
             config::library_finetune_delete,
