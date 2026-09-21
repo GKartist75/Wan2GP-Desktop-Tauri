@@ -29,15 +29,18 @@ P0 (F1–F4) implemented and committed locally — nothing pushed.
 ## C. Launcher features — P1 (build second)
 
 - [x] F5. Prompt starter pack + window validator — Guide → Prompt tools: 6 templates with line modes, copy button, offline `[/...]` checker (7 node cases green)
+- [x] F6. Headless queue runner — Launch → Headless batch: queue path + output dir + dry-run → `batch_process` with console streaming + exit codes (2 new Rust tests)
+- [x] F7. Workspace backup + disk usage — Library → Workspaces: media counts, real sizes, missing-file flags, lock toggle, definitions ZIP (2 new Rust tests)
+- [x] F8. Deepy setup checker + network panel — System → engine binary checks + `claude-agent-sdk==0.1.66` pin, public-url validator (8 node cases), TLS flag staging into launch args
 - [ ] F6. Headless queue runner — `Manage → Batch`: pick queue.zip/JSON → `--dry-run` → `--process` with progress + exit codes → `--output-dir`
 - [ ] F7. Workspace backup + disk usage — per-workspace size, backup ZIP, `archive_protected` toggle, storage bar
 - [ ] F8. Deepy setup checker + network panel — binary detection, `claude-agent-sdk==0.1.66` pin check, Refresh/catalog lifecycle, cert picker, `--public-url` validator, port/firewall check
 
 ## D. Launcher features — P2 (polish, build last)
 
-- [ ] F9. VACE + upsampler explainers — pre-flight checklist, reference-role explainer, post tables with requirement labels
-- [ ] F10. API/MCP connector helper — copy-paste launch strings, connection URL, filesystem-read warning, docs links
-- [ ] F11. Settings safety — `wgp_config.json` snapshot/diff/restore on every Apply; upstream + launcher changelog viewer
+- [x] F9. VACE + upsampler explainers — Guide → pre-flight checklist, reference-role + post tables (static, no backend)
+- [x] F10. API/MCP connector helper — Launch → Agent API card: transport/host/port/version → command + client URL + copy
+- [x] F11. Settings safety — snapshot on every Apply (memory/Deepy/Manage writes, newest 5), System → restore + upstream changelog viewer (4 new Rust tests)
 
 ## E. Non-goals
 
