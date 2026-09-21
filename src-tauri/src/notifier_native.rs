@@ -54,6 +54,19 @@ except Exception as e:
     urls, keyring_error = [], "%s: %s" % (type(e).__name__, e)
 if not keyring_error:
     keyring_error = secure_store.availability_error()
+try:
+    from importlib.metadata import version as _dist_version
+    apprise_version = _dist_version("apprise")
+except Exception:
+    apprise_version = ""
+try:
+    from importlib.metadata import version as _dist_version2
+    keyring_version = _dist_version2("keyring")
+except Exception:
+    keyring_version = ""
+import os as _os
+_exe_dir = _os.path.dirname(__import__("sys").executable)
+apprise_binary = _os.path.isfile(_os.path.join(_exe_dir, "apprise.exe" if _os.name == "nt" else "apprise"))
 out.update({
     "supported": True,
     "wgpConfig": True,
@@ -64,6 +77,9 @@ out.update({
     "onQueueComplete": bool(cfg.get(S.NOTIFY_QUEUE_COMPLETE_KEY, False)),
     "onQueueInterrupted": bool(cfg.get(S.NOTIFY_QUEUE_INTERRUPTED_KEY, False)),
     "keyringError": keyring_error,
+    "appriseVersion": apprise_version,
+    "appriseBinary": apprise_binary,
+    "keyringVersion": keyring_version,
 })
 print(json.dumps(out))"#;
 

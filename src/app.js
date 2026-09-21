@@ -697,12 +697,17 @@ function initSettingsToggles() {
       if (ld && ld.ok && $("nativeNotifUrls")) $("nativeNotifUrls").value = ld.urlsText || "";
     } catch {}
     const bits = [];
+    if (st.appriseVersion) bits.push(`apprise ${st.appriseVersion}${st.appriseBinary ? "" : " (no CLI)"}`);
+    else bits.push("apprise missing");
+    if (st.keyringVersion) bits.push(`keyring ${st.keyringVersion}`);
+    else bits.push("keyring missing");
     bits.push(st.urlsCount ? `${st.urlsCount} destination(s)` : "no destinations");
     if (st.secure) bits.push(st.credentialSet ? "credential store" : "secure, nothing stored yet");
     if (st.keyringError && st.secure) bits.push("keyring: " + st.keyringError);
     if (st.onGeneration || st.onQueueComplete || st.onQueueInterrupted)
       bits.push("native active — launcher sender off");
-    nativeStatus(bits.join(" · "), !!(st.keyringError && st.secure));
+    const pkgsMissing = !st.appriseVersion || !st.keyringVersion;
+    nativeStatus(bits.join(" · "), !!(pkgsMissing || (st.keyringError && st.secure)));
   };
   nativeRefresh().catch(() => {});
   $("nativeNotifSaveBtn")?.addEventListener("click", async () => {
