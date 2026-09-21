@@ -493,18 +493,27 @@ pub async fn launch(
         let tmp = std::env::temp_dir();
         for stale in std::fs::read_dir(&tmp).into_iter().flatten().flatten() {
             let n = stale.file_name().to_string_lossy().to_string();
-            if n.starts_with("wan2gp-bootstrap-") && n.ends_with(".py") {
-                let _ = std::fs::remove_file(stale.path());
+            if n.starts_with("wan2gp-bootstrap-") {
+                // Issue #36: legacy loose files + current subdirs.
+                if stale.path().is_dir() {
+                    let _ = std::fs::remove_dir_all(stale.path());
+                } else if n.ends_with(".py") {
+                    let _ = std::fs::remove_file(stale.path());
+                }
             }
         }
-        tmp.join(format!(
-            "wan2gp-bootstrap-{}-{}.py",
+        // Issue #36: isolated subdir so %TEMP% itself is never sys.path[0].
+        // A stray %TEMP%\grp.py used to shadow stdlib (tarfile -> import grp).
+        let dir = tmp.join(format!(
+            "wan2gp-bootstrap-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis())
                 .unwrap_or(0)
-        ))
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        dir.join("boot.py")
     };
     let _ = std::fs::write(
         &boot,
@@ -527,6 +536,10 @@ sys.stderr = _Tty(sys.stderr)
 sys.__stdout__ = sys.stdout
 sys.__stderr__ = sys.stderr
 print('[bootstrap] active', flush=True)
+# Issue #36: drop our own dir from sys.path so nothing beside boot.py can
+# shadow stdlib; %TEMP% itself is never on sys.path (isolated subdir).
+_boot_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path = [p for p in sys.path if os.path.abspath(p or '.') != _boot_dir]
 sys.argv = sys.argv[1:]
 d = os.path.dirname(os.path.abspath(sys.argv[0]))
 if d not in sys.path: sys.path.insert(0, d)

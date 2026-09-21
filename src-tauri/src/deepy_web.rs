@@ -1074,17 +1074,20 @@ pub async fn deepy_web_start(
     }
     mutating_try("deepy-web-start")?;
     let py = resolve_py();
-    let boot = std::env::temp_dir().join(format!(
-        "wan2gp-deepy-bootstrap-{}-{}.py",
+    // Issue #36: isolated subdir so %TEMP% itself is never sys.path[0].
+    let boot_dir = std::env::temp_dir().join(format!(
+        "wan2gp-deepy-bootstrap-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or(0)
     ));
-    if std::fs::write(
-        &boot,
-        r#"import os, sys, runpy
+    let boot = boot_dir.join("boot.py");
+    if std::fs::create_dir_all(&boot_dir).is_err()
+        || std::fs::write(
+            &boot,
+            r#"import os, sys, runpy
 os.environ['PYTHONUNBUFFERED'] = '1'
 os.environ.setdefault('TERM', 'xterm-256color')
 class _Tty:
@@ -1098,13 +1101,15 @@ sys.stdout = _Tty(sys.stdout)
 sys.stderr = _Tty(sys.stderr)
 sys.__stdout__ = sys.stdout
 sys.__stderr__ = sys.stderr
+_boot_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path = [p for p in sys.path if os.path.abspath(p or '.') != _boot_dir]
 sys.argv = sys.argv[1:]
 d = os.path.dirname(os.path.abspath(sys.argv[0]))
 if d not in sys.path: sys.path.insert(0, d)
 runpy.run_path(sys.argv[0], run_name='__main__')
 "#,
-    )
-    .is_err()
+        )
+        .is_err()
     {
         mutating_done();
         return Ok(serde_json::json!({"ok": false, "error": "Cannot write bootstrap shim."}));
