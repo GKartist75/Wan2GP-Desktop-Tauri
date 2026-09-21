@@ -447,11 +447,13 @@ pub(crate) fn auto_config_plan(
 
 /// Upstream Qwen3.8 27B text-GGUF checkpoints the local Prime engine can run
 /// on (shared/prompt_enhancer/assets.py: `QWEN38_27B_TEXT_GGUF_*`). Any one of
-/// them counts as "weights present" — the Q4_K_M / IQ3_S / IQ2_M quant menu.
+/// them counts as "weights present" — the Q4_K_M / IQ3_S / IQ2_M quant menu
+/// plus the v13.13 Bonsai 2 PTQ1 checkpoint (Deepy Prime at ~10GB VRAM).
 const QWEN38_27B_WEIGHT_FILES: &[&str] = &[
     "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
     "Qwen3.8-27B-Uncensored-noMTP-IQ3_S.gguf",
     "Qwen3.8-27B-Uncensored-IQ2_M.gguf",
+    "Ternary-Bonsai-2-27B-Abliterated-PTQ1_0.gguf",
 ];
 /// Upstream assets folder holding the 27B weights
 /// (shared/prompt_enhancer/assets.py: `assets_dir_name`).
@@ -706,6 +708,7 @@ fn ensure_deepy_config_for_web() -> Result<String, String> {
                 None,
                 Some(serde_json::json!(3)),
                 None,
+                None,
             );
             if r.get("ok").and_then(|x| x.as_bool()) == Some(true) {
                 Ok("zero+qwen35-4b".to_string())
@@ -738,6 +741,7 @@ fn ensure_deepy_config_for_web() -> Result<String, String> {
                 dtype.clone(),
                 eng_arg,
                 Some(serde_json::json!(3)),
+                None,
                 None,
             );
             if r.get("ok").and_then(|x| x.as_bool()) == Some(true) {
@@ -2015,6 +2019,7 @@ mod tests {
             "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
             "Qwen3.8-27B-Uncensored-noMTP-IQ3_S.gguf",
             "Qwen3.8-27B-Uncensored-IQ2_M.gguf",
+            "Ternary-Bonsai-2-27B-Abliterated-PTQ1_0.gguf",
         ] {
             let tmp = tempfile::tempdir().expect("fixture dir");
             let dir = tmp.path().join("ckpts").join("Qwen3_8_27B_Uncensored");

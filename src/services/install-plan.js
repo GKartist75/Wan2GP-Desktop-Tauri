@@ -74,6 +74,8 @@ function buildPlan(hw = {}) {
         driverWarning = `NVIDIA driver ${hw.driverVersion} is older than R580. The cu130 packages need driver R580+. Update the driver before installing, or generation will fail with CUDA errors.`
       }
       notes.push('RTX 20/30/40/50 → CUDA 13 stack (needs R580+ driver).')
+      notes.push('Comfy Kitchen kernels ship via requirements.txt (covered by the same R580+ driver) and accelerate H3 / LTX2.x; no separate wheel step.')
+      notes.push('Qwen Image 2.1 model files are large (bf16 + int8_convrot safetensors plus encoder/VAE); they download on first use. Pre/post-processing checkpoints are JIT (on-demand), so upfront disk stays smaller.')
     }
     // Attention kernels Wan2GP installs for NVIDIA (Sparge needs SM ≥ 7.0 —
     // true for every card reaching this branch, so it stays in the base list).

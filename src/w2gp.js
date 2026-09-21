@@ -148,6 +148,7 @@
         reinstall: (opts) => call("reinstall", { options: opts ?? null }),
         uninstall: (opts) => call("uninstall", { options: opts ?? null }),
         update: () => call("update"),
+        depCheck: () => call("dep_check"),
         verifyWangpFiles: () => call("verify_wangp_files"),
         repairWangpFiles: () => call("repair_wangp_files"),
         rollbackWangp: () => call("rollback_wangp"),
@@ -556,8 +557,8 @@
         configSave: (cfg) => call("config_save", { cfg }),
         deepyStatus: () => call("deepy_status"),
         deepyActivate: (e) => call("deepy_activate", { engine: e }),
-        deepySet: (mode, engine, enhancer, sessions) =>
-            call("deepy_set", { mode, engine, enhancer, sessions }),
+        deepySet: (mode, engine, enhancer, sessions, quant) =>
+            call("deepy_set", { mode, engine, enhancer, sessions, quant }),
         deepyWebPreflight: (mode) => call("deepy_web_preflight", { mode }),
         deepyWebStart: (mode, deepyPort, authMode, authFixed, https, publicUrl) =>
             call("deepy_web_start", {

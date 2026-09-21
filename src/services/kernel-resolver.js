@@ -76,18 +76,33 @@ function wheelDistVersion(url) {
 
 /**
  * GGUF wheel override toward docs/INSTALLATION.md#gguf-llamacpp-cuda-kernels.
- * setup_config.json still ships 1.0.14 while the docs prescribe 1.0.21, so
- * swap 1.0.14 → 1.0.21 — but pass anything else through untouched, so the day
+ * setup_config.json still ships 1.0.14 (verified Sep 2026) while the docs
+ * prescribe 1.0.22 (SM120 async-copy kernels, Deepy Prime Bonsai PTQ1
+ * support), so anything below the floor swaps to 1.0.22 — but the floor,
+ * anything newer, and non-GGUF URLs pass through untouched, so the day
  * upstream flips setup_config we follow it verbatim (mirrors the Rust
  * apply_gguf_override in hw.rs, which owns the live sync/overview paths).
  */
-const GGUF_1021_WIN_PY311 = 'https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.21/llamacpp_gguf_cuda-1.0.21%2Btorch210cu130py311-cp311-cp311-win_amd64.whl'
-const GGUF_1021_WIN_PY310 = 'https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.21/llamacpp_gguf_cuda-1.0.21%2Btorch271cu128py310-cp310-cp310-win_amd64.whl'
-const GGUF_TARGET_VERSION = '1.0.21'
+const GGUF_1022_WIN_PY311 = 'https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch210cu130py311-cp311-cp311-win_amd64.whl'
+const GGUF_1022_WIN_PY310 = 'https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch271cu128py310-cp310-cp310-win_amd64.whl'
+const GGUF_TARGET_VERSION = '1.0.22'
+
+function ggufFloorGt(cmd) {
+  // True when the GGUF wheel version in cmd is below the 1.0.22 floor.
+  if (typeof cmd !== 'string') return false
+  const m = /llamacpp_gguf_cuda-(\d+)\.(\d+)\.(\d+)/.exec(cmd)
+  if (!m) return false
+  const v = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const f = [1, 0, 22]
+  for (let i = 0; i < 3; i++) {
+    if (v[i] !== f[i]) return v[i] < f[i]
+  }
+  return false
+}
 
 function applyGgufOverride(key, cmd, torchCode) {
-  if (typeof cmd !== 'string' || !cmd.includes('llamacpp_gguf_cuda-1.0.14')) return cmd
-  return cmd.includes('py310') ? GGUF_1021_WIN_PY310 : GGUF_1021_WIN_PY311
+  if (!ggufFloorGt(cmd)) return cmd
+  return cmd.includes('py310') ? GGUF_1022_WIN_PY310 : GGUF_1022_WIN_PY311
 }
 
 /**
@@ -143,7 +158,7 @@ function buildOverviewWheels(cfg, gpu, osKey) {
   return kernels.map((name) => {
     const def = KERNEL_DISPLAY[name] || { label: name, pipName: name }
     const cmd = components[name] && components[name].cmd && components[name].cmd[osKey]
-    const url = applyGgufOverride(name, cmd, torchCode) // GGUF → docs 1.0.21 while setup_config lags (identity once upstream flips)
+    const url = applyGgufOverride(name, cmd, torchCode) // GGUF → docs 1.0.22 while setup_config lags (identity once upstream flips)
     let configured = null
     if (url) {
       const wi = wheelDistVersion(url)

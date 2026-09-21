@@ -92,7 +92,7 @@ C:\Wan2GP-Models\               ← models library
 ![Wan2GP Desktop Launcher — Desktop view with Wan2GP running and the floating console](screenshots/desktop-live-progress.png)
 *Desktop view: Wan2GP (LTX-2.5 Distilled) embedded, floating console streaming the live log, topbar CPU/GPU/RAM/VRAM sparklines.*
 
-![Auto-Tune — hardware detection, rec/saved tags, and Int8 Kernels default-on](screenshots/autotune-int8.png)
+![Auto-Tune — hardware detection with rec/saved tags](screenshots/autotune-int8.png)
 ![Active Environment — installed packages and GPU kernel wheels](screenshots/env-kernel-wheels.png)
 ![Deepy Prime — local Qwen3.8 + remote LLM engines](screenshots/deepy-prime-engines.png)
 ![Plugin Manager — community catalog with install, update, and favourites](screenshots/plugins-manager.png)
@@ -136,7 +136,7 @@ Same launcher, same Wan2GP, same features — new shell. The Electron edition sh
 **What the launcher adds:**
 
 - 🚀 **One-click install** — GPU detect → plan → preflight (Python pin, disk space, drivers, folder triage) → live progress. Missing Git/Python/uv installs silently, no PATH editing.
-- 🎯 **Always the right kernels** — per-GPU wheels from WanGP's `setup_config.json`, re-synced on install and every update.
+- 🎯 **Always the right kernels** — per-GPU wheels from WanGP's `setup_config.json`, re-synced on install and every update, plus launcher safety overrides (GGUF floor, sage safe build) with one-click pure-upstream Restore.
 - 📂 **Clean data layout** — `C:\Wan2GP` (app) + `C:\Wan2GP-Models` (models), both editable to any drive/folder; migrate later via Dashboard → Paths.
 - 🖥️ **Flexible launch** — Desktop embed, Browser, or External Terminal; pop-out, zoom, browser picker.
 - 🎨 **5 themes + text sizing** — Mono (default), Blue Sky, Orca, Cyber, Matrix; every theme editable (accent/background/text, live preview, Save/Set-as-default/Reset), topbar palette quick-switch, Text + Terminal size sliders in Manage → Appearance.
@@ -165,7 +165,7 @@ Same launcher, same Wan2GP, same features — new shell. The Electron edition sh
 
 **Settings written to `wgp_config.json`**
 
-`video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `enable_int8_kernels` (default on — experimental, ~10% faster with INT8 checkpoints, needs Triton), `vae_config` (always Auto), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** checkbox forces P5 for hardware where the recommendation still crashes.
+`video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `int8_kernels` (Auto / Comfy Kitchen / Triton / Disabled — upstream v13.13 replacement for the old numeric toggle), `kernel_precision` (fast approximate / strict), `vae_config` (always Auto: 16GB+ / 8GB+ / 6GB+ presets), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** checkbox forces P5 for hardware where the recommendation still crashes.
 
 ---
 
@@ -191,15 +191,15 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 | **Python** (uv) | `3.11.14` (RTX 20–50) / `3.10.9` (GTX 10) | venv interpreter |
 | **PyTorch + CUDA** | `2.10.0` + CUDA 13.0 | tensor + GPU runtime |
 | **Triton** | per-GPU pin from `setup_config.json`: `triton-windows>=3.6,<3.7` (RTX 30–50, torch 2.10) / `>=3.2,<3.3` (RTX 20XX) | JIT for custom CUDA/attention kernels on Windows |
-| **SageAttention** | `1.0.6` (RTX 20) / `2.2.0` (RTX 30–50) | fused attention — big speed-up |
+| **SageAttention** | `1.0.6` (RTX 20) / `2.2.0` post6 safe build by default (RTX 30–50; upstream pins post4, restorable via Restore GPU Wheels) | fused attention — big speed-up |
 | **SpargeAttn** | `0.1.0` | sparsity-aware speed-up alongside Sage |
 | **FlashAttention** | `2.8.3` | memory-efficient exact attention for long/high-res |
 | **Nunchaku** | `1.2.1` | SVD-quantized (NF4/SVDQ) runtime — 4/8-bit models |
-| **GGUF llama.cpp CUDA** | `1.0.21` (docs-led; `setup_config.json` still ships 1.0.14, followed automatically once flipped) | CUDA GGUF kernels (Stream-K, quantized KV-cache, speculative-workload fix) |
+| **GGUF llama.cpp CUDA** | `1.0.22` (docs-led; `setup_config.json` still ships 1.0.14, followed automatically once flipped) | CUDA GGUF kernels (Stream-K, quantized KV-cache, SM120 async path, Bonsai PTQ1 support) |
 | **LightX2V** | `0.0.2` | FP4 kernels — **RTX 50xx / sm120+ only** |
 | **bitsandbytes** | `0.49.2` | 8-bit/NF4 dequant for NF4 checkpoints |
 
-**Per-GPU set:** RTX 20 → Sage 1.0.6 + Nunchaku + GGUF + bnb (Flash is Ampere+, so RTX 30 and newer only). RTX 30/40 → add Sparge + Sage 2.2.0. RTX 50 → add LightX2V. All get bitsandbytes. Versions track `setup_config.json` — next update installs new wheels automatically.
+**Per-GPU set:** RTX 20 → Sage 1.0.6 + Nunchaku + GGUF + bnb (Flash is Ampere+, so RTX 30 and newer only). RTX 30/40 → add Sparge + Sage 2.2.0. RTX 50 → add LightX2V. All get bitsandbytes. Versions track `setup_config.json` — next update installs new wheels automatically. Fresh installs finish with a post-install override pass (GGUF floor, sage safe build) so they never land stale; Sync warns if your checkout is behind `origin/main`. `comfy-kitchen==0.2.35` (upstream v13.13, +10% H3/LTX2.x) arrives via `requirements.txt`.
 
 **PyTorch matrix:** RTX 20/30/40/50 → Py 3.11.14 + PyTorch 2.10 + CUDA 13.0/13.1 · GTX 10xx → Py 3.10.9 + PyTorch 2.7.1 + CUDA 12.8. Avoids 2.8.0 (RAM leak) + 2.9.0 (VAE VRAM bug). GTX 10/16 stay on **CUDA 12.8** (no R580 needed); every other NVIDIA card needs **R580+** and is checked before install.
 
@@ -219,7 +219,7 @@ Configure without editing JSON: **Settings → Deepy** or the Dashboard card.
 
 - **Disabled** — Deepy off; keeps local Prompt Enhancer.
 - **Deepy Zero** — local, no account/key. Qwen VL models.
-- **Deepy Prime** — remote LLM via **OpenCode** (free, local models), **Claude Code** (`claude-agent-sdk==0.1.66` pinned bridge) or **Codex** (paid), or local **Qwen3.8 VL 27B** (needs the 27B model + GGUF 1.0.21; auto-sets 32k context + Summarize). Prime exposes WanGP's MCP tools.
+- **Deepy Prime** — remote LLM via **OpenCode** (free, local models), **Claude Code** (`claude-agent-sdk==0.1.66` pinned bridge) or **Codex** (paid), or local **Qwen3.8 VL 27B** (needs the 27B model + GGUF 1.0.22; auto-sets 32k context + Summarize). Local Qwen3.8 offers a **Quantization** picker — GGUF Q4 / IQ3_S / Q2 / **Bonsai PTQ1** (~10 GB VRAM) — plus Automatic prompting and INT8 KV cache for Bonsai. Prime exposes WanGP's MCP tools.
 
 Switching live-re-renders the selector; **Apply** writes a consistent `wgp_config.json` (with backup). Also editable inside WanGP: *Configuration → Prompt Enhancer / Deepy*.
 
@@ -267,7 +267,9 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.7.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.2) *(latest)* — Deepy Web + Wan2GP exits split (independent stop, Stop-Deepy-only button, server-following LED), upstream 13.11 reverse-proxy origin (`--public-url` card field, validated + persisted), version-aware Xet Storage card (installed vs requirements pin, Update when outdated), stale `reference/` snapshot retired.
+- [**v0.7.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.3) *(latest)* — upstream WanGP v13.13 wave: GGUF floor 1.0.22, post-install override sync (fresh installs land on safe wheels), Deepy Qwen quantization picker with Bonsai PTQ1 + Automatic prompting, memory panel tracks `int8_kernels`/`kernel_precision`, VAE presets relabeled, startup drift self-check, marker-aware update diff, +1px panel text. Details in [CHANGELOG](CHANGELOG.md); upstream PR [deepbeepmeep/Wan2GP#2355](https://github.com/deepbeepmeep/Wan2GP/pull/2355) (Enhance button + Deepy template defaults).
+
+- [**v0.7.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.2) — Deepy Web + Wan2GP exits split (independent stop, Stop-Deepy-only button, server-following LED), upstream 13.11 reverse-proxy origin (`--public-url` card field, validated + persisted), version-aware Xet Storage card (installed vs requirements pin, Update when outdated), stale `reference/` snapshot retired.
 
 - [**v0.7.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.0) — 5 editable themes + text/terminal sizing, Deepy Web Assistant selector + click-to-open URLs + persistent topbar LED, Save-As file-type filters (issue #29), one-line update verdict (100% original git proof), dashboard text raised to readable minimums, LAN HTTPS under Advanced.
 

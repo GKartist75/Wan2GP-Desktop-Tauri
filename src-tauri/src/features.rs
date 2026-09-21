@@ -134,6 +134,16 @@ pub fn memory_profile_read() -> serde_json::Value {
     let p = get_repo_dir().join("wgp_config.json");
     if let Ok(s) = std::fs::read_to_string(&p) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+            // int8_kernels replaced the legacy enable_int8_kernels upstream
+            // (v13.13 migration deletes the old key on launch). Prefer the
+            // new key; map a lingering legacy value for display so
+            // pre-update configs still read correctly.
+            let int8 = v.get("int8_kernels").cloned().unwrap_or_else(|| {
+                match v.get("enable_int8_kernels").and_then(|x| x.as_i64()) {
+                    Some(0) => serde_json::json!("disabled"),
+                    _ => serde_json::json!("auto"),
+                }
+            });
             return serde_json::json!({"ok": true, "settings": {
                 "video_profile": v.get("video_profile").cloned().unwrap_or(serde_json::json!(4)),
                 "image_profile": v.get("image_profile").cloned().unwrap_or(serde_json::json!(4)),
@@ -141,11 +151,12 @@ pub fn memory_profile_read() -> serde_json::Value {
                 "vram_safety_coefficient": v.get("vram_safety_coefficient").cloned().unwrap_or(serde_json::json!(0.8)),
                 "vae_config": v.get("vae_config").cloned().unwrap_or(serde_json::json!(0)),
                 "transformer_quantization": v.get("transformer_quantization").cloned().unwrap_or(serde_json::json!("int8")),
-                "enable_int8_kernels": v.get("enable_int8_kernels").cloned().unwrap_or(serde_json::json!(1))
+                "int8_kernels": int8,
+                "kernel_precision": v.get("kernel_precision").cloned().unwrap_or(serde_json::json!("fast"))
             }});
         }
     }
-    serde_json::json!({"ok": true, "settings": {"video_profile": 4, "image_profile": 4, "audio_profile": 4, "vram_safety_coefficient": 0.8, "vae_config": 0, "transformer_quantization": "int8", "enable_int8_kernels": 1}})
+    serde_json::json!({"ok": true, "settings": {"video_profile": 4, "image_profile": 4, "audio_profile": 4, "vram_safety_coefficient": 0.8, "vae_config": 0, "transformer_quantization": "int8", "int8_kernels": "auto", "kernel_precision": "fast"}})
 }
 #[tauri::command]
 pub fn auto_tune_detect() -> serde_json::Value {
@@ -244,7 +255,7 @@ pub fn auto_tune_recommend(
     if !failsafe && hw.get("cuda_available").and_then(|v| v.as_bool()) == Some(false) {
         return serde_json::json!({
             "video_profile": 4.5, "image_profile": 4.5, "audio_profile": 4.5,
-            "vram_safety_coefficient": 0.70, "vae_config": 0, "transformer_quantization": "int8", "enable_int8_kernels": 1,
+            "vram_safety_coefficient": 0.70, "vae_config": 0, "transformer_quantization": "int8", "int8_kernels": "auto", "kernel_precision": "fast",
             "_recommendation_label": "Auto-tune unavailable on this hardware",
             "_recommendation_reason": "No CUDA-capable GPU detected. Conservative profile applied — generation may be limited.",
             "packages": ["torch","triton","sageattention"],
@@ -295,7 +306,7 @@ pub fn auto_tune_recommend(
     };
     serde_json::json!({
         "video_profile": profile, "image_profile": profile, "audio_profile": audio,
-        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8", "enable_int8_kernels": 1,
+        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8", "int8_kernels": "auto", "kernel_precision": "fast",
         "_recommendation_label": label,
         "_recommendation_reason": "Auto-tuned for your hardware",
         "packages": ["torch","triton","sageattention"],
@@ -901,7 +912,13 @@ pub fn deepy_status() -> serde_json::Value {
         .and_then(|x| x.as_str())
         .map(normalize_session_gallery_mode)
         .unwrap_or_else(|| "link".into());
-    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode})
+    // Qwen LLM quantization backend (upstream `prompt_enhancer_quantization`:
+    // quanto_int8/gguf/gguf_q3/gguf_q2/gguf_ptq1) so the panel can pre-select.
+    let quant = v
+        .get("prompt_enhancer_quantization")
+        .and_then(|x| x.as_str())
+        .map(std::string::ToString::to_string);
+    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "promptEnhancerQuantization": quant, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode})
 }
 /// Upstream `normalize_deepy_session_mode` (shared/deepy/config.py):
 /// disabled/selectable/dedicated, anything else falls back to disabled.
@@ -972,14 +989,37 @@ pub(crate) fn prime_profile_to_ui_id(profile: &str) -> &str {
         _ => "opencode",
     }
 }
+/// Upstream Qwen LLM quantization backend (`prompt_enhancer_quantization`):
+/// valid values per local engine (plugins/configuration/plugin.py
+/// `prompt_enhancer_quantization_ui_state`): Qwen3.8 (id 5) takes the four
+/// GGUF backends including Bonsai PTQ1 (`gguf_ptq1`, ~10GB VRAM, needs
+/// GGUF kernels 1.0.22+); Qwen3.5 4B/9B (ids 3/4) take Quanto Int8 or
+/// plain GGUF Q4. Engine-inappropriate values normalize to the engine
+/// default (mirrors upstream); `None` preserves existing config.
+/// Pure + unit-tested.
+pub(crate) fn normalize_qwen_quant<'a>(quant: Option<&'a str>, enhancer: Option<i64>) -> Option<&'a str> {
+    let q = quant.map(str::trim).filter(|s| !s.is_empty())?;
+    match enhancer {
+        Some(5) => match q {
+            "gguf" | "gguf_q3" | "gguf_q2" | "gguf_ptq1" => Some(q),
+            _ => Some("gguf"),
+        },
+        Some(3) | Some(4) => match q {
+            "quanto_int8" | "gguf" => Some(q),
+            _ => Some("quanto_int8"),
+        },
+        _ => None,
+    }
+}
 #[tauri::command]
 pub fn deepy_set(
     mode: String,
     engine: Option<String>,
     enhancer: Option<serde_json::Value>,
     sessions: Option<serde_json::Value>,
+    quant: Option<String>,
 ) -> serde_json::Value {
-    eprintln!("[deepy_set] mode={mode} engine={engine:?} enhancer={enhancer:?}");
+    eprintln!("[deepy_set] mode={mode} engine={engine:?} enhancer={enhancer:?} quant={quant:?}");
     let m = mode.trim().to_lowercase();
     if !["disabled", "zero", "prime"].contains(&m.as_str()) {
         return serde_json::json!({"ok": false, "error": format!("Unknown Deepy mode: {}", mode)});
@@ -1068,6 +1108,36 @@ pub fn deepy_set(
         if let Some(id) = enh_id {
             v["enhancer_enabled"] = serde_json::json!(id);
         }
+    }
+    // Qwen LLM quantization (upstream "Qwen LLM Quantization" dropdown):
+    // applies only with a local Qwen engine — Zero on 3/4/5, or Prime on
+    // local Qwen3.8 (id 5). Engine-inappropriate values normalize to the
+    // engine default; absent quant preserves existing config (e.g. the
+    // auto-config fix path must not clobber a chosen Bonsai backend).
+    let quant_enhancer: Option<i64> = match m.as_str() {
+        "zero" => enh_id.filter(|id| [3, 4, 5].contains(id)),
+        "prime" if engine.as_deref() == Some("local-qwen38") => Some(5),
+        _ => None,
+    };
+    if let Some(q) = normalize_qwen_quant(quant.as_deref(), quant_enhancer) {
+        v["prompt_enhancer_quantization"] = serde_json::json!(q);
+        if q == "gguf_ptq1" {
+            // Bonsai companion: INT8 KV cache halves cache VRAM — what makes
+            // Prime viable at ~10GB (GGUF 1.0.22+ carries the kernels).
+            // (Prompt enhancement mode is handled below with all Deepy
+            // enables: Automatic.)
+            v["deepy_kv_cache_quantization"] = serde_json::json!("int8");
+        }
+    }
+    // Prompt enhancement: Automatic for Deepy generation. enhancer_mode=0
+    // shows the Automatic dropdown on every generation form (Deepy tool
+    // templates carry no flags of their own, so they follow it); manual
+    // generations do too — there is no Deepy-only key upstream, and
+    // per-model/template prompt_enhancer flags stay "" as shipped.
+    // Upstream default when the key is missing is already 0; this makes it
+    // explicit whenever a Deepy config is applied. Disabled preserves it.
+    if m == "zero" || m == "prime" {
+        v["enhancer_mode"] = serde_json::json!(0);
     }
     // llm_engines deepy
     let eng_map = |id: &str| match id {
@@ -1219,7 +1289,7 @@ pub fn deepy_set(
 }
 #[tauri::command]
 pub fn deepy_activate(engine: String) -> serde_json::Value {
-    deepy_set("prime".into(), Some(engine), None, None)
+    deepy_set("prime".into(), Some(engine), None, None, None)
 }
 // Auto-start via the per-user Run key (no admin needed). Returns success, like the UI checks.
 #[tauri::command]
@@ -1260,6 +1330,22 @@ pub fn set_auto_start(enabled: bool) -> serde_json::Value {
     }
 }
 #[tauri::command]
+/// Fail-closed gate for the new upstream string enums (upstream raises
+/// ValueError on unknown selections, so garbage must never reach
+/// wgp_config.json). Other memory keys are validated by their own panels
+/// or are numeric upstream choices — this gate covers only the string
+/// enums it names. Pure + unit-tested.
+pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool {
+    let s = val.as_str().unwrap_or("");
+    match key {
+        // shared/kernels/int8_backend.py CHOICES
+        "int8_kernels" => ["auto", "disabled", "triton", "kitchen"].contains(&s),
+        // shared/kernels/kernel_policy.py CHOICES ("strict"/"fast")
+        "kernel_precision" => ["fast", "strict"].contains(&s),
+        _ => true,
+    }
+}
+#[tauri::command]
 pub fn memory_profile_apply(settings: serde_json::Value) -> serde_json::Value {
     // mirrors Electron memory_profile:apply — writes to wgp_config.json and returns applied keys
     let p = get_repo_dir().join("wgp_config.json");
@@ -1280,11 +1366,23 @@ pub fn memory_profile_apply(settings: serde_json::Value) -> serde_json::Value {
         "vram_safety_coefficient",
         "vae_config",
         "transformer_quantization",
-        "enable_int8_kernels",
+        "int8_kernels",
+        "kernel_precision",
     ] {
         if let Some(val) = settings.get(key) {
+            if !valid_memory_override(key, val) {
+                return serde_json::json!({"ok": false, "success": false, "error": format!("{key}: invalid value")});
+            }
             cfg[key] = val.clone();
             applied.push(key.to_string());
+        }
+    }
+    // Drop the deleted legacy key when the new one is written so upstream
+    // never sees a stale enable_int8_kernels (its own migration deletes it
+    // on next launch anyway; this just avoids the confusion sooner).
+    if settings.get("int8_kernels").is_some() {
+        if let Some(m) = cfg.as_object_mut() {
+            m.remove("enable_int8_kernels");
         }
     }
     if applied.is_empty() {
@@ -1594,7 +1692,7 @@ mod deepy_roundtrip_tests {
             return;
         } // no Wan2GP install on CI — nothing to verify
         let original = std::fs::read(&p).unwrap();
-        // zero + Qwen 9B
+        // zero + Qwen 9B + GGUF quant
         let r = deepy_set(
             "zero".into(),
             None,
@@ -1604,6 +1702,7 @@ mod deepy_roundtrip_tests {
                 "reset_mode": "reset_session",
                 "gallery_media_mode": "copy",
             })),
+            Some("gguf".into()),
         );
         assert!(
             r.get("ok").and_then(|v| v.as_bool()).unwrap(),
@@ -1617,18 +1716,32 @@ mod deepy_roundtrip_tests {
         assert_eq!(c["deepy_vram_mode"], "unload");
         assert_eq!(c["deepy_context_tokens"], 16386);
         assert_eq!(c["deepy_tool_gen_image"], "Krea 2 Turbo (8 Steps)");
+        // Deepy enable (zero included) writes Automatic prompting.
+        assert_eq!(c["enhancer_mode"], 0);
         // explicit session prefs stick
         assert_eq!(c["deepy_session_reset_mode"], "reset_session");
         assert_eq!(c["deepy_session_gallery_media_mode"], "copy");
         assert_eq!(c["deepy_multi_session"], "dedicated");
+        // explicit quant sticks (engine-appropriate)
+        assert_eq!(c["prompt_enhancer_quantization"], "gguf");
+        // Bonsai PTQ1 on a Qwen3.5 engine normalizes to its default
+        let r = deepy_set(
+            "zero".into(),
+            None,
+            Some(serde_json::json!(4)),
+            None,
+            Some("gguf_ptq1".into()),
+        );
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
+        assert_eq!(read_cfg()["prompt_enhancer_quantization"], "quanto_int8");
         // zero + Llama id must fall back to 3 (tokenizer-crash combo)
-        let r = deepy_set("zero".into(), None, Some(serde_json::json!(1)), None);
+        let r = deepy_set("zero".into(), None, Some(serde_json::json!(1)), None, None);
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
         let c = read_cfg();
         assert_eq!(c["enhancer_enabled"], 3);
         assert_eq!(c["llm_engines"]["deepy"], "qwen35_4b");
         // prime + codex
-        let r = deepy_set("prime".into(), Some("codex".into()), None, None);
+        let r = deepy_set("prime".into(), Some("codex".into()), None, None, None);
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
         let c = read_cfg();
         assert_eq!(c["deepy_type"], "prime");
@@ -1639,8 +1752,24 @@ mod deepy_roundtrip_tests {
         assert_eq!(c["deepy_session_reset_mode"], "reset_session");
         assert_eq!(c["deepy_session_gallery_media_mode"], "copy");
         assert_eq!(c["deepy_multi_session"], "dedicated");
+        // prime + local Qwen3.8 + Bonsai PTQ1 sticks
+        let r = deepy_set(
+            "prime".into(),
+            Some("local-qwen38".into()),
+            None,
+            None,
+            Some("gguf_ptq1".into()),
+        );
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
+        let c = read_cfg();
+        assert_eq!(c["enhancer_enabled"], 5);
+        assert_eq!(c["llm_engines"]["deepy"], "qwen38_27b");
+        assert_eq!(c["prompt_enhancer_quantization"], "gguf_ptq1");
+        // Bonsai companions ride along: Automatic prompting + INT8 KV cache.
+        assert_eq!(c["enhancer_mode"], 0);
+        assert_eq!(c["deepy_kv_cache_quantization"], "int8");
         // disabled + Florence
-        let r = deepy_set("disabled".into(), None, Some(serde_json::json!(2)), None);
+        let r = deepy_set("disabled".into(), None, Some(serde_json::json!(2)), None, None);
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
         let c = read_cfg();
         assert_eq!(c["deepy_enabled"], 0);
@@ -1683,6 +1812,10 @@ mod autotune_matrix_tests {
             assert_eq!(r["audio_profile"].as_f64().unwrap(), a, "{vt}/{rt} audio");
             assert_eq!(r["vae_config"], 0);
             assert_eq!(r["transformer_quantization"], "int8");
+            // Upstream v13.13 kernel settings (legacy enable_int8_kernels is gone).
+            assert_eq!(r["int8_kernels"], "auto");
+            assert_eq!(r["kernel_precision"], "fast");
+            assert!(r.get("enable_int8_kernels").is_none());
         }
         // failsafe forces P5 + 0.60
         let r = rec("high", "high", 48.0, true);
@@ -1700,5 +1833,50 @@ mod autotune_matrix_tests {
             .as_str()
             .unwrap()
             .contains("unavailable"));
+    }
+}
+#[cfg(test)]
+mod kernel_setting_tests {
+    use super::{normalize_qwen_quant, valid_memory_override};
+    #[test]
+    fn qwen_quant_normalizes_per_engine() {
+        // Qwen3.8 (id 5): four GGUF backends incl. Bonsai PTQ1.
+        for good in ["gguf", "gguf_q3", "gguf_q2", "gguf_ptq1"] {
+            assert_eq!(normalize_qwen_quant(Some(good), Some(5)), Some(good));
+        }
+        // Wrong-engine values fall back to the engine default, never garbage.
+        assert_eq!(normalize_qwen_quant(Some("quanto_int8"), Some(5)), Some("gguf"));
+        assert_eq!(normalize_qwen_quant(Some("gguf_ptq1"), Some(4)), Some("quanto_int8"));
+        assert_eq!(normalize_qwen_quant(Some("gguf"), Some(3)), Some("gguf"));
+        // No engine / no quant preserves existing config.
+        assert_eq!(normalize_qwen_quant(Some("gguf_ptq1"), None), None);
+        assert_eq!(normalize_qwen_quant(None, Some(5)), None);
+        assert_eq!(normalize_qwen_quant(Some(""), Some(5)), None);
+    }
+    #[test]
+    fn int8_backends_match_upstream_choices() {
+        // shared/kernels/int8_backend.py CHOICES.
+        for good in ["auto", "disabled", "triton", "kitchen"] {
+            assert!(
+                valid_memory_override("int8_kernels", &serde_json::json!(good)),
+                "{good}"
+            );
+        }
+        for bad in ["", "enabled", "1", "pytorch", "AUTO"] {
+            assert!(
+                !valid_memory_override("int8_kernels", &serde_json::json!(bad)),
+                "{bad}"
+            );
+        }
+        // Legacy numeric key must not validate as the new enum.
+        assert!(!valid_memory_override("int8_kernels", &serde_json::json!(1)));
+    }
+    #[test]
+    fn kernel_precision_match_upstream_choices() {
+        // shared/kernels/kernel_policy.py CHOICES ("strict"/"fast").
+        assert!(valid_memory_override("kernel_precision", &serde_json::json!("fast")));
+        assert!(valid_memory_override("kernel_precision", &serde_json::json!("strict")));
+        assert!(!valid_memory_override("kernel_precision", &serde_json::json!("preserve")));
+        assert!(!valid_memory_override("kernel_precision", &serde_json::json!("")));
     }
 }

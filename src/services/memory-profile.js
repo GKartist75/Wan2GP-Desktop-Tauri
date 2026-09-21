@@ -17,21 +17,30 @@
 const fs = require('fs')
 const path = require('path')
 
-// Keys this panel is allowed to touch (subset of auto-tune appliedKeys).
+// Keys this panel is allowed to touch (subset of auto-tune appliedKeys,
+// plus the upstream v13.13 kernel settings).
 const MEMORY_KEYS = [
   'video_profile',
   'image_profile',
   'audio_profile',
   'vram_safety_coefficient',
   'vae_config',
-  'transformer_quantization'
+  'transformer_quantization',
+  'int8_kernels',
+  'kernel_precision'
 ]
 
 // Valid mmgp profile numbers (1..5, with the 3.5/4.5 half-steps Wan2GP supports).
 const VALID_PROFILES = [1, 2, 3, 3.5, 4, 4.5, 5]
-// vae_config choices in Wan2GP: 0=auto,1=full/untiled,2=tiling256,3=tiling128
+// vae_config choices in Wan2GP: 0=auto, 1=16GB+, 2=8GB+, 3=6GB+
+// (Qwen Image 2.1: 1024/512/256px tiles with 25% overlap, Auto thresholds
+// 16000/8000 MiB; older Wan VAEs used full/untiled + fixed tile sizes).
 const VALID_VAE = [0, 1, 2, 3]
 const VALID_QUANT = ['none', 'int8', 'fp8', 'nvfp4']
+// Upstream v13.13: shared/kernels/int8_backend.py CHOICES and
+// shared/kernels/kernel_policy.py CHOICES ("strict"/"fast").
+const VALID_INT8_KERNELS = ['auto', 'disabled', 'triton', 'kitchen']
+const VALID_KERNEL_PRECISION = ['fast', 'strict']
 
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)) }
 
@@ -63,6 +72,14 @@ function validateMemorySettings(s) {
     } else if (key === 'transformer_quantization') {
       if (!VALID_QUANT.includes(v)) {
         errors.push({ field: key, message: `must be one of ${VALID_QUANT.join(', ')}` })
+      }
+    } else if (key === 'int8_kernels') {
+      if (!VALID_INT8_KERNELS.includes(v)) {
+        errors.push({ field: key, message: `must be one of ${VALID_INT8_KERNELS.join(', ')}` })
+      }
+    } else if (key === 'kernel_precision') {
+      if (!VALID_KERNEL_PRECISION.includes(v)) {
+        errors.push({ field: key, message: `must be one of ${VALID_KERNEL_PRECISION.join(', ')}` })
       }
     }
   }
@@ -134,6 +151,8 @@ module.exports = {
   VALID_PROFILES,
   VALID_VAE,
   VALID_QUANT,
+  VALID_INT8_KERNELS,
+  VALID_KERNEL_PRECISION,
   validateMemorySettings,
   readMemorySettings,
   applyMemorySettings

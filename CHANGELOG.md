@@ -2,6 +2,59 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.7.3] — 2026-09-21
+
+- Upstream Wan2GP v13.13 (Sep 20-21): GGUF kernel floor 1.0.21 → 1.0.22
+  (docs prescription over `setup_config.json` lag, verified Sep 2026;
+  required for Deepy Prime Bonsai PTQ1) in Rust + JS resolvers, UI strings,
+  stale-wheel diagnostics and tests; 1.0.21 now counts as stale
+- Kernel Sync warns when the local checkout is behind `origin/main`
+  (15s best-effort check, silent offline) — sync follows the checkout,
+  so stale clones installed stale wheels with no hint before
+- Deepy Prime weights check accepts the Bonsai 2 PTQ1 checkpoint
+  (`Ternary-Bonsai-2-27B-Abliterated-PTQ1_0.gguf`, upstream
+  `QWEN38_27B_TEXT_GGUF_PTQ1_FILENAME`) — Bonsai-only installs no longer
+  misreport missing 27B weights
+- VAE Config dropdown relabeled to upstream presets (auto / 16GB+ / 8GB+ /
+  6GB+); auto-tune still recommends Auto, comments updated for Qwen 2.1
+  tiling (1024/512/256, 25% overlap, Auto thresholds 16000/8000 MiB)
+- Install plan notes: Comfy Kitchen via `requirements.txt` (same R580+
+  driver, +10% H3/LTX2.x), Qwen 2.1 first-use download sizes, JIT
+  on-demand pre/post checkpoints, first-H3-INT8 ConvRot VAE fetch;
+  USER-GUIDE gains sync-behind warning, download notes and an
+  `AUTHENTICATION.md` pointer. Plugin catalog needs no change (reads the
+  checkout's `plugins.json`, so H3 Director appears after update)
+- Update pin diff is environment-marker aware: `; python_version …`
+  branches are evaluated against the active env's interpreter (probed,
+  fallback to unfiltered), duplicate dist names resolve last-wins —
+  ends the phantom `onnxruntime-gpu 1.25.0.dev… -> 1.22.0` line when old
+  and new files carry both conditional branches; dep recheck filters
+  inapplicable branches the same way
+- Memory panel tracks upstream v13.13 kernel settings: the deleted legacy
+  `enable_int8_kernels` numeric toggle is replaced by `int8_kernels`
+  (`auto`/`kitchen`/`triton`/`disabled`) and `kernel_precision`
+  (`fast`/`strict`) dropdowns, with fail-closed validation matching
+  upstream CHOICES; apply removes the stale legacy key, read maps a
+  lingering legacy value for display, auto-tune seeds upstream defaults
+- Deepy panel gains a Qwen LLM Quantization selector (upstream
+  `prompt_enhancer_quantization`): GGUF Q4 / IQ3_S / Q2 / Bonsai PTQ1 for
+  Qwen3.8, Quanto Int8 / GGUF Q4 for Qwen3.5 — shown only with a local
+  Qwen engine, engine-inappropriate values normalize to the engine
+  default, absent choice preserves existing config; choosing Bonsai
+  also sets INT8 KV cache, and any Deepy apply sets Automatic prompting
+  (the one global switch upstream offers; template flags untouched)
+- Startup drift sync: new `dep_check` command reuses the post-update pin
+  comparison so the dashboard reconciles the drift banner with the live
+  env once at startup (stale banner clears, real drift names itself)
+- Post-install override sync: after successful `setup.py`, install swaps
+  the two wheels it can never produce itself (GGUF floor, sage safe
+  build) so fresh installs don't land stale; warn-only, honors the
+  sageSafe setting, `setup.py` untouched
+- Readability: small hint/micro text across all panels +1px (0.5→0.5625,
+  0.5625→0.625, 0.6→0.6625, 0.625→0.6875, 0.6875/0.7→0.75rem, incl.
+  inline HTML sizes); body 0.75rem and the terminal's own slider scale
+  untouched
+
 ## [0.7.2] — 2026-09-18
 
 - Deepy Web and Wan2GP exits are now independent events: the backend emits

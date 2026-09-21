@@ -2955,6 +2955,11 @@ pub async fn install(
         }
     }
     emit("[*] Install finished.\n");
+    // Post-install override pass: setup.py installs upstream's wheel pins
+    // verbatim (GGUF 1.0.14, sage post4) — swap the two wheels the launcher
+    // overrides so a fresh install doesn't land stale with instant
+    // dashboard warnings. Warn-only inside (never fails the install).
+    sync_post_install_overrides(&app, &repo).await;
     // Remember where the working install lives (next to the data-dir override
     // in the home dir, so it survives drive changes). If the drive letter
     // changes or the drive disconnects later, first-run warns instead of
@@ -3445,6 +3450,142 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value, St
 pub async fn restore_kernels(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     sync_kernels_inner(app, true).await
 }
+/// Post-install override wheels: the subset of Sync that setup.py can never
+/// produce — the GGUF floor and the sage safe build. setup.py installs
+/// upstream's pins verbatim (GGUF 1.0.14, sage post4); without this pass a
+/// fresh install lands stale and the dashboard immediately warns about the
+/// wheels it just installed. Pure over (setup_config, profile, sage_safe)
+/// so the selection is unit-tested; `None` per wheel means "upstream pin is
+/// already the launcher set — nothing to do". Mirrors sync_kernels_inner's
+/// URL lookup (components.kernels / components.sage[profile.sage]).
+pub(crate) struct OverrideWheels {
+    pub gguf: Option<String>,
+    pub sage: Option<String>,
+}
+
+pub(crate) const SAGE_SAFE_WIN_URL: &str = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl";
+const SAGE_UPSTREAM_TAG: &str = "sageattention-2.2.0+cu130torch2.9.0andhigher.post4";
+
+pub(crate) fn post_install_override_urls(
+    cfg: &serde_json::Value,
+    profile: &str,
+    sage_safe: bool,
+) -> OverrideWheels {
+    let comp = |key: &str| {
+        cfg.get("components")
+            .and_then(|c| c.get("kernels"))
+            .and_then(|m| m.get(key))
+            .and_then(|e| e.get("cmd"))
+            .and_then(|c| c.get("win"))
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let gguf_url = comp("gguf");
+    let gguf = if gguf_url.is_empty() {
+        None
+    } else {
+        let swapped = crate::hw::apply_gguf_override(&gguf_url);
+        (swapped != gguf_url).then_some(swapped)
+    };
+    let sage_url = {
+        let sage_ver = cfg
+            .get("gpu_profiles")
+            .and_then(|p| p.get(profile))
+            .and_then(|pr| pr.get("sage"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("v220_cu13");
+        cfg.get("components")
+            .and_then(|c| c.get("sage"))
+            .and_then(|m| m.get(sage_ver))
+            .and_then(|e| e.get("cmd"))
+            .and_then(|c| c.get("win"))
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    // Empty lookup → cannot prove an override is needed → no-op. Only the
+    // known upstream post4 pin swaps to the safe build.
+    let sage = if sage_safe
+        && ["RTX_30", "RTX_40", "RTX_50"].contains(&profile)
+        && sage_url.contains(SAGE_UPSTREAM_TAG)
+    {
+        Some(SAGE_SAFE_WIN_URL.to_string())
+    } else {
+        None
+    };
+    OverrideWheels { gguf, sage }
+}
+
+/// Run the post-install override pass after a successful setup.py install:
+/// pip-installs only the wheels post_install_override_urls flags (GGUF
+/// floor, sage safe build — never the full profile set). Warn-only: a
+/// failure logs and the install still counts as successful; the dashboard
+/// banners cover the remainder exactly as if Sync had been skipped.
+async fn sync_post_install_overrides(app: &tauri::AppHandle, repo: &std::path::Path) {
+    let emit_log = |msg: &str| {
+        crate::base::push_log(msg, "setup");
+        let _ = app.emit("setup-output", msg.to_string());
+    };
+    let cfg: serde_json::Value = match std::fs::read_to_string(repo.join("setup_config.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+    {
+        Some(c) => c,
+        None => {
+            emit_log("[!] post-install wheel sync skipped — setup_config.json unreadable\n");
+            return;
+        }
+    };
+    let gpu = get_gpu_info_sync();
+    let profile = kernel_profile_key(
+        gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
+        gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+    );
+    let sage_safe = load_config_value()
+        .get("sageSafe")
+        .and_then(serde_json::Value::as_bool)
+        != Some(false); // ponytail: default safe post6 (1348e5b)
+    let wants = post_install_override_urls(&cfg, &profile, sage_safe);
+    let jobs: Vec<(&str, String)> = [("gguf", wants.gguf), ("sage", wants.sage)]
+        .into_iter()
+        .filter_map(|(n, u)| u.map(|url| (n, url)))
+        .collect();
+    if jobs.is_empty() {
+        emit_log("[*] post-install wheel sync: upstream pins already match the launcher set — nothing to do\n");
+        return;
+    }
+    let env = get_active_env();
+    let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
+    let base = if std::path::Path::new(raw).is_absolute() {
+        PathBuf::from(raw)
+    } else {
+        repo.join(raw.trim_start_matches(".\\").trim_start_matches("./"))
+    };
+    let py = if cfg!(windows) {
+        base.join("Scripts\\python.exe")
+    } else {
+        base.join("bin/python3")
+    };
+    if !py.exists() {
+        emit_log("[!] post-install wheel sync skipped — env python not found (run Update GPU Wheels manually)\n");
+        return;
+    }
+    emit_log("[*] post-install wheel sync: applying launcher overrides setup.py cannot express (GGUF floor, sage safe build)…\n");
+    let py_s = py.to_string_lossy().to_string();
+    for (name, url) in jobs {
+        emit_log(&format!("[*] sync kernel {name} (post-install override)\n"));
+        let emit_k = |s: &str| {
+            crate::base::push_log(s, "setup");
+            let _ = app.emit("setup-output", s.to_string());
+        };
+        if !crate::base::run_logged(&app, &py_s, &["-m", "pip", "install", url.as_str(), "--upgrade"], None, emit_k).await
+        {
+            emit_log(&format!("[!] post-install override for {name} failed — install itself succeeded; run Update GPU Wheels manually\n"));
+        }
+    }
+}
+
 async fn sync_kernels_inner(
     app: tauri::AppHandle,
     pure_upstream: bool,
@@ -3553,6 +3694,38 @@ async fn sync_kernels_inner(
         emit_log(&format!(
             "[*] setup_config.json @ {head} (gguf {v}) — deepbeepmeep's wanted wheels\n"
         ));
+        // A2: HEAD-behind warning — sync follows the LOCAL checkout, so a
+        // stale clone installs stale wheels. Best-effort remote HEAD check
+        // with a hard timeout; offline/slow networks skip silently.
+        if head != "unknown" && !head.is_empty() {
+            let repo_c = repo.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let out = silent_command(tool_path("git").as_str())
+                    .args(["ls-remote", "origin", "HEAD"])
+                    .current_dir(&repo_c)
+                    .output()
+                    .ok()
+                    .and_then(|o| {
+                        if o.status.success() {
+                            Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                        } else {
+                            None
+                        }
+                    });
+                let _ = tx.send(out);
+            });
+            if let Ok(Some(remote)) =
+                rx.recv_timeout(std::time::Duration::from_secs(15))
+            {
+                if let Some(remote_hash) = remote.split_whitespace().next() {
+                    if !remote_hash.starts_with(&head) {
+                        let remote_short = remote_hash.chars().take(7).collect::<String>();
+                        emit_log(&format!("[!] local checkout {head} is behind origin/main ({remote_short}) — update Wan2GP first, then re-run Sync, or you will install stale wheels\n"));
+                    }
+                }
+            }
+        }
     }
     let gpu = get_gpu_info_sync();
     let profile = kernel_profile_key(
@@ -3648,7 +3821,7 @@ async fn sync_kernels_inner(
                 let _ = app.emit("launch-log", m.to_string());
                 continue;
             }
-            // GGUF 1.0.21 floor (docs prescription over setup_config lag) —
+            // GGUF 1.0.22 floor (docs prescription over setup_config lag) —
             // skipped in restore mode so upstream's pinned wheel returns.
             let url = if pure_upstream {
                 url
@@ -4164,9 +4337,18 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
     let changed = file_sig(&req_path) != pre_sig;
     // Visible pin diff (what pip streams but never names):
     // `mmgp 3.7.14 -> 3.8.0`, `+pkg==v`, `-pkg==v`. Same parser as drift.
+    // Marker-aware: `; python_version …` branches are evaluated against the
+    // active env so conditional pins (onnxruntime-gpu, insightface) can't
+    // report phantom bumps. Probe failure → unfiltered (legacy).
     let pin_diff: Vec<String> = if changed {
         let post_text = std::fs::read_to_string(&req_path).unwrap_or_default();
-        diff_requirement_pins(&pre_text, &post_text)
+        let diff_py = get_active_env()
+            .get("path")
+            .and_then(|p| p.as_str())
+            .filter(|s| !s.is_empty())
+            .and_then(|raw| resolve_env_python(&repo, raw))
+            .and_then(|py| env_python_version(&py));
+        diff_requirement_pins(&pre_text, &post_text, diff_py)
     } else {
         Vec::new()
     };
@@ -4225,6 +4407,18 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         result["error"] = serde_json::Value::String(e.to_string());
     }
     Ok(result)
+}
+/// Startup drift sync: the same pins-vs-installed comparison as the
+/// post-update check, exposed so the dashboard can reconcile the drift
+/// banner with the live env once at startup (show with a real list, or
+/// hide a stale one) instead of trusting leftover update-time state.
+/// Silent — no console output; the caller logs only on drift.
+#[tauri::command]
+pub fn dep_check() -> serde_json::Value {
+    let repo = get_repo_dir();
+    let req_path = repo.join("requirements.txt");
+    let (check, drift) = post_update_dep_check(&repo, &req_path, &|_| {});
+    serde_json::json!({"ok": true, "depCheck": check, "drift": drift})
 }
 /// Read-only report of tracked-tree deviations from upstream (Dubon-class
 /// updater failures, plugin-mangled trees). Untracked user files are
@@ -4403,8 +4597,116 @@ pub async fn rollback_wangp(app: tauri::AppHandle) -> Result<serde_json::Value, 
 }
 /// Parse `name==version` pins from requirements.txt text. Only exact pins;
 /// skips comments, options (`-r`/`-e`/`--…`), URLs, extras (`pkg[x]==…`),
-/// and non-`==` specifiers. Pure + unit-tested.
+/// and non-`==` specifiers. Environment markers (`; …`) are stripped and
+/// the line is kept — see parse_requirement_pins_for for marker-aware
+/// filtering. Pure + unit-tested.
 pub(crate) fn parse_requirement_pins(text: &str) -> Vec<(String, String)> {
+    parse_requirement_pins_for(text, None)
+}
+
+/// Evaluate a PEP 508 environment marker for pin filtering.
+/// Handles what upstream requirements.txt actually uses: `python_version`
+/// comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=` against quoted `"3.11"`),
+/// `platform_system` / `sys_platform` `==` / `!=`, joined by `and` / `or`.
+/// Unknown keys or unparseable clauses evaluate TRUE (fail-visible: a pin
+/// we can't judge stays in the report instead of silently vanishing).
+/// Pure + unit-tested.
+pub(crate) fn pin_marker_applies(marker: &str, py: (u32, u32)) -> bool {
+    let platform_system = if cfg!(windows) {
+        "Windows"
+    } else if cfg!(target_os = "macos") {
+        "Darwin"
+    } else {
+        "Linux"
+    };
+    let sys_platform = if cfg!(windows) {
+        "win32"
+    } else if cfg!(target_os = "macos") {
+        "darwin"
+    } else {
+        "linux"
+    };
+    // No parentheses in our files: `or` binds loosest, split first.
+    marker.split(" or ").any(|disjunct| {
+        disjunct.split(" and ").all(|clause| {
+            let c = clause.trim();
+            // Operators longest-first so `>=` wins over `>`.
+            let (key, op, val) = ["==", "!=", "<=", ">=", "<", ">"]
+                .iter()
+                .find_map(|op| c.find(op).map(|i| (c[..i].trim(), *op, c[i + op.len()..].trim())))
+                .unwrap_or(("", "", ""));
+            if key.is_empty() {
+                return true;
+            }
+            let val = val.trim_matches(|ch| ch == '"' || ch == '\'');
+            match key {
+                "python_version" => {
+                    let mut it = val.split('.').map(|p| {
+                        p.chars()
+                            .take_while(|ch| ch.is_ascii_digit())
+                            .collect::<String>()
+                            .parse::<u32>()
+                            .unwrap_or(0)
+                    });
+                    let want = (it.next().unwrap_or(0), it.next().unwrap_or(0));
+                    match op {
+                        "==" => py == want,
+                        "!=" => py != want,
+                        "<" => py < want,
+                        "<=" => py <= want,
+                        ">" => py > want,
+                        ">=" => py >= want,
+                        _ => true,
+                    }
+                }
+                "platform_system" => match op {
+                    "==" => platform_system.eq_ignore_ascii_case(val),
+                    "!=" => !platform_system.eq_ignore_ascii_case(val),
+                    _ => true,
+                },
+                "sys_platform" => match op {
+                    "==" => sys_platform.eq_ignore_ascii_case(val),
+                    "!=" => !sys_platform.eq_ignore_ascii_case(val),
+                    _ => true,
+                },
+                _ => true,
+            }
+        })
+    })
+}
+
+/// Active env's interpreter major.minor for marker evaluation.
+/// None when there is no env or the interpreter won't answer — callers
+/// fall back to unfiltered (legacy) parsing rather than dropping pins.
+fn env_python_version(py: &std::path::Path) -> Option<(u32, u32)> {
+    let out = silent_command(py)
+        .args([
+            "-c",
+            "import sys;print(sys.version_info[0]);print(sys.version_info[1])",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let mut it = text
+        .lines()
+        .filter_map(|l| l.trim().parse::<u32>().ok());
+    Some((it.next()?, it.next()?))
+}
+
+/// Marker-aware pin parse: with `Some((major, minor))`, lines gated by an
+/// environment marker that does NOT apply to this interpreter are dropped,
+/// so multi-branch pins (e.g. onnxruntime-gpu's `python_version < "3.11"`
+/// vs `>= "3.11"` lines, insightface's per-python wheels) resolve to the
+/// single branch pip itself would install. `None` keeps every line
+/// (legacy behavior for callers without a probed interpreter).
+/// Pure + unit-tested.
+pub(crate) fn parse_requirement_pins_for(
+    text: &str,
+    py: Option<(u32, u32)>,
+) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for raw_line in text.lines() {
         let line = raw_line.trim();
@@ -4419,15 +4721,20 @@ pub(crate) fn parse_requirement_pins(text: &str) -> Vec<(String, String)> {
             Some(i) => line[..i].trim(),
             None => line,
         };
-        // Environment marker (`pkg==1.0; python_version > …`) — pin is left of `;`.
-        let line = match line.find(';') {
-            Some(i) => line[..i].trim(),
-            None => line,
+        // Environment marker (`pkg==1.0; python_version > …`) — right of `;`.
+        let (req, marker) = match line.find(';') {
+            Some(i) => (line[..i].trim(), Some(line[i + 1..].trim())),
+            None => (line, None),
         };
-        let Some(eq) = line.find("==") else {
+        if let (Some(py), Some(m)) = (py, marker) {
+            if !m.is_empty() && !pin_marker_applies(m, py) {
+                continue;
+            }
+        }
+        let Some(eq) = req.find("==") else {
             continue;
         };
-        let (name, ver) = (line[..eq].trim(), line[eq + 2..].trim());
+        let (name, ver) = (req[..eq].trim(), req[eq + 2..].trim());
         // Bare distribution name only — extras (`pkg[x]`) and compound
         // specifiers (`a>=1,==2`) fail this gate and are skipped.
         if name.is_empty()
@@ -4452,11 +4759,35 @@ pub(crate) fn parse_requirement_pins(text: &str) -> Vec<(String, String)> {
 /// Human-readable diff of two requirements.txt pin sets: `name a -> b`
 /// bumps in new-file order, then `+name==v` additions, then `-name==v`
 /// removals. Same parser as the drift check (one source of truth) —
-/// unparseable lines are invisible to both sides. Pure + unit-tested.
-pub(crate) fn diff_requirement_pins(old: &str, new: &str) -> Vec<String> {
+/// unparseable lines are invisible to both sides. `py` filters
+/// environment-marker branches to the active interpreter, so conditional
+/// pins can't report phantom bumps; duplicate names resolve last-wins.
+/// Pure + unit-tested.
+pub(crate) fn diff_requirement_pins(
+    old: &str,
+    new: &str,
+    py: Option<(u32, u32)>,
+) -> Vec<String> {
     use std::collections::HashMap;
-    let old_pins = parse_requirement_pins(old);
-    let new_pins = parse_requirement_pins(new);
+    fn deduped(pins: Vec<(String, String)>) -> Vec<(String, String)> {
+        let mut order: Vec<String> = Vec::new();
+        let mut map: HashMap<String, String> = HashMap::new();
+        for (n, v) in pins {
+            if !map.contains_key(&n) {
+                order.push(n.clone());
+            }
+            map.insert(n, v);
+        }
+        order
+            .into_iter()
+            .map(|n| {
+                let v = map.remove(&n).unwrap_or_default();
+                (n, v)
+            })
+            .collect()
+    }
+    let old_pins = deduped(parse_requirement_pins_for(old, py));
+    let new_pins = deduped(parse_requirement_pins_for(new, py));
     let old_map: HashMap<&str, &str> = old_pins
         .iter()
         .map(|(n, v)| (n.as_str(), v.as_str()))
@@ -4519,7 +4850,7 @@ fn version_like(v: &str) -> bool {
         .any(|p| p.chars().next().is_some_and(|c| c.is_ascii_digit()))
 }
 /// Post-update dependency recheck: compare post-pull requirements.txt `==`
-/// pins against installed dist versions with ONE env-python probe
+/// pins against installed dist versions with env-python probes
 /// (`importlib.metadata`, pinned names as argv). A NEWER installed build
 /// is in-spec (never drift): downgrading the user on every update would
 /// undo working upgrades, so only an older/missing/unparseable version
@@ -4536,11 +4867,6 @@ fn post_update_dep_check(
         return ("no-requirements", Vec::new());
     }
     let text = std::fs::read_to_string(req_path).unwrap_or_default();
-    let pins = parse_requirement_pins(&text);
-    if pins.is_empty() {
-        emit("[✓] dependencies match requirements.txt (0 pinned)\n");
-        return ("ok", Vec::new());
-    }
     let env = get_active_env();
     let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
     let py_opt = if raw.is_empty() {
@@ -4551,6 +4877,14 @@ fn post_update_dep_check(
     let Some(py) = py_opt else {
         return ("skipped-no-env", Vec::new());
     };
+    // Marker-aware like the pin diff: only the branches pip itself would
+    // install are checked, so conditional pins can't drift against the
+    // wrong branch. Probe failure → unfiltered (legacy).
+    let pins = parse_requirement_pins_for(&text, env_python_version(&py));
+    if pins.is_empty() {
+        emit("[✓] dependencies match requirements.txt (0 pinned)\n");
+        return ("ok", Vec::new());
+    }
     let script = "import sys, importlib.metadata as m\nfor n in sys.argv[1:]:\n try:\n  print(n.lower().replace('_','-') + '==' + m.version(n))\n except Exception:\n  print(n.lower().replace('_','-') + '==NOTFOUND')";
     let mut cmd = silent_command(&py);
     cmd.arg("-c").arg(script).current_dir(repo);
@@ -4597,8 +4931,51 @@ fn post_update_dep_check(
     }
 }
 #[cfg(test)]
+mod override_wheels_tests {
+    use super::post_install_override_urls;
+    fn cfg_with(gguf_win: &str, sage_ver: &str, sage_win: &str) -> serde_json::Value {
+        serde_json::json!({
+            "components": {
+                "kernels": { "gguf": { "cmd": { "win": gguf_win } } },
+                "sage": { sage_ver: { "cmd": { "win": sage_win } } }
+            },
+            "gpu_profiles": { "RTX_30": { "sage": sage_ver } }
+        })
+    }
+    const GGUF_1014: &str = "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.14+torch210cu130py311-cp311-cp311-win_amd64.whl";
+    const SAGE_POST4: &str = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl";
+    #[test]
+    fn flags_stale_gguf_and_post4() {
+        let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "RTX_30", true);
+        let gguf = w.gguf.expect("stale gguf must swap");
+        assert!(gguf.contains("1.0.22"), "got {gguf}");
+        let sage = w.sage.expect("post4 must swap when safe");
+        assert!(sage.contains("post6"), "got {sage}");
+    }
+    #[test]
+    fn quiet_when_already_current_or_opted_out() {
+        // Current GGUF + safe sage → nothing to do.
+        let cur = cfg_with(
+            &GGUF_1014.replace("1.0.14", "1.0.22"),
+            "v220_cu13",
+            super::SAGE_SAFE_WIN_URL,
+        );
+        let w = post_install_override_urls(&cur, "RTX_30", true);
+        assert!(w.gguf.is_none() && w.sage.is_none());
+        // User chose upstream sage → sage untouched, gguf still swaps.
+        let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "RTX_30", false);
+        assert!(w.gguf.is_some() && w.sage.is_none());
+        // Non-RTX profile → sage untouched.
+        let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "GTX_10", true);
+        assert!(w.sage.is_none());
+    }
+}
+#[cfg(test)]
 mod req_pin_tests {
-    use super::{diff_requirement_pins, format_pin_line, parse_requirement_pins, pin_drift_entry};
+    use super::{
+        diff_requirement_pins, format_pin_line, parse_requirement_pins, parse_requirement_pins_for,
+        pin_drift_entry, pin_marker_applies,
+    };
     #[test]
     fn exact_pins_parse() {
         let pins = parse_requirement_pins("mmgp==3.8.0\ntorch==2.10.0\n");
@@ -4676,7 +5053,7 @@ mod req_pin_tests {
         let old = "mmgp==3.7.14\ntorch==2.10.0\noldpkg==1.0\n";
         let new = "mmgp==3.8.0\ntorch==2.10.0\nnewpkg==2.0\n";
         assert_eq!(
-            diff_requirement_pins(old, new),
+            diff_requirement_pins(old, new, None),
             vec![
                 "mmgp 3.7.14 -> 3.8.0".to_string(),
                 "+newpkg==2.0".to_string(),
@@ -4687,7 +5064,60 @@ mod req_pin_tests {
     #[test]
     fn pin_diff_empty_when_identical() {
         let t = "mmgp==3.8.0\n";
-        assert!(diff_requirement_pins(t, t).is_empty());
+        assert!(diff_requirement_pins(t, t, None).is_empty());
+    }
+    #[test]
+    fn pin_diff_ignores_conditional_branch_noise() {
+        // Real-world false positive (Sep 2026 update): identical files with
+        // onnxruntime-gpu's two python_version branches reported
+        // "1.25.0.dev… -> 1.22.0". Marker-aware on py3.11 → silent.
+        let t = "onnxruntime-gpu==1.22.0; python_version < \"3.11\"\nonnxruntime-gpu==1.25.0.dev20260210001; python_version >= \"3.11\"\n";
+        assert!(diff_requirement_pins(t, t, Some((3, 11))).is_empty());
+        // …and on py3.10 the other branch applies, still silent.
+        assert!(diff_requirement_pins(t, t, Some((3, 10))).is_empty());
+        // A real bump on the applicable branch still reports.
+        let bumped = t.replace("1.25.0.dev20260210001", "1.25.0.dev20260301001");
+        assert_eq!(
+            diff_requirement_pins(t, &bumped, Some((3, 11))),
+            vec!["onnxruntime-gpu 1.25.0.dev20260210001 -> 1.25.0.dev20260301001".to_string()]
+        );
+        // Legacy (no probed interpreter) keeps old behavior: identical
+        // files with duplicate names stay silent via last-wins dedupe.
+        assert!(diff_requirement_pins(t, t, None).is_empty());
+    }
+    #[test]
+    fn marker_eval_covers_upstream_shapes() {
+        assert!(pin_marker_applies("python_version < \"3.11\"", (3, 10)));
+        assert!(!pin_marker_applies("python_version < \"3.11\"", (3, 11)));
+        assert!(pin_marker_applies("python_version >= \"3.11\"", (3, 11)));
+        assert!(!pin_marker_applies("python_version >= \"3.11\"", (3, 10)));
+        assert!(pin_marker_applies("python_version == \"3.11\"", (3, 11)));
+        // Platform clauses use the compile-time OS; inequality against a
+        // nonexistent platform is true on every OS (keeps tests portable).
+        assert!(pin_marker_applies("platform_system != \"NoSuchOS\" and python_version == \"3.11\"", (3, 11)));
+        assert!(!pin_marker_applies("platform_system == \"NoSuchOS\" and python_version == \"3.11\"", (3, 11)));
+        assert!(pin_marker_applies("python_version == \"3.10\" or python_version == \"3.11\"", (3, 11)));
+        // Unknown keys fail visible (kept), never silently dropped.
+        assert!(pin_marker_applies("os_name == \"whatever\"", (3, 11)));
+        assert!(pin_marker_applies("not a marker at all", (3, 11)));
+    }
+    #[test]
+    fn filtered_parse_keeps_applicable_branch() {
+        let t = "onnxruntime-gpu==1.22.0; python_version < \"3.11\"\nonnxruntime-gpu==1.25.0.dev1; python_version >= \"3.11\"\nmmgp==3.8.1\n";
+        assert_eq!(
+            parse_requirement_pins_for(t, Some((3, 11))),
+            vec![
+                ("onnxruntime-gpu".to_string(), "1.25.0.dev1".to_string()),
+                ("mmgp".to_string(), "3.8.1".to_string()),
+            ]
+        );
+        assert_eq!(
+            parse_requirement_pins_for(t, Some((3, 10))),
+            vec![
+                ("onnxruntime-gpu".to_string(), "1.22.0".to_string()),
+                ("mmgp".to_string(), "3.8.1".to_string()),
+            ]
+        );
     }
     #[test]
     fn pin_line_marks_in_spec() {
