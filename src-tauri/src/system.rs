@@ -849,6 +849,38 @@ pub fn write_wgp_config(cfg: serde_json::Value) -> Result<serde_json::Value, Str
     atomic_write(&p, &s).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
+/// F3: strip secret values from a wgp_config snapshot for support bundles.
+/// Keys containing password/secret/credential/api-key (case-insensitive), or a
+/// whole `token` segment (auth_token but NOT context_tokens counts), become
+/// "***"; structure and all other values are preserved verbatim.
+pub(crate) fn redact_config_secrets(v: &serde_json::Value) -> serde_json::Value {
+    fn is_secret(key: &str) -> bool {
+        let kl = key.to_lowercase();
+        kl.contains("password")
+            || kl.contains("secret")
+            || kl.contains("credential")
+            || kl.contains("api_key")
+            || kl.contains("apikey")
+            || kl.split('_').any(|part| part == "token")
+    }
+    match v {
+        serde_json::Value::Object(m) => {
+            let mut out = serde_json::Map::with_capacity(m.len());
+            for (k, val) in m {
+                if is_secret(k) {
+                    out.insert(k.clone(), serde_json::Value::String("***".into()));
+                } else {
+                    out.insert(k.clone(), redact_config_secrets(val));
+                }
+            }
+            serde_json::Value::Object(out)
+        }
+        serde_json::Value::Array(a) => {
+            serde_json::Value::Array(a.iter().map(redact_config_secrets).collect())
+        }
+        _ => v.clone(),
+    }
+}
 #[tauri::command]
 pub fn report_issue() -> serde_json::Value {
     let stamp = std::time::SystemTime::now()
@@ -871,6 +903,60 @@ pub fn report_issue() -> serde_json::Value {
     if let Ok(s) = std::fs::read_to_string(get_data_dir().join("boot.log")) {
         lines.push("\n── boot.log ──".into());
         lines.extend(s.lines().take(25).map(std::string::ToString::to_string));
+    }
+    // F3 diagnostics: torch/CUDA + triton/sage probes via the active env
+    // python (best-effort — a broken env must not break the bundle).
+    let env = get_active_env();
+    let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
+    let repo = get_repo_dir();
+    let base = if std::path::Path::new(raw).is_absolute() {
+        PathBuf::from(raw)
+    } else {
+        repo.join(raw.trim_start_matches(".\\").trim_start_matches("./"))
+    };
+    let py = if cfg!(windows) {
+        base.join("Scripts\\python.exe")
+    } else {
+        base.join("bin/python")
+    };
+    if py.exists() {
+        lines.push("\n── torch / kernels ──".into());
+        if let Ok(o) = silent_command(&py)
+            .args(["-c", "import torch; print('torch ' + torch.__version__ + ' cuda=' + str(torch.cuda.is_available()) + ' device=' + (torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none'))"])
+            .output()
+        {
+            let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            lines.push(if out.is_empty() { "torch: import failed".into() } else { out });
+        }
+        for m in ["triton", "sageattention"] {
+            let probe = format!("import {m}");
+            let ver = silent_command(&py)
+                .args(["-c", &probe])
+                .output()
+                .is_ok_and(|o| o.status.success());
+            lines.push(format!("{m}: {}", if ver { "import ok" } else { "missing" }));
+        }
+    } else {
+        lines.push("\n── torch / kernels ──".into());
+        lines.push("no active python environment".into());
+    }
+    // F3: redacted wgp_config.json copy (secrets stripped, structure kept).
+    let cfg_path = get_repo_dir().join("wgp_config.json");
+    if let Ok(s) = std::fs::read_to_string(&cfg_path) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+            let redacted = redact_config_secrets(&v);
+            let out = serde_json::to_string_pretty(&redacted).unwrap_or_else(|_| "{}".into());
+            let _ = std::fs::write(bundle.join("wgp_config.redacted.json"), out);
+            lines.push("wgp_config: redacted copy in bundle".into());
+        }
+    }
+    // F3: staged launch args from desktop-config.json (data dir).
+    if let Ok(s) = std::fs::read_to_string(get_data_dir().join("desktop-config.json")) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+            if let Some(a) = v.get("launchArgs").and_then(|a| a.as_str()) {
+                lines.push(format!("launchArgs: {a}"));
+            }
+        }
     }
     let _ = std::fs::write(bundle.join("system-info.txt"), lines.join("\n"));
     let eq = get_repo_dir().join("error_queue.zip");
@@ -1622,5 +1708,43 @@ pub(crate) fn shutdown_cleanup_full(app: &tauri::AppHandle) {
             ),
             "launch",
         );
+    }
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::redact_config_secrets;
+
+    #[test]
+    fn redacts_secret_keys_case_insensitive() {
+        let v = serde_json::json!({
+            "auth_password": "hunter2",
+            "auth_token": "abc",
+            "video_profile": 4
+        });
+        let r = redact_config_secrets(&v);
+        assert_eq!(r["auth_password"], serde_json::json!("***"));
+        assert_eq!(r["auth_token"], serde_json::json!("***"));
+        assert_eq!(r["video_profile"], serde_json::json!(4));
+    }
+
+    #[test]
+    fn redacts_nested_and_arrays_preserves_shape() {
+        let v = serde_json::json!({
+            "nested": { "api_key": "k", "keep": [1, 2] },
+            "list": [{ "secret": "s" }, { "ok": true }]
+        });
+        let r = redact_config_secrets(&v);
+        assert_eq!(r["nested"]["api_key"], serde_json::json!("***"));
+        assert_eq!(r["nested"]["keep"], serde_json::json!([1, 2]));
+        assert_eq!(r["list"][0]["secret"], serde_json::json!("***"));
+        assert_eq!(r["list"][1]["ok"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn leaves_benign_keys_untouched() {
+        let v = serde_json::json!({ "launchArgs": "--profile 4", "deepy_context_tokens": 32000 });
+        let r = redact_config_secrets(&v);
+        assert_eq!(r, v);
     }
 }
