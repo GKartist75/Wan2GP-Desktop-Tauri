@@ -5,6 +5,15 @@ Every screen, tab and button, and what it does. The launcher has three screens
 **Viewer**. Companion: [WanGP Guidance](WAN2GP-GUIDE.md) — which model and
 settings to pick for your goal.
 
+```mermaid
+flowchart TD
+  S["Splash: install check"] --> D["Dashboard: health, launch, updates"]
+  D --> I["Installer: GPU plan, preflight, progress"]
+  D --> V["Viewer: WanGP embedded with console and gallery"]
+  D --> M["Manage: tokens, launch args, system, plugins, library"]
+  D --> G["Guide (topbar): model picks, prompt tools, checklists"]
+```
+
 ## Contents
 
 - [Dashboard](#dashboard)

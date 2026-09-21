@@ -82,6 +82,16 @@ Rules that save hours:
 
 If out-of-memory: smaller model -> fewer frames -> lower resolution -> P5 profile. Exact fallback: `--attention sdpa --profile 4`.
 
+```mermaid
+flowchart TD
+  Q["How do you want to run it?"]
+  Q --> D["Desktop: Wan2GP embedded, console + gallery built in"]
+  Q --> B["Browser: visible console, auto-opens your browser"]
+  Q --> T["Terminal: real Windows Terminal, in-app LED + Stop"]
+  Q --> N["Short on VRAM? Browser No-GPU: Chrome with GPU off frees VRAM"]
+  D & B & T & N --> S["Same WanGP, same models — pick per session"]
+```
+
 ### Path 2 — animate a photo (i2v)
 
 Image goes in **Start Image**. Prompt describes **motion/camera**, not the
@@ -161,6 +171,17 @@ Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
 `int8_kernels`: Auto tries Kitchen CUDA/HIP → Triton → PyTorch; `kernel_precision`
 fast/strict controls H3 VAE fusions. Pinokio installs are detected and left
 untouched — the launcher can reuse their model library instead of re-downloading.
+
+```mermaid
+flowchart TD
+  A["Installer: detect GPU, VRAM, RAM, driver"] --> B["Plan: show what will be installed"]
+  B --> C["Preflight: Python pin, disk space, R580+ for cu130"]
+  C --> D["Clone repo + create env (uv, venv or conda)"]
+  D --> E["PyTorch + CUDA per GPU table above"]
+  E --> F["requirements.txt + per-GPU kernel wheels"]
+  F --> G["Auto-Tune profiles into wgp_config.json"]
+  G --> H["Launch: Desktop, Browser or Terminal"]
+```
 
 ## Launcher vs WanGP settings map
 
@@ -394,6 +415,16 @@ for edit models (Qwen Edit, Flux Kontext, Chrono, Ditto).
 | Each paragraph = new window (`PW`) | Windows with own line-breaks; blank line between windows |
 | All lines = same prompt (`FG`) | Timeline / dialogue / lyrics block |
 
+```mermaid
+flowchart TD
+  M["What does your prompt look like?"]
+  M --> G["Separate ideas or A-B variants? G: each line a queued job"]
+  M --> P["Multi-line ideas kept together? PG: each paragraph a job"]
+  M --> W["One long video, beat per line? W: each line a window"]
+  M --> PW["Window prompts with their own line breaks? PW: paragraph per window"]
+  M --> F["Timeline, dialogue or lyrics? FG: all lines one prompt"]
+```
+
 Window commands (in brackets, stripped before model):
 
 `[/duration=121]` / `[/duration=5s]` / `[/duration=20%]`, `[/overlap=9]` /
@@ -483,6 +514,15 @@ Apply via Settings dropdown -> Apply; missing LoRAs auto-download on first gen.
 
 Phone path: launcher Deepy Web card -> Same-PC / Phone-LAN / External Tailscale URL + QR, click-to-open in real browser, auth passphrase, LED in topbar.
 
+```mermaid
+flowchart TD
+  E["Which Deepy engine?"]
+  E --> L4["Limited hardware? Qwen3.5 4B local, Zero, fast single tasks"]
+  E --> L9["Room to spare? Qwen3.5 9B local, best general Zero"]
+  E --> L27["16-24 GB VRAM, multi-step plans? Qwen3.8 27B local Prime (Bonsai PTQ1 near 10 GB)"]
+  E --> R["Need VRAM free or stronger reasoning? Codex, Claude or OpenCode remote (Prime only)"]
+```
+
 ---
 
 ## Workspaces + sessions
@@ -530,6 +570,15 @@ to move); back up folder + media for portable archive.
   (`--mcp-auth`), separate from web login. Deepy Prime pins v2 internally.
 * Disclose WanGP use in any integrating product's UI + docs (license terms).
 
+```mermaid
+flowchart TD
+  A["Want agents or scripts to drive WanGP?"]
+  A --> P["Python app? Export Settings in UI, then init plus submit_task"]
+  A --> H["Overnight jobs? Save Queue in UI, then wgp.py --process queue.zip"]
+  A --> M["Claude or OpenCode agent? wgp.py --mcp (v2, streamable-http on LAN)"]
+  P & H & M --> G["Gallery media IDs travel everywhere; direct paths need filesystem permission"]
+```
+
 ## Network protection (from `AUTHENTICATION.md`)
 
 * Off by default. `--auth` = one password for all Gradio/Deepy web (no username);
@@ -546,6 +595,15 @@ to move); back up folder + media for portable archive.
   apps; default accepts same-host HTTP/HTTPS. Mic recording may require trusted HTTPS.
 * MCP OAuth (`--mcp-auth`, separate passphrase, `--mcp-auth-url` public origin) —
   browser cookie never authorizes MCP; tokens 1h, refresh ≤7d, restart revokes.
+
+```mermaid
+flowchart TD
+  N["Who can reach your server?"]
+  N --> L["Only this PC? Default localhost, nothing needed"]
+  N --> T["Trusted home LAN? Add auth, plus HTTPS against sniffing"]
+  N --> V["VPN only? Firewall plus VPN rules may suffice, close forwarded ports"]
+  N --> P["Public internet? Auth plus trusted HTTPS, forward the HTTPS port only"]
+```
 
 ## Launch flags (CLI) reference
 
@@ -590,6 +648,17 @@ Emergency: `--attention sdpa --profile 4 --fp16`, then `torch.cuda.is_available(
 ---
 
 ## Troubleshooting fast lane
+
+```mermaid
+flowchart TD
+  S["What broke?"]
+  S --> O["Out of memory? Smaller model, quant on, P4 or P5, fewer frames"]
+  S --> L["Too slow? Compile plus sage2 on RTX 30+, teacache 2.0, profile 3"]
+  S --> K["Sage or Triton error? Check import, wipe the triton cache, fall back to sdpa"]
+  S --> Q["Bad quality? Guidance 1 with accelerators, 30+ steps, longer prompt"]
+  S --> P["Port busy? Try 7861 or kill the 7860 holder from System tab"]
+  O & L & K & Q & P --> D["Still stuck? Export diagnostics plus full error to Discord"]
+```
 
 | Symptom | Try in order |
 | --- | --- |
