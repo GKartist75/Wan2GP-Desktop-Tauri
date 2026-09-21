@@ -28,7 +28,7 @@ P0 (F1–F4) implemented and committed locally — nothing pushed.
 
 ## C. Launcher features — P1 (build second)
 
-- [ ] F5. Prompt starter pack + window validator — templates (text/i2v/edit/dialogue/lyrics), macro expander, `G/PG/W/PW/FG` explainer, offline `[/...]` + `L/X` validator
+- [x] F5. Prompt starter pack + window validator — Guide → Prompt tools: 6 templates with line modes, copy button, offline `[/...]` checker (7 node cases green)
 - [ ] F6. Headless queue runner — `Manage → Batch`: pick queue.zip/JSON → `--dry-run` → `--process` with progress + exit codes → `--output-dir`
 - [ ] F7. Workspace backup + disk usage — per-workspace size, backup ZIP, `archive_protected` toggle, storage bar
 - [ ] F8. Deepy setup checker + network panel — binary detection, `claude-agent-sdk==0.1.66` pin check, Refresh/catalog lifecycle, cert picker, `--public-url` validator, port/firewall check
