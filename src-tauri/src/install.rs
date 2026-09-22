@@ -1116,7 +1116,7 @@ fn smoke_verify(py: &Path, repo: &Path) -> Result<String, String> {
         } else {
             format!(" [collect_env: {env}]")
         };
-        return Err(format!("torch can't see the AMD GPU (cuda=False) — update to a recent Adrenalin/Pro driver (>= 24.5), confirm the TheRock index URL matches your GPU family (docs/AMD-INSTALLATION.md), reboot, then repair the environment.{suffix}"));
+        return Err(format!("torch can't see the AMD GPU (cuda=False) — update to a recent Adrenalin/Pro driver (>= 24.5), confirm the torch index URL matches your GPU family and stack (TheRock /v2/ default, or repo.amd.com HIP 7.14 opt-in on gfx1201 per docs/INSTALLATION.md), reboot, then repair the environment.{suffix}"));
     }
     if vendor == "AMD" {
         if let Some(env) = amd_collect_env(py, repo) {
@@ -1183,6 +1183,19 @@ pub(crate) fn amd_therock_torch_cmds(profile: &str, gpu_name: &str) -> Option<(S
     Some((primary, fallback))
 }
 
+/// Experimental AMD HIP torch source (upstream docs/INSTALLATION.md, Sep 2026):
+/// gfx1201-only pinned stack on the AMD public index — NOT TheRock nightlies.
+/// `torch[device-gfx1201]==2.10.0+rocm7.14.0` + `rocm[libraries,device-gfx1201]`.
+/// Informational / log + future install-path use: the main install stays on
+/// TheRock 7.15, the HIP GGUF wheel opt-in (install_hip_gguf_wheel) requires
+/// this torch. Rejects other builds at GGUF import. Pure + unit-tested.
+pub(crate) fn amd_hip_stable_cmds(profile: &str) -> Option<String> {
+    if profile != "AMD_GFX1201" {
+        return None;
+    }
+    Some("--index-url https://repo.amd.com/rocm/whl-multi-arch/ \"torch[device-gfx1201]==2.10.0+rocm7.14.0\" \"rocm[libraries,device-gfx1201]==7.14.0\"".into())
+}
+
 /// Pure helper: default `attention_mode` to "auto" on AMD when the key is
 /// missing/empty OR holds setup.py's bogus 'sage'/'sage2' default.
 /// Rationale (issue #15): upstream setup.py picks the default with
@@ -1215,6 +1228,9 @@ pub(crate) fn apply_attention_mode_auto(cfg: &mut serde_json::Value) -> bool {
 /// URLs, no cmake/ninja/setup.py anywhere. If a vanilla `triton` dist is
 /// installed it must be uninstalled first: both own the `triton` import
 /// namespace and overwrite each other (documented upstream conflict).
+/// Sep 2026: upstream moved to portable `triton.language.extra.libdevice`
+/// + `nearbyint` (AMD Triton crash fix) — needs triton-windows >= 3.6 on the
+/// torch 2.10 path. Floating latest satisfies this; never pin below 3.6 here.
 /// AMD-gated by the caller; Intel/NVIDIA/CPU flows never call it.
 /// Pure + unit-tested.
 pub(crate) fn triton_windows_pip_args() -> Vec<&'static str> {
@@ -2127,7 +2143,16 @@ pub async fn install(
     };
     if let Some((primary, _)) = &amd_cmds {
         match patch_therock_torch_cmd(&repo, primary) {
-                Ok(()) => emit(&format!("[*] AMD TheRock torch: per-family /v2/ float (torch trio + rocm[devel])\n{primary}\n")),
+                Ok(()) => {
+                    emit(&format!("[*] AMD TheRock torch: per-family /v2/ float (torch trio + rocm[devel])\n{primary}\n"));
+                    // gfx1201 HIP alternative: TheRock stays the install stack;
+                    // point RX 9070/R9700 users at the sync-kernels-only HIP opt-in.
+                    if plan["profile"].as_str().unwrap_or("") == "AMD_GFX1201" {
+                        if let Some(hip) = amd_hip_stable_cmds("AMD_GFX1201") {
+                            emit(&format!("[i] Experimental alternative for gfx1201: HIP torch 2.10+rocm7.14 ({hip}) + HIP GGUF wheel via dashboard Sync kernels → HIP GGUF (exp). Validation pending.\n"));
+                        }
+                    }
+                }
                 // Fail-closed (issue #15): without the TheRock entry setup.py
                 // installs its stale gfx110x wheels — never run it unpatched.
                 Err(e) => {
@@ -3449,6 +3474,86 @@ pub async fn sync_kernels(app: tauri::AppHandle) -> Result<serde_json::Value, St
 #[tauri::command]
 pub async fn restore_kernels(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     sync_kernels_inner(app, true).await
+}
+
+/// Experimental AMD HIP GGUF wheel (upstream docs/INSTALLATION.md, Sep 2026):
+/// `llamacpp_gguf_cuda-1.0.22+torch210rocm714py311` for RX 9070-series
+/// (gfx1201) on PyTorch 2.10.0+rocm7.14.0. Sync-kernels-only opt-in: the main
+/// install stays on the TheRock 7.15 stack, this swaps just the GGUF dist
+/// (same package name as the CUDA wheel, so --force-reinstall). --no-deps
+/// preserves the installed torch — the HIP wheel rejects other builds at
+/// import. AMD-gated; non-AMD profiles refused. Non-gfx1201 AMD allowed with
+/// a warning (upstream targets gfx1201, validation pending). URL lives in
+/// hw.rs alongside the CUDA wheels (single source of truth).
+use crate::hw::GGUF_1022_WIN_PY311_HIP as HIP_GGUF_WHEEL_URL;
+
+#[tauri::command]
+pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    mutating_try("install-hip-gguf")?;
+    let emit_log = |msg: &str| {
+        crate::base::push_log(msg, "setup");
+        let _ = app.emit("launch-log", msg.to_string());
+    };
+    let gpu = get_gpu_info_sync();
+    let vendor = gpu
+        .get("vendor")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_uppercase();
+    if vendor != "AMD" {
+        mutating_done();
+        return Err("Experimental HIP wheel needs an AMD GPU — this box is not AMD.".into());
+    }
+    let profile = kernel_profile_key(
+        gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
+        gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+    );
+    if profile != "AMD_GFX1201" {
+        emit_log(&format!("[!] {profile} is not the upstream gfx1201 target (RX 9070/R9700) — installing anyway, validation pending.\n"));
+    }
+    emit_log("[*] Installing experimental HIP GGUF wheel 1.0.22+torch210rocm714 (needs torch 2.10.0+rocm7.14.0; validation pending)…\n");
+    let repo = get_repo_dir();
+    let env = get_active_env();
+    let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
+    let base = if std::path::Path::new(raw).is_absolute() {
+        PathBuf::from(raw)
+    } else {
+        repo.join(raw.trim_start_matches(".\\").trim_start_matches("./"))
+    };
+    let py = if cfg!(windows) {
+        base.join("Scripts\\python.exe")
+    } else {
+        base.join("bin/python3")
+    };
+    if !py.exists() {
+        mutating_done();
+        return Err("python not found for active env".into());
+    }
+    let py_s = py.to_string_lossy().to_string();
+    let ok = crate::base::run_logged(
+        &app,
+        &py_s,
+        &[
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            "--force-reinstall",
+            "--upgrade",
+            HIP_GGUF_WHEEL_URL,
+        ],
+        None,
+        |s: &str| {
+            crate::base::push_log(s, "setup");
+            let _ = app.emit("launch-log", s.to_string());
+        },
+    )
+    .await;
+    mutating_done();
+    if !ok {
+        return Err("HIP GGUF wheel install failed — see console output. Confirm torch 2.10.0+rocm7.14.0 is installed; the wheel rejects other builds at import.".into());
+    }
+    Ok(serde_json::json!({"ok": true, "success": true, "wheel": HIP_GGUF_WHEEL_URL}))
 }
 /// Post-install override wheels: the subset of Sync that setup.py can never
 /// produce — the GGUF floor and the sage safe build. setup.py installs

@@ -154,6 +154,7 @@
         rollbackWangp: () => call("rollback_wangp"),
         syncKernels: () => call("sync_kernels"),
         restoreKernels: () => call("restore_kernels"),
+        installHipGguf: () => call("install_hip_gguf_wheel"),
         installPlan: () => call("install_plan"),
         validateInstall: () => call("validate_install"),
         classifyTarget: () => call("classify_target"),
@@ -566,7 +567,7 @@
         deepySet: (mode, engine, enhancer, sessions, quant, enhancerMode) =>
             call("deepy_set", { mode, engine, enhancer, sessions, quant, enhancerMode }),
         deepyWebPreflight: (mode) => call("deepy_web_preflight", { mode }),
-        deepyWebStart: (mode, deepyPort, authMode, authFixed, https, publicUrl) =>
+        deepyWebStart: (mode, deepyPort, authMode, authFixed, https, publicUrl, extraArgs) =>
             call("deepy_web_start", {
                 mode,
                 deepyPort,
@@ -577,6 +578,7 @@
                 httpsKey: (https && https.key) || "",
                 httpsPort: (https && https.port) || null,
                 publicUrl: (typeof publicUrl === "string" ? publicUrl : "") || "",
+                extraArgs: (typeof extraArgs === "string" ? extraArgs : "") || null,
             }),
         deepyWebStop: (deepyPort) => call("deepy_web_stop", { deepyPort }),
         deepyWebStatus: (deepyPort) => call("deepy_web_status", { deepyPort }),

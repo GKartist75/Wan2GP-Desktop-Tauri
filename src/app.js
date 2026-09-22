@@ -4428,6 +4428,21 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
   const box = $("kernelWheels");
   const tag = $("kernelProfileTag");
   if (!card || !box) return;
+  // Experimental HIP GGUF opt-in: AMD only, gfx1201 primary target.
+  // Other AMD profiles see it too (upstream validation pending, warning on click).
+  try {
+    const hipBtn = $("installHipGgufBtn");
+    if (hipBtn) {
+      const p = String(kernelProfile || "");
+      hipBtn.style.display = p.indexOf("AMD") === 0 ? "" : "none";
+      if (p.indexOf("AMD") === 0 && p !== "AMD_GFX1201") {
+        hipBtn.title =
+          "Experimental AMD-only: GGUF 1.0.22 torch210rocm714 HIP wheel (upstream targets gfx1201 RX 9070/R9700 — installing on " +
+          p +
+          " is unvalidated). Needs torch 2.10.0+rocm7.14.0.";
+      }
+    }
+  } catch {}
   const list = Array.isArray(wheels) ? wheels : [];
   if (!list.length) {
     // Distinguish "no GPU profile" (genuinely nothing to show) from a data
@@ -4844,6 +4859,30 @@ $("restoreKernelsBtn")?.addEventListener("click", async function () {
   } finally {
     this.disabled = false;
     this.textContent = "Restore GPU Wheels";
+    setTimeout(refreshDashboard, 1500);
+  }
+});
+// Experimental AMD HIP GGUF wheel (sync-kernels-only opt-in, gfx1201).
+// Replaces the CUDA GGUF wheel (same dist name); needs torch 2.10+rocm7.14.
+$("installHipGgufBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  if (
+    !confirm(
+      "Install experimental HIP GGUF 1.0.22 (torch210rocm714) for RX 9070/R9700?\n\nNeeds torch 2.10.0+rocm7.14.0 — the wheel rejects other builds at import. Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
+    )
+  )
+    return;
+  this.disabled = true;
+  this.textContent = "Installing…";
+  try {
+    const r = await window.w2gp.installHipGguf();
+    if (r && r.success) showToast("✓ HIP GGUF wheel installed");
+    else showToast("✗ HIP install failed: " + (r && r.error ? r.error : "unknown"));
+  } catch (e) {
+    showToast("✗ HIP install failed: " + e.message);
+  } finally {
+    this.disabled = false;
+    this.textContent = "HIP GGUF (exp)";
     setTimeout(refreshDashboard, 1500);
   }
 });
@@ -7803,6 +7842,10 @@ function deepyWebPublicUrl() {
   const v = ($("deepyWebPublicUrlInput") || {}).value;
   return typeof v === "string" ? v.trim() : "";
 }
+function deepyWebExtraArgs() {
+  const v = ($("deepyWebExtraArgsInput") || {}).value;
+  return typeof v === "string" ? v.trim() : "";
+}
 async function deepyWebCertFlow(action) {
   const p = deepyWebHttpsPaths();
   try {
@@ -7894,6 +7937,8 @@ async function refreshDeepyWeb(light = false) {
           if (Number.isFinite(p) && p >= 1 && p <= 65535)
             $("deepyWebPortInput").value = String(p);
         }
+        if ($("deepyWebExtraArgsInput") && typeof cfg.deepyExtraArgs === "string" && !$("deepyWebExtraArgsInput").value)
+          $("deepyWebExtraArgsInput").value = cfg.deepyExtraArgs;
         // Assistant pre-select (persisted per-start choice, no default).
         if (
           cfg.deepyWebAssistant === "zero" ||
@@ -7979,7 +8024,7 @@ async function refreshDeepyWeb(light = false) {
     if (urls.phone) {
       phoneHint.textContent =
         deepyWebMode() === "lan"
-          ? "Phone-LAN mode uses --listen: Windows may show a firewall prompt — allow it on private networks. No firewall rules are created silently."
+          ? "Phone-LAN mode uses --listen: the server becomes reachable from anywhere on your local network (and by extension your VPN). Windows may show a firewall prompt — allow it on private networks. No firewall rules are created silently."
           : "Phone URL is shown for convenience — start in Phone-LAN mode to serve it.";
     } else {
       phoneHint.textContent =
@@ -8120,6 +8165,7 @@ async function deepyWebStartFlow() {
   const httpsPaths = deepyWebHttpsPaths();
   const httpsOn = deepyWebHttpsOn();
   const publicUrl = deepyWebPublicUrl();
+  const extraArgs = deepyWebExtraArgs();
   const assistant = deepyWebAssistant();
   if (httpsOn && (!httpsPaths.cert || !httpsPaths.key)) {
     showToast("HTTPS needs both .pem and .key — use Bring or Create first.");
@@ -8143,6 +8189,8 @@ async function deepyWebStartFlow() {
       cfg.deepyKeyPath = httpsPaths.key;
       if (publicUrl) cfg.deepyPublicUrl = publicUrl;
       else delete cfg.deepyPublicUrl;
+      if (extraArgs) cfg.deepyExtraArgs = extraArgs;
+      else delete cfg.deepyExtraArgs;
       if (authMode === "fixed" && rememberPw && authFixed) {
         cfg.deepySavedPassword = authFixed;
         cfg.deepyPasswordExpiry = Date.now() + DEEPY_SAVED_DAYS * 864e5;
@@ -8232,7 +8280,7 @@ async function deepyWebStartFlow() {
       enabled: httpsOn,
       cert: httpsPaths.cert,
       key: httpsPaths.key,
-    }, publicUrl);
+    }, publicUrl, extraArgs);
     if (r && r.ok) {
       showToast("✓ Deepy Web running on :" + r.port);
       const extUrl = (r.urls && r.urls.external) || "";

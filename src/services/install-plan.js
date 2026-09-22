@@ -12,8 +12,9 @@
  *  - NVIDIA RTX 20/30/40/50 (compute ≥ 7.0, not GTX 10/16) → PyTorch 2.10 + CUDA 13
  *  - GTX 10/16 (compute 6.1) → legacy PyTorch 2.7.1 + CUDA 12.8
  *  - NVIDIA cu130 needs driver R580+ (skipped for GTX 10/16)
- *  - AMD (Windows) → exact-pinned ROCm 7.15 / torch 2.12.0 TheRock stack
- *    (whl-multi-arch, verified working) + numpy 1.26.4 pin on the fallback path
+ *  - AMD (Windows) → TheRock ROCm 7.15 / torch 2.12.0 default
+ *    (whl-multi-arch, verified working) + numpy 1.26.4 pin on the fallback path;
+ *    experimental HIP 7.14 / torch 2.10 opt-in lives in Sync kernels (gfx1201 only)
  *  - Apple/Intel → MPS/CPU (no CUDA)
  *  - Attention kernels: SageAttention, FlashAttention, SpargeAttention, LightX2V
  *    (RTX 50), Nunchaku+GGUF — installed by setup.py per its own matrix.
@@ -82,13 +83,14 @@ function buildPlan(hw = {}) {
     attention = ['SageAttention', 'FlashAttention', 'SpargeAttention']
     if (cap >= 9.0) attention.push('Nunchaku + GGUF', 'LightX2V')
   } else if (vendor === 'AMD') {
-    cuda = 'ROCm 7.15 (TheRock)'
+    cuda = 'ROCm 7.15 (TheRock, default)'
     torch = 'PyTorch 2.12 (ROCm 7.15)'
     // numpy 1.26.4 pin applies only on the staging-float fallback path — the
     // pinned 7.15 primary resolves with numpy 2.x (verified pip closure).
     numpyPin = 'numpy==1.26.4 (fallback path only; skipped on the ROCm 7.15 stack)'
     attention = ['SageAttention (ROCm)', 'FlashAttention (ROCm)']
-    notes.push('AMD detected — exact-pinned ROCm 7.15 stack (torch 2.12.0+rocm7.15.0a20260728, verified working); staging float on retry.')
+    notes.push('AMD detected — TheRock ROCm 7.15 stack (torch 2.12.0+rocm7.15.0a20260728, verified working); staging float on retry.')
+    notes.push('Experimental opt-in on RX 9070/R9700 (gfx1201): HIP torch 2.10.0+rocm7.14.0 + GGUF 1.0.22 torch210rocm714 wheel via Sync kernels — needs that exact torch, validation pending, SDPA fallback expected for paged attention.')
     // #5 ROCm driver minimum pre-check (upstream parity gap): ROCm 7.x needs an
     // Adrenalin/Pro driver >= ~24.5 (or the matching TheRock runtime). If we can
     // read a numeric driver version, warn when it's below the floor.

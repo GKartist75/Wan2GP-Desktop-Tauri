@@ -595,6 +595,11 @@ pub(crate) fn parse_pip_show_versions(text: &str) -> Option<String> {
 /// GGUF wheel URLs shipped by upstream (docs/INSTALLATION.md#gguf-llamacpp-cuda-kernels).
 const GGUF_1022_WIN_PY311: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
 const GGUF_1022_WIN_PY310: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch271cu128py310-cp310-cp310-win_amd64.whl";
+/// Experimental AMD HIP wheel (docs/INSTALLATION.md, Sep 2026): RX 9070
+/// gfx1201 on torch 2.10.0+rocm7.14.0. Same dist name as the CUDA wheel —
+/// pick by backend, never mix. Sync-kernels-only opt-in via
+/// install_hip_gguf_wheel; the GGUF floor below must never swap HIP->CUDA.
+pub(crate) const GGUF_1022_WIN_PY311_HIP: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch210rocm714py311-cp311-cp311-win_amd64.whl";
 /// GGUF floor toward the documented 1.0.22 build (RTX50 SM120 kernels,
 /// 50-100% Deepy decode speedup, Deepy Prime Bonsai PTQ1 support).
 /// setup_config.json lags (1.0.14 and older in the wild, verified Sep 2026),
@@ -605,6 +610,13 @@ const GGUF_1022_WIN_PY310: &str = "https://github.com/deepbeepmeep/kernels/relea
 /// Applies to every kernel URL (no-op unless it's a stale GGUF link), so
 /// both the sync installer and the overview's want/have comparison share it.
 pub(crate) fn apply_gguf_override(url: &str) -> String {
+    // HIP stack owns its wheel (same dist name, different backend): never
+    // swap HIP->CUDA or CUDA->HIP here. The HIP opt-in installs its URL
+    // directly via install_hip_gguf_wheel.
+    let low = url.to_ascii_lowercase();
+    if low.contains("rocm714") || low.contains("rocm7.14") || low.contains("+hip") || low.contains("torch212") {
+        return url.to_string();
+    }
     let Some(ver) = gguf_wheel_version(url) else {
         return url.to_string();
     };
@@ -955,8 +967,8 @@ pub(crate) fn build_install_plan(hw: &serde_json::Value) -> serde_json::Value {
         }
     } else if vendor == "AMD" {
         (
-            "ROCm 7.15 (TheRock)",
-            "PyTorch 2.12 (ROCm 7.15)",
+            "ROCm 7.15 (TheRock, default)",
+            "PyTorch 2.12 (ROCm 7.15; HIP 7.14 opt-in)",
             String::new(),
         )
     } else if vendor == "APPLE" {
@@ -1094,8 +1106,9 @@ fn comp_label(code: &str) -> String {
         "cu128" => "PyTorch 2.7.1 + CUDA 12.8".into(),
         "cu130" => "PyTorch 2.10.0 + CUDA 13.0".into(),
         // Key stays rocm65 (upstream setup_config.json schema) — the label is
-        // what the installer actually puts down (exact-pinned 7.15 stack).
-        "rocm65" => "PyTorch 2.12 + ROCm 7.15 (TheRock)".into(),
+        // what the installer actually puts down (TheRock 7.15 default; HIP
+        // 7.14 wheel is a sync-kernels-only opt-in on gfx1201).
+        "rocm65" => "PyTorch 2.12 + ROCm 7.15 TheRock (HIP 7.14 opt-in)".into(),
         "mps" => "PyTorch (MPS)".into(),
         "v33" => "Triton < 3.3".into(),
         "v34" => "Triton < 3.4".into(),
@@ -1250,7 +1263,7 @@ pub(crate) fn hardware_profile_detail(vendor: &str, name: &str, vram_mb: f64) ->
             "AMD",
             Prof {
                 python: "3.11.14",
-                torch: "ROCm 7.15",
+                torch: "ROCm 7.15 (HIP 7.14 opt-in)",
                 triton: None,
                 sage: None,
                 sparge: None,
@@ -1650,7 +1663,7 @@ mod amd_sim_tests {
         );
         assert_eq!(
             plan.get("cuda").and_then(|v| v.as_str()),
-            Some("ROCm 7.15 (TheRock)")
+            Some("ROCm 7.15 (TheRock, default)")
         );
 
         // Doc per-family float primary (rocm[devel] on /v2/), staging float fallback.
