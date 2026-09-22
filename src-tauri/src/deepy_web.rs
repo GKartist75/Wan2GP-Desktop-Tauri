@@ -376,6 +376,47 @@ pub(crate) fn build_public_url_args(mut args: Vec<String>, public_url: &str) -> 
     args
 }
 
+/// Flags owned by the Deepy Web card — rejected in Extra args with an
+/// actionable message. The card already manages them (mode/port/auth/HTTPS/
+/// proxy widgets); duplicates would silently double up or fight the URL and
+/// auth logic. `--share` is rejected too: it opens a public Gradio tunnel —
+/// use Tailscale or a reverse proxy with Auth + HTTPS instead.
+const DEEPY_MANAGED_FLAGS: &[&str] = &[
+    "--deepy-server",
+    "--server-port",
+    "--server-name",
+    "--deepy-sessions-dir",
+    "--listen",
+    "--auth",
+    "--ssl-certfile",
+    "--ssl-keyfile",
+    "--https-port",
+    "--public-url",
+    "--config",
+];
+
+/// Validate the Deepy Web Extra args free-text field (Manage-tab `launchArgs`
+/// pattern): quote-aware split, managed flags and `--share` refused
+/// fail-closed. Pure + unit-tested.
+pub(crate) fn validate_deepy_extra_args(raw: &str) -> Result<Vec<String>, String> {
+    let args = crate::launch::split_launch_args(raw);
+    for a in &args {
+        let flag = a.split('=').next().unwrap_or(a);
+        if DEEPY_MANAGED_FLAGS.contains(&flag) {
+            return Err(format!(
+                "{flag} is managed by the Deepy Web card (mode/port/auth/HTTPS/proxy settings) — remove it from Extra args."
+            ));
+        }
+        if flag == "--share" {
+            return Err(
+                "--share opens a public tunnel — not allowed here. Use Tailscale or a reverse proxy with Auth + HTTPS instead."
+                    .to_string(),
+            );
+        }
+    }
+    Ok(args)
+}
+
 pub(crate) fn should_stop_deepy_process(cmdline: &str, deepy_port: u64) -> bool {
     let cl = cmdline.to_lowercase();
     cl.contains("wgp.py") && cl.contains("--deepy-server") && cl.contains(&deepy_port.to_string())
@@ -881,6 +922,7 @@ pub async fn deepy_web_start(
     https_key: Option<String>,
     https_port: Option<u64>,
     public_url: Option<String>,
+    extra_args: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let lan = match mode.as_deref() {
         Some("lan") => true,
@@ -1055,6 +1097,25 @@ pub async fn deepy_web_start(
     if let Some(ref pu) = public_url_norm {
         args = build_public_url_args(args, pu);
     }
+    // Extra args free-text field (Deepy Web card, Step 4): validated against
+    // the card-managed flags, appended last so they take effect. Fail-closed
+    // on managed/`--share` entries — never silently dropped.
+    let extra_raw = extra_args
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            load_config_value()
+                .get("deepyExtraArgs")
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.trim().is_empty())
+                .map(|v| v.to_string())
+        })
+        .unwrap_or_default();
+    match validate_deepy_extra_args(&extra_raw) {
+        Ok(extra) => args.extend(extra),
+        Err(e) => {
+            return Ok(serde_json::json!({"ok": false, "error": e}));
+        }
+    }
     debug_assert!(
         auth_secret
             .as_deref()
@@ -1069,11 +1130,29 @@ pub async fn deepy_web_start(
     emit(&format!(
         "[Deepy] Starting Deepy Web ({mode_label}) on :{port} (auto-config: {autoconf})…\n"
     ));
+    // Console echo of the exact start command (defaults come from the
+    // Deepy Web card settings: mode/port/auth/HTTPS/public-URL). argv never
+    // carries the auth password (child env only), so the full line is safe
+    // to log. Shown as `python wgp.py ...` — the boot shim is an
+    // implementation detail (it re-execs wgp.py with the same flags).
+    let py = resolve_py();
+    {
+        let quoted: Vec<String> = std::iter::once(py.clone())
+            .chain(args.iter().cloned())
+            .map(|a| {
+                if a.chars().any(|c| c.is_whitespace() || c == '"') {
+                    format!("\"{}\"", a.replace('"', ""))
+                } else {
+                    a
+                }
+            })
+            .collect();
+        emit(&format!("[Deepy] cmd: {}\n", quoted.join(" ")));
+    }
     if lan {
-        emit("[Deepy] Phone-LAN mode: Windows may show a firewall prompt — allow it on private networks. No firewall rules are created silently: https://github.com/deepbeepmeep/Wan2GP\n");
+        emit("[Deepy] Phone-LAN mode (--listen): reachable from anywhere on your local network (and by extension your VPN). Windows may show a firewall prompt — allow it on private networks. No firewall rules are created silently: https://github.com/deepbeepmeep/Wan2GP\n");
     }
     mutating_try("deepy-web-start")?;
-    let py = resolve_py();
     // Issue #36: isolated subdir so %TEMP% itself is never sys.path[0].
     let boot_dir = std::env::temp_dir().join(format!(
         "wan2gp-deepy-bootstrap-{}-{}",
@@ -1193,10 +1272,19 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     // while the process kept loading and bound the port minutes later.)
     let child_pid = child.pid();
     let mut opened = false;
+    let mut child_gone = false;
     for waited in 1..=300u32 {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         if !port_is_free(port) {
             opened = true;
+            break;
+        }
+        // Fail fast: the child died without binding the port — waiting out
+        // the 5-minute window only hides the real error and holds
+        // DEEPY_STARTING, blocking retries with "already starting".
+        // Checked every 5s (a powershell spawn each second would be wasteful).
+        if waited % 5 == 0 && process_cmdline(child_pid).is_none() {
+            child_gone = true;
             break;
         }
         if waited % 30 == 0 {
@@ -1236,9 +1324,15 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             }
         }
         clear_deepy_tracking();
-        emit(&format!(
-            "[Deepy] ✗ Deepy Web did not open :{port} within 5 minutes — spawned process stopped.\n"
-        ));
+        if child_gone {
+            emit(&format!(
+                "[Deepy] ✗ Deepy Web process exited before opening :{port} — see the traceback above, then retry.\n"
+            ));
+        } else {
+            emit(&format!(
+                "[Deepy] ✗ Deepy Web did not open :{port} within 5 minutes — spawned process stopped.\n"
+            ));
+        }
         let early = stderr_buf.lock().map(|g| g.clone()).unwrap_or_default();
         let hint = flag_drift_hint(&early).unwrap_or_else(|| {
             "Deepy Web did not open its port — check Manage → logs for the traceback, then retry.".to_string()
@@ -1842,6 +1936,32 @@ mod tests {
         assert!(a.contains(&"--server-port".to_string()));
         assert!(a.contains(&"7861".to_string()));
         assert!(!a.contains(&"--listen".to_string()));
+    }
+
+    // Extra args field: free text passes through, managed flags and
+    // --share are refused fail-closed with guidance.
+    #[test]
+    fn green_extra_args_passthrough_and_quotes() {
+        assert!(validate_deepy_extra_args("").unwrap().is_empty());
+        let v = validate_deepy_extra_args("--verbose 2 --theme dark").unwrap();
+        assert_eq!(v, vec!["--verbose", "2", "--theme", "dark"]);
+        let v = validate_deepy_extra_args("--theme \"my theme\"").unwrap();
+        assert_eq!(v, vec!["--theme", "my theme"]);
+    }
+
+    #[test]
+    fn green_extra_args_rejects_managed_and_share() {
+        for bad in [
+            "--listen",
+            "--server-port 9999",
+            "--auth",
+            "--public-url=https://x.example.com",
+            "--deepy-sessions-dir C:\\x",
+            "--share",
+        ] {
+            let e = validate_deepy_extra_args(bad).unwrap_err();
+            assert!(!e.is_empty(), "{bad} must be refused");
+        }
     }
 
     #[test]

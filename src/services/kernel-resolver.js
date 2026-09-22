@@ -85,6 +85,7 @@ function wheelDistVersion(url) {
  */
 const GGUF_1022_WIN_PY311 = 'https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch210cu130py311-cp311-cp311-win_amd64.whl'
 const GGUF_1022_WIN_PY310 = 'https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch271cu128py310-cp310-cp310-win_amd64.whl'
+const GGUF_1022_WIN_PY311_HIP = 'https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch210rocm714py311-cp311-cp311-win_amd64.whl'
 const GGUF_TARGET_VERSION = '1.0.22'
 
 function ggufFloorGt(cmd) {
@@ -101,6 +102,12 @@ function ggufFloorGt(cmd) {
 }
 
 function applyGgufOverride(key, cmd, torchCode) {
+  // HIP stack owns its wheel (same dist name, different backend): never swap
+  // HIP->CUDA or CUDA->HIP here. Mirrors hw.rs apply_gguf_override.
+  if (typeof cmd === 'string') {
+    const low = cmd.toLowerCase()
+    if (low.includes('rocm714') || low.includes('rocm7.14') || low.includes('+hip') || low.includes('torch212')) return cmd
+  }
   if (!ggufFloorGt(cmd)) return cmd
   return cmd.includes('py310') ? GGUF_1022_WIN_PY310 : GGUF_1022_WIN_PY311
 }
@@ -240,5 +247,6 @@ module.exports = {
   SAGE_CU130_SAFE_WHEEL,
   SAGE_CU130_SAFE_BASE,
   GGUF_TARGET_VERSION,
+  GGUF_1022_WIN_PY311_HIP,
   KERNEL_DISPLAY,
 }

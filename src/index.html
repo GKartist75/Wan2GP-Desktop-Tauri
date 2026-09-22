@@ -950,6 +950,7 @@
             <span class="env-type-tag" id="kernelProfileTag"></span>
             <button class="btn btn-ghost small" id="restoreKernelsBtn" title="Reinstall deepbeepmeep's setup_config wheels exactly — downgrades launcher overrides (sage safe build, GGUF floor). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
                 <button class="btn btn-ghost small" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.22 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
+                <button class="btn btn-ghost small" id="installHipGgufBtn" title="Experimental AMD-only: install GGUF 1.0.22 torch210rocm714 HIP wheel for RX 9070/R9700 gfx1201. Needs torch 2.10.0+rocm7.14.0; replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
           </div>
           <div class="env-subsection" id="kernelWheelsSubsection" style="margin-top:0;border-top:none;padding-top:0">
             <div class="env-specs" id="kernelWheels">
@@ -1127,8 +1128,8 @@
               <!-- Step 1 · Addresses -->
               <div class="deepy-sub-label" style="margin-top:8px">1 · Addresses</div>
               <div class="deepy-mode-row" style="margin-top:6px">
-                      <label class="deepy-mode-opt"><input type="radio" name="deepyWebMode" value="same-pc" checked> Same-PC only</label>
-                      <label class="deepy-mode-opt"><input type="radio" name="deepyWebMode" value="lan"> Phone-LAN (HTTP)</label>
+                      <label class="deepy-mode-opt" title="Localhost only — no --listen, nothing leaves your PC"><input type="radio" name="deepyWebMode" value="same-pc" checked> Same-PC only (no --listen)</label>
+                      <label class="deepy-mode-opt" title="Binds the LAN — appends --listen, Windows may show a firewall prompt"><input type="radio" name="deepyWebMode" value="lan"> Phone-LAN (adds --listen)</label>
                     </div>
               <div class="deepyweb-urls" style="margin-top:8px">
                 <div class="deepyweb-url-row">
@@ -1239,6 +1240,11 @@
                 <button class="btn btn-primary" id="deepyWebStartBtn">Start Deepy Web</button>
                 <button class="btn btn-ghost" id="deepyWebStopBtn">Stop</button>
                 <button class="btn btn-ghost" id="deepyWebOutputsBtn" title="Open the shared Wan2GP outputs folder in Explorer">Outputs folder</button>
+              </div>
+              <div style="margin-top:8px">
+                <label class="path-hint" for="deepyWebExtraArgsInput">Extra args (optional, like Manage → Extra Launch Args)</label>
+                <input id="deepyWebExtraArgsInput" type="text" style="width:100%;max-width:520px" placeholder="--verbose 2 --theme dark">
+                <p class="path-hint" style="margin-top:4px">Appended to the start command (shown as <code>[Deepy] cmd:</code> in the console). Card-managed flags (<code>--listen --server-port --auth --public-url</code>…) and <code>--share</code> are refused — use the widgets above instead.</p>
               </div>
                       <!-- Guides (reference — collapsed) -->
                       <details style="margin-top:8px">

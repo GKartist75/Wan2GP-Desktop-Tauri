@@ -2,6 +2,30 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.8.1] — 2026-09-22
+
+- AMD experimental HIP wheel (upstream Sep 22 `docs/INSTALLATION.md`):
+  Sync-kernels-only opt-in for RX 9070 / R9700 (gfx1201) — new
+  **HIP GGUF (exp)** button in GPU Kernel Wheels (AMD profiles only)
+  installs `llamacpp_gguf_cuda-1.0.22+torch210rocm714` with
+  `--no-deps --force-reinstall` (same dist name as the CUDA wheel, torch
+  untouched — the HIP wheel rejects other torch builds at import; needs
+  torch 2.10.0+rocm7.14.0, validation pending). The main install stays on
+  the TheRock 7.15 stack and now logs the HIP alternative on gfx1201
+  installs; GGUF floor overrides (Rust + JS) are HIP-aware and never swap
+  HIP↔CUDA; installer labels name both stacks
+- Deepy Web start transparency + control: every start logs the exact
+  `[Deepy] cmd:` line to the console (password stays env-only, never
+  logged); new **Extra args** field in Step 4 (Manage-style free text,
+  persisted, fail-closed validation — card-managed flags and `--share`
+  refused with guidance); mode radios spell out `--listen`
+  (Same-PC = no `--listen`, Phone-LAN = adds `--listen`, per upstream:
+  reachable from anywhere on the LAN and by extension the VPN); boot wait
+  fails fast when the child dies instead of holding "already starting"
+  for 5 minutes
+- Deepy checks note the AMD HIP paged-attention SDPA fallback
+  (`hip_paged_sdpa`) as expected/slower, not an error
+
 ## [0.8.0] — 2026-09-21
 
 - Launch hardening (#36): the Python bootstrap shim now lives in an

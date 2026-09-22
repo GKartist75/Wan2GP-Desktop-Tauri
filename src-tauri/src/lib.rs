@@ -191,6 +191,7 @@ pub fn run() {
             install::uninstall,
             install::sync_kernels,
             install::restore_kernels,
+            install::install_hip_gguf_wheel,
             install::update,
             install::dep_check,
             install::dlss5_status,

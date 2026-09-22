@@ -74,7 +74,7 @@
       rows.map((r) => (
         '<tr><td>' + (r.ok ? '✓' : '✗') + '</td><td><strong>' + esc(r.name) + '</strong><br><span class="token-hint">' + esc(r.note) + '</span></td></tr>'
       )).join('') + '</table>'
-    if (status) status.textContent = 'Remote engines need Deepy Prime; local Qwen needs nothing here'
+    if (status) status.textContent = 'Remote engines need Deepy Prime; local Qwen needs nothing here. AMD HIP: paged-attention SDPA fallback (hip_paged_sdpa) is expected and slower — not an error.'
   }
 
   function init() {
