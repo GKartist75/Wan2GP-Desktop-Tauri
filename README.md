@@ -65,7 +65,7 @@ Full workspace viewer: multi-select, reorder, eject, copy/move across workspaces
 Three separate things, three places:
 
 ```
-1) The launcher app itself (≈ 7 MB)   ← installed by the setup.exe
+1) The launcher app itself (≈ 12 MB)   ← installed by the setup.exe
    %LocalAppData%\Wan2GP Desktop Launcher Tauri\
    Uses the WebView2 engine already in Windows — no bundled Chromium.
    (Machine-wide install goes to Program Files instead.)
@@ -106,8 +106,8 @@ C:\Wan2GP-Models\               ← models library
 
 Same launcher, same Wan2GP, same features — lightweight native shell. It uses the **WebView2 engine already built into Windows 10/11** and a compiled **Rust** backend. No bundled browser, no Node runtime.
 
-- Installer download: **≈ 3 MB**
-- Installed app: **≈ 7 MB**
+- Installer download: **≈ 4 MB**
+- Installed app: **≈ 12 MB**
 - Idle RAM (launcher shell): **~30–80 MB (shared system WebView2)**
 - Startup: **near-instant native boot**
 - Backend: **compiled Rust (memory-safe, no GC pauses)**
@@ -171,7 +171,7 @@ Same launcher, same Wan2GP, same features — lightweight native shell. It uses 
 
 ## 📊 Monitoring & control
 
-- **Dockable console** — live server log in green-on-black, dock to bottom/left/top or float. Search, export, resize.
+- **Dockable console** — live server log in green-on-black, dock to bottom/left/top or float. Search, export, **Clear**.
 - **Topbar sparklines** — CPU/GPU/RAM/VRAM mini real-time charts.
 - **Running LED & Stop** — status light + one-click server stop.
 - **Auto-start with Windows**, notifications on server ready/stop.
@@ -228,9 +228,11 @@ Switching live-re-renders the selector; **Apply** writes a consistent `wgp_confi
 
 **Sessions** (same card, below the engine picker): multisessions mode — *Disabled* (one temporary chat), *selectable Workspace* (sessions share one workspace/outputs folder, the launcher default), *dedicated Workspace* (each session owns its gallery) — plus reset behavior and gallery media (keep links vs copy files into the session). Saved via the same **Apply**; per-session workspace choice stays inside WanGP.
 
-**Deepy Web** card: Assistant selector (Zero/Prime per start — Prime keeps your saved engine: local Qwen3.8 27B, Claude, or Codex — never silently switched to OpenCode), Same-PC (no `--listen`, localhost only) / Phone-LAN (adds `--listen`: reachable from anywhere on the LAN and by extension the VPN) addresses plus an **External** row (Tailscale IPv4 URL with Copy + QR) for off-LAN access — Tailscale on both ends, Phone-LAN mode serves it. Every start logs the exact `[Deepy] cmd:` line to the Console, and Step 4 has an **Extra args** field (Manage-style free text; card-managed flags and `--share` refused with guidance). Address URLs are click-to-open in the real browser (login must happen in a tab — embedded views 403). Topbar shows a persistent Deepy Web LED (green = running, red = stopped) next to the Wan2GP LED. Auth passphrase generator now allows length 4–64. All Deepy actions log `[Deepy]` lines to the Console.
+## 📱 Phone & remote access
 
-![Deepy Web on a phone — Prime session generating an image](screenshots/deepy-web-phone-app.jpg)
+One panel, two paths — pick one. **A · Gradio server** exposes Gradio `/` and the phone-friendly `/deepy/` together over a **LAN (`--listen`) toggle** (persisted, appended verbatim on launch; flipping it while running offers a restart in place): same conversation, galleries, progress and queue on every device, with This-PC and Phone URLs (Open/Copy/QR). **B · Deepy Web standalone** is a second process on its own port with its own conversation — Assistant selector (Zero/Prime per start), Same-PC / Phone-LAN addresses plus an **External** Tailscale row (Copy + QR), Auth (Off / fixed passphrase with generator), port (empty = auto, server port + 1), LAN HTTPS, reverse-proxy origin, Extra args, Start/Stop. Standalone never live-syncs — finish → stop → resume via saved sessions. Address URLs are click-to-open in the real browser (login must happen in a tab — embedded views 403). Topbar shows a persistent Deepy Web LED (green = running, red = stopped) next to the Wan2GP LED. All actions log `[Deepy]` lines to the Console. Left info cards collapse (chevron, remembered) while keeping key actions live in the header.
+
+<img src="screenshots/deepy-web-phone-app.jpg" alt="Deepy Web on a phone — Prime session generating an image" width="320">
 
 ![Deepy Web on desktop — Prime multi-turn session with follow-up edit](screenshots/deepy-web-desktop-prime.png)
 
