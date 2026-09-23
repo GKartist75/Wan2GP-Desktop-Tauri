@@ -111,7 +111,7 @@
               <input type="color" id="customTextInput" value="#e0f8eb" style="width:44px;height:24px;padding:0;border:1px solid var(--border);border-radius:4px;background:none;cursor:pointer">
               <input type="text" id="customTextHex" value="#e0f8eb" maxlength="7" spellcheck="false" style="width:74px" class="input" title="Hex color, e.g. #e0f8eb">
             </div>
-            <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <div class="form-row" style="margin-top:8px">
               <button class="btn btn-primary small" id="customSaveBtn" title="Save these 3 colors into the selected theme">Save theme</button>
               <button class="btn btn-ghost small" id="customDefaultBtn" title="Make this theme the startup default">Set as default</button>
               <button class="btn btn-ghost small" id="customResetBtn" title="Restore this theme's shipped colors">Reset</button>
@@ -182,38 +182,6 @@
             <p class="token-hint" id="notifStatus" style="margin-top:8px"></p>
           </div>
         </div>
-        <div class="settings-section">
-          <h3>Xet Storage (hf_xet)</h3>
-          <p class="token-hint" id="xetStatusLine">Speeds up HuggingFace model downloads with delta compression. Status: <span id="xetStatus">checking...</span></p>
-          <button class="btn btn-primary small" id="xetInstallBtn" title="Install hf_xet for faster HuggingFace downloads">Install hf_xet</button>
-        </div>
-        <div class="settings-section">
-          <h3>GGUF CUDA Kernel</h3>
-          <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the FP16/BF16 multiply policy; <em>Stream-K</em> (default on) enables CUDA-graph-safe Stream-K; <em>BF16→FP16</em> restores the legacy path; <em>Disable</em> turns the GGUF CUDA kernels off entirely.</p>
-          <label class="toggle-row"><input type="checkbox" id="ggufEnabled"> <span>Enable GGUF CUDA kernels</span></label>
-          <div class="token-field" style="margin-top:8px">
-            <label class="token-hint" style="display:block;margin-bottom:4px">Matmul mode</label>
-            <select id="ggufMatmulMode" class="input">
-              <option value="auto">auto (wheel default)</option>
-              <option value="fast">fast</option>
-              <option value="low_vram">low_vram</option>
-            </select>
-          </div>
-          <label class="toggle-row" style="margin-top:8px"><input type="checkbox" id="ggufStreamK"> <span>Enable Stream-K (CUDA graphs)</span></label>
-          <label class="toggle-row"><input type="checkbox" id="ggufBf16Fp16"> <span>BF16 → FP16 (legacy cuBLAS path)</span></label>
-          <button class="btn btn-primary small" id="ggufSaveBtn" style="margin-top:8px" title="Save GGUF kernel settings (applies on next launch)">Save GGUF settings</button>
-        </div>
-        <div class="settings-section">
-          <h3>AMD ROCm</h3>
-          <p class="token-hint">AMD-only, applies on next launch. <em>Disable MIOpen</em> leaves <code>MIOPEN_FIND_MODE</code> fully unset (the guide's <code>cudnn.enabled = False</code> alternative) — try it if generation crashes with MIOpen/hip errors while <em>FAST</em> (default) is set.</p>
-          <label class="toggle-row"><input type="checkbox" id="amdMiopenDisabled"> <span>Disable MIOpen (unset MIOPEN_FIND_MODE)</span></label>
-          <button class="btn btn-primary small" id="amdSaveBtn" style="margin-top:8px" title="Save AMD ROCm settings (applies on next launch)">Save AMD settings</button>
-        </div>
-        <div class="settings-section">
-          <h3>Repair Settings</h3>
-          <p class="token-hint">If saving settings in Wan2GP fails with <em>"Value: N is not in the list of choices: [0, 1]"</em>, a saved value is out of range for a dropdown (usually from an older version or imported settings). This scans <code>models/_settings.json</code> and all <code>*_settings.json</code> files and resets out-of-range values to valid ones. Originals are backed up as <code>*.bak-repair</code>.</p>
-          <button class="btn btn-primary small" id="repairSettingsBtn" style="margin-top:8px" title="Scan settings files and reset out-of-range values (originals backed up first)">Scan & Repair Settings</button>
-        </div>
       </div>
       <div class="settings-tab-content" data-tab="launch">
         <div class="settings-section">
@@ -262,6 +230,7 @@
             <input type="text" id="launchArgsInput" class="input" placeholder="--profile 4 --attention sage2 --perc-reserved-mem-max 0.3">
             <button class="btn btn-primary small" id="launchArgsSaveBtn" title="Save extra launch args (applies on next launch)">Save</button>
           </div>
+          <p class="token-hint">Arguments passed to <code>wgp.py</code> on launch. See <a href="#" id="cliDocsLink">CLI docs</a> for all options. Changes apply on next launch.</p>
           <div class="settings-section" style="margin-top:12px">
             <h3>Server Port</h3>
             <div class="token-field">
@@ -325,6 +294,28 @@
             <p class="token-hint">RTX 30/40/50: <code>post4</code> is deepbeepmeep's published wheel but corrupts CUDA context under torch 2.10; <code>post6</code> is the safe <code>cu130</code> fix. Change applies on next sync/install.</p>
           </div>
           <div class="settings-section" style="margin-top:12px">
+            <h3>GGUF CUDA Kernel</h3>
+            <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the FP16/BF16 multiply policy; <em>Stream-K</em> (default on) enables CUDA-graph-safe Stream-K; <em>BF16→FP16</em> restores the legacy path; <em>Disable</em> turns the GGUF CUDA kernels off entirely.</p>
+            <label class="toggle-row"><input type="checkbox" id="ggufEnabled"> <span>Enable GGUF CUDA kernels</span></label>
+            <div class="token-field" style="margin-top:8px">
+              <label class="token-hint" style="display:block;margin-bottom:4px">Matmul mode</label>
+              <select id="ggufMatmulMode" class="input">
+                <option value="auto">auto (wheel default)</option>
+                <option value="fast">fast</option>
+                <option value="low_vram">low_vram</option>
+              </select>
+            </div>
+            <label class="toggle-row" style="margin-top:8px"><input type="checkbox" id="ggufStreamK"> <span>Enable Stream-K (CUDA graphs)</span></label>
+            <label class="toggle-row"><input type="checkbox" id="ggufBf16Fp16"> <span>BF16 → FP16 (legacy cuBLAS path)</span></label>
+            <button class="btn btn-primary small" id="ggufSaveBtn" style="margin-top:8px" title="Save GGUF kernel settings (applies on next launch)">Save GGUF settings</button>
+          </div>
+          <div class="settings-section" style="margin-top:12px">
+            <h3>AMD ROCm</h3>
+            <p class="token-hint">AMD-only, applies on next launch. <em>Disable MIOpen</em> leaves <code>MIOPEN_FIND_MODE</code> fully unset (the guide's <code>cudnn.enabled = False</code> alternative) — try it if generation crashes with MIOpen/hip errors while <em>FAST</em> (default) is set.</p>
+            <label class="toggle-row"><input type="checkbox" id="amdMiopenDisabled"> <span>Disable MIOpen (unset MIOPEN_FIND_MODE)</span></label>
+            <button class="btn btn-primary small" id="amdSaveBtn" style="margin-top:8px" title="Save AMD ROCm settings (applies on next launch)">Save AMD settings</button>
+          </div>
+          <div class="settings-section" style="margin-top:12px">
             <h3>Bind Address</h3>
             <div class="token-field">
               <select id="serverNameSelect" class="input" style="max-width:360px">
@@ -335,7 +326,6 @@
             </div>
             <p class="token-hint">Address Wan2GP binds and connects to. <code>localhost</code> resolves to whatever your PC uses (IPv4 or IPv6) and matches Gradio's own startup check — use it if you saw "When localhost is not accessible…". <code>127.0.0.1</code> is a strict-IPv4 fallback for proxy/VPN setups. Changes apply on next launch.</p>
           </div>
-          <p class="token-hint">Arguments passed to <code>wgp.py</code> on launch. See <a href="#" id="cliDocsLink">CLI docs</a> for all options. Changes apply on next launch.</p>
           <div class="settings-section" style="margin-top:12px">
             <h3>Agent API (MCP server)</h3>
             <p class="token-hint">Run WanGP as a tool server for Claude/OpenCode agents (v2 default; v1 for old clients). Browser login never authorizes MCP — network use needs OAuth (<code>--mcp-auth</code>). Gallery media IDs work without filesystem access; direct paths need <code>--mcp-allow-read-file-system</code>.</p>
@@ -415,6 +405,11 @@
           <p class="token-hint" id="manageUpdateWan2gpStatus" style="margin-top:6px"></p>
         </div>
         <div class="settings-section">
+          <h3>Xet Storage (hf_xet)</h3>
+          <p class="token-hint" id="xetStatusLine">Speeds up HuggingFace model downloads with delta compression. Status: <span id="xetStatus">checking...</span></p>
+          <button class="btn btn-primary small" id="xetInstallBtn" title="Install hf_xet for faster HuggingFace downloads">Install hf_xet</button>
+        </div>
+        <div class="settings-section">
           <h3>Desktop Launcher</h3>
           <p class="token-hint">Check for a new Desktop Launcher release on GitHub.</p>
           <button class="btn btn-primary small" id="manageUpdateDesktopBtn" title="Check GitHub for a new Desktop Launcher release">↻ Check Desktop Updates</button>
@@ -430,6 +425,11 @@
           <p class="token-hint">One-click fixes from the upstream <a id="tsUpstreamDocsLink" href="#" style="color:var(--accent)">TROUBLESHOOTING.md</a> (see also <a id="tsInstallDocsLink" href="#" style="color:var(--accent)">INSTALLATION.md</a>). Read-only checks first — destructive actions always ask or back up.</p>
         </div>
         <div class="settings-section">
+          <h3>Repair Settings</h3>
+          <p class="token-hint">If saving settings in Wan2GP fails with <em>"Value: N is not in the list of choices: [0, 1]"</em>, a saved value is out of range for a dropdown (usually from an older version or imported settings). This scans <code>models/_settings.json</code> and all <code>*_settings.json</code> files and resets out-of-range values to valid ones. Originals are backed up as <code>*.bak-repair</code>.</p>
+          <button class="btn btn-primary small" id="repairSettingsBtn" style="margin-top:8px" title="Scan settings files and reset out-of-range values (originals backed up first)">Scan & Repair Settings</button>
+        </div>
+        <div class="settings-section">
           <h3>Emergency Failsafe</h3>
           <p class="token-hint">Upstream absolute-minimum setup: <code>--attention sdpa --profile 4 --teacache 0 --fp16</code> + P5 profiles in <code>wgp_config.json</code> (backed up first). Use when nothing else boots.</p>
           <div class="token-field" style="margin-top:8px">
@@ -440,7 +440,7 @@
           </div>
         </div>
         <div class="settings-section" style="margin-top:12px">
-          <h3>Server Port</h3>
+          <h3>Port conflict</h3>
           <p class="token-hint">Fixes “Port 7860 is already in use”. Check who owns the port, kill only a Python owner, or move to the next free port.</p>
           <div class="token-field" style="margin-top:8px">
             <button class="btn btn-ghost small" id="tsPortCheckBtn" title="Show which process owns the server port">Check port</button>
@@ -920,7 +920,7 @@
     <div class="dash-body" id="dashBody">
       <!-- Left column: System, Paths, Model Folders, Active Environment -->
       <div class="col-left">
-        <div class="card">
+        <div class="card" id="systemCard">
           <div class="card-header">
             <span class="card-title">System</span>
           </div>
@@ -931,7 +931,7 @@
             <div class="spec-row"><span class="spec-label">VRAM</span><span class="spec-value" id="specVram">—</span> <span class="spec-free" id="specVramFree"></span></div>
           </div>
         </div>
-        <div class="card">
+        <div class="card" id="pathsCard">
           <div class="card-header">
             <span class="card-title">Paths &amp; Model Folders</span>
           </div>
@@ -948,9 +948,9 @@
           <div class="card-header">
             <span class="card-title">GPU Kernel Wheels</span>
             <span class="env-type-tag" id="kernelProfileTag"></span>
-            <button class="btn btn-ghost small" id="restoreKernelsBtn" title="Reinstall deepbeepmeep's setup_config wheels exactly — downgrades launcher overrides (sage safe build, GGUF floor). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
-                <button class="btn btn-ghost small" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.22 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
-                <button class="btn btn-ghost small" id="installHipGgufBtn" title="Experimental AMD-only: install GGUF 1.0.22 torch210rocm714 HIP wheel for RX 9070/R9700 gfx1201. Needs torch 2.10.0+rocm7.14.0; replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
+            <button class="btn btn-ghost small hide-on-collapse" id="restoreKernelsBtn" title="Reinstall deepbeepmeep's setup_config wheels exactly — downgrades launcher overrides (sage safe build, GGUF floor). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.22 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only: install GGUF 1.0.22 torch210rocm714 HIP wheel for RX 9070/R9700 gfx1201. Needs torch 2.10.0+rocm7.14.0; replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
           </div>
           <div class="env-subsection" id="kernelWheelsSubsection" style="margin-top:0;border-top:none;padding-top:0">
             <div class="env-specs" id="kernelWheels">
@@ -958,15 +958,15 @@
             </div>
           </div>
         </div>
-        <div class="card">
+        <div class="card" id="activeEnvCard">
           <div class="card-header">
             <span class="card-title">Active Environment</span>
             <span class="env-type-tag" id="envType"></span>
-            <button class="env-unlink-btn" id="envUnlinkBtn" title="Uninstall active environment">unlink</button>
-            <button class="env-restore-btn" id="envRestoreBtn" title="Reinstall all packages from requirements.txt">restore</button>
-            <button class="env-restore-btn" id="envReinstallBtn" title="Recreate the whole environment (Python, PyTorch, packages, kernels). Models & settings are kept.">reinstall</button>
-            <button class="btn btn-ghost small" id="envSetupBtn" style="display:none" title="Open the installer to set up a fresh environment">🧭 Run Setup</button>
-            <button class="btn btn-ghost small" id="checkPkgUpdatesBtn" title="Check PyPI for package updates" style="margin-left:auto;padding:1px 6px;font-size:0.6125rem;line-height:1.4">↻ Check Updates</button>
+            <button class="env-unlink-btn hide-on-collapse" id="envUnlinkBtn" title="Uninstall active environment">unlink</button>
+            <button class="env-restore-btn hide-on-collapse" id="envRestoreBtn" title="Reinstall all packages from requirements.txt">restore</button>
+            <button class="env-restore-btn hide-on-collapse" id="envReinstallBtn" title="Recreate the whole environment (Python, PyTorch, packages, kernels). Models & settings are kept.">reinstall</button>
+            <button class="btn btn-ghost small hide-on-collapse" id="envSetupBtn" style="display:none" title="Open the installer to set up a fresh environment">🧭 Run Setup</button>
+            <button class="btn btn-ghost small hide-on-collapse" id="checkPkgUpdatesBtn" title="Check PyPI for package updates" style="margin-left:auto;padding:1px 6px;font-size:0.6125rem;line-height:1.4">↻ Check Updates</button>
           </div>
           <p class="token-hint" style="margin:6px 12px 0">↻ Check Updates queries PyPI for newer versions. Updating a single package (e.g. torch) can break the env (CUDA mismatch, black frames) — use <em>restore</em> to reinstall the tested <code>requirements.txt</code>.</p>
           <div class="env-detail">
@@ -1014,14 +1014,14 @@
           <p class="path-hint">How Wan2GP enhances prompts on generation forms — applies on next Wan2GP launch, with or without Deepy.</p>
           <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px">
             <label class="path-hint">Enhancement UI<br>
-              <select id="deepyEnhancerMode" class="input" style="margin-top:4px;min-width:260px">
+              <select id="deepyEnhancerMode" class="input" data-keep-visible title="Prompt enhancement mode" style="margin-top:4px;min-width:260px">
                 <option value="1">Enhance Prompt button</option>
                 <option value="0">Automatic (dropdown)</option>
               </select>
             </label>
           </div>
           <div class="deepy-actions">
-            <button class="btn btn-primary" id="deepyPromptApplyBtn" disabled title="Save the prompt-enhancement choice into Wan2GP config (applies on next launch)">Apply</button>
+            <button class="btn btn-primary" id="deepyPromptApplyBtn" data-keep-visible disabled title="Save the prompt-enhancement choice into Wan2GP config (applies on next launch)">Apply</button>
           </div>
           <div id="deepyPromptStatusMsg" class="pip-advanced-hint" style="margin-top:8px"></div>
         </div>
@@ -1034,7 +1034,7 @@
             <span class="card-title">Deepy (WanGP assistant)</span>
           </div>
           <p class="path-hint">Deepy is WanGP's conversational media assistant. Pick a mode — the launcher writes it into Wan2GP's config so the next launch applies it. <a id="deepyDocsLink" href="#" style="color:var(--accent)">What is Deepy? (docs)</a></p>
-          <div class="deepy-mode-row">
+          <div class="deepy-mode-row" data-keep-visible>
             <label class="deepy-mode-opt"><input type="radio" name="deepyMode" value="disabled"> Disabled</label>
             <label class="deepy-mode-opt"><input type="radio" name="deepyMode" value="zero"> Deepy Zero <span class="deepy-mode-sub">local model</span></label>
             <label class="deepy-mode-opt"><input type="radio" name="deepyMode" value="prime"> Deepy Prime <span class="deepy-mode-sub">remote / local LLM</span></label>
@@ -1102,31 +1102,63 @@
             </div>
           </div>
           <div class="deepy-actions">
-            <button class="btn btn-primary" id="deepyApplyBtn" disabled title="Save the Deepy mode choice into Wan2GP config (applies on next launch)">Apply</button>
+            <button class="btn btn-primary" id="deepyApplyBtn" data-keep-visible disabled title="Save the Deepy mode choice into Wan2GP config (applies on next launch)">Apply</button>
           </div>
               <div id="deepyStatusMsg" class="pip-advanced-hint" style="margin-top:8px"></div>
             </div>
 
-            <!-- Deepy Web standalone (upstream `wgp.py --deepy-server`): one-button
-                 Same-PC + Phone-LAN HTTP. Standalone process on deepyPort — it does
-                 NOT live-sync with the Gradio /deepy/ view (finish → stop → resume). -->
+            <!-- Phone & remote access: A · main-server LAN toggle + synchronized
+                 /deepy/ URLs, then B · Deepy Web standalone (upstream
+                 `wgp.py --deepy-server` on deepyPort — no live-sync with the
+                 Gradio /deepy/ view, finish → stop → resume). -->
             <div class="card" id="deepyWebCard" style="margin-top:10px">
               <div class="card-header">
-                <span class="card-title">📱 Deepy Web</span>
+                <span class="card-title">📱 Phone & remote access</span>
               </div>
-              <p class="path-hint">Phone-friendly Deepy chat in a second process beside the main server. Start it here, open the Same-PC URL on this PC or scan the Phone URL from your phone (same Wi-Fi).</p>
+              <p class="path-hint">Two ways to use Wan2GP from your phone — pick one. <strong>A · Gradio server</strong> serves Gradio <code>/</code> and the phone-friendly <code>/deepy/</code> together: same conversation, galleries and live progress on every device, no second port. <strong>B · Deepy Web</strong> is a separate process on its own port with its own conversation (finish → stop → resume to move between them).</p>
+              <!-- A · Main server: --listen on the already-running process. -->
+              <div id="mainLanCard" style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                  <span class="deepy-sub-label">A · Gradio server (+ /deepy/ together — recommended)</span>
+                  <label class="toggle-row" style="margin:0;margin-left:auto" data-keep-visible title="Start Wan2GP with upstream --listen so phones on your Wi-Fi can reach it. Needs a server restart to take effect."><input type="checkbox" id="mainLanToggle"> <span>LAN (--listen)</span></label>
+                </div>
+                <div id="mainLanStatus" class="pip-advanced-hint" style="margin-top:4px">Checking…</div>
+                <div class="deepyweb-urls" style="margin-top:8px">
+                  <div class="deepyweb-url-row">
+                    <span class="deepy-sub-label">This PC</span>
+                    <button class="deepyweb-url deepyweb-open" id="mainLanSamePcOpen" title="Open the main Wan2GP UI in your browser">—</button>
+                    <button class="btn btn-ghost small" id="mainLanSamePcCopy" title="Copy This-PC URL">Copy</button>
+                  </div>
+                  <div class="deepyweb-url-row">
+                    <span class="deepy-sub-label">Phone</span>
+                    <button class="deepyweb-url deepyweb-open" id="mainLanPhoneOpen" title="Open Gradio in your phone browser. Phone must be on the same Wi-Fi.">—</button>
+                    <button class="btn btn-ghost small" id="mainLanPhoneCopy" title="Copy Phone (Gradio) URL">Copy</button>
+                  </div>
+                  <div class="deepyweb-url-row">
+                    <span class="deepy-sub-label">Phone /deepy/</span>
+                    <button class="deepyweb-url deepyweb-open" id="mainLanPhoneDeepyOpen" title="Open the phone-friendly /deepy/ app. Phone must be on the same Wi-Fi.">—</button>
+                    <button class="btn btn-ghost small" id="mainLanPhoneDeepyCopy" title="Copy Phone /deepy/ URL">Copy</button>
+                    <button class="btn btn-ghost small" id="mainLanPhoneQr" title="Show /deepy/ URL as QR — scan from your phone">QR</button>
+                  </div>
+                </div>
+                <p class="path-hint" id="mainLanHint" style="margin-top:4px"></p>
+              </div>
+              <!-- B · Deepy Web standalone -->
+              <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+                <span class="deepy-sub-label">B · Deepy Web standalone (second process, own port)</span>
+              </div>
               <div id="deepyWebStatus" class="pip-advanced-hint" style="margin-top:4px">Checking…</div>
               <!-- Assistant level for THIS Deepy Web process (mirrors the Deepy panel above).
                    The standalone process reads the same wgp_config.json, but selecting here
                    applies immediately to this start — no separate Apply round-trip. -->
-              <div class="deepy-sub-label" style="margin-top:8px">Assistant</div>
+              <div class="deepy-sub-label" style="margin-top:12px">Assistant</div>
               <div class="deepy-mode-row" style="margin-top:6px" id="deepyWebAssistantRow">
                 <label class="deepy-mode-opt" title="Fast, lightweight — runs on the local Qwen model"><input type="radio" name="deepyWebAssistant" value="zero"> Deepy Zero</label>
                 <label class="deepy-mode-opt" title="Planning + multi-step work — needs a Prime engine (see Deepy panel above)"><input type="radio" name="deepyWebAssistant" value="prime"> Deepy Prime</label>
               </div>
               <p class="path-hint" id="deepyWebAssistantHint" style="margin-top:4px">Uses the saved Deepy config. Pick Zero or Prime for this start — applied when you press Start (also saved for next time).</p>
               <!-- Step 1 · Addresses -->
-              <div class="deepy-sub-label" style="margin-top:8px">1 · Addresses</div>
+              <div class="deepy-sub-label" style="margin-top:12px">1 · Addresses</div>
               <div class="deepy-mode-row" style="margin-top:6px">
                       <label class="deepy-mode-opt" title="Localhost only — no --listen, nothing leaves your PC"><input type="radio" name="deepyWebMode" value="same-pc" checked> Same-PC only (no --listen)</label>
                       <label class="deepy-mode-opt" title="Binds the LAN — appends --listen, Windows may show a firewall prompt"><input type="radio" name="deepyWebMode" value="lan"> Phone-LAN (adds --listen)</label>
@@ -1166,23 +1198,23 @@
                         <p class="path-hint" style="margin-top:4px">Public-NAT rule: public exposure needs Auth + trusted HTTPS — forward the HTTPS port only, never plain HTTP.</p>
                       </div>
                   <!-- Step 2 · Auth -->
-                  <div style="margin-top:10px">
+                  <div style="margin-top:12px">
                     <div class="deepy-sub-label">2 · Auth (remote lock)</div>
                     <div class="deepy-mode-row" style="margin-top:4px">
                       <label class="deepy-mode-opt"><input type="radio" name="deepyWebAuth" value="off" checked> Off</label>
                       <label class="deepy-mode-opt"><input type="radio" name="deepyWebAuth" value="fixed"> Fixed</label>
                     </div>
-                    <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                      <label class="path-hint" for="deepyWebAuthFixed">Fixed secret</label>
+                    <div class="form-row" style="margin-top:6px">
+                      <label class="path-hint" for="deepyWebAuthFixed">Fixed passphrase</label>
                       <input id="deepyWebAuthFixed" type="password" autocomplete="new-password" style="width:180px" placeholder="type or generate secret">
                         <button class="btn btn-ghost small" id="deepyWebAuthShow">Show</button>
                     </div>
-                    <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <div class="form-row" style="margin-top:6px">
                       <label class="path-hint" for="deepyWebAuthLen">Length (4–64)</label>
                       <input id="deepyWebAuthLen" type="number" min="4" max="64" step="1" value="16" style="width:70px">
                       <button class="btn btn-ghost small" id="deepyWebAuthGen">Generate passphrase</button>
                     </div>
-                    <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <div class="form-row" style="margin-top:6px">
                       <label class="path-hint"><input id="deepyWebAuthRemember" type="checkbox"> Remember on this PC (30 days)</label>
                       <button class="btn btn-ghost small" id="deepyWebAuthForget">Forget</button>
                     </div>
@@ -1193,9 +1225,9 @@
                   <div id="deepyWebAuthPassword" class="pip-advanced-hint" style="margin-top:6px;display:none"></div>
                   </div>
                   <!-- Step 3 · Connection -->
-                  <div style="margin-top:10px">
+                  <div style="margin-top:12px">
                     <div class="deepy-sub-label">3 · Connection (port, HTTPS)</div>
-                    <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <div class="form-row" style="margin-top:6px">
                       <label class="path-hint" for="deepyWebPortInput">Deepy Web port (default: server port + 1)</label>
                       <input id="deepyWebPortInput" type="number" min="1" max="65535" step="1" style="width:90px" placeholder="auto">
                       <button class="btn btn-ghost small" id="deepyWebPortSave">Save</button>
@@ -1207,15 +1239,15 @@
                           <label class="deepy-mode-opt"><input type="radio" name="deepyWebHttps" value="off" checked> Off</label>
                           <label class="deepy-mode-opt"><input type="radio" name="deepyWebHttps" value="on"> On</label>
                         </div>
-                        <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                        <div class="form-row" style="margin-top:6px">
                           <label class="path-hint" for="deepyWebCertInput">Cert .pem</label>
                           <input id="deepyWebCertInput" type="text" style="width:220px" placeholder="C:\certs\lan-cert.pem">
                         </div>
-                        <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                        <div class="form-row" style="margin-top:6px">
                           <label class="path-hint" for="deepyWebKeyInput">Key .key</label>
                           <input id="deepyWebKeyInput" type="text" style="width:220px" placeholder="C:\certs\lan-cert-key.pem">
                         </div>
-                        <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                        <div class="form-row" style="margin-top:6px">
                           <button class="btn btn-ghost small" id="deepyWebCertBring">Use these files</button>
                           <button class="btn btn-ghost small" id="deepyWebCertCreate">Create LAN cert (mkcert)</button>
                         </div>
@@ -1226,7 +1258,7 @@
                     <details style="margin-top:8px">
                       <summary class="deepy-sub-label" style="cursor:pointer">Advanced · Reverse proxy (RunPod / Nginx / Cloudflare)</summary>
                       <div style="margin-top:8px">
-                        <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                        <div class="form-row" style="margin-top:6px">
                           <label class="path-hint" for="deepyWebPublicUrlInput">Public origin</label>
                           <input id="deepyWebPublicUrlInput" type="text" style="width:260px" placeholder="https://wangp.example.com">
                         </div>
@@ -1235,10 +1267,10 @@
                     </details>
                   </div>
 <!-- Step 4 · Start -->
-              <div class="deepy-sub-label" style="margin-top:10px">4 · Start</div>
+              <div class="deepy-sub-label" style="margin-top:12px">4 · Start</div>
 <div class="deepy-actions" style="margin-top:6px">
-                <button class="btn btn-primary" id="deepyWebStartBtn">Start Deepy Web</button>
-                <button class="btn btn-ghost" id="deepyWebStopBtn">Stop</button>
+                <button class="btn btn-primary" id="deepyWebStartBtn" data-keep-visible>Start Deepy Web</button>
+                <button class="btn btn-ghost" id="deepyWebStopBtn" data-keep-visible>Stop</button>
                 <button class="btn btn-ghost" id="deepyWebOutputsBtn" title="Open the shared Wan2GP outputs folder in Explorer">Outputs folder</button>
               </div>
               <div style="margin-top:8px">
@@ -1271,6 +1303,16 @@
                       <li><strong>Public internet (NAT forward):</strong> Auth + trusted HTTPS required — forward the HTTPS port only, never plain HTTP. (See 3 · Connection above.)</li>
                     </ul>
                   </details>
+                      <details style="margin-top:6px">
+                        <summary class="deepy-sub-label" style="cursor:pointer">Proxy debugging (page loads but chat/queue stalls behind RunPod / Nginx / Cloudflare)</summary>
+                        <ol class="path-hint" style="margin:6px 0 6px 18px;line-height:1.6">
+                          <li>In a desktop browser open your public origin (e.g. <code>https://POD-ID-7860.proxy.runpod.net</code>), press F12 → Console, and check <code>window.gradio_config.root</code> is that same public HTTPS origin. If it shows <code>http://</code> or the internal host, the proxy is rewriting or dropping the Host header — set the Public origin above (3 · Connection → Reverse proxy).</li>
+                          <li>Gradio main UI stalls: in F12 → Network look for <code>gradio_api/queue/data</code> — it should be an active (pending/streaming) request. Gradio's queue needs HTTP streaming; if it fails, the proxy is buffering or blocking streaming responses.</li>
+                          <li><code>/deepy/</code> app or Deepy Web stalls: in F12 → Network look for <code>deepy_api/events</code> — status <strong>101</strong> means the live WebSocket is up. If the proxy rejects the upgrade, Deepy falls back to <code>deepy_api/events/poll</code> automatically — chat keeps working, slightly delayed.</li>
+                          <li><strong>403</strong> on any of the above means origin validation or login: check the Public origin value and sign in again. Any other failed status: note the HTTP code and check the Console card output.</li>
+                        </ol>
+                        <p class="path-hint">Direct Same-PC / Phone-LAN use (no proxy) never needs this — these checks are only for reverse-proxy setups.</p>
+                      </details>
                       <details style="margin-top:6px">
                         <summary class="deepy-sub-label" style="cursor:pointer">Phone CA-install guide (needed for trusted HTTPS + mic)</summary>
                         <ol class="path-hint" style="margin:6px 0 6px 18px;line-height:1.6">
@@ -1339,8 +1381,11 @@
 
         <!-- Advanced pip install: open-ended, but spec-validated (no shell, no
              injection). Any future LLM SDK works here with no code change. -->
-        <div class="pip-install-row" style="margin-top:6px">
-          <div class="pip-advanced-label">Advanced — install any pip package</div>
+        <div class="card" id="pipInstallCard" style="margin-top:10px">
+          <div class="card-header">
+            <span class="card-title">Advanced — pip packages</span>
+          </div>
+          <div class="pip-install-row" style="margin-top:6px">
           <div style="display:flex;gap:6px;width:100%">
             <input type="text" id="pipInput" class="pip-input" placeholder="package (e.g. claude-agent-sdk==0.1.40)" spellcheck="false">
             <button class="pip-install-btn" id="pipInstallBtn" title="Install this package into the active environment">pip install</button>
@@ -1350,6 +1395,7 @@
             <button class="pip-copy-btn" id="pipCmdCopy" title="Copy command">copy</button>
           </div>
           <div class="pip-advanced-hint">Pins allowed (==, &gt;=, ~=). Flags like <code>--index-url</code> and shell characters are blocked for safety. The exact command that runs is shown above — copy it to run in your own terminal.</div>
+          </div>
         </div>
       </div>
 
@@ -1456,6 +1502,7 @@
                 <svg viewBox="0 0 24 24" style="width:10px;height:10px"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
                 <span class="follow-text">Follow</span>
               </button>
+              <button class="term-btn-small" id="dashTermClearBtn" title="Clear the console">Clear</button>
             </div>
           </div>
           <div class="term-body dash-term-body" id="termBody" style="flex:1"></div>
@@ -1685,6 +1732,7 @@
           <svg viewBox="0 0 24 24" style="width:10px;height:10px"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
           <span class="follow-text">Follow</span>
         </button>
+        <button class="term-btn-small" id="ftClearBtn" title="Clear the console">Clear</button>
         <div class="dock-btns">
           <button class="dock-btn active" data-dock="bottom" title="Dock bottom">⬇</button>
           <button class="dock-btn" data-dock="left" title="Dock left">⬅</button>

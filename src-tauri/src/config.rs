@@ -727,10 +727,20 @@ pub fn manage_list() -> serde_json::Value {
     }
     if let Ok(s) = std::fs::read_to_string(&f) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+            // Dashboard env switcher consumes objects ({name, type, active}),
+            // not bare name strings — strings render as a bare dot row and
+            // click-to-activate sends "undefined".
+            let active = v.get("active").and_then(|a| a.as_str()).unwrap_or("");
             if let Some(envs) = v.get("envs").and_then(|e| e.as_object()) {
                 return serde_json::Value::Array(
-                    envs.keys()
-                        .map(|k| serde_json::Value::String(k.clone()))
+                    envs.iter()
+                        .map(|(k, entry)| {
+                            serde_json::json!({
+                                "name": k,
+                                "type": entry.get("type").and_then(|t| t.as_str()).unwrap_or("?"),
+                                "active": k == active,
+                            })
+                        })
                         .collect(),
                 );
             }

@@ -271,6 +271,7 @@ pub fn run() {
             system::term_set_dock,
             system::export_logs,
             system::mirror_console,
+            system::clear_log_history,
             system::open_task_manager,
             system::get_crash_recovery_info,
             launch::launch_webview,
@@ -305,7 +306,8 @@ pub fn run() {
             deepy_web::deepy_web_status,
             deepy_web::deepy_web_cert,
             deepy_web::deepy_web_tailscale,
-            deepy_web::deepy_web_open_outputs
+            deepy_web::deepy_web_open_outputs,
+            deepy_web::main_lan_urls
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -94,24 +94,39 @@ launcher default, one shared outputs folder), reset behavior, gallery media
 forms. Works with or without Deepy, with its own *Apply* (same coherent config
 write as the Deepy card).
 
-**Deepy Web card** — phone-friendly Deepy in a second process. *Assistant*:
-Zero or Prime per start (applied via Apply — fixes the external-process-boots-Zero
-issue). *1 · Addresses*: Same-PC, Phone (same Wi-Fi), plus an *External* row
-with the Tailscale IPv4 URL (Copy + QR) for off-LAN access — needs Tailscale on
-both ends and Phone-LAN mode to serve it. Address URLs are click-to-open in the
-real browser (login must happen in a tab — embedded views 403). Topbar shows a
-persistent Deepy Web LED (green = running, red = stopped) next to the Wan2GP LED.
-*2 · Auth*: fixed passphrase (generator allows length 4–64, remember
-30 days optional). *3 · Connection*: port + LAN HTTPS under Advanced
-(bring/create cert, CA guide). Upstream reference:
-`docs/AUTHENTICATION.md` in the Wan2GP repo (web login, `--public-url`
-reverse-proxy origins, certificates, MCP OAuth). All actions log `[Deepy]` lines to the Console.
+**Phone & remote access card** — two paths, pick one. **A · Gradio server**
+LAN (`--listen`) toggle plus This-PC and Phone URLs — Gradio `/` and the
+synchronized `/deepy/` mobile app (Open/Copy/QR): same conversation,
+galleries, progress and queue on every device; accepted work survives
+closed browsers. Flipping LAN while running offers a confirm-then-restart
+in the same Desktop/Browser mode. **B · Deepy Web standalone** — second
+process on its own port with its own conversation (finish → stop → resume
+via saved sessions). *Assistant*: Zero or Prime per start. *1 ·
+Addresses*: Same-PC, Phone (same Wi-Fi), plus an *External* Tailscale IPv4
+row (Copy + QR) for off-LAN access — needs Tailscale on both ends and
+Phone-LAN mode. Address URLs are click-to-open in the real browser (login
+must happen in a tab — embedded views 403). Topbar shows a persistent
+Deepy Web LED (green = running, red = stopped) next to the Wan2GP LED.
+*2 · Auth*: Off or Fixed passphrase (generator, length 4–64, remember
+30 days optional). *3 · Connection*: port — empty means auto (server port
++ 1) — plus LAN HTTPS (bring/create cert, CA guide) and reverse-proxy
+origin under Advanced. *4 · Start/Stop* plus an Extra-args field and
+guides (Tailscale setup, protection tiers, proxy debugging, CA install).
+Upstream reference: `docs/AUTHENTICATION.md` in the Wan2GP repo (web
+login, `--public-url` reverse-proxy origins, certificates, MCP OAuth).
+All actions log `[Deepy]` lines to the Console.
+
+**Left info cards collapse** via the chevron (System, Paths, Kernels,
+Environment, Prompt enhancement, Deepy, Phone & remote access, DLSS 5, pip
+packages) — state is remembered across restarts. Collapsed headers keep
+their key actions live (enhancement mode + Apply, Disabled/Zero/Prime +
+Apply, LAN toggle + Deepy Start/Stop); Kernel/Env headers collapse clean.
 
 **DLSS 5 card** — optional NVIDIA upsampler runtimes. *Install DLSS 5…* opens a
 confirmation (Cancel / Install).
 
-**pip install row** — install any extra PyPI package into the active env, with a
-copy button for the equivalent command.
+**Advanced — pip packages card** — install any extra PyPI package into the
+active env, with a copy button for the equivalent command.
 
 **Launch buttons** — start Wan2GP:
 
@@ -130,7 +145,8 @@ repair — settings/models/envs untouched, Pinokio refused), *Check updates*
 (launcher version), *Desktop shortcut*, *Roll back Wan2GP update* (one-click
 return to the recorded upstream commit, dirty-tree guarded), *Auto-Tune shortcut*.
 
-**Console card** — live launcher + install/launch log with follow toggle.
+**Console card** — live launcher + install/launch log with follow toggle and a
+**Clear** button (wipes every console plus the backend history).
 
 ---
 
@@ -234,13 +250,6 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   open `https://ntfy.sh/your-topic` in a browser, then use
   `ntfys://your-topic` — WhatsApp, Discord, Telegram etc. work via any
   [Apprise URL](https://appriseit.com/services/).
-- **Xet Storage (hf_xet)** — fast HuggingFace downloads toggle.
-- **GGUF CUDA Kernel** — llama.cpp CUDA offload switch.
-- **Repair Settings** — resets launcher settings to defaults.
-- **AMD ROCm** (AMD only, applies on next launch) — *Disable MIOpen* leaves
-  `MIOPEN_FIND_MODE` fully unset (the upstream guide's `cudnn.enabled = False`
-  alternative). Try it if generation crashes with MIOpen/HIP errors while the
-  default `FAST` mode is set.
 
 ## Manage → Launch
 
@@ -253,6 +262,12 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **GPU Device** — `auto` or a pinned `cuda:N` for generation.
 - **Launcher GPU** — which GPU the launcher UI itself prefers.
 - **SageAttention wheel** — which Sage build to use.
+- **GGUF CUDA Kernel** — llama.cpp CUDA offload switch (matmul mode,
+  Stream-K, BF16→FP16 legacy path, or disable). Applies on next launch.
+- **AMD ROCm** (AMD only, applies on next launch) — *Disable MIOpen* leaves
+  `MIOPEN_FIND_MODE` fully unset (the upstream guide's `cudnn.enabled = False`
+  alternative). Try it if generation crashes with MIOpen/HIP errors while the
+  default `FAST` mode is set.
 - **Bind Address** — `localhost` (matches Gradio's self-check) vs strict `127.0.0.1` for proxy/VPN setups.
 
 ## Manage → System
@@ -266,17 +281,22 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   update/repair/clone records the upstream commit, so *Roll back Wan2GP
   update* (Dashboard action row) can return to it later. Updates also show
   the full requirements check: per-pin ✓/✗ lines plus the pin diff.
+- **Xet Storage (hf_xet)** — fast HuggingFace downloads toggle.
 - **Setup** — re-opens the installer (fresh / repair / migrate).
 - **🛟 Troubleshooting** — **Verify GPU compute** (proves torch + each kernel wheel
   actually *import*, naming the broken dist — run after AV restores, driver
   updates, or env surgery), GPU report, emergency fallback torch probe.
   Links out to upstream `TROUBLESHOOTING.md` (plus `INSTALLATION.md`).
+- **Repair Settings** — resets out-of-range dropdown values in
+  `models/_settings.json` + all `*_settings.json` files (originals backed up
+  as `*.bak-repair`); fixes the *"Value: N is not in the list of choices"*
+  save failure.
 - **🐞 Report an issue…** — support ZIP: system info, torch/CUDA + triton/sage probes, staged launch args, redacted `wgp_config.json`, boot log, crash queue. Opened in Explorer next to a pre-filled GitHub issue.
 - **Config backups & changelog** — every Apply snapshots `wgp_config.json` (newest 5); restore re-snapshots first so it is undoable. Upstream changelog head viewer.
 - **Deepy engine checks** — OpenCode/Claude/Codex binary presence + `claude-agent-sdk==0.1.66` pin check.
 - **Network & TLS flags** — `--public-url` origin validator + cert/key/https-port staging into Extra Launch Args.
 - **Emergency Failsafe** — last-resort recovery when nothing launches.
-- **Server Port** — port conflict detection / override.
+- **Port conflict** — port-in-use detection / kill Python owner / move to the next free port.
 - **Debug Bundle** — copies full diagnostics (hardware, paths, checks, log tail).
 - **Triton / SageAttention** — attention-backend controls.
 - **SageAttention 3** — deliberately not installed by ↻ Update GPU Wheels and not offered: it needs

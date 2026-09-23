@@ -205,6 +205,11 @@
             listen("console-mirror", cb);
             return () => {};
         },
+        clearLogHistory: () => call("clear_log_history"),
+        onConsoleCleared: (cb) => {
+            listen("console-cleared", cb);
+            return () => {};
+        },
         // Fire-and-forget (hot path — must never throw into appendLog).
         mirrorConsole: (text) => {
             try {
@@ -586,6 +591,7 @@
             call("deepy_web_cert", { action, certPath, keyPath }),
         deepyWebTailscale: () => call("deepy_web_tailscale"),
         deepyWebOpenOutputs: () => call("deepy_web_open_outputs", {}),
+        mainLanUrls: () => call("main_lan_urls"),
         llmEnginesList: () => call("llm_engines_list"),
         llmEngineInstall: (e) => call("llm_engine_install", { engine: e }),
         llmEngineUninstall: (e) => call("llm_engine_uninstall", { engine: e }),

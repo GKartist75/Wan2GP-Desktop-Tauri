@@ -706,6 +706,8 @@ html[data-theme="dark"][data-accent="rose"],
  display: flex;
  align-items: center;
  justify-content: space-between;
+ flex-wrap: wrap;
+ row-gap: 8px;
  margin-bottom: 14px;
 }
 .card-title {
@@ -716,6 +718,84 @@ html[data-theme="dark"][data-accent="rose"],
  color: var(--text-secondary);
 }
 
+/* ── Collapsible info cards (left column): chevron hides all but the header ── */
+.card-collapse-btn {
+  margin-left: 8px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 0.6875rem;
+  line-height: 1.5;
+}
+.card-collapse-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.card-collapse-btn .chev {
+  display: inline-block;
+  transition: transform 0.15s;
+}
+.card.collapsed > :not(.card-header) {
+  display: none !important;
+}
+.card.collapsed .card-header {
+  margin-bottom: 0;
+}
+.card.collapsed .card-collapse-btn .chev {
+  transform: rotate(-90deg);
+}
+.card.collapsed .hide-on-collapse {
+  display: none !important;
+}
+/* Slim kept controls so title + actions + chevron fit one collapsed row. */
+.card.collapsed .card-header {
+ flex-wrap: nowrap;
+}
+.card.collapsed .collapse-kept {
+ min-width: 0;
+}
+.card.collapsed .deepy-mode-sub {
+ display: none;
+}
+.card.collapsed .deepy-mode-opt {
+ padding: 2px 8px;
+}
+/* Key actions kept visible in collapsed headers (moved nodes, same state). */
+.collapse-kept {
+ display: inline-flex;
+ align-items: center;
+ gap: 6px;
+ margin-left: auto;
+ font-size: 0.6875rem;
+}
+.collapse-kept .btn,
+.collapse-kept select.input,
+.collapse-kept .deepy-mode-opt {
+ font-size: inherit;
+}
+.collapse-kept .btn {
+ padding: 2px 10px;
+}
+.collapse-kept .toggle-row {
+ margin: 0;
+}
+.collapse-kept select.input {
+ min-width: 0 !important;
+}
+/* Shared structural rhythm for panel interiors. */
+.form-row {
+ display: flex;
+ gap: 8px;
+ align-items: center;
+ flex-wrap: wrap;
+}
+#pipInstallCard .pip-install-row {
+ flex-direction: column;
+ align-items: stretch;
+}
 /* ── Spec Grid ── */
 .spec-grid {
  display: flex;
@@ -1424,12 +1504,6 @@ html[data-theme="dark"][data-accent="rose"],
 }
 .llm-external-hint {
  color: var(--text-tertiary);
-}
-.pip-advanced-label {
- font-size: 0.6625rem;
- color: var(--text-secondary);
- margin-bottom: 4px;
- font-weight: 600;
 }
 .pip-advanced-hint {
  font-size: 0.6875rem;
@@ -2896,6 +2970,31 @@ table.args-table.lib-table.compact td:nth-child(3) {
  background: var(--surface, #242424);
  color: var(--text-primary, #e8e6e1);
 }
+/* Native dropdowns follow the theme instead of rendering browser-white. */
+select.input {
+ background: color-mix(in srgb, var(--text-primary) 8%, var(--surface));
+ color: var(--text-primary);
+ border: 1px solid var(--border);
+ border-radius: 4px;
+ padding: 2px 6px;
+ box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+select.input option {
+ background: var(--surface);
+ color: var(--text-primary);
+}
+/* Theme-aware base for native text fields. :where() keeps specificity at
+   element level, so any real component rule (.ft-search, .pip-input, …)
+   still wins — this only fills the unstyled gaps. */
+input:where([type="text"], [type="number"], [type="password"], :not([type])) {
+ background: color-mix(in srgb, var(--text-primary) 8%, var(--surface));
+ color: var(--text-primary);
+ border: 1px solid var(--border);
+ border-radius: 4px;
+ padding: 2px 6px;
+ box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.25);
+ caret-color: var(--accent);
+}
 .embed-top-wrap {
  display: inline-flex;
  align-items: center;
@@ -3454,4 +3553,85 @@ table.args-table.lib-table.compact td:nth-child(3) {
 .settings-section .token-field select.input {
  max-width: 220px;
  margin-top: 4px;
+}
+
+/* ── Control taxonomy: fields vs links vs buttons read differently ──
+   All derived from theme variables (plus color-mix), so every accent ×
+   light/dark theme adapts with no per-theme values.
+   - Type-in fields: inset ("carved") + accent caret/focus ring.
+   - Address open-buttons: link treatment (accent text, no box).
+   - Buttons: filled primary vs bordered ghost (existing .btn rules).
+   - Radio pills: selected = accent border + tint. */
+input:where([type="text"], [type="number"], [type="password"], :not([type])):focus,
+select.input:focus {
+ outline: none;
+ border-color: var(--accent);
+ box-shadow: 0 0 0 2px var(--accent-dim), inset 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+/* Clickable addresses: accent link text, no box — never confused with a field. */
+button.deepyweb-url {
+ background: transparent;
+ border-color: transparent;
+ color: var(--accent);
+ padding: 4px 2px;
+}
+button.deepyweb-url:not(:disabled)::after {
+ content: " ↗";
+ opacity: 0.55;
+}
+button.deepyweb-open:hover:not(:disabled) {
+ border-color: transparent;
+ background: var(--surface-hover);
+ color: var(--accent);
+ text-decoration: underline;
+ text-underline-offset: 3px;
+}
+button.deepyweb-open:disabled {
+ color: var(--text-tertiary);
+ opacity: 1;
+}
+/* Radio pills: the selected choice carries the accent, not just the dot. */
+.deepy-mode-opt:has(input:checked),
+.deepy-enhancer-opt:has(input:checked) {
+ border-color: var(--accent);
+ background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+.deepy-mode-opt:has(input:focus-visible) {
+ outline: 2px solid var(--accent-dim);
+ outline-offset: 1px;
+}
+/* Native checks/radios follow the palette in both themes. */
+input[type="checkbox"],
+input[type="radio"] {
+ accent-color: var(--accent);
+}
+/* Visible keyboard focus on buttons. */
+.btn:focus-visible,
+.term-btn-small:focus-visible,
+.card-collapse-btn:focus-visible,
+.pip-copy-btn:focus-visible {
+ outline: 2px solid var(--accent-dim);
+ outline-offset: 1px;
+}
+/* ── Topbar sight-line: one control height, one icon size, no baseline gaps.
+   Inline SVG width/height attributes lose to CSS, so icons unify without
+   HTML edits. Text rows share line-height:1 with the buttons. */
+.topbar-right .btn.small,
+.topbar-right .btn-icon,
+.topbar .embed-select {
+ height: 26px;
+ box-sizing: border-box;
+}
+.topbar .btn svg,
+.topbar .btn-icon svg {
+ display: block;
+ width: 14px;
+ height: 14px;
+}
+.topbar .metric,
+.topbar .embed-top-wrap,
+.topbar .zoom-label,
+.topbar .running-led,
+.topbar-center > span {
+ line-height: 1;
 }

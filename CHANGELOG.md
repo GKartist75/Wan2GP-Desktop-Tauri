@@ -2,6 +2,48 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.8.2] — 2026-09-23
+
+- Phone & remote access panel (left column): new **LAN (`--listen`) toggle**
+  for the main Gradio server, persisted as `mainLan` and appended verbatim
+  on launch (deduped against manual Extra args; wins over the bind-address
+  setting exactly like upstream `wgp.py`, which forces `0.0.0.0`). Flipping
+  it while running offers a confirm-then-restart in the same Desktop/Browser
+  mode (fail-closed if the port stays bound). The card shows This-PC plus
+  Phone **Gradio `/` and `/deepy/`** URLs with Open/Copy/QR — both views
+  share the live conversation, galleries, progress and queue — and probes
+  the LAN IP itself so the status stays honest even for manually-started
+  servers. Merged with the Deepy Web card into one panel with labeled
+  **A · Gradio server** / **B · Deepy Web standalone** sections
+- Collapsible left info panels (chevron per card, state remembered across
+  restarts): collapsed headers keep their key actions live (enhancement
+  mode + Apply, Deepy Disabled/Zero/Prime + Apply, LAN toggle + Deepy
+  Start/Stop), while Kernel Wheels and Active Environment collapse clean;
+  the pip strip is now a real panel too. Single-env installs no longer
+  show the dead environment-switcher row (renders only with 2+ envs)
+- Console **Clear** button (dashboard, docked, and pop-out consoles):
+  wipes local buffers plus the backend ring buffer and broadcasts so all
+  consoles stay identical
+- Control taxonomy styling (all themes, no per-theme values): inset
+  type-in fields with accent focus, link-style address buttons, accent
+  radio-pill selection, themed native dropdowns/inputs, focus rings
+- Fixes: Deepy Web port field can be cleared back to **auto** (server
+  port + 1) again — empty + Save deletes the override; `manage_list` now
+  returns `{name, type, active}` objects so the env switcher renders names
+  and click-to-activate works (was a bare bullet row); "Fixed secret"
+  relabeled **Fixed passphrase** (matches upstream wording)
+- Guides: new proxy-debugging checklist (RunPod/Nginx/Cloudflare stalls —
+  `gradio_config.root`, queue stream, events 101 vs poll fallback, 403)
+- Manage tabs reorganized: Repair Settings → System troubleshooting,
+  GGUF CUDA Kernel + AMD ROCm → Launch (next-launch hardware prefs),
+  Xet Storage → System updates cluster; System port tool renamed
+  **Port conflict**; the stray Extra-args hint sits under its own field.
+  General is now purely tokens/browser/appearance/desktop/notifications
+- Polish: topbar realigned to one 26px sight-line (uniform icons, no
+  baseline gaps); collapsed headers keep actions on a single right-aligned
+  row with uniform sizing; panel interiors share one section rhythm, a
+  `.form-row` pattern, and a vertical pip card
+
 ## [0.8.1] — 2026-09-22
 
 - AMD experimental HIP wheel (upstream Sep 22 `docs/INSTALLATION.md`):

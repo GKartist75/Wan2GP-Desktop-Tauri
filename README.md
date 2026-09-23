@@ -280,7 +280,9 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.8.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.1) *(latest)* — AMD experimental HIP GGUF opt-in button, Deepy Web start-command transparency + Extra args + fast-fail boot wait, `--listen` spelled out on the mode radios. Details in [CHANGELOG](CHANGELOG.md).
+- [**v0.8.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.2) *(latest)* — 📱 Phone & remote access panel (main-server `--listen` toggle with restart-in-place, Gradio + `/deepy/` phone URLs with QR, merged with Deepy Web), collapsible left panels with live header actions, Manage tabs reorganized, topbar alignment, console Clear button, control taxonomy styling, Deepy port reset-to-auto, env-switcher fix. Details in [CHANGELOG](CHANGELOG.md).
+
+- [**v0.8.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.1) — AMD experimental HIP GGUF opt-in button, Deepy Web start-command transparency + Extra args + fast-fail boot wait, `--listen` spelled out on the mode radios. Details in [CHANGELOG](CHANGELOG.md).
 
 - [**v0.8.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.0) — native-first queue notifications (Apprise destinations in `wgp_config.json`, credential-store support, test button, `apprise`+`keyring` install, legacy sender fallback), launch hardening against stray `%TEMP%` scripts shadowing stdlib (issue #36). Details in [CHANGELOG](CHANGELOG.md).
 

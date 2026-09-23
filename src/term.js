@@ -89,6 +89,27 @@ function setFollow(v) {
   b.querySelector(".follow-text").textContent = follow ? "Follow" : "Paused";
 }
 
+function clearTerm() {
+  buf = [];
+  _lastLine = "";
+  _carriageReturn = false;
+  try {
+    if (search.value) search.value = "";
+  } catch {}
+  render();
+  try {
+    window.w2gp.clearLogHistory().catch(() => {});
+  } catch {}
+}
+try {
+  window.w2gp.onConsoleCleared(() => {
+    buf = [];
+    _lastLine = "";
+    _carriageReturn = false;
+    render();
+  });
+} catch {}
+
 // Load existing log history on startup — pipe through appendToBuf for consistency
 window.w2gp.getLogHistory().then((entries) => {
   for (const entry of entries) {
@@ -118,6 +139,9 @@ body.addEventListener("scroll", () => {
 document
   .getElementById("ftFollowBtn")
   .addEventListener("click", () => setFollow(!follow));
+document
+  .getElementById("ftClearBtn")
+  ?.addEventListener("click", clearTerm);
 
 function termStatus(t) {
   try {
