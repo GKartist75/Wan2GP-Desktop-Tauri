@@ -91,6 +91,39 @@ function renderTerminals() {
   });
 }
 
+// Wipe all local console views + backend history. Local buffers clear
+// immediately; the backend call clears LOG_HISTORY and broadcasts
+// `console-cleared` so the separate term window wipes its own buffer too.
+function clearConsole() {
+  logBuffer.length = 0;
+  lastLine = "";
+  _carriageReturn = false;
+  for (const k of Object.keys(termText)) delete termText[k];
+  for (const k of Object.keys(termDirty)) delete termDirty[k];
+  try {
+    const s = $("logSearch");
+    if (s && s.value) {
+      s.value = "";
+      _lastFilter = "";
+    }
+  } catch {}
+  renderTerminals();
+  try {
+    window.w2gp.clearLogHistory().catch(() => {});
+  } catch {}
+}
+// A Clear issued from another window (separate term window): wipe local
+// buffers without re-broadcasting. Registered in init alongside the other
+// console listeners.
+function onRemoteConsoleCleared() {
+  logBuffer.length = 0;
+  lastLine = "";
+  _carriageReturn = false;
+  for (const k of Object.keys(termText)) delete termText[k];
+  for (const k of Object.keys(termDirty)) delete termDirty[k];
+  renderTerminals();
+}
+
 function setupScrollUnfollow(bodyId, btnId) {
   const body = document.getElementById(bodyId);
   const btn = btnId ? document.getElementById(btnId) : null;
@@ -117,6 +150,83 @@ function setupScrollUnfollow(bodyId, btnId) {
 }
 
 const $ = (id) => document.getElementById(id);
+// ── Collapsible left-column info cards ──
+// A chevron per card header; the collapsed set persists in localStorage (pure
+// UI preference, no backend/config churn). Runs at script eval (deferred, so
+// the DOM is parsed) to restore state before first paint-ish.
+const _collapsedCards = (() => {
+  try {
+    const v = JSON.parse(localStorage.getItem("w2gp.collapsedCards") || "[]");
+    return new Set(Array.isArray(v) ? v : []);
+  } catch {
+    return new Set();
+  }
+})();
+function saveCollapsedCards() {
+  try {
+    localStorage.setItem(
+      "w2gp.collapsedCards",
+      JSON.stringify([..._collapsedCards]),
+    );
+  } catch {}
+}
+function initCardCollapse() {
+  const wire = (container, labelEl, key) => {
+    if (!container || !labelEl || !key) return;
+    if (labelEl.querySelector(":scope > .card-collapse-btn")) return;
+    const btn = document.createElement("button");
+    btn.className = "card-collapse-btn";
+    const chev = document.createElement("span");
+    chev.className = "chev";
+    chev.textContent = "▾";
+    btn.appendChild(chev);
+    // Key actions (marked data-keep-visible) relocate into the header while
+    // collapsed so they stay usable; restored to their exact spots on expand.
+    // Same nodes move (listeners/state preserved).
+    const kept = [...container.querySelectorAll("[data-keep-visible]")].map(
+      (el) => ({ el, parent: el.parentElement, next: el.nextSibling }),
+    );
+    let keptWrap = null;
+    const setCollapsed = (on) => {
+      container.classList.toggle("collapsed", on);
+      btn.title = on ? "Expand this panel" : "Collapse this panel";
+      if (on) {
+        if (kept.length && !keptWrap) {
+          keptWrap = document.createElement("span");
+          keptWrap.className = "collapse-kept";
+          kept.forEach(({ el }) => keptWrap.appendChild(el));
+          labelEl.insertBefore(keptWrap, btn);
+        }
+        _collapsedCards.add(key);
+      } else {
+        if (keptWrap) {
+          kept.forEach(({ el, parent, next }) => {
+            if (parent && next && next.parentElement === parent)
+              parent.insertBefore(el, next);
+            else if (parent) parent.appendChild(el);
+          });
+          keptWrap.remove();
+          keptWrap = null;
+        }
+        _collapsedCards.delete(key);
+      }
+      saveCollapsedCards();
+    };
+    btn.setAttribute("aria-label", "Collapse/expand panel");
+    btn.addEventListener("click", () =>
+      setCollapsed(!container.classList.contains("collapsed")),
+    );
+    labelEl.appendChild(btn);
+    if (_collapsedCards.has(key)) setCollapsed(true);
+    else btn.title = "Collapse this panel";
+  };
+  document
+    .querySelectorAll(".col-left .card[id] > .card-header")
+    .forEach((header) => wire(header.parentElement, header, header.parentElement && header.parentElement.id));
+}
+try {
+  initCardCollapse();
+} catch {}
 // Tauri invoke() rejects with the raw backend string, not an Error object —
 // reading e.message would print "undefined". Normalizes both shapes.
 function errText(e) {
@@ -1919,6 +2029,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         false,
       ),
     );
+    window.w2gp.onConsoleCleared(onRemoteConsoleCleared);
     window.w2gp.onDlss5Progress(dlss5OnEvent);
     window.w2gp.onInstallProgress(installProgressOnEvent);
 
@@ -2045,6 +2156,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       // renderer-side timers re-poll and re-flag the green dot + changelog.
       startWangpPolling();
       startDeepyWebPolling();
+      startMainLanPolling();
       startDesktopPolling();
       // (Wan2GP polls immediately at boot; Desktop does its early check
       // 8s after boot inside startDesktopPolling.)
@@ -4222,7 +4334,14 @@ async function refreshDashboard() {
       frag.appendChild(div);
     });
     list.innerHTML = "";
-    list.appendChild(frag);
+    // Single-env installs have nothing to switch: the Active Environment
+    // card already shows it. Only render the switcher when a choice exists.
+    if (Array.isArray(envs) && envs.length > 1) {
+      list.appendChild(frag);
+      list.style.display = "";
+    } else {
+      list.style.display = "none";
+    }
     loadWangpChangelog();
     loadPaths();
     loadModelPaths();
@@ -5891,6 +6010,9 @@ function setAppLaunchLabel() {
     ? "Back to Wan2GP in Desktop"
     : "Launch Wan2GP in Desktop";
   syncEmbedSwitchLocks();
+  try {
+    refreshMainLan();
+  } catch {}
 }
 // Renderer switches are usable only while NO Desktop session is active: while
 // one runs, every switch shows the active viewer locked (stop the server +
@@ -6553,6 +6675,7 @@ window.w2gp.onWangpExit(async (c) => {
   setAppLaunchLabel();
   updateLed("stopped");
   updateFtStatus("stopped");
+  try { refreshMainLan(); } catch {}
   // Config-skew recovery: wgp.py died with KeyError on a settings key
   // (partial write after a failed install, or an ancient config after an
   // update). Crashes only — never for a manual Stop, which also exits
@@ -6578,6 +6701,7 @@ window.w2gp.onDeepyExit(async (c) => {
     const code = c && typeof c === "object" ? (c.code ?? "?") : c;
   appendLog(`[*] Deepy Web stopped (code ${code}).`);
   try { refreshDeepyWeb(); } catch {}
+  try { refreshMainLan(); } catch {}
   try { updateDeepyWebLed(false); } catch {}
 });
 
@@ -8645,18 +8769,29 @@ document
   .querySelectorAll("input[name=deepyWebMode]")
   .forEach((r) => r.addEventListener("change", refreshDeepyWeb));
 $("deepyWebPortSave")?.addEventListener("click", async () => {
+  const raw = String(($("deepyWebPortInput") || {}).value == null ? "" : $("deepyWebPortInput").value).trim();
   const port = deepyWebPortArg();
-  if (!port) {
+  if (raw !== "" && !port) {
     showToast("Port must be 1–65535 (or empty for auto).");
     return;
   }
   try {
     const cfg = await window.w2gp.configLoad().catch(() => ({}));
     if (cfg && typeof cfg === "object") {
-      cfg.deepyPort = port;
+      if (port) {
+        cfg.deepyPort = port;
+        showToast("Deepy Web port set to " + port);
+      } else {
+        // Empty = reset to auto (server port + 1): drop the saved override
+        // so resolve_ports falls back to the default again.
+        delete cfg.deepyPort;
+        try {
+          $("deepyWebPortInput").value = "";
+        } catch {}
+        showToast("Deepy Web port reset to auto (server port + 1)");
+      }
       await window.w2gp.configSave(cfg);
     }
-    showToast("Deepy Web port set to " + port);
   } catch (e) {
     showToast("✗ " + errText(e));
   }
@@ -8675,6 +8810,236 @@ $("deepyWebTailnetCopy")?.addEventListener("click", () =>
   deepyWebCopy("tailnet"),
 );
 $("deepyWebTailnetQr")?.addEventListener("click", () => deepyWebQr("tailnet"));
+// ── Phone access: --listen on the MAIN server (Launch card) ──
+// Upstream model: one Gradio process serves / plus the synchronized /deepy/
+// mobile app (shared chat, galleries, active work) — the phone needs no
+// second port. The toggle persists `mainLan`; launch() appends --listen
+// verbatim. The bind address is fixed at startup, so flipping while the
+// server runs restarts it in the same mode.
+let _mainLan = {
+  lanOn: false,
+  serving: false,
+  servingLan: false,
+  port: 7860,
+  samePc: "",
+  phone: null,
+  phoneDeepy: null,
+};
+let _mainLanBusy = false;
+async function refreshMainLan() {
+  if (!$("mainLanCard") || _mainLanBusy) return;
+  _mainLanBusy = true;
+  try {
+    const [cfg, u] = await Promise.all([
+      window.w2gp.configLoad().catch(() => ({})),
+      window.w2gp.mainLanUrls().catch(() => null),
+    ]);
+    const lanOn = !!(cfg && cfg.mainLan);
+    const port = (u && u.port) || (cfg && cfg.serverPort) || 7860;
+    const samePc = (u && u.samePc) || "http://localhost:" + port;
+    const phone = (u && u.phone) || null;
+    const phoneDeepy = (u && u.phoneDeepy) || null;
+    const serving = !!(u && u.serving);
+    const servingLan = !!(u && u.servingLan);
+    _mainLan = { lanOn, serving, servingLan, port, samePc, phone, phoneDeepy };
+    const tgl = $("mainLanToggle");
+    if (tgl) tgl.checked = lanOn;
+    const statusEl = $("mainLanStatus");
+    if (statusEl) {
+      statusEl.textContent = "";
+      const dot = document.createElement("span");
+      if (serving && servingLan) {
+        dot.style.color = "#4ADE80";
+        dot.textContent = "● Live on LAN :" + port + " — ";
+        statusEl.append(
+          dot,
+          "open a Phone URL or scan the QR (same Wi-Fi). Gradio and /deepy/ share the live conversation, galleries, progress and queue.",
+        );
+      } else if (serving && lanOn) {
+        dot.style.color = "#FBBF24";
+        dot.textContent = "● ON but this boot predates the toggle — ";
+        statusEl.append(
+          dot,
+          "flip the toggle off and on again to restart onto the LAN.",
+        );
+      } else if (serving) {
+        dot.style.color = "#4ADE80";
+        dot.textContent = "● Running (this PC only) — ";
+        statusEl.append(dot, "flip LAN on to expose it to your Wi-Fi.");
+      } else {
+        statusEl.append(
+          "○ Server stopped — flip LAN on and it applies on the next launch.",
+        );
+      }
+    }
+    const setUrlBtn = (el, url, fallbackText) => {
+      if (!el) return;
+      const has = typeof url === "string" && url.length > 0;
+      el.textContent = has ? url : fallbackText || "—";
+      el.disabled = !has;
+    };
+    setUrlBtn($("mainLanSamePcOpen"), samePc);
+    setUrlBtn($("mainLanPhoneOpen"), phone, "unavailable — no LAN adapter");
+    setUrlBtn(
+      $("mainLanPhoneDeepyOpen"),
+      phoneDeepy,
+      "unavailable — no LAN adapter",
+    );
+    const hint = $("mainLanHint");
+    if (hint) {
+      hint.textContent = phone
+        ? "Gradio + /deepy/ together: start a request on one device, follow, pause, stop or inspect it on the other — accepted work continues with every browser closed, reopen to recover. If the page can't connect, allow the port through the PC firewall. Trusted home Wi-Fi is fine as-is; shared networks need a password + HTTPS first (main-server auth is a follow-up). Never port-forward plain HTTP to the internet."
+        : "No LAN adapter found — connect to Wi-Fi/Ethernet to enable the Phone URLs.";
+    }
+  } finally {
+    _mainLanBusy = false;
+  }
+}
+function startMainLanPolling() {
+  if (window.__mainLanPollTimer) clearInterval(window.__mainLanPollTimer);
+  const poll = () => {
+    if (document.hidden) return;
+    const dash = $("dashBody");
+    if (dash && dash.style.display === "none") return;
+    if (!$("mainLanCard")) return;
+    if (window.__mainLanRestarting) return;
+    refreshMainLan().catch(() => {});
+  };
+  poll(); // immediate tick on (re)start
+  window.__mainLanPollTimer = setInterval(poll, 15000);
+}
+async function mainLanRestartFlow(mode, on) {
+  if (window.__mainLanRestarting) return;
+  window.__mainLanRestarting = true;
+  try {
+    _expectServerExit = true;
+    if (_expectServerExitTimer) clearTimeout(_expectServerExitTimer);
+    _expectServerExitTimer = setTimeout(() => {
+      _expectServerExit = false;
+      _expectServerExitTimer = null;
+    }, 10000);
+    appendLog(
+      "[*] Restarting Wan2GP (Phone access " + (on ? "ON" : "OFF") + ")…",
+    );
+    try {
+      await window.w2gp.stopWangp();
+    } catch (e) {
+      showToast("✗ Stop failed: " + errText(e));
+      appendLog("[!] Restart aborted — stop failed: " + errText(e));
+      return;
+    }
+    // Wait for the port to actually release: launching while it is still
+    // bound would take the "already running" reuse path on the OLD flags.
+    let free = false;
+    for (let i = 0; i < 30; i++) {
+      try {
+        const st = await window.w2gp.tsPortStatus();
+        if (st && st.inUse === false) {
+          free = true;
+          break;
+        }
+      } catch {}
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    if (!free) {
+      showToast("✗ Port still busy — press Stop All, then launch manually");
+      appendLog(
+        "[!] Restart aborted — server port still bound after stop. Press Stop All and launch manually.",
+      );
+      return;
+    }
+    (mode === "browser" ? $("browserBtn") : $("appBtn")).click();
+  } finally {
+    window.__mainLanRestarting = false;
+    refreshMainLan().catch(() => {});
+  }
+}
+$("mainLanToggle")?.addEventListener("change", async (ev) => {
+  const on = ev.target.checked;
+  try {
+    const cfg = await window.w2gp.configLoad().catch(() => ({}));
+    if (cfg && typeof cfg === "object") {
+      cfg.mainLan = on;
+      await window.w2gp.configSave(cfg).catch(() => {});
+    }
+  } catch {}
+  appendLog(
+    "[*] Phone access " + (on ? "ON (--listen)" : "OFF") + " saved.",
+  );
+  if (serverMode) {
+    let choice = "cancel";
+    try {
+      choice = await window.w2gp.confirmDialog({
+        title: on
+          ? "Restart Wan2GP with Phone access?"
+          : "Restart Wan2GP off the LAN?",
+        message: on
+          ? "Wan2GP is running. Restart now so phones on your Wi-Fi can reach it?"
+          : "Wan2GP is running. Restart now to take it off the network?",
+        detail:
+          "Restarts in the same mode (Desktop / Browser). Terminal-launched servers come back as plain Browser. The bind address can only change at startup — that is why a restart is needed.",
+      });
+    } catch {}
+    if (choice !== "ok") {
+      refreshMainLan().catch(() => {});
+      return;
+    }
+    mainLanRestartFlow(serverMode, on);
+  } else {
+    showToast(
+      on ? "✓ Phone access applies on next launch" : "Phone access off",
+    );
+    refreshMainLan().catch(() => {});
+  }
+});
+$("mainLanSamePcOpen")?.addEventListener("click", () => {
+  if (!_mainLan.samePc) {
+    showToast("No URL yet.");
+    return;
+  }
+  deepyWebOpenUrl(_mainLan.samePc);
+});
+$("mainLanSamePcCopy")?.addEventListener("click", () =>
+  deepyWebCopyUrl(_mainLan.samePc),
+);
+$("mainLanPhoneOpen")?.addEventListener("click", () => {
+  if (!_mainLan.phone) {
+    showToast("No Phone URL yet — no LAN adapter found.");
+    return;
+  }
+  deepyWebOpenUrl(_mainLan.phone);
+});
+$("mainLanPhoneCopy")?.addEventListener("click", () => {
+  if (!_mainLan.phone) {
+    showToast("No Phone URL yet — no LAN adapter found.");
+    return;
+  }
+  deepyWebCopyUrl(_mainLan.phone);
+});
+$("mainLanPhoneDeepyOpen")?.addEventListener("click", () => {
+  if (!_mainLan.phoneDeepy) {
+    showToast("No Phone URL yet — no LAN adapter found.");
+    return;
+  }
+  deepyWebOpenUrl(_mainLan.phoneDeepy);
+});
+$("mainLanPhoneDeepyCopy")?.addEventListener("click", () => {
+  if (!_mainLan.phoneDeepy) {
+    showToast("No Phone URL yet — no LAN adapter found.");
+    return;
+  }
+  deepyWebCopyUrl(_mainLan.phoneDeepy);
+});
+$("mainLanPhoneQr")?.addEventListener("click", () => {
+  if (!_mainLan.phoneDeepy) {
+    showToast("No Phone URL yet — no LAN adapter found.");
+    return;
+  }
+  deepyWebQrUrl(
+    _mainLan.phoneDeepy,
+    "Scan from your phone camera (same Wi-Fi) — opens the synchronized /deepy/ mobile app",
+  );
+});
 // ── DLSS5 optional runtime (upstream scripts/install_dlss5.ps1) ──
 async function refreshDlss5() {
   const msg = $("dlss5StatusMsg"),
@@ -9030,6 +9395,8 @@ $("dashTermFollowBtn").addEventListener("click", () => {
     if (e) setTimeout(() => (e.scrollTop = e.scrollHeight), 10);
   }
 });
+$("dashTermClearBtn")?.addEventListener("click", clearConsole);
+$("ftClearBtn")?.addEventListener("click", clearConsole);
 $("installFollowBtn").addEventListener("click", () => {
   termFollow.installTermBody = !termFollow.installTermBody;
   const b = $("installFollowBtn");

@@ -1629,6 +1629,20 @@ pub fn mirror_console(app: tauri::AppHandle, text: String) -> serde_json::Value 
     }
     serde_json::json!({"ok": true})
 }
+/// Clear the shared console history (Clear buttons in every console view).
+/// Empties the backend ring buffer and broadcasts `console-cleared` so all
+/// windows (main + separate term window) wipe their local buffers too.
+#[tauri::command]
+pub fn clear_log_history(app: tauri::AppHandle) -> serde_json::Value {
+    use tauri::Emitter;
+    if let Some(m) = crate::base::LOG_HISTORY.get() {
+        if let Ok(mut g) = m.lock() {
+            g.clear();
+        }
+    }
+    let _ = app.emit("console-cleared", ());
+    serde_json::json!({"ok": true})
+}
 /// console: sums working-set of every msedgewebview2.exe plus the launcher
 /// itself. sysinfo process scan (~10ms), no powershell spawn.
 #[tauri::command]

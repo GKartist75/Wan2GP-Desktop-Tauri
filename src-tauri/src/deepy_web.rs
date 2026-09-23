@@ -607,7 +607,7 @@ fn port_is_free(port: u64) -> bool {
 
 /// Enumerate non-loopback LAN IPv4s: `local-ipaddress` crate first,
 /// `ipconfig` parse as fallback. Never yields `0.0.0.0`.
-fn lan_candidates() -> Vec<String> {
+pub(crate) fn lan_candidates() -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     if let Ok(nics) = local_ip_address::list_afinet_netifas() {
         for (_, ip) in nics {
@@ -857,6 +857,54 @@ fn deepy_urls(deepy_port: u64) -> serde_json::Value {
         }
     }
     urls
+}
+
+/// True when `port` answers on the primary LAN IP: the running server was
+/// started off-localhost (`--listen`), so phones on the LAN can reach it.
+/// A localhost-only server (or no server at all) fails this probe.
+fn lan_reachable(port: u64) -> bool {
+    use std::time::Duration;
+    let cands = lan_candidates();
+    let ip = match select_lan_ip(&cands) {
+        Some(ip) => ip,
+        None => return false,
+    };
+    match format!("{ip}:{port}").parse::<std::net::SocketAddr>() {
+        Ok(sa) => std::net::TcpStream::connect_timeout(&sa, Duration::from_millis(500)).is_ok(),
+        Err(_) => false,
+    }
+}
+
+/// Dashboard Launch-card "Phone access" status: main-server port + LAN toggle
+/// state + Gradio URLs. `phoneDeepy` is the synchronized `/deepy/` mobile app
+/// (upstream: same process shares chat, galleries, selections, active work —
+/// no second port needed). `servingLan` probes the LAN IP itself so the card
+/// stays honest when the server was started outside the toggle (e.g. a manual
+/// `--listen` in Extra args, or a stale toggle vs a localhost-only boot).
+#[tauri::command]
+pub async fn main_lan_urls() -> Result<serde_json::Value, String> {
+    let cfg = load_config_value();
+    let port = cfg
+        .get("serverPort")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(7860);
+    let lan_on = cfg
+        .get("mainLan")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let mut urls = deepy_urls(port);
+    let phone_deepy = urls
+        .get("phone")
+        .and_then(|v| v.as_str())
+        .map(|base| format!("{base}/deepy/"))
+        .map(serde_json::Value::String)
+        .unwrap_or(serde_json::Value::Null);
+    urls["phoneDeepy"] = phone_deepy;
+    urls["port"] = serde_json::json!(port);
+    urls["lanOn"] = serde_json::json!(lan_on);
+    urls["serving"] = serde_json::json!(!port_is_free(port));
+    urls["servingLan"] = serde_json::json!(lan_reachable(port));
+    Ok(urls)
 }
 
 #[tauri::command]

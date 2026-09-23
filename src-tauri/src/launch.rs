@@ -434,6 +434,16 @@ pub async fn launch(
             args.extend(add);
         }
     }
+    // Phone-access toggle (dashboard Launch card): upstream `--listen` verbatim
+    // ("Server accessible on local network" — Gradio binds off-localhost).
+    // Deduped: a manual Extra-args entry already covers it.
+    let main_lan = cfg
+        .get("mainLan")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if main_lan && !args.iter().any(|a| a == "--listen") {
+        args.push("--listen".into());
+    }
     let emit = |msg: &str| {
         crate::base::push_log(msg, "launch");
         let _ = app.emit("launch-log", msg.to_string());
