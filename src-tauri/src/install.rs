@@ -3809,7 +3809,9 @@ async fn sync_kernels_inner(
             .and_then(|c| c.get("win"))
             .and_then(|u| u.as_str())
             .unwrap_or("");
-        // wheelDistVersion extract: <dist>-<version>-cp... -> version
+        // wheelDistVersion extract: <dist>-<version>-cp... -> version.
+        // Decode the %2B build-tag separator upstream uses so the log reads
+        // "1.0.23+torch…" instead of "1.0.23%2Btorch…".
         let gguf_ver = gguf_url
             .split('/')
             .next_back()
@@ -3819,8 +3821,14 @@ async fn sync_kernels_inner(
             .unwrap_or("")
             .split('-')
             .nth(1)
-            .unwrap_or("?");
-        let v = if gguf_ver.is_empty() { "?" } else { gguf_ver };
+            .unwrap_or("?")
+            .replace("%2B", "+")
+            .replace("%2b", "+");
+        let v = if gguf_ver.is_empty() {
+            "?".to_string()
+        } else {
+            gguf_ver
+        };
         emit_log(&format!(
             "[*] setup_config.json @ {head} (gguf {v}) — deepbeepmeep's wanted wheels\n"
         ));
