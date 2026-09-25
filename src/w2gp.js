@@ -270,7 +270,28 @@
         // real child Webview (backend owns it, downloads arrive as download-finished
         // events); anything else keeps the iframe path. Backend returns the active mode.
         createBrowserView: async (url, opts) => {
-            const u = url || "http://localhost:7861";
+            const u0 = url || "http://localhost:7861";
+            // Match the embedded Gradio page to the launcher theme: Gradio 5
+            // reads `?__theme=dark|light|system` on load (verified in the
+            // gradio 5.29 frontend bundle; its own toggle rewrites the param,
+            // so this only sets the initial default). Without it a dark
+            // launcher embeds a light WanGP page (#43). Applies to iframe +
+            // native — both navigate to this URL. Never clobber an explicit
+            // param already on the URL.
+            let u = u0;
+            try {
+                if (/^https?:\/\//i.test(u) && !/[?&]__theme=/.test(u)) {
+                    const dark =
+                        document.documentElement.getAttribute("data-theme") ===
+                        "dark";
+                    u +=
+                        (u.includes("?") ? "&" : "?") +
+                        "__theme=" +
+                        (dark ? "dark" : "light");
+                }
+            } catch {
+                u = u0;
+            }
             // close any previous WebviewWindow if it exists (from previous separate-window attempt)
             try {
                 const { WebviewWindow } = window.__TAURI__.webviewWindow;

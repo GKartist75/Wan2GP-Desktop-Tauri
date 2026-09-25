@@ -20,6 +20,10 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 - Collapsed GPU Kernel Wheels card now signals pending wheel updates: a green
   "● update" badge on the header one-liner (the Update button itself is hidden
   while collapsed) plus a green ring around ↻ Update GPU Wheels when expanded.
+- Desktop view follows the launcher theme (fixes #43): the embed URL now
+  carries Gradio's `?__theme=dark|light` (verified against the gradio 5.29
+  frontend bundle; Gradio's own toggle still wins afterwards). Covers iframe
+  + native renderers.
 - Upstream-proofing (Sync keeps working after deepbeepmeep changes):
   GGUF floor follows `setup_config.json` forward and stale pins swap to
   upstream's own fresh pin (a future 1.0.24 flows through with no code
