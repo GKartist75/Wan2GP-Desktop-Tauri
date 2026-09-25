@@ -19,6 +19,7 @@
 - [User Guide — all screens, tabs & buttons](docs/USER-GUIDE.md)
 - [WanGP Guidance — what to make, which model & settings](docs/WAN2GP-GUIDE.md)
 - [Download & Install](#download--install)
+- [🔥 What's New](#-whats-new)
 - [Screenshots](#screenshots)
 - [Why Tauri?](#why-tauri)
 - [What you get](#what-you-get)
@@ -28,7 +29,6 @@
 - [Deepy — your offline agent](#deepy--your-offline-agent)
 - [🧩 Plugin Manager & ✨ DLSS5](#-plugin-manager)
 - [🧭 Guide & 📚 Library](#-guide--library)
-- [🔥 What's New](#-whats-new)
 - [🛠 Build from source](#-build-from-source)
 - [⭐ Star History](#-star-history)
 - [Credits & License](#credits--license)
@@ -80,6 +80,65 @@ C:\Wan2GP-Models\               ← models library
 ```
 
 > `C:\Wan2GP` / `C:\Wan2GP-Models` are pre-filled defaults — Browse to any drive/folder at install or later via **Dashboard → Migrate to new location**. A custom data folder is remembered in `%USERPROFILE%\.wan2gp-tauri-data-dir` (the old Electron pointer is followed automatically, so your install carries over).
+
+## 🔥 What's New
+
+> Full history: [CHANGELOG.md](CHANGELOG.md)
+
+- [**v0.8.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.3) *(latest)* — GGUF 1.0.23 + cu128 split, Sync `--no-deps` fix (issue #44), self-updating floor + setup_config validation + post-update compat check, collapsed card update badge, Desktop follows launcher theme (issue #43). Details in [CHANGELOG](CHANGELOG.md).
+
+- [**v0.8.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.2) — 📱 Phone & remote access panel (main-server `--listen` toggle with restart-in-place, Gradio + `/deepy/` phone URLs with QR, merged with Deepy Web), collapsible left panels with live header actions, Manage tabs reorganized, topbar alignment, console Clear button, control taxonomy styling, Deepy port reset-to-auto, env-switcher fix. Details in [CHANGELOG](CHANGELOG.md).
+
+- [**v0.8.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.1) — AMD experimental HIP GGUF opt-in button, Deepy Web start-command transparency + Extra args + fast-fail boot wait, `--listen` spelled out on the mode radios. Details in [CHANGELOG](CHANGELOG.md).
+
+- [**v0.8.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.0) — native-first queue notifications (Apprise destinations in `wgp_config.json`, credential-store support, test button, `apprise`+`keyring` install, legacy sender fallback), launch hardening against stray `%TEMP%` scripts shadowing stdlib (issue #36). Details in [CHANGELOG](CHANGELOG.md).
+
+- [**v0.7.5**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.5) — Guide topbar tab, Library tab, launch presets/builder, MCP helper, headless batch runner, workspace backup, config snapshots + restore, engine checks, support-bundle probes, 10-guide infographics. Details in [CHANGELOG](CHANGELOG.md).
+
+- [**v0.7.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.4) — standalone Prompt enhancement card (Enhance Prompt button by default, Automatic optional, works with Deepy off), all local models selectable when Deepy is Disabled, existing enhancement choice preserved on Apply, Disabled message fix. Details in [CHANGELOG](CHANGELOG.md).
+- [**v0.7.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.3) — upstream WanGP v13.13 wave: GGUF floor 1.0.22, post-install override sync (fresh installs land on safe wheels), Deepy Qwen quantization picker with Bonsai PTQ1 + Automatic prompting, memory panel tracks `int8_kernels`/`kernel_precision`, VAE presets relabeled, startup drift self-check, marker-aware update diff, +1px panel text. Details in [CHANGELOG](CHANGELOG.md); upstream PR [deepbeepmeep/Wan2GP#2355](https://github.com/deepbeepmeep/Wan2GP/pull/2355) (Enhance button + Deepy template defaults).
+
+- [**v0.7.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.2) — Deepy Web + Wan2GP exits split (independent stop, Stop-Deepy-only button, server-following LED), upstream 13.11 reverse-proxy origin (`--public-url` card field, validated + persisted), version-aware Xet Storage card (installed vs requirements pin, Update when outdated), stale `reference/` snapshot retired.
+
+- [**v0.7.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.0) — 5 editable themes + text/terminal sizing, Deepy Web Assistant selector + click-to-open URLs + persistent topbar LED, Save-As file-type filters (issue #29), one-line update verdict (100% original git proof), dashboard text raised to readable minimums, LAN HTTPS under Advanced.
+
+- [**v0.6.8**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.8) — dependency drift after update is unmissable (toast + persistent banner with Restore, issue #23), hover tooltips on all 150 buttons, live uninstall progress, GPU Kernel Wheels split into Update (upstream + launcher fixes) vs Restore (pure upstream set), faster boot update checks with console traces, refcounted first-boot bar.
+
+- [**v0.6.7**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.7) — updater no longer dies when an untracked file collides with an incoming upstream add (byte-identical strays are removed so the merge lands them tracked, differing ones move aside to `.launcher-update-backup/` — nothing deleted; the pull error now names this cause).
+
+- [**v0.6.6**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.6) — updater v2 (dirty-tree stash + recoverable errors, no more `undefined`), Verify / Repair Wan2GP files + one-click rollback to the recorded upstream commit, reinstall keeps tokens/launchArgs/prefs, unified prerequisite probes, full per-pin requirements report on update, `[wan2gp]`-tagged console lines, XSS hardening (DOM-built panels), metrics stay live while Wan2GP runs embedded, Status Pro self-healing retired.
+
+- [**v0.6.5**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.5) — mmgp 3.8.0 fallout fixes (Update auto-reinstalls changed `requirements.txt` + post-update dep recheck with drift warning, Status Pro uninstalled by default), Install-button progress feedback (Working…/Installing… locks, Measuring… log, wipe-phase lines, no double-press), more env-panel packages (MMGP/XFormers/Torchaudio/MoviePy), self-repairing first-launch bar.
+
+- [**v0.6.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.4) — Ordered app-close (sessions die first, verified sweep runs, then the window closes; second X forces out; foreign processes spared), Launch hero + 2x2 grid (Browser / Browser No-GPU / Terminal / Terminal No-GPU — No-GPU frees VRAM for generation), terminal-launch argparse fix (no more unrecognized-arguments in terminal modes), per-download [dl #id] tracing on the backend log bus, verbose embed-bounds debug toggle (off by default).
+
+- [**v0.6.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.3) — AMD easy-mode installer (#15): per-family `/v2/` ROCm torch float with `rocm[devel]`, full ROCm launch env, attention Auto (incl. setup.py `sage`-artifact repair), fixed AMD package buttons + auto `triton-windows`, repair flow survives missing `pyvenv.cfg` (no more exit 106), Intel/AMD pipelines separated. In-app updater fixed (signed artifacts + `latest.json`).
+
+- [**v0.6.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.2) — Windows long paths end to end (preflight warn + one-click enable + install gate), gallery keeps last results (seeded `clear_file_list` default), installer no longer asks twice (backup-stash/radio/foreign-folder fixes).
+
+- [**v0.6.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.1) — native-view drag & drop fixed (drops reach Gradio), closing the launcher now stops servers (no orphans), Stop hardening (OpenCode :4096 + custom-port sweeps, unique terminal scripts + cleanup).
+
+- [**v0.6.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.0) — native Desktop embed (default): real child Webview with browser-grade Save-As downloads, floating console as its own window, one console stream everywhere, stall-free Stop that kills rebuild orphans, view-transition mutex + Stop teardown (no stale UI states). AMD install fix (#15): `setup.py` is now driven through a hook module (no more source patching) — profile/VRAM/conda-pip applied via import, fail-closed on upstream drift.
+
+- **v0.5.3** — AMD hardening: install runs a real GPU compute probe (both HSA modes, winner recorded for launch), auto-reseats torch to the staging float on failure, pre-install detection gate (git/driver/VRAM/Defender), Verify GPU compute button, deleted envs read as missing. Plus: Verify proves wheels *import* (names the broken dist), no-env setup is a tick-and-Install checklist, conda envs work like uv/venv (root-interpreter resolution + smoke test), viewer drag & drop + Save/Save As download prompt, Run Setup button on the empty env card.
+
+- **v0.5.2** — AMD install fix: `setup.py` re-detected hardware via removed `wmic.exe` → installed the CUDA stack on AMD boxes; the launcher now forces its profile + VRAM verdict into the cloned `setup.py`, with a known-card VRAM table (R9700 → 32 GB) and stale-config cleanup.
+
+- **v0.5.1** — AMD overhaul: exact-pinned ROCm 7.15 / PyTorch 2.12 torch stack for all RDNA profiles (staging float on retry), large-card VRAM misread fixed (32 GB cards no longer show 4095 MB), installer labels now factual.
+
+- **v0.5.0** — AMD TheRock installer pipeline (RDNA 2/3/3.5/4 incl. R9700), Intel CPU honesty (no XPU promises), 🛟 Troubleshooting + Updates folded into the System tab, Chrome-probe flash fix, autotune layout fixes.
+
+- **v0.4.6** — Kernel Wheels panel moved up; fixed LightX2V/OpenCV detection.
+- **v0.4.5** — fullscreen embed with zoom/downloads, Stop All button, GGUF 1.0.21, AMD profiles.
+- **v0.4.4** — install retry/resume, Gradio embed fills the window.
+- **v0.4.3** — hardened backend, prerequisite fallbacks, crash recovery.
+- **v0.4.2** — self-repairing toolchain (corrupt uv auto-reinstalls).
+- **v0.4.1** — one-click prerequisites (git/uv/Python/Miniconda).
+- **v0.4.0** — hardened installer: folder triage, preflights, smoke test, Pinokio model reuse.
+- **v0.3.x** — DLSS5 panel with per-file versions + SHA checklist.
+- **v0.2.1** — live console download bars.
+- **v0.2.0** — 🧩 Plugin Manager + Status Pro · ✨ DLSS5 one-click installer · Deepy Qwen3.8/Claude · Int8 kernels default-on.
+- **v0.1.x** — first feature-complete Tauri build (Rust backend, Auto-Tune, Deepy, updater, Electron removal).
 
 ---
 
@@ -290,67 +349,6 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 Full workspace viewer: multi-select, reorder, eject, copy/move across workspaces, ZIP download, import, delete (confirmed), media-details pane with prompt/model/settings. New arrivals pop Save / Save As… with proper `*.zip`/`*.json` filters.
 
 **Manage → Launch** adds presets (Balanced / Low VRAM / Max perf / Emergency) + flag builder, an MCP command/URL helper, and a headless queue runner (`--process` with console streaming). **Manage → System** adds torch/CUDA probes to the issue bundle, config snapshots on every Apply (undoable restore), upstream changelog viewer, and Deepy engine checks.
-
----
-
-## 🔥 What's New
-
-> Full history: [CHANGELOG.md](CHANGELOG.md)
-
-- [**v0.8.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.3) *(latest)* — GGUF 1.0.23 + cu128 split, Sync `--no-deps` fix (issue #44), self-updating floor + setup_config validation + post-update compat check, collapsed card update badge, Desktop follows launcher theme (issue #43). Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.8.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.2) — 📱 Phone & remote access panel (main-server `--listen` toggle with restart-in-place, Gradio + `/deepy/` phone URLs with QR, merged with Deepy Web), collapsible left panels with live header actions, Manage tabs reorganized, topbar alignment, console Clear button, control taxonomy styling, Deepy port reset-to-auto, env-switcher fix. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.8.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.1) — AMD experimental HIP GGUF opt-in button, Deepy Web start-command transparency + Extra args + fast-fail boot wait, `--listen` spelled out on the mode radios. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.8.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.0) — native-first queue notifications (Apprise destinations in `wgp_config.json`, credential-store support, test button, `apprise`+`keyring` install, legacy sender fallback), launch hardening against stray `%TEMP%` scripts shadowing stdlib (issue #36). Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.7.5**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.5) — Guide topbar tab, Library tab, launch presets/builder, MCP helper, headless batch runner, workspace backup, config snapshots + restore, engine checks, support-bundle probes, 10-guide infographics. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.7.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.4) — standalone Prompt enhancement card (Enhance Prompt button by default, Automatic optional, works with Deepy off), all local models selectable when Deepy is Disabled, existing enhancement choice preserved on Apply, Disabled message fix. Details in [CHANGELOG](CHANGELOG.md).
-- [**v0.7.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.3) — upstream WanGP v13.13 wave: GGUF floor 1.0.22, post-install override sync (fresh installs land on safe wheels), Deepy Qwen quantization picker with Bonsai PTQ1 + Automatic prompting, memory panel tracks `int8_kernels`/`kernel_precision`, VAE presets relabeled, startup drift self-check, marker-aware update diff, +1px panel text. Details in [CHANGELOG](CHANGELOG.md); upstream PR [deepbeepmeep/Wan2GP#2355](https://github.com/deepbeepmeep/Wan2GP/pull/2355) (Enhance button + Deepy template defaults).
-
-- [**v0.7.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.2) — Deepy Web + Wan2GP exits split (independent stop, Stop-Deepy-only button, server-following LED), upstream 13.11 reverse-proxy origin (`--public-url` card field, validated + persisted), version-aware Xet Storage card (installed vs requirements pin, Update when outdated), stale `reference/` snapshot retired.
-
-- [**v0.7.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.7.0) — 5 editable themes + text/terminal sizing, Deepy Web Assistant selector + click-to-open URLs + persistent topbar LED, Save-As file-type filters (issue #29), one-line update verdict (100% original git proof), dashboard text raised to readable minimums, LAN HTTPS under Advanced.
-
-- [**v0.6.8**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.8) — dependency drift after update is unmissable (toast + persistent banner with Restore, issue #23), hover tooltips on all 150 buttons, live uninstall progress, GPU Kernel Wheels split into Update (upstream + launcher fixes) vs Restore (pure upstream set), faster boot update checks with console traces, refcounted first-boot bar.
-
-- [**v0.6.7**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.7) — updater no longer dies when an untracked file collides with an incoming upstream add (byte-identical strays are removed so the merge lands them tracked, differing ones move aside to `.launcher-update-backup/` — nothing deleted; the pull error now names this cause).
-
-- [**v0.6.6**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.6) — updater v2 (dirty-tree stash + recoverable errors, no more `undefined`), Verify / Repair Wan2GP files + one-click rollback to the recorded upstream commit, reinstall keeps tokens/launchArgs/prefs, unified prerequisite probes, full per-pin requirements report on update, `[wan2gp]`-tagged console lines, XSS hardening (DOM-built panels), metrics stay live while Wan2GP runs embedded, Status Pro self-healing retired.
-
-- [**v0.6.5**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.5) — mmgp 3.8.0 fallout fixes (Update auto-reinstalls changed `requirements.txt` + post-update dep recheck with drift warning, Status Pro uninstalled by default), Install-button progress feedback (Working…/Installing… locks, Measuring… log, wipe-phase lines, no double-press), more env-panel packages (MMGP/XFormers/Torchaudio/MoviePy), self-repairing first-launch bar.
-
-- [**v0.6.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.4) — Ordered app-close (sessions die first, verified sweep runs, then the window closes; second X forces out; foreign processes spared), Launch hero + 2x2 grid (Browser / Browser No-GPU / Terminal / Terminal No-GPU — No-GPU frees VRAM for generation), terminal-launch argparse fix (no more unrecognized-arguments in terminal modes), per-download [dl #id] tracing on the backend log bus, verbose embed-bounds debug toggle (off by default).
-
-- [**v0.6.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.3) — AMD easy-mode installer (#15): per-family `/v2/` ROCm torch float with `rocm[devel]`, full ROCm launch env, attention Auto (incl. setup.py `sage`-artifact repair), fixed AMD package buttons + auto `triton-windows`, repair flow survives missing `pyvenv.cfg` (no more exit 106), Intel/AMD pipelines separated. In-app updater fixed (signed artifacts + `latest.json`).
-
-- [**v0.6.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.2) — Windows long paths end to end (preflight warn + one-click enable + install gate), gallery keeps last results (seeded `clear_file_list` default), installer no longer asks twice (backup-stash/radio/foreign-folder fixes).
-
-- [**v0.6.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.1) — native-view drag & drop fixed (drops reach Gradio), closing the launcher now stops servers (no orphans), Stop hardening (OpenCode :4096 + custom-port sweeps, unique terminal scripts + cleanup).
-
-- [**v0.6.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.6.0) — native Desktop embed (default): real child Webview with browser-grade Save-As downloads, floating console as its own window, one console stream everywhere, stall-free Stop that kills rebuild orphans, view-transition mutex + Stop teardown (no stale UI states). AMD install fix (#15): `setup.py` is now driven through a hook module (no more source patching) — profile/VRAM/conda-pip applied via import, fail-closed on upstream drift.
-
-- **v0.5.3** — AMD hardening: install runs a real GPU compute probe (both HSA modes, winner recorded for launch), auto-reseats torch to the staging float on failure, pre-install detection gate (git/driver/VRAM/Defender), Verify GPU compute button, deleted envs read as missing. Plus: Verify proves wheels *import* (names the broken dist), no-env setup is a tick-and-Install checklist, conda envs work like uv/venv (root-interpreter resolution + smoke test), viewer drag & drop + Save/Save As download prompt, Run Setup button on the empty env card.
-
-- **v0.5.2** — AMD install fix: `setup.py` re-detected hardware via removed `wmic.exe` → installed the CUDA stack on AMD boxes; the launcher now forces its profile + VRAM verdict into the cloned `setup.py`, with a known-card VRAM table (R9700 → 32 GB) and stale-config cleanup.
-
-- **v0.5.1** — AMD overhaul: exact-pinned ROCm 7.15 / PyTorch 2.12 torch stack for all RDNA profiles (staging float on retry), large-card VRAM misread fixed (32 GB cards no longer show 4095 MB), installer labels now factual.
-
-- **v0.5.0** — AMD TheRock installer pipeline (RDNA 2/3/3.5/4 incl. R9700), Intel CPU honesty (no XPU promises), 🛟 Troubleshooting + Updates folded into the System tab, Chrome-probe flash fix, autotune layout fixes.
-
-- **v0.4.6** — Kernel Wheels panel moved up; fixed LightX2V/OpenCV detection.
-- **v0.4.5** — fullscreen embed with zoom/downloads, Stop All button, GGUF 1.0.21, AMD profiles.
-- **v0.4.4** — install retry/resume, Gradio embed fills the window.
-- **v0.4.3** — hardened backend, prerequisite fallbacks, crash recovery.
-- **v0.4.2** — self-repairing toolchain (corrupt uv auto-reinstalls).
-- **v0.4.1** — one-click prerequisites (git/uv/Python/Miniconda).
-- **v0.4.0** — hardened installer: folder triage, preflights, smoke test, Pinokio model reuse.
-- **v0.3.x** — DLSS5 panel with per-file versions + SHA checklist.
-- **v0.2.1** — live console download bars.
-- **v0.2.0** — 🧩 Plugin Manager + Status Pro · ✨ DLSS5 one-click installer · Deepy Qwen3.8/Claude · Int8 kernels default-on.
-- **v0.1.x** — first feature-complete Tauri build (Rust backend, Auto-Tune, Deepy, updater, Electron removal).
 
 ---
 
