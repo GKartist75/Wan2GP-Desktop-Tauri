@@ -94,11 +94,19 @@ C:\Wan2GP-Models\               ← models library
 ![Wan2GP Desktop Launcher — Desktop view with Wan2GP running and the floating console](screenshots/desktop-live-progress.png)
 *Desktop view: Wan2GP (LTX-2.5 Distilled) embedded, floating console streaming the live log, topbar CPU/GPU/RAM/VRAM sparklines.*
 
-![Auto-Tune — hardware detection with rec/saved tags](screenshots/autotune-int8.png)
-![Active Environment — installed packages and GPU kernel wheels](screenshots/env-kernel-wheels.png)
-![Deepy Prime — local Qwen3.8 + remote LLM engines](screenshots/deepy-prime-engines.png)
-![Plugin Manager — community catalog with install, update, and favourites](screenshots/plugins-manager.png)
-![DLSS5 installer — live per-component checklist with SHA-256 verification](screenshots/dlss5-checklist.png)
+<table>
+  <tr>
+    <td><img src="screenshots/autotune-int8.png" alt="Auto-Tune" width="100%"><br><sub>Auto-Tune — hardware detection with rec/saved tags</sub></td>
+    <td><img src="screenshots/env-kernel-wheels.png" alt="Active Environment" width="100%"><br><sub>Active Environment — installed packages and GPU kernel wheels</sub></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/deepy-prime-engines.png" alt="Deepy Prime" width="100%"><br><sub>Deepy Prime — local Qwen3.8 + remote LLM engines</sub></td>
+    <td><img src="screenshots/plugins-manager.png" alt="Plugin Manager" width="100%"><br><sub>Plugin Manager — community catalog, install, update, favourites</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="screenshots/dlss5-checklist.png" alt="DLSS5 installer" width="100%"><br><sub>DLSS5 installer — live per-component checklist with SHA-256 verification</sub></td>
+  </tr>
+</table>
 
 ---
 
@@ -141,9 +149,12 @@ Same launcher, same Wan2GP, same features — lightweight native shell. It uses 
 - 🖥️ **Flexible launch** — Desktop embed, Browser, or External Terminal; pop-out, zoom, browser picker.
 - 🎨 **5 themes + text sizing** — Mono (default), Blue Sky, Orca, Cyber, Matrix; every theme editable (accent/background/text, live preview, Save/Set-as-default/Reset), topbar palette quick-switch, Text + Terminal size sliders in Manage → Appearance.
 
-![Appearance — 5 themes, Mono default, click to apply](screenshots/appearance-themes.png)
-
-![Appearance editor — 3 colors per theme, Save/Set-as-default/Reset](screenshots/appearance-editor.png)
+<table>
+  <tr>
+    <td><img src="screenshots/appearance-themes.png" alt="Appearance themes" width="100%"><br><sub>Appearance — 5 themes, Mono default, click to apply</sub></td>
+    <td><img src="screenshots/appearance-editor.png" alt="Appearance editor" width="100%"><br><sub>Appearance editor — 3 colors per theme, Save/Set-as-default/Reset</sub></td>
+  </tr>
+</table>
 
 - 🔄 **Safe updates** — manual-only, version-aware, from Dashboard / Manage → Updates.
 - 🛡️ **Crash-proof UI** — crash recovery restores your session.
@@ -232,15 +243,19 @@ Switching live-re-renders the selector; **Apply** writes a consistent `wgp_confi
 
 One panel, two paths — pick one. **A · Gradio server** exposes Gradio `/` and the phone-friendly `/deepy/` together over a **LAN (`--listen`) toggle** (persisted, appended verbatim on launch; flipping it while running offers a restart in place): same conversation, galleries, progress and queue on every device, with This-PC and Phone URLs (Open/Copy/QR). **B · Deepy Web standalone** is a second process on its own port with its own conversation — Assistant selector (Zero/Prime per start), Same-PC / Phone-LAN addresses plus an **External** Tailscale row (Copy + QR), Auth (Off / fixed passphrase with generator), port (empty = auto, server port + 1), LAN HTTPS, reverse-proxy origin, Extra args, Start/Stop. Standalone never live-syncs — finish → stop → resume via saved sessions. Address URLs are click-to-open in the real browser (login must happen in a tab — embedded views 403). Topbar shows a persistent Deepy Web LED (green = running, red = stopped) next to the Wan2GP LED. All actions log `[Deepy]` lines to the Console. Left info cards collapse (chevron, remembered) while keeping key actions live in the header.
 
-<img src="screenshots/deepy-web-phone-app.jpg" alt="Deepy Web on a phone — Prime session generating an image" width="320">
-
-![Deepy Web on desktop — Prime multi-turn session with follow-up edit](screenshots/deepy-web-desktop-prime.png)
-
-![Deepy Web card — addresses, auth, connection, start](screenshots/deepy-web-settings.png)
-
-![Deepy Prime panel — engine picker, LLM engines, sessions](screenshots/deepy-prime-panel.png)
-
-![Deepy Zero panel — local Qwen model picker](screenshots/deepy-zero-panel.png)
+<table>
+  <tr>
+    <td><img src="screenshots/deepy-web-phone-app.jpg" alt="Deepy Web on a phone" width="320"><br><sub>Deepy Web on a phone — Prime session generating an image</sub></td>
+    <td><img src="screenshots/deepy-web-desktop-prime.png" alt="Deepy Web on desktop" width="100%"><br><sub>Deepy Web on desktop — Prime multi-turn session with follow-up edit</sub></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/deepy-web-settings.png" alt="Deepy Web card" width="100%"><br><sub>Deepy Web card — addresses, auth, connection, start</sub></td>
+    <td><img src="screenshots/deepy-prime-panel.png" alt="Deepy Prime panel" width="100%"><br><sub>Deepy Prime panel — engine picker, LLM engines, sessions</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="screenshots/deepy-zero-panel.png" alt="Deepy Zero panel" width="100%"><br><sub>Deepy Zero panel — local Qwen model picker</sub></td>
+  </tr>
+</table>
 
 > New to this? Start with **OpenCode** — the only zero-cost option.
 
