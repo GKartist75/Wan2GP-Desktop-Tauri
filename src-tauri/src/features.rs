@@ -152,11 +152,12 @@ pub fn memory_profile_read() -> serde_json::Value {
                 "vae_config": v.get("vae_config").cloned().unwrap_or(serde_json::json!(0)),
                 "transformer_quantization": v.get("transformer_quantization").cloned().unwrap_or(serde_json::json!("int8")),
                 "int8_kernels": int8,
-                "kernel_precision": v.get("kernel_precision").cloned().unwrap_or(serde_json::json!("fast"))
+                "kernel_precision": v.get("kernel_precision").cloned().unwrap_or(serde_json::json!("fast")),
+                "queue_color_scheme": v.get("queue_color_scheme").cloned().unwrap_or(serde_json::json!("pastel"))
             }});
         }
     }
-    serde_json::json!({"ok": true, "settings": {"video_profile": 4, "image_profile": 4, "audio_profile": 4, "vram_safety_coefficient": 0.8, "vae_config": 0, "transformer_quantization": "int8", "int8_kernels": "auto", "kernel_precision": "fast"}})
+    serde_json::json!({"ok": true, "settings": {"video_profile": 4, "image_profile": 4, "audio_profile": 4, "vram_safety_coefficient": 0.8, "vae_config": 0, "transformer_quantization": "int8", "int8_kernels": "auto", "kernel_precision": "fast", "queue_color_scheme": "pastel"}})
 }
 #[tauri::command]
 pub fn auto_tune_detect() -> serde_json::Value {
@@ -1409,6 +1410,10 @@ pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool 
         "int8_kernels" => ["auto", "disabled", "triton", "kitchen"].contains(&s),
         // shared/kernels/kernel_policy.py CHOICES ("strict"/"fast")
         "kernel_precision" => ["fast", "strict"].contains(&s),
+        // wgp.py queue table: "pastel" renders per-row hues, anything else
+        // renders the theme-following alternating grey rows. Fail-closed to
+        // the two known names so garbage never reaches wgp_config.json.
+        "queue_color_scheme" => ["pastel", "grey"].contains(&s),
         _ => true,
     }
 }
@@ -1435,6 +1440,7 @@ pub fn memory_profile_apply(settings: serde_json::Value) -> serde_json::Value {
         "transformer_quantization",
         "int8_kernels",
         "kernel_precision",
+        "queue_color_scheme",
     ] {
         if let Some(val) = settings.get(key) {
             if !valid_memory_override(key, val) {
@@ -2062,5 +2068,19 @@ mod kernel_setting_tests {
         assert!(valid_memory_override("kernel_precision", &serde_json::json!("strict")));
         assert!(!valid_memory_override("kernel_precision", &serde_json::json!("preserve")));
         assert!(!valid_memory_override("kernel_precision", &serde_json::json!("")));
+    }
+    #[test]
+    fn queue_color_scheme_allows_only_known_names() {
+        // wgp.py: "pastel" renders per-row hues, anything else the
+        // theme-following grey rows. Fail-closed to the two known names.
+        assert!(valid_memory_override("queue_color_scheme", &serde_json::json!("pastel")));
+        assert!(valid_memory_override("queue_color_scheme", &serde_json::json!("grey")));
+        for bad in ["", "rainbow", "dark", "GREY"] {
+            assert!(
+                !valid_memory_override("queue_color_scheme", &serde_json::json!(bad)),
+                "{bad:?}"
+            );
+        }
+        assert!(!valid_memory_override("queue_color_scheme", &serde_json::json!(1)));
     }
 }

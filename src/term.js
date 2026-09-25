@@ -42,6 +42,13 @@ function strip(t) {
   return t.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "").replace(/\x08/g, "");
 }
 
+// Same tqdm coalescing as app.js progressKey(): consecutive \n-printed
+// progress updates with one key collapse into a single row.
+function progressKey(line) {
+  const m = /^(.*?)(\d+)%\|.*\|\s*\d+\/\d+\s*\[.*(?:it\/s|s\/it)/.exec(line);
+  return m ? m[1].trimEnd() : null;
+}
+
 function appendToBuf(text) {
   if (!text) return;
   const parts = text.replace(/\r\n/g, "\n").split(/(\r|\n)/);
@@ -51,7 +58,13 @@ function appendToBuf(text) {
       // Don't push anything to buffer; the render() shows _lastLine as the in-progress line.
       _carriageReturn = true;
     } else if (part === "\n") {
-      if (_lastLine.trim()) buf.push(_lastLine.trim());
+      if (_lastLine.trim()) {
+        const k = progressKey(_lastLine);
+        const prev = buf.length ? buf[buf.length - 1] : null;
+        if (k && prev && progressKey(prev) === k)
+          buf[buf.length - 1] = _lastLine.trim();
+        else buf.push(_lastLine.trim());
+      }
       _lastLine = "";
       _carriageReturn = false;
     } else if (part !== "") {

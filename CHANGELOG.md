@@ -2,6 +2,16 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## Unreleased
+
+- Console: consecutive tqdm progress prints (e.g. Wan2GP's `Generating: 0%|…`
+  LLM meter, one `\n`-terminated row per refresh) collapse into a single
+  in-place row instead of flooding the log — 0% → 100% ticks on one line in
+  every console view (dashboard, floating, separate window).
+- Memory panel: new Queue Row Colors dropdown (Pastel rainbow / Theme grey)
+  writing upstream's `queue_color_scheme` — grey follows dark/light instead
+  of the hardcoded pastel rows.
+
 ## [0.8.3] — 2026-09-25
 
 - Upstream Wan2GP `5533384` (Sep 24, H3 VAE fix): GGUF kernel floor

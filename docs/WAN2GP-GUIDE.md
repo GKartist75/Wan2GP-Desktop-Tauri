@@ -11,8 +11,8 @@ Upstream truth: model selector in WanGP, `defaults/*.json`, `profiles/*/*.json`,
 ## Contents
 
 - [Start here: goal -> model -> profile](#start-here-goal---model---profile)
-- [Guided paths](#guided-paths)
 - [Install prerequisites](#install-prerequisites-what-the-launcher-sets-up-for-you)
+- [Guided paths](#guided-paths)
 - [Launcher vs WanGP settings map](#launcher-vs-wangp-settings-map)
 - [Models reference](#models-reference--complete-inventory-232-defaultsjson)
 - [Generation settings reference](#generation-settings-reference)
@@ -67,6 +67,34 @@ Rules that save hours:
 4. Long video = sliding windows + overlap, not one giant window (see below).
 
 ---
+
+## Install prerequisites (what the launcher sets up for you)
+
+From `INSTALLATION.md` — the launcher automates all of this; listed so you know why each step exists:
+
+| Stack | RTX 20–50 | GTX 10/16 | AMD RDNA 2/3/3.5/4 | Intel/Apple |
+| --- | --- | --- | --- | --- |
+| Python | 3.11.14 | 3.10.9 | 3.11 | — |
+| PyTorch | 2.10.0 + CUDA 13.0/13.1 (cu130, needs R580+ driver) | 2.7.1 + CUDA 12.8 (no R580 needed) | 2.12 ROCm 7.15 TheRock | CPU / MPS (SDPA only) |
+| Triton | `triton-windows>=3.6,<3.7` (torch 2.10); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | auto | — |
+| Attention | Sage 2.2.0 (RTX 30+, Ampere+) / Sage 1.0.6 (RTX 20) / Flash 2.8.3 / Sparge 0.1.0 | SDPA | — | SDPA |
+| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.23, LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2, Comfy Kitchen via requirements | bitsandbytes | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back) | — |
+
+Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
+`int8_kernels`: Auto tries Kitchen CUDA/HIP → Triton → PyTorch; `kernel_precision`
+fast/strict controls H3 VAE fusions. Pinokio installs are detected and left
+untouched — the launcher can reuse their model library instead of re-downloading.
+
+```mermaid
+flowchart TD
+  A["Installer: detect GPU, VRAM, RAM, driver"] --> B["Plan: show what will be installed"]
+  B --> C["Preflight: Python pin, disk space, R580+ for cu130"]
+  C --> D["Clone repo + create env (uv, venv or conda)"]
+  D --> E["PyTorch + CUDA per GPU table above"]
+  E --> F["requirements.txt + per-GPU kernel wheels"]
+  F --> G["Auto-Tune profiles into wgp_config.json"]
+  G --> H["Launch: Desktop, Browser or Terminal"]
+```
 
 ## Guided paths
 
@@ -154,34 +182,6 @@ Don't regenerate a good scene — late-postprocess it: spatial upscale
 (`mmaudio`), voice swap (`seedvc_*`). Originals stay untouched.
 
 ---
-
-## Install prerequisites (what the launcher sets up for you)
-
-From `INSTALLATION.md` — the launcher automates all of this; listed so you know why each step exists:
-
-| Stack | RTX 20–50 | GTX 10/16 | AMD RDNA 2/3/3.5/4 | Intel/Apple |
-| --- | --- | --- | --- | --- |
-| Python | 3.11.14 | 3.10.9 | 3.11 | — |
-| PyTorch | 2.10.0 + CUDA 13.0/13.1 (cu130, needs R580+ driver) | 2.7.1 + CUDA 12.8 (no R580 needed) | 2.12 ROCm 7.15 TheRock | CPU / MPS (SDPA only) |
-| Triton | `triton-windows>=3.6,<3.7` (torch 2.10); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | auto | — |
-| Attention | Sage 2.2.0 (RTX 30+, Ampere+) / Sage 1.0.6 (RTX 20) / Flash 2.8.3 / Sparge 0.1.0 | SDPA | — | SDPA |
-| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.23, LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2, Comfy Kitchen via requirements | bitsandbytes | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back) | — |
-
-Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
-`int8_kernels`: Auto tries Kitchen CUDA/HIP → Triton → PyTorch; `kernel_precision`
-fast/strict controls H3 VAE fusions. Pinokio installs are detected and left
-untouched — the launcher can reuse their model library instead of re-downloading.
-
-```mermaid
-flowchart TD
-  A["Installer: detect GPU, VRAM, RAM, driver"] --> B["Plan: show what will be installed"]
-  B --> C["Preflight: Python pin, disk space, R580+ for cu130"]
-  C --> D["Clone repo + create env (uv, venv or conda)"]
-  D --> E["PyTorch + CUDA per GPU table above"]
-  E --> F["requirements.txt + per-GPU kernel wheels"]
-  F --> G["Auto-Tune profiles into wgp_config.json"]
-  G --> H["Launch: Desktop, Browser or Terminal"]
-```
 
 ## Launcher vs WanGP settings map
 

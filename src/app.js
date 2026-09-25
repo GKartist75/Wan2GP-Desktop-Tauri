@@ -19,6 +19,20 @@ function scheduleTerminalRender() {
     renderTerminals();
   });
 }
+// tqdm-style progress prints (one full line per refresh, \n-terminated — e.g.
+// Wan2GP's `[wan2gp] Generating: 0%| | 0/1 [00:05<?, ?it/s, …]` LLM meter)
+// would flood the console with dozens of near-identical rows. Consecutive
+// updates sharing the same key (everything before the NN%) collapse into ONE
+// row: each new update replaces the previous instead of appending, so the
+// row visibly ticks 0% → 100% in place. \r-style bars (pip) already coalesce
+// via _carriageReturn below; this covers the \n-printing kind. Returns the
+// key, or null when the line is not a progress update.
+function progressKey(line) {
+  const m = /^(.*?)(\d+)%\|.*\|\s*\d+\/\d+\s*\[.*(?:it\/s|s\/it)/.exec(line);
+  // trimEnd: tqdm pads the number field (`Generating:  0%` vs
+  // `Generating: 100%`) — padding must not split one bar into two rows.
+  return m ? m[1].trimEnd() : null;
+}
 // Main console entry. `forward=false` for backend-echoed lines (the backend
 // already emits those to every window — forwarding would duplicate them in
 // the separate term window). Everything else mirrors to the backend bus so
@@ -34,7 +48,15 @@ function appendLog(text, forward) {
       // The render shows lastLine as the in-progress line, so progress bars stay visible.
       _carriageReturn = true;
     } else if (part === "\n") {
-      if (lastLine.trim()) logBuffer.push(lastLine.trim());
+      if (lastLine.trim()) {
+        const k = progressKey(lastLine);
+        const prev = logBuffer.length
+          ? logBuffer[logBuffer.length - 1]
+          : null;
+        if (k && prev && progressKey(prev) === k)
+          logBuffer[logBuffer.length - 1] = lastLine.trim();
+        else logBuffer.push(lastLine.trim());
+      }
       lastLine = "";
       _carriageReturn = false;
     } else if (part !== "") {
@@ -10111,8 +10133,10 @@ function memProfileCollect() {
   const q = $("memQuant").value;
   const i8k = $("memInt8Kernels") ? $("memInt8Kernels").value : "";
   const kp = $("memKernelPrecision") ? $("memKernelPrecision").value : "";
+  const qc = $("memQueueColors") ? $("memQueueColors").value : "";
   if (i8k) s.int8_kernels = i8k;
   if (kp) s.kernel_precision = kp;
+  if (qc) s.queue_color_scheme = qc;
   if (vp) s.video_profile = Number(vp);
   if (ip) s.image_profile = Number(ip);
   if (ap) s.audio_profile = Number(ap);
@@ -10174,6 +10198,11 @@ const MEM_FIELDS = {
     rec: "recKernelPrecision",
     saved: "savedKernelPrecision",
   },
+  queue_color_scheme: {
+    sel: "memQueueColors",
+    rec: "recQueueColors",
+    saved: "savedQueueColors",
+  },
 };
 const INT8_KERNEL_LABELS = {
   auto: "Auto (default)",
@@ -10185,6 +10214,10 @@ const KERNEL_PRECISION_LABELS = {
   fast: "Approximate (default)",
   strict: "Preserve precision",
 };
+const QUEUE_COLOR_LABELS = {
+  pastel: "Pastel rainbow (default)",
+  grey: "Theme grey",
+};
 function fmtVal(key, v) {
   if (v == null || v === "") return "—";
   if (key === "vae_config") return v + (Number(v) === 0 ? " (AUTO)" : "");
@@ -10192,6 +10225,8 @@ function fmtVal(key, v) {
     return INT8_KERNEL_LABELS[v] || String(v);
   if (key === "kernel_precision")
     return KERNEL_PRECISION_LABELS[v] || String(v);
+  if (key === "queue_color_scheme")
+    return QUEUE_COLOR_LABELS[v] || String(v);
   return String(v);
 }
 
