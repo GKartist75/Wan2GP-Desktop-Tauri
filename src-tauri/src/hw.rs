@@ -539,19 +539,126 @@ pub(crate) fn version_gt(a: &str, b: &str) -> bool {
 
 /// Dist version out of a llamacpp_gguf_cuda wheel URL
 /// (`.../llamacpp_gguf_cuda-1.0.14+torch210cu130py311-...whl` → "1.0.14").
+/// Upstream percent-encodes the build tag (`%2B` for `+`) — cut at both, so
+/// the floor math never compares "1.0.23%2Btorch…" as a version.
 /// None for non-GGUF URLs. Pure + unit-tested.
 pub(crate) fn gguf_wheel_version(url: &str) -> Option<String> {
     let file = url.rsplit('/').next()?;
     if !file.starts_with("llamacpp_gguf_cuda-") {
         return None;
     }
-    let ver = file.split('-').nth(1)?.split('+').next()?;
+    let ver = file
+        .split('-')
+        .nth(1)?
+        .split(['+', '%'])
+        .next()?;
     if ver.is_empty() || !ver.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         return None;
     }
     Some(ver.to_string())
 }
 
+/// Highest GGUF version pinned anywhere in setup_config's kernel components
+/// (`gguf` + `gguf_cu128` win cmds). None when absent/unparseable — callers
+/// keep the hardcoded floor. Pure + unit-tested.
+pub(crate) fn setup_config_gguf_version(cfg: &serde_json::Value) -> Option<String> {
+    let kernels = cfg
+        .get("components")?
+        .get("kernels")?
+        .as_object()?;
+    let mut best: Option<String> = None;
+    for key in ["gguf", "gguf_cu128"] {
+        let v = kernels
+            .get(key)
+            .and_then(|e| e.get("cmd"))
+            .and_then(|c| c.get("win"))
+            .and_then(|u| u.as_str())
+            .and_then(gguf_wheel_version);
+        if let Some(v) = v {
+            if best.as_ref().is_none_or(|b| version_gt(&v, b)) {
+                best = Some(v);
+            }
+        }
+    }
+    best
+}
+
+/// Effective GGUF floor: the hardcoded docs floor raised to whatever
+/// setup_config already pins (max). The day upstream ships 1.0.24 in
+/// setup_config, Sync/override/overview follow it with zero launcher
+/// changes; stale checkouts still get the hardcoded floor. Pure +
+/// unit-tested.
+pub(crate) fn effective_gguf_floor(cfg: &serde_json::Value) -> String {
+    let mut floor = GGUF_FLOOR.to_string();
+    if let Some(v) = setup_config_gguf_version(cfg) {
+        if version_gt(&v, &floor) {
+            floor = v;
+        }
+    }
+    floor
+}
+
+/// Warn-only structural validation of setup_config.json against the shapes
+/// the launcher understands. Upstream adds components/profiles without
+/// warning (gguf_cu128 in 5533384, light2xv earlier) — unknown entries must
+/// shout in the console instead of silently skipping installs. Never blocks:
+/// returns human-readable warnings, empty when clean. Pure + unit-tested.
+pub(crate) fn validate_setup_config_shape(cfg: &serde_json::Value) -> Vec<String> {
+    let mut out = Vec::new();
+    let comps = cfg.get("components");
+    if comps.is_none() {
+        out.push("setup_config.json: missing 'components' — upstream shape changed; kernel sync may be incomplete (launcher may need an update)".to_string());
+        return out;
+    }
+    let comps = comps.unwrap();
+    let kernels = comps
+        .get("kernels")
+        .and_then(|k| k.as_object());
+    let profiles = cfg.get("gpu_profiles").and_then(|p| p.as_object());
+    match profiles {
+        None => out.push(
+            "setup_config.json: missing 'gpu_profiles' — upstream shape changed; kernel sync may be incomplete (launcher may need an update)".to_string(),
+        ),
+        Some(profiles) => {
+            for (pname, prof) in profiles {
+                match prof.get("kernels").and_then(|k| k.as_array()) {
+                    None => out.push(format!(
+                        "setup_config.json: profile '{pname}' has no kernels list — skipping it; launcher may need an update"
+                    )),
+                    Some(list) => {
+                        for k in list {
+                            if let Some(key) = k.as_str() {
+                                // Resolved outside components.kernels (sage via
+                                // components.sage, sage3 gated off entirely).
+                                if ["sage", "sageattention", "sage3", "sageattn3"]
+                                    .contains(&key)
+                                {
+                                    continue;
+                                }
+                                let known = kernels
+                                    .and_then(|m| m.get(key))
+                                    .is_some();
+                                if !known {
+                                    out.push(format!(
+                                        "setup_config.json: profile '{pname}' lists kernel '{key}' with no components.kernels entry — skipping it; launcher may need an update"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(sage_ver) = prof.get("sage").and_then(|s| s.as_str()) {
+                    if comps.get("sage").and_then(|s| s.get(sage_ver)).is_none() {
+                        out.push(format!(
+                            "setup_config.json: profile '{pname}' wants sage '{sage_ver}' with no components.sage entry — sage sync skipped for this profile; launcher may need an update"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
 /// Pinned triton version out of a setup_config spec: `==3.3.1` pins and
 /// `<3.3` ceilings both resolve to the bound ("3.3.1" / "3.3"); unpinned
 /// specs and exact wheel URLs yield None (deliberate installs proceed).
@@ -624,7 +731,67 @@ pub(crate) const GGUF_1022_WIN_PY311_HIP: &str = "https://github.com/deepbeepmee
 /// change (same shape as the Sage post4/post6 swap in sync_kernels).
 /// Applies to every kernel URL (no-op unless it's a stale GGUF link), so
 /// both the sync installer and the overview's want/have comparison share it.
+/// Plain hardcoded-floor wrapper. Prod paths with config use
+/// `apply_gguf_override_cfg`; this stays as the stable contract for the
+/// no-config paths (kernel probe stale check) and the JS mirror.
+#[allow(dead_code)]
 pub(crate) fn apply_gguf_override(url: &str) -> String {
+    apply_gguf_override_with(url, GGUF_FLOOR)
+}
+
+/// Config-aware GGUF override (preferred wherever setup_config is loaded):
+/// swaps stale pins to upstream's OWN fresh pin when setup_config already
+/// carries one (py tag picks gguf vs gguf_cu128, mirroring setup.py), else
+/// falls back to the hardcoded docs build. A future 1.0.24 therefore flows
+/// through with zero launcher changes; stale checkouts still get 1.0.23.
+/// Pure + unit-tested.
+pub(crate) fn apply_gguf_override_cfg(url: &str, cfg: &serde_json::Value) -> String {
+    let low = url.to_ascii_lowercase();
+    if low.contains("rocm714") || low.contains("rocm7.14") || low.contains("+hip") || low.contains("torch212") {
+        return url.to_string();
+    }
+    let Some(ver) = gguf_wheel_version(url) else {
+        return url.to_string();
+    };
+    if !version_gt(&effective_gguf_floor(cfg), &ver) {
+        return url.to_string();
+    }
+    gguf_swap_target(cfg, url)
+}
+
+/// Swap target for a stale GGUF pin: upstream's fresh component URL when it
+/// meets the hardcoded floor, else the hardcoded docs build for the URL's py
+/// tag. Pure + unit-tested.
+pub(crate) fn gguf_swap_target(cfg: &serde_json::Value, url: &str) -> String {
+    let comp = if url.contains("py310") {
+        "gguf_cu128"
+    } else {
+        "gguf"
+    };
+    if let Some(up) = cfg
+        .get("components")
+        .and_then(|c| c.get("kernels"))
+        .and_then(|m| m.get(comp))
+        .and_then(|e| e.get("cmd"))
+        .and_then(|c| c.get("win"))
+        .and_then(|u| u.as_str())
+    {
+        if let Some(v) = gguf_wheel_version(up) {
+            if !version_gt(GGUF_FLOOR, &v) {
+                return up.to_string();
+            }
+        }
+    }
+    if url.contains("py310") {
+        GGUF_1023_WIN_PY310.into()
+    } else {
+        GGUF_1023_WIN_PY311.into()
+    }
+}
+/// Floor-parameterized GGUF override (pure floor compare + hardcoded docs
+/// target). Prefer `apply_gguf_override_cfg` wherever setup_config is loaded
+/// — only this form is used by no-config paths and unit tests.
+pub(crate) fn apply_gguf_override_with(url: &str, floor: &str) -> String {
     // HIP stack owns its wheel (same dist name, different backend): never
     // swap HIP->CUDA or CUDA->HIP here. The HIP opt-in installs its URL
     // directly via install_hip_gguf_wheel.
@@ -635,7 +802,7 @@ pub(crate) fn apply_gguf_override(url: &str) -> String {
     let Some(ver) = gguf_wheel_version(url) else {
         return url.to_string();
     };
-    if !version_gt(GGUF_FLOOR, &ver) {
+    if !version_gt(floor, &ver) {
         return url.to_string();
     }
     if url.contains("py310") {
@@ -854,8 +1021,7 @@ mod gguf_override_tests {
         for u in [
             "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23+torch210cu130py311-cp311-cp311-win_amd64.whl",
             // Newer than the floor follows upstream with no swap.
-            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.24/llamacpp_gguf_cuda-1.0.24+torch210cu130py311-cp311-cp311-win_amd64.whl",
-            "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl",
+            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.24/llamacpp_gguf_cuda-1.0.24+torch210cu130py311-cp311-cp311-win_amd64.whl",            "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl",
         ] { assert_eq!(apply_gguf_override(u), u); }
     }
     #[test]
@@ -878,10 +1044,90 @@ mod gguf_override_tests {
             "got {out310}"
         );
     }
+    #[test]
+    fn effective_floor_follows_setup_config_forward() {
+        use super::{apply_gguf_override_cfg, effective_gguf_floor, setup_config_gguf_version};
+        // Current upstream shape: both components at 1.0.23 → floor stays.
+        let cfg = serde_json::json!({
+            "components": { "kernels": {
+                "gguf": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch210cu130py311-cp311-cp311-win_amd64.whl" } },
+                "gguf_cu128": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch271cu128py310-cp310-cp310-win_amd64.whl" } }
+            } }
+        });
+        assert_eq!(setup_config_gguf_version(&cfg).as_deref(), Some("1.0.23"));
+        assert_eq!(effective_gguf_floor(&cfg), "1.0.23");
+        // Upstream ships 1.0.24 tomorrow: floor follows with no code change,
+        // and 1.0.23 installs now flag stale.
+        let cfg24 = serde_json::json!({
+            "components": { "kernels": {
+                "gguf": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.24/llamacpp_gguf_cuda-1.0.24%2Btorch210cu130py311-cp311-cp311-win_amd64.whl" } }
+            } }
+        });
+        assert_eq!(effective_gguf_floor(&cfg24), "1.0.24");
+        let u23 = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+        let swapped = apply_gguf_override_cfg(u23, &cfg24);
+        assert!(swapped.contains("1.0.24"), "got {swapped}");
+        // Stale checkout (1.0.14 pins, no cu128): hardcoded floor still applies.
+        let stale = serde_json::json!({
+            "components": { "kernels": {
+                "gguf": { "cmd": { "win": "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.14+torch210cu130py311-cp311-cp311-win_amd64.whl" } }
+            } }
+        });
+        assert_eq!(effective_gguf_floor(&stale), super::GGUF_FLOOR);
+    }
+    #[test]
+    fn shape_validation_flags_unknown_kernels() {
+        use super::validate_setup_config_shape;
+        let cfg = serde_json::json!({
+            "components": {
+                "kernels": { "gguf": { "cmd": { "win": "https://x/gguf-1.0.23.whl" } } },
+                "sage": { "v220_cu13": { "cmd": { "win": "https://x/sage.whl" } } }
+            },
+            "gpu_profiles": {
+                "RTX_50": { "sage": "v220_cu13", "kernels": ["nunchaku_cu13", "gguf", "flash_mla"] },
+                "RTX_99": { "sage": "v999", "kernels": ["gguf"] }
+            }
+        });
+        let w = validate_setup_config_shape(&cfg);
+        assert!(w.iter().any(|m| m.contains("flash_mla")), "got {w:?}");
+        assert!(w.iter().any(|m| m.contains("nunchaku_cu13")), "got {w:?}");
+        assert!(w.iter().any(|m| m.contains("v999")), "got {w:?}");
+        // Current upstream shape is clean.
+        let clean = serde_json::json!({
+            "components": {
+                "kernels": {
+                    "gguf": { "cmd": { "win": "https://x/gguf.whl" } },
+                    "nunchaku_cu13": { "cmd": { "win": "https://x/n.whl" } }
+                },
+                "sage": { "v220_cu13": { "cmd": { "win": "https://x/s.whl" } } }
+            },
+            "gpu_profiles": {
+                "RTX_50": { "sage": "v220_cu13", "kernels": ["nunchaku_cu13", "gguf"] }
+            }
+        });
+        assert!(validate_setup_config_shape(&clean).is_empty());
+    }
 }
 #[cfg(test)]
 mod version_cmp_tests {
     use super::{gguf_wheel_version, parse_pip_show_versions, version_gt, wanted_triton_pin};
+    #[test]
+    fn gguf_version_cuts_percent_encoded_build_tag() {
+        // Upstream percent-encodes `+` as `%2B` — the floor math must see
+        // "1.0.23", not "1.0.23%2Btorch210cu130py311".
+        assert_eq!(
+            gguf_wheel_version(
+                "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch210cu130py311-cp311-cp311-win_amd64.whl"
+            )
+            .as_deref(),
+            Some("1.0.23")
+        );
+        assert_eq!(
+            gguf_wheel_version("--no-deps https://x/llamacpp_gguf_cuda-1.0.23%2Btorch271cu128py310-cp310-cp310-win_amd64.whl")
+                .as_deref(),
+            Some("1.0.23")
+        );
+    }
     #[test]
     fn dotted_compare() {
         assert!(version_gt("1.0.21", "1.0.2"));
@@ -1144,7 +1390,7 @@ fn comp_label(code: &str) -> String {
 fn kernel_display(key: &str) -> (&str, &str) {
     match key {
         "nunchaku" | "nunchaku_cu13" => ("Nunchaku", "nunchaku"),
-        "gguf" | "llamacpp_gguf_cuda" => ("GGUF (llamacpp)", "llamacpp_gguf_cuda"),
+        "gguf" | "gguf_cu128" | "llamacpp_gguf_cuda" => ("GGUF (llamacpp)", "llamacpp_gguf_cuda"),
         "lightx2v" | "light2xv" | "lightx2v_kernel" => ("LightX2V", "lightx2v_kernel"),
         "sageattention" => ("SageAttention", "sageattention"),
         "spas_sage_attn" => ("Sparge (Sage)", "spas_sage_attn"),

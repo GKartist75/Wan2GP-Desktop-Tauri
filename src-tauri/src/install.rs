@@ -5,7 +5,7 @@
 use crate::base::*;
 use crate::{
     hw::{
-        apply_gguf_override, build_install_plan, classify_amd_driver, get_gpu_info_sync,
+        build_install_plan, classify_amd_driver, get_gpu_info_sync,
         kernel_profile_key, wmi_all_gpus, wmi_virtual_adapters,
     },
     status::{get_active_env, resolve_env_python},
@@ -3599,7 +3599,8 @@ pub(crate) fn post_install_override_urls(
     // Upstream 5533384 splits GGUF into `gguf` (cu130/py311) + `gguf_cu128`
     // (cu128/py310); profiles still list `gguf` and setup.py remaps via
     // (torch_k, py_k). Check both components — either stale pin swaps to its
-    // matching 1.0.23 build via apply_gguf_override (py tag picks the build).
+    // matching build (py tag picks the build; upstream's own fresh pin
+    // preferred, so a future 1.0.24 needs no launcher change).
     let gguf = ["gguf", "gguf_cu128"]
         .into_iter()
         .filter_map(|k| {
@@ -3607,7 +3608,7 @@ pub(crate) fn post_install_override_urls(
             if url.is_empty() {
                 return None;
             }
-            let swapped = crate::hw::apply_gguf_override(&url);
+            let swapped = crate::hw::apply_gguf_override_cfg(&url, cfg);
             (swapped != url).then_some(swapped)
         })
         .next();
@@ -3823,6 +3824,12 @@ async fn sync_kernels_inner(
         emit_log(&format!(
             "[*] setup_config.json @ {head} (gguf {v}) — deepbeepmeep's wanted wheels\n"
         ));
+        // Shape validation: upstream adds components without warning
+        // (gguf_cu128, light2xv). Unknown entries warn here AND at each
+        // skipped kernel below — never a silent under-install.
+        for w in crate::hw::validate_setup_config_shape(&cfg) {
+            emit_log(&format!("[!] {w}\n"));
+        }
         // A2: HEAD-behind warning — sync follows the LOCAL checkout, so a
         // stale clone installs stale wheels. Best-effort remote HEAD check
         // with a hard timeout; offline/slow networks skip silently.
@@ -3957,6 +3964,13 @@ async fn sync_kernels_inner(
                 };
             }
             if url.is_empty() {
+                // Unknown profile kernel (upstream added a component the
+                // launcher doesn't know, e.g. a future gguf_cu129): skip
+                // LOUDLY so the console names it instead of silently
+                // under-installing the profile.
+                let m = format!("[!] profile '{profile}' lists kernel '{name}' with no matching setup_config entry — skipping it; the launcher may need an update to install this wheel\n");
+                crate::base::push_log(&m, "setup");
+                let _ = app.emit("launch-log", m);
                 continue;
             }
             // Sage safe toggle: post4 (upstream) vs post6 (safe) — respects Manage → Settings
@@ -3979,12 +3993,13 @@ async fn sync_kernels_inner(
                 let _ = app.emit("launch-log", m.to_string());
                 continue;
             }
-            // GGUF 1.0.23 floor (docs prescription over setup_config lag) —
-            // skipped in restore mode so upstream's pinned wheel returns.
+            // GGUF floor (docs prescription over setup_config lag, upstream's
+            // own fresh pin preferred via apply_gguf_override_cfg) — skipped
+            // in restore mode so upstream's pinned wheel returns.
             let url = if pure_upstream {
                 url
             } else {
-                apply_gguf_override(&url)
+                crate::hw::apply_gguf_override_cfg(&url, &cfg)
             };
             // Triton no-downgrade (#2264): a pinned/ceiling spec must not
             // clobber a working newer triton (H3-sol setups). RTX_20/GTX_10
@@ -4561,13 +4576,37 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
     // Post-update dependency recheck: ONE quick env-python probe against
     // the post-pull == pins. Warn-only — drift never fails the update.
     let (dep_check, drift) = post_update_dep_check(&repo, &req_path, &emit);
+    // Launcher-compat verify pass: the update may have pulled a setup_config
+    // shape the launcher doesn't understand yet (new kernel components,
+    // GGUF version bumps). Warn-only, console + result JSON.
+    let compat: Vec<String> = match std::fs::read_to_string(repo.join("setup_config.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+    {
+        None => vec![
+            "setup_config.json unreadable after update — kernel Sync may be incomplete; verify the checkout".to_string(),
+        ],
+        Some(cfg) => {
+            let mut c = crate::hw::validate_setup_config_shape(&cfg);
+            let floor = crate::hw::effective_gguf_floor(&cfg);
+            let pinned = crate::hw::setup_config_gguf_version(&cfg)
+                .unwrap_or_else(|| "?".to_string());
+            emit(&format!(
+                "[*] launcher compat: setup_config gguf {pinned} (floor {floor}) — re-run Sync GPU Wheels to land new wheels\n"
+            ));
+            c
+        }
+    };
+    for w in &compat {
+        emit(&format!("[!] {w}\n"));
+    }
     // The pull landed (or was already current): this HEAD is the new
     // rollback point. Best-effort — a record failure never fails update.
     if record_wangp_pin(&repo) {
         emit("[*] Recorded this upstream commit as the rollback point.\n");
     }
     mutating_done();
-    let mut result = serde_json::json!({"ok": true, "success": pip_ok, "requirements": requirements, "pinDiff": pin_diff, "depCheck": dep_check, "drift": drift});
+    let mut result = serde_json::json!({"ok": true, "success": pip_ok, "requirements": requirements, "pinDiff": pin_diff, "depCheck": dep_check, "drift": drift, "compat": compat});
     if let Some(e) = req_error {
         result["error"] = serde_json::Value::String(e.to_string());
     }

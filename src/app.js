@@ -6835,6 +6835,12 @@ $("updateBtn").addEventListener("click", async () => {
       // earlier drift run — otherwise Restore/Dismiss linger confusingly.
       hideDriftBanner();
     }
+    // Launcher-compat verify pass (backend): non-empty means the update
+    // pulled a setup_config shape this launcher doesn't fully understand.
+    if (r && Array.isArray(r.compat) && r.compat.length) {
+      appendLog("[!] launcher compat: " + r.compat.join(" | "));
+      showToast("[!] Upstream changed setup — see Console, then Sync GPU Wheels");
+    }
     refreshDashboard();
   } catch (e) {
     appendLog("[!] Update failed: " + errText(e));

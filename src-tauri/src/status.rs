@@ -62,7 +62,7 @@ pub fn get_status() -> serde_json::Value {
                             if let Some(key) = k.as_str() {
                                 let (label, pip) = match key {
                                     "nunchaku_cu13" | "nunchaku" => ("Nunchaku", "nunchaku"),
-                                    "gguf" | "llamacpp_gguf_cuda" => {
+                                    "gguf" | "gguf_cu128" | "llamacpp_gguf_cuda" => {
                                         ("GGUF (llamacpp)", "llamacpp_gguf_cuda")
                                     }
                                     "light2xv" | "lightx2v_kernel" => {
@@ -80,7 +80,7 @@ pub fn get_status() -> serde_json::Value {
                                     .and_then(|c| c.get("win"))
                                     .and_then(|u| u.as_str())
                                 {
-                                    let cmd = crate::hw::apply_gguf_override(cmd);
+                                    let cmd = crate::hw::apply_gguf_override_cfg(cmd, &cfg);
                                     // wheelDistVersion: parse "<dist>-<version>-cp..."
                                     if let Some(base) = cmd.as_str().split('/').next_back() {
                                         // NOTE: newer upstream URLs percent-encode the build tag

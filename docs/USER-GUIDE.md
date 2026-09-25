@@ -63,8 +63,9 @@ The home screen. Top to bottom:
 - *Checkpoints / LoRAs / Output* — model and output folders, each with open + change buttons.
 - Keep models OUT of AppData/Roaming (tens–hundreds of GB, roams with your profile).
 - New models are large (e.g. Qwen Image 2.1 ships bf16 + int8 safetensors plus encoder/VAE) and download on first use; the first H3 INT8 run also fetches its ConvRot VAE. Pre/post-processing checkpoints download on demand (upstream JIT), so the upfront footprint stays smaller than it looks.
+- H3 Video VAE on Auto follows your Transformer Quantization choice (16-bit → BF16, FP8 → FP8 mixed, INT8 → INT8 ConvRot decoder); explicit BF16/FP8/INT8 choices in the Memory panel override Auto and are preserved.
 
-**GPU Kernel Wheels card** — per-GPU wheels (torch, triton, sage/flash attention, nunchaku/GGUF) with installed versions. *↻ Update GPU Wheels* installs upstream's wanted set plus launcher fixes (sage safe build, GGUF 1.0.23 floor), *Restore GPU Wheels* reinstalls deepbeepmeep's pure upstream set. Sync follows your local checkout — if it is behind `origin/main`, the console warns you to update Wan2GP first, otherwise you install stale wheels.
+**GPU Kernel Wheels card** — per-GPU wheels (torch, triton, sage/flash attention, nunchaku/GGUF) with installed versions. *↻ Update GPU Wheels* installs upstream's wanted set plus launcher fixes (sage safe build, GGUF floor that follows `setup_config.json` forward), *Restore GPU Wheels* reinstalls deepbeepmeep's pure upstream set. Sync follows your local checkout — if it is behind `origin/main`, the console warns you to update Wan2GP first, otherwise you install stale wheels. After every Wan2GP update the launcher also runs a compat check (setup_config shape + GGUF pins) and says so in the Console — re-run Sync when it reports new wheels.
 
 **Active Environment card** — the selected Python env (`uv`, `venv` or `conda`):
 
@@ -298,7 +299,10 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **Emergency Failsafe** — last-resort recovery when nothing launches.
 - **Port conflict** — port-in-use detection / kill Python owner / move to the next free port.
 - **Debug Bundle** — copies full diagnostics (hardware, paths, checks, log tail).
-- **Triton / SageAttention** — attention-backend controls.
+- **Triton / SageAttention** — attention-backend controls. Triton versions are
+  per-GPU by upstream design (RTX 20 → 3.2, Torch 2.7 → 3.3, Torch 2.10 → 3.6;
+  `setup_config.json` picks automatically) — Sync never downgrades a newer
+  working Triton except on RTX 20/GTX 10 where upstream genuinely needs old builds.
 - **SageAttention 3** — deliberately not installed by ↻ Update GPU Wheels and not offered: it needs
   a Blackwell GPU *and* Python ≥ 3.12 (launcher envs are 3.10/3.11), and it refuses
   older cards at runtime even when imported. Verify reports a stray `sageattn3`

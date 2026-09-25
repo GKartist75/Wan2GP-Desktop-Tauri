@@ -17,6 +17,14 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   split into separate pip argv items; override wheels install with
   `--no-deps` exactly like `setup.py`. Kernel Sync/Restore/HIP failure
   toasts also print the real backend error instead of "undefined".
+- Upstream-proofing (Sync keeps working after deepbeepmeep changes):
+  GGUF floor follows `setup_config.json` forward and stale pins swap to
+  upstream's own fresh pin (a future 1.0.24 flows through with no code
+  change); unknown profile kernels skip LOUDLY in the console instead of
+  silently under-installing; `setup_config.json` shape is validated
+  warn-only at Sync and after every Wan2GP update (new `compat` field +
+  toast); update flow logs a launcher-compat line (setup_config gguf pin
+  vs floor). `%2B`-encoded wheel versions now parse to clean versions.
 
 ## [0.8.2] — 2026-09-23
 
