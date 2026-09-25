@@ -2,7 +2,7 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
-## Unreleased
+## [0.8.3] — 2026-09-25
 
 - Upstream Wan2GP `5533384` (Sep 24, H3 VAE fix): GGUF kernel floor
   1.0.22 → 1.0.23 (short-batch projection fusion + SM120 async path).
