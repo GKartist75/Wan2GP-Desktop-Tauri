@@ -4563,8 +4563,7 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
     }
   } catch {}
   const list = Array.isArray(wheels) ? wheels : [];
-  if (!list.length) {
-    // Distinguish "no GPU profile" (genuinely nothing to show) from a data
+  if (!list.length) {    // Distinguish "no GPU profile" (genuinely nothing to show) from a data
     // error so the user isn't left staring at a blank section.
     if (
       kernelProfile === null ||
@@ -4579,15 +4578,28 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
     }
     card.style.display = ""; // keep the card; show the friendly note
     if (tag) tag.textContent = kernelProfile || "—";
+    try {
+      document
+        .getElementById("kernelWheelsCard")
+        ?.classList.remove("wheels-update");
+    } catch {}
     return;
   }
   card.style.display = "";
   if (tag && kernelProfile) tag.textContent = kernelProfile;
   box.innerHTML = "";
+  // Pending-update flag for the (possibly collapsed) card header: any
+  // versioned wheel that isn't "ok" lights the header badge + rings the
+  // Update button green. Bare-string entries carry no version info, so they
+  // never flag (can't prove an update exists).
+  let needsUpdate = false;
   list.forEach((w) => {
     // ponytail: Tauri spike returns string array; Electron returns objects — handle both
-    if (typeof w === "string")
+    let unversioned = false;
+    if (typeof w === "string") {
+      unversioned = true;
       w = { key: w, label: w, pipName: w, state: "missing" };
+    }
     const row = document.createElement("div");
     row.className = "spec-row";
     const dot = document.createElement("span");
@@ -4602,6 +4614,7 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
     const cls =
       state === "ok" ? "installed" : state === "mismatch" ? "error" : "";
     if (cls) dot.classList.add(cls);
+    if (!unversioned && state !== "ok") needsUpdate = true;
     const label = document.createElement("span");
     label.className = "spec-label";
     label.textContent = w.label;
@@ -4624,6 +4637,11 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
     row.appendChild(val);
     box.appendChild(row);
   });
+  try {
+    document
+      .getElementById("kernelWheelsCard")
+      ?.classList.toggle("wheels-update", needsUpdate);
+  } catch {}
 }
 
 // ── GPU Profile Overview (mirrors setup_config.json gpu_profiles) ──

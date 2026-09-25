@@ -17,6 +17,9 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   split into separate pip argv items; override wheels install with
   `--no-deps` exactly like `setup.py`. Kernel Sync/Restore/HIP failure
   toasts also print the real backend error instead of "undefined".
+- Collapsed GPU Kernel Wheels card now signals pending wheel updates: a green
+  "● update" badge on the header one-liner (the Update button itself is hidden
+  while collapsed) plus a green ring around ↻ Update GPU Wheels when expanded.
 - Upstream-proofing (Sync keeps working after deepbeepmeep changes):
   GGUF floor follows `setup_config.json` forward and stale pins swap to
   upstream's own fresh pin (a future 1.0.24 flows through with no code
