@@ -10133,8 +10133,10 @@ function memProfileCollect() {
   const q = $("memQuant").value;
   const i8k = $("memInt8Kernels") ? $("memInt8Kernels").value : "";
   const kp = $("memKernelPrecision") ? $("memKernelPrecision").value : "";
+  const qc = $("memQueueColors") ? $("memQueueColors").value : "";
   if (i8k) s.int8_kernels = i8k;
   if (kp) s.kernel_precision = kp;
+  if (qc) s.queue_color_scheme = qc;
   if (vp) s.video_profile = Number(vp);
   if (ip) s.image_profile = Number(ip);
   if (ap) s.audio_profile = Number(ap);
@@ -10196,6 +10198,11 @@ const MEM_FIELDS = {
     rec: "recKernelPrecision",
     saved: "savedKernelPrecision",
   },
+  queue_color_scheme: {
+    sel: "memQueueColors",
+    rec: "recQueueColors",
+    saved: "savedQueueColors",
+  },
 };
 const INT8_KERNEL_LABELS = {
   auto: "Auto (default)",
@@ -10207,6 +10214,10 @@ const KERNEL_PRECISION_LABELS = {
   fast: "Approximate (default)",
   strict: "Preserve precision",
 };
+const QUEUE_COLOR_LABELS = {
+  pastel: "Pastel rainbow (default)",
+  grey: "Theme grey",
+};
 function fmtVal(key, v) {
   if (v == null || v === "") return "—";
   if (key === "vae_config") return v + (Number(v) === 0 ? " (AUTO)" : "");
@@ -10214,6 +10225,8 @@ function fmtVal(key, v) {
     return INT8_KERNEL_LABELS[v] || String(v);
   if (key === "kernel_precision")
     return KERNEL_PRECISION_LABELS[v] || String(v);
+  if (key === "queue_color_scheme")
+    return QUEUE_COLOR_LABELS[v] || String(v);
   return String(v);
 }
 
