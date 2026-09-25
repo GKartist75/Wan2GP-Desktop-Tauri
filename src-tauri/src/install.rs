@@ -3586,13 +3586,21 @@ pub(crate) fn post_install_override_urls(
             .unwrap_or("")
             .to_string()
     };
-    let gguf_url = comp("gguf");
-    let gguf = if gguf_url.is_empty() {
-        None
-    } else {
-        let swapped = crate::hw::apply_gguf_override(&gguf_url);
-        (swapped != gguf_url).then_some(swapped)
-    };
+    // Upstream 5533384 splits GGUF into `gguf` (cu130/py311) + `gguf_cu128`
+    // (cu128/py310); profiles still list `gguf` and setup.py remaps via
+    // (torch_k, py_k). Check both components — either stale pin swaps to its
+    // matching 1.0.23 build via apply_gguf_override (py tag picks the build).
+    let gguf = ["gguf", "gguf_cu128"]
+        .into_iter()
+        .filter_map(|k| {
+            let url = comp(k);
+            if url.is_empty() {
+                return None;
+            }
+            let swapped = crate::hw::apply_gguf_override(&url);
+            (swapped != url).then_some(swapped)
+        })
+        .next();
     let sage_url = {
         let sage_ver = cfg
             .get("gpu_profiles")
@@ -3886,14 +3894,43 @@ async fn sync_kernels_inner(
                     .unwrap_or("")
                     .to_string()
             } else {
-                cfg.get("components")
-                    .and_then(|c| c.get("kernels"))
-                    .and_then(|m| m.get(name))
-                    .and_then(|e| e.get("cmd"))
-                    .and_then(|c| c.get("win"))
-                    .and_then(|u| u.as_str())
-                    .unwrap_or("")
-                    .to_string()
+                // GGUF cu128 split (upstream 5533384): profiles list `gguf`
+                // (cu130/py311) but py310 envs need `gguf_cu128`. Mirror
+                // setup.py's (torch_k, py_k) remap via the env python major/minor.
+                if name == "gguf" {
+                    let base_url = cfg
+                        .get("components")
+                        .and_then(|c| c.get("kernels"))
+                        .and_then(|m| m.get(name))
+                        .and_then(|e| e.get("cmd"))
+                        .and_then(|c| c.get("win"))
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let cu128_url = cfg
+                        .get("components")
+                        .and_then(|c| c.get("kernels"))
+                        .and_then(|m| m.get("gguf_cu128"))
+                        .and_then(|e| e.get("cmd"))
+                        .and_then(|c| c.get("win"))
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if !cu128_url.is_empty() && env_python_version(&py) == Some((3, 10)) {
+                        cu128_url
+                    } else {
+                        base_url
+                    }
+                } else {
+                    cfg.get("components")
+                        .and_then(|c| c.get("kernels"))
+                        .and_then(|m| m.get(name))
+                        .and_then(|e| e.get("cmd"))
+                        .and_then(|c| c.get("win"))
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                }
             };
             if url.is_empty() && (name == "sage" || name == "sageattention") {
                 // fallback to known URLs if setup_config missing sage entry
@@ -3926,7 +3963,7 @@ async fn sync_kernels_inner(
                 let _ = app.emit("launch-log", m.to_string());
                 continue;
             }
-            // GGUF 1.0.22 floor (docs prescription over setup_config lag) —
+            // GGUF 1.0.23 floor (docs prescription over setup_config lag) —
             // skipped in restore mode so upstream's pinned wheel returns.
             let url = if pure_upstream {
                 url
@@ -5053,7 +5090,7 @@ mod override_wheels_tests {
     fn flags_stale_gguf_and_post4() {
         let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "RTX_30", true);
         let gguf = w.gguf.expect("stale gguf must swap");
-        assert!(gguf.contains("1.0.22"), "got {gguf}");
+        assert!(gguf.contains("1.0.23"), "got {gguf}");
         let sage = w.sage.expect("post4 must swap when safe");
         assert!(sage.contains("post6"), "got {sage}");
     }
@@ -5061,18 +5098,51 @@ mod override_wheels_tests {
     fn quiet_when_already_current_or_opted_out() {
         // Current GGUF + safe sage → nothing to do.
         let cur = cfg_with(
-            &GGUF_1014.replace("1.0.14", "1.0.22"),
+            &GGUF_1014.replace("1.0.14", "1.0.23"),
             "v220_cu13",
             super::SAGE_SAFE_WIN_URL,
         );
         let w = post_install_override_urls(&cur, "RTX_30", true);
         assert!(w.gguf.is_none() && w.sage.is_none());
+        // 1.0.22 is now stale too (floor 1.0.23).
+        let old22 = cfg_with(
+            &GGUF_1014.replace("1.0.14", "1.0.22"),
+            "v220_cu13",
+            super::SAGE_SAFE_WIN_URL,
+        );
+        let w22 = post_install_override_urls(&old22, "RTX_30", true);
+        assert!(w22.gguf.is_some(), "1.0.22 must swap to 1.0.23");
         // User chose upstream sage → sage untouched, gguf still swaps.
         let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "RTX_30", false);
         assert!(w.gguf.is_some() && w.sage.is_none());
         // Non-RTX profile → sage untouched.
         let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "GTX_10", true);
         assert!(w.sage.is_none());
+    }
+    #[test]
+    fn swaps_stale_gguf_cu128_split() {
+        // Upstream 5533384: `gguf_cu128` (cu128/py310) at 1.0.23. A stale
+        // cu128 pin must swap to its matching 1.0.23 cu128 build.
+        let stale_cu128 = GGUF_1014
+            .replace("torch210cu130py311", "torch271cu128py310")
+            .replace("py311", "py310");
+        let cfg = serde_json::json!({
+            "components": {
+                "kernels": {
+                    "gguf": { "cmd": { "win": super::SAGE_SAFE_WIN_URL } },
+                    "gguf_cu128": { "cmd": { "win": stale_cu128 } }
+                },
+                "sage": { "v220_cu13": { "cmd": { "win": super::SAGE_SAFE_WIN_URL } } }
+            },
+            "gpu_profiles": { "RTX_30": { "sage": "v220_cu13" } }
+        });
+        // gguf entry is not a GGUF URL → no version → skipped; cu128 swaps.
+        let w = post_install_override_urls(&cfg, "RTX_30", true);
+        let gguf = w.gguf.expect("stale gguf_cu128 must swap");
+        assert!(
+            gguf.contains("1.0.23") && gguf.contains("torch271cu128py310"),
+            "got {gguf}"
+        );
     }
 }
 #[cfg(test)]

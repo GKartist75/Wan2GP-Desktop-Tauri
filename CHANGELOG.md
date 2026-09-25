@@ -2,6 +2,16 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## Unreleased
+
+- Upstream Wan2GP `5533384` (Sep 24, H3 VAE fix): GGUF kernel floor
+  1.0.22 → 1.0.23 (short-batch projection fusion + SM120 async path).
+  Sync / post-install override / overview now target the 1.0.23 builds and
+  understand the `gguf` (cu130/py311) + `gguf_cu128` (cu128/py310) split —
+  py310 envs get the cu128 build (mirrors `setup.py`'s torch/py remap),
+  1.0.22 installs now flag stale. HIP `1.0.22+torch210rocm714` opt-in
+  unchanged (upstream did not bump it).
+
 ## [0.8.2] — 2026-09-23
 
 - Phone & remote access panel (left column): new **LAN (`--listen`) toggle**

@@ -497,16 +497,17 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
     "CPU".into()
 }
 
-/// Docs-prescribed GGUF kernel floor: 1.0.22 carries the precompiled
-/// RTX50xx (SM120) async-copy kernels for Q8 prefill and decode/verification
+/// Docs-prescribed GGUF kernel floor: 1.0.23 adds native short-batch GGUF
+/// projection fusion and retains the precompiled RTX50xx (SM120) async-copy
+/// kernels for Q8 prefill and decode/verification
 /// (docs/INSTALLATION.md#gguf-llamacpp-cuda-kernels) and is required for Deepy
 /// Prime Bonsai PTQ1 at ~10GB VRAM. Older builds silently fall back to
 /// slow PyTorch SDPA on Deepy decode (6 tok/s vs 37: #2274, #2193), hit the
 /// Q2_K fallback assert (#2235), or 404 outright on stale URLs (#2249).
-/// Anything older resolves to the known-good 1.0.22 wheel; the floor,
+/// Anything older resolves to the known-good 1.0.23 wheel; the floor,
 /// newer builds, and unparseable URLs pass through, so the day upstream
 /// flips setup_config forward we follow it with no code change.
-pub(crate) const GGUF_FLOOR: &str = "1.0.22";
+pub(crate) const GGUF_FLOOR: &str = "1.0.23";
 
 /// Numeric dotted-version compare: true when a > b ("1.0.21" > "1.0.2",
 /// "3.8.0" > "3.3", "3.3.1" > "3.3"). Non-numeric tails ignored,
@@ -593,17 +594,28 @@ pub(crate) fn parse_pip_show_versions(text: &str) -> Option<String> {
 }
 
 /// GGUF wheel URLs shipped by upstream (docs/INSTALLATION.md#gguf-llamacpp-cuda-kernels).
-const GGUF_1022_WIN_PY311: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
-const GGUF_1022_WIN_PY310: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch271cu128py310-cp310-cp310-win_amd64.whl";
+/// Upstream 5533384 splits the component: `gguf` (cu130/py311) + `gguf_cu128`
+/// (cu128/py310), both at 1.0.23. Profiles still list `gguf`; setup.py remaps
+/// via (torch_k, py_k) — the launcher mirrors that by picking the URL matching
+/// the stale link's py tag (py310 → cu128 build, else cu130 build).
+const GGUF_1023_WIN_PY311: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+const GGUF_1023_WIN_PY310: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch271cu128py310-cp310-cp310-win_amd64.whl";
+/// Back-compat aliases: older call sites/tests reference the 1022 names.
+#[allow(dead_code)]
+const GGUF_1022_WIN_PY311: &str = GGUF_1023_WIN_PY311;
+#[allow(dead_code)]
+const GGUF_1022_WIN_PY310: &str = GGUF_1023_WIN_PY310;
 /// Experimental AMD HIP wheel (docs/INSTALLATION.md, Sep 2026): RX 9070
 /// gfx1201 on torch 2.10.0+rocm7.14.0. Same dist name as the CUDA wheel —
 /// pick by backend, never mix. Sync-kernels-only opt-in via
 /// install_hip_gguf_wheel; the GGUF floor below must never swap HIP->CUDA.
+/// NOTE: upstream 5533384 did NOT bump the HIP wheel — it stays 1.0.22.
 pub(crate) const GGUF_1022_WIN_PY311_HIP: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch210rocm714py311-cp311-cp311-win_amd64.whl";
-/// GGUF floor toward the documented 1.0.22 build (RTX50 SM120 kernels,
-/// 50-100% Deepy decode speedup, Deepy Prime Bonsai PTQ1 support).
+/// GGUF floor toward the documented 1.0.23 build (short-batch projection
+/// fusion + RTX50 SM120 kernels, 50-100% Deepy decode speedup, Deepy Prime
+/// Bonsai PTQ1 support).
 /// setup_config.json lags (1.0.14 and older in the wild, verified Sep 2026),
-/// so anything below the floor swaps to 1.0.22 — but the
+/// so anything below the floor swaps to 1.0.23 — but the
 /// floor, anything newer, and non-GGUF URLs pass through untouched, so the
 /// day upstream flips setup_config we follow it verbatim with no code
 /// change (same shape as the Sage post4/post6 swap in sync_kernels).
@@ -624,9 +636,9 @@ pub(crate) fn apply_gguf_override(url: &str) -> String {
         return url.to_string();
     }
     if url.contains("py310") {
-        GGUF_1022_WIN_PY310.into()
+        GGUF_1023_WIN_PY310.into()
     } else {
-        GGUF_1022_WIN_PY311.into()
+        GGUF_1023_WIN_PY311.into()
     }
 }
 
@@ -812,11 +824,11 @@ mod known_vram_tests {
 mod gguf_override_tests {
     use super::apply_gguf_override;
     #[test]
-    fn swaps_stale_for_1022() {
+    fn swaps_stale_for_1023() {
         let old_win = "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.14+torch210cu130py311-cp311-cp311-win_amd64.whl";
         let new = apply_gguf_override(old_win);
         assert!(
-            new.contains("gguf-v1.0.22") && new.contains("1.0.22"),
+            new.contains("gguf-v1.0.23") && new.contains("1.0.23"),
             "got {new}"
         );
         assert!(!new.contains("1.0.14"));
@@ -824,32 +836,34 @@ mod gguf_override_tests {
             .replace("py311", "py310")
             .replace("torch210cu130py311", "torch271cu128py310");
         assert!(apply_gguf_override(&old_310).contains("torch271cu128py310"));
-        // 1.0.21 is now below the floor as well (docs prescribe 1.0.22).
-        let old_1021 = old_win.replace("1.0.14", "1.0.21");
-        let new_1021 = apply_gguf_override(&old_1021);
-        assert!(
-            new_1021.contains("gguf-v1.0.22") && new_1021.contains("1.0.22"),
-            "got {new_1021}"
-        );
+        // 1.0.21 and 1.0.22 are now below the floor (docs prescribe 1.0.23).
+        for v in ["1.0.21", "1.0.22"] {
+            let old = old_win.replace("1.0.14", v);
+            let swapped = apply_gguf_override(&old);
+            assert!(
+                swapped.contains("gguf-v1.0.23") && swapped.contains("1.0.23"),
+                "got {swapped}"
+            );
+        }
     }
     #[test]
     fn passes_other_urls_through() {
         for u in [
-            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22+torch210cu130py311-cp311-cp311-win_amd64.whl",
-            // Newer than the floor follows upstream with no swap.
             "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23+torch210cu130py311-cp311-cp311-win_amd64.whl",
+            // Newer than the floor follows upstream with no swap.
+            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.24/llamacpp_gguf_cuda-1.0.24+torch210cu130py311-cp311-cp311-win_amd64.whl",
             "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl",
         ] { assert_eq!(apply_gguf_override(u), u); }
     }
     #[test]
     fn floor_catches_all_stale_builds() {
         // #2274 (1.0.2 silent SDPA fallback), #2235, #2249 (1.0.13 404):
-        // anything below 1.0.22 resolves to the known-good wheel.
-        for v in ["1.0.2", "1.0.7", "1.0.12", "1.0.13", "1.0.14", "1.0.21"] {
+        // anything below 1.0.23 resolves to the known-good wheel.
+        for v in ["1.0.2", "1.0.7", "1.0.12", "1.0.13", "1.0.14", "1.0.21", "1.0.22"] {
             let u = format!("https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-{v}+torch210cu130py311-cp311-cp311-win_amd64.whl");
             let out = apply_gguf_override(&u);
             assert!(
-                out.contains("gguf-v1.0.22") && out.contains("1.0.22") && out.contains("cp311"),
+                out.contains("gguf-v1.0.23") && out.contains("1.0.23") && out.contains("cp311"),
                 "{v} got {out}"
             );
         }
@@ -857,7 +871,7 @@ mod gguf_override_tests {
         let old310 = "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.12+torch271cu128py310-cp310-cp310-win_amd64.whl";
         let out310 = apply_gguf_override(old310);
         assert!(
-            out310.contains("torch271cu128py310") && out310.contains("1.0.22"),
+            out310.contains("torch271cu128py310") && out310.contains("1.0.23"),
             "got {out310}"
         );
     }

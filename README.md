@@ -196,7 +196,7 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 | **SpargeAttn** | `0.1.0` | sparsity-aware speed-up alongside Sage |
 | **FlashAttention** | `2.8.3` | memory-efficient exact attention for long/high-res |
 | **Nunchaku** | `1.2.1` | SVD-quantized (NF4/SVDQ) runtime — 4/8-bit models |
-| **GGUF llama.cpp CUDA** | `1.0.22` (docs-led; `setup_config.json` still ships 1.0.14, followed automatically once flipped) | CUDA GGUF kernels (Stream-K, quantized KV-cache, SM120 async path, Bonsai PTQ1 support) |
+| **GGUF llama.cpp CUDA** | `1.0.23` (docs-led; `setup_config.json` splits `gguf` cu130/py311 + `gguf_cu128` cu128/py310, followed automatically — py310 envs get the cu128 build) | CUDA GGUF kernels (short-batch projection fusion, Stream-K, quantized KV-cache, SM120 async path, Bonsai PTQ1 support) |
 | **LightX2V** | `0.0.2` | FP4 kernels — **RTX 50xx / sm120+ only** |
 | **bitsandbytes** | `0.49.2` | 8-bit/NF4 dequant for NF4 checkpoints |
 
@@ -220,7 +220,7 @@ Configure without editing JSON: **Settings → Deepy** or the Dashboard card.
 
 - **Disabled** — Deepy off; prompt enhancement keeps working with any local model (Florence or Qwen).
 - **Deepy Zero** — local, no account/key. Qwen VL models.
-- **Deepy Prime** — remote LLM via **OpenCode** (free, local models), **Claude Code** (`claude-agent-sdk==0.1.66` pinned bridge) or **Codex** (paid), or local **Qwen3.8 VL 27B** (needs the 27B model + GGUF 1.0.22; auto-sets 32k context + Summarize). Local Qwen3.8 offers a **Quantization** picker — GGUF Q4 / IQ3_S / Q2 / **Bonsai PTQ1** (~10 GB VRAM) — plus INT8 KV cache for Bonsai. Prime exposes WanGP's MCP tools.
+- **Deepy Prime** — remote LLM via **OpenCode** (free, local models), **Claude Code** (`claude-agent-sdk==0.1.66` pinned bridge) or **Codex** (paid), or local **Qwen3.8 VL 27B** (needs the 27B model + GGUF 1.0.23; auto-sets 32k context + Summarize). Local Qwen3.8 offers a **Quantization** picker — GGUF Q4 / IQ3_S / Q2 / **Bonsai PTQ1** (~10 GB VRAM) — plus INT8 KV cache for Bonsai. Prime exposes WanGP's MCP tools.
 
 Switching live-re-renders the selector; **Apply** writes a consistent `wgp_config.json` (with backup). Also editable inside WanGP: *Configuration → Prompt Enhancer / Deepy*.
 
