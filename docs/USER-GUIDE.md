@@ -22,8 +22,8 @@ flowchart TD
 - [Manage → General](#manage--general)
 - [Manage → Launch](#manage--launch)
 - [Manage → System](#manage--system)
-- [Manage → Plugins](#manage--plugins)
 - [Manage → Auto-Tune](#manage--auto-tune)
+- [Manage → Plugins](#manage--plugins)
 - [Manage → Library](#manage--library)
 - [Guide (topbar)](#guide-topbar)
 - [Console & logs](#console--logs)
@@ -312,6 +312,11 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   cards already run the fastest available attention with nothing to configure.
 - **uv Wheel Cache** — cache location / cleanup.
 
+## Manage → Auto-Tune
+
+⚡ **Performance Auto-Tune** — one click: detects your GPU and applies the right
+profile (precision, attention backend, memory knobs). Re-run after GPU/driver changes.
+
 ## Manage → Plugins
 
 - **Installed & Available** — plugin list with enable/disable/install/remove.
@@ -320,10 +325,16 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   `desktop-config.json`). Nothing auto-installs otherwise: plugins come only
   from your favourites.
 
-## Manage → Auto-Tune
+## Manage → Library
 
-⚡ **Performance Auto-Tune** — one click: detects your GPU and applies the right
-profile (precision, attention backend, memory knobs). Re-run after GPU/driver changes.
+📚 **LoRA & Finetune Library** — per-family LoRA file counts, sizes and known
+download URLs (`loras_url_cache_v2.json`); finetune list with base architecture
+and URL/LoRA counts, plus import (validated, never overwrites), export
+(download JSON to share) and delete. Refresh Model List in WanGP afterwards.
+
+**Workspaces** — per-project media counts, real on-disk sizes, moved/missing
+file flags, archive-lock toggle, definitions backup ZIP (back up outputs too
+for a portable archive).
 
 ## Guide (topbar)
 
@@ -339,17 +350,6 @@ window beats) with the WanGP line-mode each needs, copy button, and an offline
 ✅ **VACE pre-flight + post at a glance** — static checklists: control/mask/
 reference setup, Skip-Layer-Guidance rule, reference roles, upsampler/audio
 method syntax with hardware requirements.
-
-## Manage → Library
-
-📚 **LoRA & Finetune Library** — per-family LoRA file counts, sizes and known
-download URLs (`loras_url_cache_v2.json`); finetune list with base architecture
-and URL/LoRA counts, plus import (validated, never overwrites), export
-(download JSON to share) and delete. Refresh Model List in WanGP afterwards.
-
-**Workspaces** — per-project media counts, real on-disk sizes, moved/missing
-file flags, archive-lock toggle, definitions backup ZIP (back up outputs too
-for a portable archive).
 
 ---
 
