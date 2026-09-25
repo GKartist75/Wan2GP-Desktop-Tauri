@@ -598,8 +598,11 @@ pub(crate) fn parse_pip_show_versions(text: &str) -> Option<String> {
 /// (cu128/py310), both at 1.0.23. Profiles still list `gguf`; setup.py remaps
 /// via (torch_k, py_k) — the launcher mirrors that by picking the URL matching
 /// the stale link's py tag (py310 → cu128 build, else cu130 build).
-const GGUF_1023_WIN_PY311: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
-const GGUF_1023_WIN_PY310: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch271cu128py310-cp310-cp310-win_amd64.whl";
+/// Both carry upstream's `--no-deps` prefix verbatim (setup.py installs
+/// `pip {cmd}` = `pip --no-deps <wheel>` — preserves the torch env);
+/// install.rs splits the cmd into separate pip argv items.
+const GGUF_1023_WIN_PY311: &str = "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+const GGUF_1023_WIN_PY310: &str = "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch271cu128py310-cp310-cp310-win_amd64.whl";
 /// Back-compat aliases: older call sites/tests reference the 1022 names.
 #[allow(dead_code)]
 const GGUF_1022_WIN_PY311: &str = GGUF_1023_WIN_PY311;

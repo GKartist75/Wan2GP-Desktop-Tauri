@@ -11,6 +11,12 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   py310 envs get the cu128 build (mirrors `setup.py`'s torch/py remap),
   1.0.22 installs now flag stale. HIP `1.0.22+torch210rocm714` opt-in
   unchanged (upstream did not bump it).
+- Fix Sync failure on GGUF 1.0.23: upstream `setup_config.json` cmds carry a
+  `--no-deps` prefix (since `a56122a`) which the launcher passed to pip as
+  ONE argument (`no such option: --no-deps https://…`). Kernel cmds are now
+  split into separate pip argv items; override wheels install with
+  `--no-deps` exactly like `setup.py`. Kernel Sync/Restore/HIP failure
+  toasts also print the real backend error instead of "undefined".
 
 ## [0.8.2] — 2026-09-23
 

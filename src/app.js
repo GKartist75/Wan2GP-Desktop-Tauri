@@ -4952,7 +4952,7 @@ $("syncKernelsBtn")?.addEventListener("click", async function () {
     if (r && r.success) showToast("✓ GPU wheels updated");
     else showToast("✗ Update failed: " + (r && r.error ? r.error : "unknown"));
   } catch (e) {
-    showToast("✗ Update failed: " + e.message);
+    showToast("✗ Update failed: " + errText(e));
   } finally {
     this.disabled = false;
     this.textContent = "↻ Update GPU Wheels";
@@ -4974,7 +4974,7 @@ $("restoreKernelsBtn")?.addEventListener("click", async function () {
     if (r && r.success) showToast("✓ GPU wheels restored to upstream set");
     else showToast("✗ Restore failed: " + (r && r.error ? r.error : "unknown"));
   } catch (e) {
-    showToast("✗ Restore failed: " + e.message);
+    showToast("✗ Restore failed: " + errText(e));
   } finally {
     this.disabled = false;
     this.textContent = "Restore GPU Wheels";
@@ -4998,7 +4998,7 @@ $("installHipGgufBtn")?.addEventListener("click", async function () {
     if (r && r.success) showToast("✓ HIP GGUF wheel installed");
     else showToast("✗ HIP install failed: " + (r && r.error ? r.error : "unknown"));
   } catch (e) {
-    showToast("✗ HIP install failed: " + e.message);
+    showToast("✗ HIP install failed: " + errText(e));
   } finally {
     this.disabled = false;
     this.textContent = "HIP GGUF (exp)";

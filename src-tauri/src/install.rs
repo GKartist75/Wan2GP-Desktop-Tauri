@@ -3568,6 +3568,16 @@ pub(crate) struct OverrideWheels {
     pub sage: Option<String>,
 }
 
+/// Split a `setup_config.json` wheel cmd into separate pip argv items.
+/// Upstream cmds are either a bare spec (`<url>`, `sageattention==1.0.6`) or
+/// flag-prefixed (`--no-deps <url>` since the GGUF 1.0.22 wave, a56122a).
+/// Passing the raw cmd string as ONE argv item makes pip fail with
+/// `no such option: --no-deps https://…` — each whitespace-separated token
+/// must be its own argument. Pure + unit-tested.
+pub(crate) fn pip_install_argv(cmd: &str) -> Vec<String> {
+    cmd.split_whitespace().map(|s| s.to_string()).collect()
+}
+
 pub(crate) const SAGE_SAFE_WIN_URL: &str = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl";
 const SAGE_UPSTREAM_TAG: &str = "sageattention-2.2.0+cu130torch2.9.0andhigher.post4";
 
@@ -3692,7 +3702,13 @@ async fn sync_post_install_overrides(app: &tauri::AppHandle, repo: &std::path::P
             crate::base::push_log(s, "setup");
             let _ = app.emit("setup-output", s.to_string());
         };
-        if !crate::base::run_logged(&app, &py_s, &["-m", "pip", "install", url.as_str(), "--upgrade"], None, emit_k).await
+        // Split the cmd (`--no-deps <url>` must be TWO argv items, not one).
+        let mut argv: Vec<String> =
+            vec!["-m".into(), "pip".into(), "install".into()];
+        argv.extend(pip_install_argv(&url));
+        argv.push("--upgrade".into());
+        let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+        if !crate::base::run_logged(&app, &py_s, &argv_ref, None, emit_k).await
         {
             emit_log(&format!("[!] post-install override for {name} failed — install itself succeeded; run Update GPU Wheels manually\n"));
         }
@@ -3995,10 +4011,17 @@ async fn sync_kernels_inner(
                 let _ = app.emit("launch-log", s.to_string());
             };
             let py_s = py.to_string_lossy().to_string();
+            // Split the setup_config cmd: `--no-deps <url>` must be TWO argv
+            // items — one combined string fails with `no such option`.
+            let mut argv: Vec<String> =
+                vec!["-m".into(), "pip".into(), "install".into()];
+            argv.extend(pip_install_argv(&url));
+            argv.push("--upgrade".into());
+            let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
             if !run_logged(
                 &app,
                 &py_s,
-                &["-m", "pip", "install", url.as_str(), "--upgrade"],
+                &argv_ref,
                 None,
                 emit_k,
             )
@@ -5070,6 +5093,28 @@ fn post_update_dep_check(
             drift.join(", ")
         ));
         ("drift", drift)
+    }
+}
+#[cfg(test)]
+mod pip_argv_tests {
+    use super::pip_install_argv;
+    #[test]
+    fn splits_flag_prefixed_cmds() {
+        // Upstream GGUF cmds carry `--no-deps` (a56122a): one argv item per
+        // token, or pip dies with `no such option: --no-deps https://…`.
+        assert_eq!(
+            pip_install_argv("--no-deps https://example.com/a-1.0.23%2Btorch210cu130py311-cp311-cp311-win_amd64.whl"),
+            vec!["--no-deps".to_string(), "https://example.com/a-1.0.23%2Btorch210cu130py311-cp311-cp311-win_amd64.whl".to_string()]
+        );
+        // Bare specs stay a single item.
+        assert_eq!(
+            pip_install_argv("https://example.com/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl"),
+            vec!["https://example.com/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl".to_string()]
+        );
+        assert_eq!(
+            pip_install_argv("sageattention==1.0.6"),
+            vec!["sageattention==1.0.6".to_string()]
+        );
     }
 }
 #[cfg(test)]

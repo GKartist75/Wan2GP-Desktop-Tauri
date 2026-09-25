@@ -85,8 +85,12 @@ function wheelDistVersion(url) {
  * sync/overview paths). Upstream 5533384 splits `gguf` (cu130/py311) +
  * `gguf_cu128` (cu128/py310); the py tag on the stale URL picks the build.
  */
-const GGUF_1023_WIN_PY311 = 'https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch210cu130py311-cp311-cp311-win_amd64.whl'
-const GGUF_1023_WIN_PY310 = 'https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch271cu128py310-cp310-cp310-win_amd64.whl'
+const GGUF_1023_WIN_PY311 = '--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch210cu130py311-cp311-cp311-win_amd64.whl'
+const GGUF_1023_WIN_PY310 = '--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch271cu128py310-cp310-cp310-win_amd64.whl'
+// NOTE: the `--no-deps` prefix is part of upstream's cmd verbatim. Any live
+// installer MUST split the cmd on whitespace into separate pip argv items —
+// passing it as one argument fails with `no such option: --no-deps https://…`
+// (broken Sync Sep 24, upstream a56122a added the prefix).
 // Back-compat aliases (older imports reference the 1022 names).
 const GGUF_1022_WIN_PY311 = GGUF_1023_WIN_PY311
 const GGUF_1022_WIN_PY310 = GGUF_1023_WIN_PY310
