@@ -48,7 +48,7 @@ No Python, no CUDA toolkit, no `pip`, no Node needed beforehand — the installe
 
 ![Launch buttons — Desktop hero, Browser/No-GPU, Terminal/No-GPU, update/verify/rollback actions](screenshots/launch-buttons.png)
 
-- **Desktop** — Wan2GP embedded in the launcher, with reload, zoom 25–200%, hide/show switching that keeps your session, and console-first boot (watch the dashboard log, view opens when ready). Browser-parity media flow: drag & drop files into Gradio dropzones works, and new gallery arrivals pop a Save / Save As… prompt (with real file-type filters — issue #29).
+- **Desktop** — Wan2GP embedded in the launcher, with reload, zoom 25–200%, hide/show switching that keeps your session, and console-first boot (watch the dashboard log, view opens when ready). The embedded page follows the launcher theme (dark/light via Gradio's theme param; Gradio's own toggle still wins afterwards). Browser-parity media flow: drag & drop files into Gradio dropzones works, and new gallery arrivals pop a Save / Save As… prompt (with real file-type filters — issue #29).
 - **Browser** — visible console + auto-opens your browser when ready.
 - **External Terminal** — real Windows Terminal / cmd via generated script; in-app LED + Stop.
 - **No-GPU Chrome** — launch Chrome with GPU disabled to free VRAM for generation.
@@ -200,7 +200,7 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 | **LightX2V** | `0.0.2` | FP4 kernels — **RTX 50xx / sm120+ only** |
 | **bitsandbytes** | `0.49.2` | 8-bit/NF4 dequant for NF4 checkpoints |
 
-**Per-GPU set:** RTX 20 → Sage 1.0.6 + Nunchaku + GGUF + bnb (Flash is Ampere+, so RTX 30 and newer only). RTX 30/40 → add Sparge + Sage 2.2.0. RTX 50 → add LightX2V. All get bitsandbytes. Versions track `setup_config.json` — next update installs new wheels automatically. Fresh installs finish with a post-install override pass (GGUF floor, sage safe build) so they never land stale; Sync warns if your checkout is behind `origin/main`. `comfy-kitchen==0.2.35` (upstream v13.13, +10% H3/LTX2.x) arrives via `requirements.txt`.
+**Per-GPU set:** RTX 20 → Sage 1.0.6 + Nunchaku + GGUF + bnb (Flash is Ampere+, so RTX 30 and newer only). RTX 30/40 → add Sparge + Sage 2.2.0. RTX 50 → add LightX2V. All get bitsandbytes. Versions track `setup_config.json` — next update installs new wheels automatically. Fresh installs finish with a post-install override pass (GGUF floor, sage safe build) so they never land stale; Sync warns if your checkout is behind `origin/main`. The GGUF floor follows `setup_config.json` forward (future bumps install with no launcher update); unknown future components skip loudly in the Console instead of silently; every Wan2GP update runs a compat check (Console + toast when upstream changed something unfamiliar). A collapsed Kernel Wheels card shows a green ● update badge while wheels are stale. `comfy-kitchen==0.2.35` (upstream v13.13, +10% H3/LTX2.x) arrives via `requirements.txt`.
 
 **PyTorch matrix:** RTX 20/30/40/50 → Py 3.11.14 + PyTorch 2.10 + CUDA 13.0/13.1 · GTX 10xx → Py 3.10.9 + PyTorch 2.7.1 + CUDA 12.8. Avoids 2.8.0 (RAM leak) + 2.9.0 (VAE VRAM bug). GTX 10/16 stay on **CUDA 12.8** (no R580 needed); every other NVIDIA card needs **R580+** and is checked before install.
 

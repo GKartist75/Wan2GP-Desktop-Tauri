@@ -4587,7 +4587,7 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
             "setup_config.json unreadable after update — kernel Sync may be incomplete; verify the checkout".to_string(),
         ],
         Some(cfg) => {
-            let mut c = crate::hw::validate_setup_config_shape(&cfg);
+            let c = crate::hw::validate_setup_config_shape(&cfg);
             let floor = crate::hw::effective_gguf_floor(&cfg);
             let pinned = crate::hw::setup_config_gguf_version(&cfg)
                 .unwrap_or_else(|| "?".to_string());
