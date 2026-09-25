@@ -279,7 +279,7 @@ One panel, two paths — pick one. **A · Gradio server** exposes Gradio `/` and
 - **★ Favourites** auto-install on fresh setup (stored in `desktop-config.json` → `favoritePlugins`).
 - Changes apply on next Wan2GP launch.
 
-![Plugin Manager — community catalog with install, update, and favourites](screenshots/plugins-manager.png)
+<a href="screenshots/plugins-manager.png"><img src="screenshots/plugins-manager.png" alt="Plugin Manager — community catalog with install, update, and favourites" height="500"></a>
 
 ## ✨ DLSS5 installer — optional NVIDIA upsamplers
 
