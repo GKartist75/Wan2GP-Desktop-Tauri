@@ -4563,8 +4563,7 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
     }
   } catch {}
   const list = Array.isArray(wheels) ? wheels : [];
-  if (!list.length) {
-    // Distinguish "no GPU profile" (genuinely nothing to show) from a data
+  if (!list.length) {    // Distinguish "no GPU profile" (genuinely nothing to show) from a data
     // error so the user isn't left staring at a blank section.
     if (
       kernelProfile === null ||
@@ -4579,15 +4578,28 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
     }
     card.style.display = ""; // keep the card; show the friendly note
     if (tag) tag.textContent = kernelProfile || "—";
+    try {
+      document
+        .getElementById("kernelWheelsCard")
+        ?.classList.remove("wheels-update");
+    } catch {}
     return;
   }
   card.style.display = "";
   if (tag && kernelProfile) tag.textContent = kernelProfile;
   box.innerHTML = "";
+  // Pending-update flag for the (possibly collapsed) card header: any
+  // versioned wheel that isn't "ok" lights the header badge + rings the
+  // Update button green. Bare-string entries carry no version info, so they
+  // never flag (can't prove an update exists).
+  let needsUpdate = false;
   list.forEach((w) => {
     // ponytail: Tauri spike returns string array; Electron returns objects — handle both
-    if (typeof w === "string")
+    let unversioned = false;
+    if (typeof w === "string") {
+      unversioned = true;
       w = { key: w, label: w, pipName: w, state: "missing" };
+    }
     const row = document.createElement("div");
     row.className = "spec-row";
     const dot = document.createElement("span");
@@ -4602,6 +4614,7 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
     const cls =
       state === "ok" ? "installed" : state === "mismatch" ? "error" : "";
     if (cls) dot.classList.add(cls);
+    if (!unversioned && state !== "ok") needsUpdate = true;
     const label = document.createElement("span");
     label.className = "spec-label";
     label.textContent = w.label;
@@ -4624,6 +4637,11 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
     row.appendChild(val);
     box.appendChild(row);
   });
+  try {
+    document
+      .getElementById("kernelWheelsCard")
+      ?.classList.toggle("wheels-update", needsUpdate);
+  } catch {}
 }
 
 // ── GPU Profile Overview (mirrors setup_config.json gpu_profiles) ──
@@ -4952,7 +4970,7 @@ $("syncKernelsBtn")?.addEventListener("click", async function () {
     if (r && r.success) showToast("✓ GPU wheels updated");
     else showToast("✗ Update failed: " + (r && r.error ? r.error : "unknown"));
   } catch (e) {
-    showToast("✗ Update failed: " + e.message);
+    showToast("✗ Update failed: " + errText(e));
   } finally {
     this.disabled = false;
     this.textContent = "↻ Update GPU Wheels";
@@ -4974,7 +4992,7 @@ $("restoreKernelsBtn")?.addEventListener("click", async function () {
     if (r && r.success) showToast("✓ GPU wheels restored to upstream set");
     else showToast("✗ Restore failed: " + (r && r.error ? r.error : "unknown"));
   } catch (e) {
-    showToast("✗ Restore failed: " + e.message);
+    showToast("✗ Restore failed: " + errText(e));
   } finally {
     this.disabled = false;
     this.textContent = "Restore GPU Wheels";
@@ -4998,7 +5016,7 @@ $("installHipGgufBtn")?.addEventListener("click", async function () {
     if (r && r.success) showToast("✓ HIP GGUF wheel installed");
     else showToast("✗ HIP install failed: " + (r && r.error ? r.error : "unknown"));
   } catch (e) {
-    showToast("✗ HIP install failed: " + e.message);
+    showToast("✗ HIP install failed: " + errText(e));
   } finally {
     this.disabled = false;
     this.textContent = "HIP GGUF (exp)";
@@ -6835,6 +6853,12 @@ $("updateBtn").addEventListener("click", async () => {
       // earlier drift run — otherwise Restore/Dismiss linger confusingly.
       hideDriftBanner();
     }
+    // Launcher-compat verify pass (backend): non-empty means the update
+    // pulled a setup_config shape this launcher doesn't fully understand.
+    if (r && Array.isArray(r.compat) && r.compat.length) {
+      appendLog("[!] launcher compat: " + r.compat.join(" | "));
+      showToast("[!] Upstream changed setup — see Console, then Sync GPU Wheels");
+    }
     refreshDashboard();
   } catch (e) {
     appendLog("[!] Update failed: " + errText(e));
@@ -7377,7 +7401,7 @@ const DEEPY_PANEL_ENGINES = [
   { id: "opencode", label: "OpenCode", paid: false },
   { id: "claude-code", label: "Claude Code", paid: true },
   { id: "codex", label: "OpenAI Codex", paid: true },
-  // ponytail: b71026f — local Prime runs on Qwen3.8 VL 27B (needs the 27B model + GGUF 1.0.22; backend auto-raises 32k context + Summarize)
+  // ponytail: b71026f — local Prime runs on Qwen3.8 VL 27B (needs the 27B model + GGUF 1.0.23; backend auto-raises 32k context + Summarize)
   { id: "local-qwen38", label: "Qwen3.8 VL 27B (local)", paid: false },
 ];
 
@@ -7407,7 +7431,7 @@ const DEEPY_QUANT_CHOICES = {
     { id: "gguf", label: "GGUF Q4 (default, highest quality)" },
     { id: "gguf_q3", label: "GGUF IQ3_S (middle, 16 GB VRAM)" },
     { id: "gguf_q2", label: "GGUF Q2 (lowest memory)" },
-    { id: "gguf_ptq1", label: "Bonsai PTQ1 (~10 GB VRAM, needs kernels 1.0.22+)" },
+    { id: "gguf_ptq1", label: "Bonsai PTQ1 (~10 GB VRAM, needs kernels 1.0.23+)" },
   ],
   4: [
     { id: "quanto_int8", label: "Quanto Int8 (recommended, better quality)" },
@@ -7461,7 +7485,7 @@ function updateDeepyQuantHint(value, enhancerId) {
   if (!hint) return;
   hint.textContent =
     value === "gguf_ptq1"
-      ? "Bonsai PTQ1 runs Prime on ~10 GB VRAM (Sync Kernels for 1.0.22+). Weights download on first WanGP launch. Apply also sets INT8 KV cache."
+      ? "Bonsai PTQ1 runs Prime on ~10 GB VRAM (Sync Kernels for 1.0.23+). Weights download on first WanGP launch. Apply also sets INT8 KV cache."
       : Number(enhancerId) === 5
         ? "GGUF Q4 is highest quality; Q3/Q2 trade quality for VRAM. Weights download on first WanGP launch."
         : "Quanto Int8 preserves quality; GGUF Q4 uses less memory when kernels are installed.";

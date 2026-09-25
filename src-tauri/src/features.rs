@@ -1044,7 +1044,7 @@ pub(crate) fn prime_profile_to_ui_id(profile: &str) -> &str {
 /// valid values per local engine (plugins/configuration/plugin.py
 /// `prompt_enhancer_quantization_ui_state`): Qwen3.8 (id 5) takes the four
 /// GGUF backends including Bonsai PTQ1 (`gguf_ptq1`, ~10GB VRAM, needs
-/// GGUF kernels 1.0.22+); Qwen3.5 4B/9B (ids 3/4) take Quanto Int8 or
+/// GGUF kernels 1.0.23+); Qwen3.5 4B/9B (ids 3/4) take Quanto Int8 or
 /// plain GGUF Q4. Engine-inappropriate values normalize to the engine
 /// default (mirrors upstream); `None` preserves existing config.
 /// Pure + unit-tested.
@@ -1178,7 +1178,7 @@ pub fn deepy_set(
         v["prompt_enhancer_quantization"] = serde_json::json!(q);
         if q == "gguf_ptq1" {
             // Bonsai companion: INT8 KV cache halves cache VRAM — what makes
-            // Prime viable at ~10GB (GGUF 1.0.22+ carries the kernels).
+            // Prime viable at ~10GB (GGUF 1.0.23+ carries the kernels).
             // (Prompt enhancement mode is handled below from the panel choice.)
             v["deepy_kv_cache_quantization"] = serde_json::json!("int8");
         }

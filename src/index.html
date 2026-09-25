@@ -271,7 +271,7 @@
               </select>
               <button class="btn btn-primary small" id="embedModeSaveBtn" title="Save Desktop embed mode (applies on next Desktop launch)">Save</button>
             </div>
-            <p class="token-hint">How Wan2GP renders in Desktop mode. <code>iframe</code> is the classic embed (downloads land silently in Downloads, then prompt). <code>Native</code> uses a real child webview with download events — exact Save-As prompts, no polling — but it composites above the interface, so the console docks beside it instead of overlaying. Applies on next Desktop launch (close the view first).</p>
+            <p class="token-hint">How Wan2GP renders in Desktop mode. <code>iframe</code> is the classic embed (downloads land silently in Downloads, then prompt). <code>Native</code> uses a real child webview with download events — exact Save-As prompts, no polling — but it composites above the interface, so the console docks beside it instead of overlaying. Applies on next Desktop launch (close the view first). Switch while the server is stopped — the topbar Renderer dropdown locks during a session. The embedded page follows the launcher theme (dark/light) automatically.</p>
             <div class="token-field" style="margin-top:8px">
               <button class="btn btn-ghost small" id="webviewMemBtn" title="Measure WebView2 + launcher memory once to compare embed modes">Measure WebView2 memory</button>
             </div>
@@ -949,7 +949,7 @@
             <span class="card-title">GPU Kernel Wheels</span>
             <span class="env-type-tag" id="kernelProfileTag"></span>
             <button class="btn btn-ghost small hide-on-collapse" id="restoreKernelsBtn" title="Reinstall deepbeepmeep's setup_config wheels exactly — downgrades launcher overrides (sage safe build, GGUF floor). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
-                <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.22 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.23 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
                 <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only: install GGUF 1.0.22 torch210rocm714 HIP wheel for RX 9070/R9700 gfx1201. Needs torch 2.10.0+rocm7.14.0; replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
           </div>
           <div class="env-subsection" id="kernelWheelsSubsection" style="margin-top:0;border-top:none;padding-top:0">
@@ -1060,7 +1060,7 @@
             <div class="deepy-cost-note">
               <span class="dot-ok">●</span> <strong>OpenCode</strong> — free, local models, no account.
               <span class="dot-bad">●</span> <strong>Claude Code / Codex</strong> — paid (subscription or API credits).
-              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 27B (local)</strong> — runs on your GPU; needs the 27B model + GGUF kernels 1.0.22 (Sync Kernels). Bonsai PTQ1 quant runs Prime on ~10 GB VRAM. Auto-sets 32k context + Summarize.
+              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 27B (local)</strong> — runs on your GPU; needs the 27B model + GGUF kernels 1.0.23 (Sync Kernels). Bonsai PTQ1 quant runs Prime on ~10 GB VRAM. Auto-sets 32k context + Summarize.
               <br>Prime plans advanced multi-step work and is required for every external LLM (it exposes WanGP's MCP tools). Zero is lightweight and local-only.
             </div>
             <div id="deepyEngineOptions" class="deepy-engine-options"></div>

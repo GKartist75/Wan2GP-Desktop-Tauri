@@ -2,6 +2,37 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.8.3] — 2026-09-25
+
+- Upstream Wan2GP `5533384` (Sep 24, H3 VAE fix): GGUF kernel floor
+  1.0.22 → 1.0.23 (short-batch projection fusion + SM120 async path).
+  Sync / post-install override / overview now target the 1.0.23 builds and
+  understand the `gguf` (cu130/py311) + `gguf_cu128` (cu128/py310) split —
+  py310 envs get the cu128 build (mirrors `setup.py`'s torch/py remap),
+  1.0.22 installs now flag stale. HIP `1.0.22+torch210rocm714` opt-in
+  unchanged (upstream did not bump it).
+- Fix Sync failure on GGUF 1.0.23 (fixes #44): upstream `setup_config.json` cmds carry a
+  `--no-deps` prefix (since `a56122a`) which the launcher passed to pip as
+  ONE argument (`no such option: --no-deps https://…`). Kernel cmds are now
+  split into separate pip argv items; override wheels install with
+  `--no-deps` exactly like `setup.py`. Kernel Sync/Restore/HIP failure
+  toasts also print the real backend error instead of "undefined".
+- Collapsed GPU Kernel Wheels card now signals pending wheel updates: a green
+  "● update" badge on the header one-liner (the Update button itself is hidden
+  while collapsed) plus a green ring around ↻ Update GPU Wheels when expanded.
+- Desktop view follows the launcher theme (fixes #43): the embed URL now
+  carries Gradio's `?__theme=dark|light` (verified against the gradio 5.29
+  frontend bundle; Gradio's own toggle still wins afterwards). Covers iframe
+  + native renderers.
+- Upstream-proofing (Sync keeps working after deepbeepmeep changes):
+  GGUF floor follows `setup_config.json` forward and stale pins swap to
+  upstream's own fresh pin (a future 1.0.24 flows through with no code
+  change); unknown profile kernels skip LOUDLY in the console instead of
+  silently under-installing; `setup_config.json` shape is validated
+  warn-only at Sync and after every Wan2GP update (new `compat` field +
+  toast); update flow logs a launcher-compat line (setup_config gguf pin
+  vs floor). `%2B`-encoded wheel versions now parse to clean versions.
+
 ## [0.8.2] — 2026-09-23
 
 - Phone & remote access panel (left column): new **LAN (`--listen`) toggle**

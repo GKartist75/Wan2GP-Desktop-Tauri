@@ -165,7 +165,7 @@ From `INSTALLATION.md` — the launcher automates all of this; listed so you kno
 | PyTorch | 2.10.0 + CUDA 13.0/13.1 (cu130, needs R580+ driver) | 2.7.1 + CUDA 12.8 (no R580 needed) | 2.12 ROCm 7.15 TheRock | CPU / MPS (SDPA only) |
 | Triton | `triton-windows>=3.6,<3.7` (torch 2.10); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | auto | — |
 | Attention | Sage 2.2.0 (RTX 30+, Ampere+) / Sage 1.0.6 (RTX 20) / Flash 2.8.3 / Sparge 0.1.0 | SDPA | — | SDPA |
-| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.22, LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2, Comfy Kitchen via requirements | bitsandbytes | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back) | — |
+| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.23, LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2, Comfy Kitchen via requirements | bitsandbytes | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back) | — |
 
 Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
 `int8_kernels`: Auto tries Kitchen CUDA/HIP → Triton → PyTorch; `kernel_precision`

@@ -76,25 +76,34 @@ function wheelDistVersion(url) {
 
 /**
  * GGUF wheel override toward docs/INSTALLATION.md#gguf-llamacpp-cuda-kernels.
- * setup_config.json still ships 1.0.14 (verified Sep 2026) while the docs
- * prescribe 1.0.22 (SM120 async-copy kernels, Deepy Prime Bonsai PTQ1
- * support), so anything below the floor swaps to 1.0.22 — but the floor,
- * anything newer, and non-GGUF URLs pass through untouched, so the day
- * upstream flips setup_config we follow it verbatim (mirrors the Rust
- * apply_gguf_override in hw.rs, which owns the live sync/overview paths).
+ * setup_config.json lags older builds (verified Sep 2026) while the docs
+ * prescribe 1.0.23 (short-batch projection fusion + SM120 async-copy kernels,
+ * Deepy Prime Bonsai PTQ1 support), so anything below the floor swaps to
+ * 1.0.23 — but the floor, anything newer, and non-GGUF URLs pass through
+ * untouched, so the day upstream flips setup_config we follow it verbatim
+ * (mirrors the Rust apply_gguf_override in hw.rs, which owns the live
+ * sync/overview paths). Upstream 5533384 splits `gguf` (cu130/py311) +
+ * `gguf_cu128` (cu128/py310); the py tag on the stale URL picks the build.
  */
-const GGUF_1022_WIN_PY311 = 'https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch210cu130py311-cp311-cp311-win_amd64.whl'
-const GGUF_1022_WIN_PY310 = 'https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch271cu128py310-cp310-cp310-win_amd64.whl'
+const GGUF_1023_WIN_PY311 = '--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch210cu130py311-cp311-cp311-win_amd64.whl'
+const GGUF_1023_WIN_PY310 = '--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch271cu128py310-cp310-cp310-win_amd64.whl'
+// NOTE: the `--no-deps` prefix is part of upstream's cmd verbatim. Any live
+// installer MUST split the cmd on whitespace into separate pip argv items —
+// passing it as one argument fails with `no such option: --no-deps https://…`
+// (broken Sync Sep 24, upstream a56122a added the prefix).
+// Back-compat aliases (older imports reference the 1022 names).
+const GGUF_1022_WIN_PY311 = GGUF_1023_WIN_PY311
+const GGUF_1022_WIN_PY310 = GGUF_1023_WIN_PY310
 const GGUF_1022_WIN_PY311_HIP = 'https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch210rocm714py311-cp311-cp311-win_amd64.whl'
-const GGUF_TARGET_VERSION = '1.0.22'
+const GGUF_TARGET_VERSION = '1.0.23'
 
 function ggufFloorGt(cmd) {
-  // True when the GGUF wheel version in cmd is below the 1.0.22 floor.
+  // True when the GGUF wheel version in cmd is below the 1.0.23 floor.
   if (typeof cmd !== 'string') return false
   const m = /llamacpp_gguf_cuda-(\d+)\.(\d+)\.(\d+)/.exec(cmd)
   if (!m) return false
   const v = [Number(m[1]), Number(m[2]), Number(m[3])]
-  const f = [1, 0, 22]
+  const f = [1, 0, 23]
   for (let i = 0; i < 3; i++) {
     if (v[i] !== f[i]) return v[i] < f[i]
   }
@@ -109,7 +118,7 @@ function applyGgufOverride(key, cmd, torchCode) {
     if (low.includes('rocm714') || low.includes('rocm7.14') || low.includes('+hip') || low.includes('torch212')) return cmd
   }
   if (!ggufFloorGt(cmd)) return cmd
-  return cmd.includes('py310') ? GGUF_1022_WIN_PY310 : GGUF_1022_WIN_PY311
+  return cmd.includes('py310') ? GGUF_1023_WIN_PY310 : GGUF_1023_WIN_PY311
 }
 
 /**
@@ -136,6 +145,7 @@ const KERNEL_DISPLAY = {
   nunchaku_cu13:       { label: 'Nunchaku',        pipName: 'nunchaku' },
   nunchaku:            { label: 'Nunchaku',        pipName: 'nunchaku' },
   gguf:                { label: 'GGUF (llamacpp)', pipName: 'llamacpp_gguf_cuda' },
+  gguf_cu128:          { label: 'GGUF (llamacpp)', pipName: 'llamacpp_gguf_cuda' },
   llamacpp_gguf_cuda:  { label: 'GGUF (llamacpp)', pipName: 'llamacpp_gguf_cuda' },
   light2xv:            { label: 'LightX2V',        pipName: 'lightx2v_kernel' },
   lightx2v:             { label: 'LightX2V',        pipName: 'lightx2v_kernel' },
@@ -165,7 +175,7 @@ function buildOverviewWheels(cfg, gpu, osKey) {
   return kernels.map((name) => {
     const def = KERNEL_DISPLAY[name] || { label: name, pipName: name }
     const cmd = components[name] && components[name].cmd && components[name].cmd[osKey]
-    const url = applyGgufOverride(name, cmd, torchCode) // GGUF → docs 1.0.22 while setup_config lags (identity once upstream flips)
+    const url = applyGgufOverride(name, cmd, torchCode) // GGUF → docs 1.0.23 while setup_config lags (identity once upstream flips)
     let configured = null
     if (url) {
       const wi = wheelDistVersion(url)
@@ -247,6 +257,10 @@ module.exports = {
   SAGE_CU130_SAFE_WHEEL,
   SAGE_CU130_SAFE_BASE,
   GGUF_TARGET_VERSION,
+  GGUF_1023_WIN_PY311,
+  GGUF_1023_WIN_PY310,
+  GGUF_1022_WIN_PY311,
+  GGUF_1022_WIN_PY310,
   GGUF_1022_WIN_PY311_HIP,
   KERNEL_DISPLAY,
 }

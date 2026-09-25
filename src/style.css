@@ -1084,6 +1084,21 @@ html[data-theme="dark"][data-accent="rose"],
  color: #f59e0b;
  font-weight: 600;
 }
+/* Pending kernel-wheel update, visible on the collapsed one-liner: the
+   Update button itself is hidden while collapsed (hide-on-collapse), so the
+   header title carries a green badge; expanding reveals the button with a
+   matching green ring. Cleared by renderKernelWheels once all wheels are ok. */
+#kernelWheelsCard.wheels-update > .card-header .card-title::after {
+ content: "● update";
+ color: #4ade80;
+ font-size: 0.625rem;
+ font-weight: 600;
+ margin-left: 6px;
+ white-space: nowrap;
+}
+#kernelWheelsCard.wheels-update #syncKernelsBtn {
+ box-shadow: 0 0 0 1px #4ade80;
+}
 /* Visible error note so the env-detail panel is never silently blank */
 .env-detail-error {
  display: none;
