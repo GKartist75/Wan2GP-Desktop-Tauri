@@ -4532,9 +4532,13 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         mutating_done();
         return Err("git reset to upstream failed — offline? See console output above.".into());
     }
-    // Drop a lingering MERGE_HEAD after a conflicted reset (harmless no-op
-    // when there is none), then prove the tree is exactly upstream.
-    run_logged(&app, "git", &["merge", "--abort"], Some(&repo), emit).await;
+    // Drop a lingering MERGE_HEAD after a conflicted reset. Silent
+    // best-effort: "no merge to abort" is the common case, not an error —
+    // run_logged would print a scary `fatal:` line for it.
+    let _ = silent_command("git")
+        .args(["merge", "--abort"])
+        .current_dir(&repo)
+        .output();
     if !git_unmerged_paths(&repo).is_empty() {
         mutating_done();
         return Err("merge state survived the reset — run Verify / Repair Wan2GP files, then retry.".into());
@@ -4804,9 +4808,12 @@ pub async fn repair_wangp_files(app: tauri::AppHandle) -> Result<serde_json::Val
         return Err("git reset failed — see console output above.".into());
     }
     if !unmerged.is_empty() {
-        // Drop a lingering MERGE_HEAD (reset usually clears it; abort is a
-        // harmless no-op when there is none) and prove the merge is gone.
-        run_logged(&app, "git", &["merge", "--abort"], Some(&repo), emit).await;
+        // Drop a lingering MERGE_HEAD (reset usually clears it). Silent
+        // best-effort: "no merge to abort" is the common case, not an error.
+        let _ = silent_command("git")
+            .args(["merge", "--abort"])
+            .current_dir(&repo)
+            .output();
         let still = git_unmerged_paths(&repo);
         if !still.is_empty() {
             mutating_done();

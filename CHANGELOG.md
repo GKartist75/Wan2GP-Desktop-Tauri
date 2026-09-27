@@ -4,6 +4,12 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.8.8] — 2026-09-27
+
+- Quieter updates: the best-effort `merge --abort` cleanup after a hard
+  reset no longer prints a scary `fatal: There is no merge to abort` line
+  when there is nothing to abort (Update + Repair).
+
 ## [0.8.7] — 2026-09-27
 
 - Update policy is now stash-free: latest upstream always wins — fetch, loud
