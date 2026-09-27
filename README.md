@@ -85,7 +85,9 @@ C:\Wan2GP-Models\               ← models library
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.8.5**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.5) *(latest)* — DLSS5 card: Check compatibility verdicts (ready / not-installed / blocked) as labeled rows, opt-in workstation GPU fix for RTX PRO / Ada / RTX Ax000 (backed up, reversible). ⚠️ Workstation path untested on real hardware — confirm on PRO/A-series silicon. Details in [CHANGELOG](CHANGELOG.md).
+- [**v0.8.6**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.6) *(latest)* — Workstation fix hardened from real PRO 5000 feedback (CRLF checkouts patch now, refusals log the installed check for reports, upstream-fixed runtimes detected); probe summary goes compact. ⚠️ Workstation path still untested by us — confirm on PRO/A-series silicon. Details in [CHANGELOG](CHANGELOG.md).
+
+- [**v0.8.5**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.5) — DLSS5 card: Check compatibility verdicts (ready / not-installed / blocked) as labeled rows, opt-in workstation GPU fix for RTX PRO / Ada / RTX Ax000 (backed up, reversible). ⚠️ Workstation path untested on real hardware — confirm on PRO/A-series silicon. Details in [CHANGELOG](CHANGELOG.md).
 
 - [**v0.8.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.4) — Upstream v13.14 wave: GGUF 1.0.25 floor (+HIP wheel), local Deepy Prime 9B/27B support with combined model+quantization picker and Local/Remote engine grouping, Claude bridge 0.1.66, perpetual "update available" fix (containment checks + fast-forward-first pulls), Prompt Enhancer Usage labels. Details in [CHANGELOG](CHANGELOG.md).
 

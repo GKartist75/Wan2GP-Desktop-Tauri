@@ -4,6 +4,17 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.8.6] — 2026-09-27
+
+- Workstation GPU fix, hardened from the first real PRO 5000 report: the
+  patcher refused on CRLF checkouts (Windows autocrlf) — matching now
+  normalizes endings and preserves the file's style. A refusal logs the
+  installed `_gpu_series` body to the console for paste-into-report
+  diagnostics, and an upstream-fixed runtime is detected (nothing to patch).
+- Check compatibility: compact frame-gen probe summary (`5x max`, runtime
+  version) in the HAGS row instead of the raw JSON blob — full probe detail
+  stays in the console.
+
 ## [0.8.5] — 2026-09-27
 
 - DLSS5 card: new **Check compatibility** button — per-mode verdicts (ready /

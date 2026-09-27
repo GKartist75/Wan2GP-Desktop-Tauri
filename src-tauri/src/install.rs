@@ -6092,6 +6092,18 @@ fn dlss_reason(series: u32, minimum: u32) -> String {
     }
 }
 
+/// Compact summary of a parsed `dlssg-worker --probe` document:
+/// (available, multi-frame max, runtime version). Pure + unit-tested.
+pub(crate) fn dlss_probe_summary(v: &serde_json::Value) -> (bool, Option<u64>, Option<String>) {
+    (
+        v.get("available").and_then(|a| a.as_bool()).unwrap_or(false),
+        v.get("multi_frame_count_max").and_then(|m| m.as_u64()),
+        v.get("runtime_version")
+            .and_then(|r| r.as_str())
+            .map(str::to_string),
+    )
+}
+
 /// One DLSS mode verdict with three states: "ready", "not-installed" (every
 /// gate passes — GPU, OS, HAGS, probe — only the runtime files are missing)
 /// or "blocked" (with the reason). Missing files must NOT read as broken on
@@ -6245,8 +6257,11 @@ pub async fn dlss5_check() -> serde_json::Value {
                     if let Ok(v) =
                         serde_json::from_slice::<serde_json::Value>(&out.stdout)
                     {
+                        let (avail, max_frames, rt_ver) = dlss_probe_summary(&v);
                         probe = Some(serde_json::json!({
-                            "available": v.get("available").and_then(|a| a.as_bool()).unwrap_or(false),
+                            "available": avail,
+                            "maxFrames": max_frames,
+                            "runtimeVersion": rt_ver,
                             "raw": String::from_utf8_lossy(&out.stdout).trim().to_string(),
                         }));
                     } else {
@@ -6322,19 +6337,64 @@ const DLSS_RUNTIME_ANCHOR: &str = "    series = [int(match.group(1)) for match i
 const DLSS_RUNTIME_PATCHED_BLOCK: &str = "    series = [int(match.group(1)) for match in re.finditer(r\"GeForce\\s+RTX\\s+(\\d{2})\\d{2}\", result.stdout, re.IGNORECASE)]\n    # Launcher workstation-GPU fix: upstream only matched \"GeForce RTX\" names,\n    # so workstation/datacenter cards (RTX PRO, Ada, RTX Ax000, L40, Hopper)\n    # read as series 0 and falsely report \"RTX 30+ required\". Mirror the\n    # launcher tier here when no GeForce matched.\n    if not series:\n        _up = result.stdout.upper()\n        if any(k in _up for k in (\"PRO 6000\", \"PRO 5000\", \"PRO 4000\", \"B100\", \"B200\", \"GB100\", \"H100\", \"H200\")):\n            return 50\n        if \"ADA\" in _up or \"L40\" in _up or \" L4\" in _up:\n            return 40\n        if \"RTX A\" in _up or any(k in _up for k in (\" A40\", \" A30\", \" A16\", \" A10\", \" A80\")):\n            return 30\n        if \"QUADRO\" in _up:\n            return 20\n        _m = re.search(r\"RTX\\D*?(\\d{2})\\d{2}\", _up)\n        if _m:\n            return int(_m.group(1))\n    return max(series, default=0)";
 
 /// Build the patched file text. None when already patched or when the
-/// upstream anchor drifted (caller must fail closed). Pure + unit-tested.
+/// upstream anchor drifted (caller must fail closed). Handles CRLF checkouts
+/// (Windows autocrlf): matching runs on LF-normalized text and the original
+/// ending style is restored on write — a CRLF runtime.py must patch, not
+/// refuse. Pure + unit-tested.
 pub(crate) fn dlss_patch_runtime_text(orig: &str) -> Option<String> {
     if orig.contains(DLSS_RUNTIME_MARKER) {
         return None;
     }
-    if !orig.contains(DLSS_RUNTIME_ANCHOR) {
+    let crlf = orig.contains("\r\n");
+    let norm: String = if crlf {
+        orig.replace("\r\n", "\n")
+    } else {
+        orig.to_string()
+    };
+    if !norm.contains(DLSS_RUNTIME_ANCHOR) {
         return None;
     }
-    Some(orig.replacen(
+    let patched = norm.replacen(
         DLSS_RUNTIME_ANCHOR,
         DLSS_RUNTIME_PATCHED_BLOCK,
         1,
-    ))
+    );
+    Some(if crlf {
+        patched.replace('\n', "\r\n")
+    } else {
+        patched
+    })
+}
+
+/// True when the installed runtime.py already tiers workstation cards without
+/// the launcher (e.g. upstream merged the fix): the GeForce-only match plus a
+/// workstation fallback in `_gpu_series`. Pure + unit-tested.
+pub(crate) fn dlss_runtime_fixed_upstream(orig: &str) -> bool {
+    !orig.contains(DLSS_RUNTIME_MARKER)
+        && orig.contains("def _gpu_series")
+        && orig.contains("PRO 5000")
+}
+
+/// Installed `_gpu_series` body for drift reports (anchor miss): gives the
+/// user something pasteable instead of a bare refusal. Pure + unit-tested.
+pub(crate) fn dlss_gpu_series_excerpt(orig: &str) -> String {
+    let norm = orig.replace("\r\n", "\n");
+    let Some(start) = norm.find("def _gpu_series") else {
+        return "(_gpu_series not found in runtime.py)".into();
+    };
+    let tail = &norm[start..];
+    // Body ends at the next top-level def or 25 lines, whichever first.
+    let mut lines: Vec<&str> = Vec::new();
+    for (i, ln) in tail.lines().enumerate() {
+        if i > 0 && (ln.starts_with("def ") || ln.starts_with("@") || ln.starts_with("class ")) {
+            break;
+        }
+        lines.push(ln);
+        if lines.len() >= 25 {
+            break;
+        }
+    }
+    lines.join("\n")
 }
 
 fn dlss_runtime_paths(repo: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
@@ -6379,8 +6439,27 @@ pub fn dlss5_apply_workstation_fix() -> Result<serde_json::Value, String> {
     if orig.contains(DLSS_RUNTIME_MARKER) {
         return done(Ok(serde_json::json!({"ok": true, "already": true})));
     }
-    let patched = dlss_patch_runtime_text(&orig).ok_or_else(|| {
-        "upstream runtime.py changed shape — refusing to patch blindly. Update the launcher or report this.".to_string()
+    if dlss_runtime_fixed_upstream(&orig) {
+        push_log(
+            "[*] DLSS GPU check already tiers workstation cards upstream — nothing to patch.\n",
+            "setup",
+        );
+        return done(Ok(serde_json::json!({"ok": true, "already": true, "upstream": true})));
+    }
+    let patched = dlss_patch_runtime_text(&orig);
+    if patched.is_none() {
+        // Fail closed but loud: log the installed function body so the report
+        // carries the actual drift instead of a bare refusal.
+        push_log(
+            &format!(
+                "[!] DLSS workstation fix: upstream runtime.py changed shape — refusing to patch blindly. Installed _gpu_series:\n{}\nCopy this block into your report.\n",
+                dlss_gpu_series_excerpt(&orig)
+            ),
+            "setup",
+        );
+    }
+    let patched = patched.ok_or_else(|| {
+        "upstream runtime.py changed shape — refusing to patch blindly (installed _gpu_series logged to the console — copy it into your report). Update the launcher or report this.".to_string()
     })?;
     if !backup.exists() {
         std::fs::write(&backup, &orig)
@@ -6427,8 +6506,10 @@ pub fn dlss5_revert_workstation_fix() -> Result<serde_json::Value, String> {
 #[cfg(test)]
 mod dlss5_check_tests {
     use super::{
-        dlss_fixed_series, dlss_patch_runtime_text, dlss_reason, dlss_upstream_series,
-        dlss_verdict_state, DLSS_RUNTIME_ANCHOR, DLSS_RUNTIME_MARKER,
+        dlss_fixed_series, dlss_gpu_series_excerpt, dlss_patch_runtime_text,
+        dlss_probe_summary, dlss_reason, dlss_runtime_fixed_upstream,
+        dlss_upstream_series, dlss_verdict_state, DLSS_RUNTIME_ANCHOR,
+        DLSS_RUNTIME_MARKER,
     };
 
     #[test]
@@ -6483,6 +6564,46 @@ mod dlss5_check_tests {
     #[test]
     fn patch_refuses_drifted_upstream() {
         assert!(dlss_patch_runtime_text("def _gpu_series():\n    return 99\n").is_none());
+    }
+
+    #[test]
+    fn patch_handles_crlf_checkouts() {
+        // Windows autocrlf checkouts must patch, not refuse — and keep CRLF.
+        let lf = format!("def _gpu_series():\n{DLSS_RUNTIME_ANCHOR}\n");
+        let orig: String = lf.replace('\n', "\r\n");
+        assert!(orig.contains("\r\n"));
+        let patched = dlss_patch_runtime_text(&orig).expect("CRLF must patch");
+        assert!(patched.contains(DLSS_RUNTIME_MARKER));
+        assert!(patched.contains("\r\n"));
+        assert!(!patched.replace("\r\n", "\n").contains("\r"));
+        assert!(dlss_patch_runtime_text(&patched).is_none());
+    }
+
+    #[test]
+    fn detects_upstream_fixed_runtime() {
+        let fixed = "def _gpu_series():\n    series = []\n    if not series:\n        # PRO 5000\n        return 50\n";
+        assert!(dlss_runtime_fixed_upstream(fixed));
+        let orig = format!("def _gpu_series():\n{DLSS_RUNTIME_ANCHOR}\n");
+        assert!(!dlss_runtime_fixed_upstream(&orig));
+    }
+
+    #[test]
+    fn excerpt_reports_drifted_body() {
+        let body = dlss_gpu_series_excerpt("def _gpu_series():\n    return 99\n\ndef other():\n");
+        assert!(body.contains("def _gpu_series"));
+        assert!(!body.contains("def other"));
+        assert!(dlss_gpu_series_excerpt("nope\n").contains("not found"));
+    }
+
+    #[test]
+    fn probe_summary_extracts_compact_fields() {
+        let v = serde_json::json!({"available": true, "multi_frame_count_max": 5, "runtime_version": "310.7.0"});
+        assert_eq!(
+            dlss_probe_summary(&v),
+            (true, Some(5), Some("310.7.0".to_string()))
+        );
+        let v = serde_json::json!({"available": false});
+        assert_eq!(dlss_probe_summary(&v), (false, None, None));
     }
 
     #[test]
