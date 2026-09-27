@@ -810,6 +810,7 @@ html[data-theme="dark"][data-accent="rose"],
 .spec-row {
  display: flex;
  align-items: center;
+ gap: 8px;
  padding: 5px 8px;
  border-radius: 4px;
  font-size: 0.75rem;

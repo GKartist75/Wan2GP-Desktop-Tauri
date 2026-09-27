@@ -6031,9 +6031,493 @@ pub fn dlss5_status() -> serde_json::Value {
 // Consent ("I ACCEPT") is taken in the UI modal, so the script gets
 // -AcceptThirdPartyRisk and never blocks on Read-Host. Verdict comes from
 // re-probing dlss5/, not from parsing script output.
+// DLSS5 compatibility check (Test button): mirrors upstream
+// postprocessing/dlss5/runtime.py unavailable_reason() so workstation cards
+// (e.g. RTX PRO 5000 Blackwell) can verify the false "RTX 30+ required" block
+// without launching Wan2GP. Compares upstream GeForce-only series parsing
+// against the launcher's workstation-aware tier and reports both verdicts.
+//
+// Upstream-exact series parse: case-insensitive `GeForce\s+RTX\s+(\d{2})\d{2}`
+// on one GPU name; None when the name isn't a GeForce RTX. Pure + unit-tested.
+pub(crate) fn dlss_upstream_series(name: &str) -> Option<u32> {
+    let u = name.to_uppercase();
+    let b = u.as_bytes();
+    let mut i = 0;
+    while i + 7 < b.len() {
+        if &b[i..i + 7] == b"GEFORCE" {
+            let mut j = i + 7;
+            while j < b.len() && b[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j + 3 <= b.len() && &b[j..j + 3] == b"RTX" {
+                j += 3;
+                let mut k = j;
+                while k < b.len() && b[k].is_ascii_whitespace() {
+                    k += 1;
+                }
+                // Upstream requires whitespace between RTX and the digits.
+                if k == j
+                    || k + 4 > b.len()
+                    || !b[k..k + 4].iter().all(|c| c.is_ascii_digit())
+                {
+                    i += 1;
+                    continue;
+                }
+                let gen = (b[k] - b'0') as u32 * 10 + (b[k + 1] - b'0') as u32;
+                return Some(gen);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Launcher workstation-aware series via the shared kernel tier
+/// (PRO 5000 Blackwell → RTX_50 → 50). Pure + unit-tested.
+pub(crate) fn dlss_fixed_series(name: &str) -> u32 {
+    match crate::hw::kernel_profile_key("NVIDIA", name).as_str() {
+        "RTX_50" => 50,
+        "RTX_40" => 40,
+        "RTX_30" => 30,
+        "RTX_20" => 20,
+        _ => 0,
+    }
+}
+
+fn dlss_reason(series: u32, minimum: u32) -> String {
+    if series < minimum {
+        format!("RTX {minimum}+ required")
+    } else {
+        String::new()
+    }
+}
+
+/// One DLSS mode verdict with three states: "ready", "not-installed" (every
+/// gate passes — GPU, OS, HAGS, probe — only the runtime files are missing)
+/// or "blocked" (with the reason). Missing files must NOT read as broken on
+/// a capable card: e.g. an RTX 3080 with 0/8 files is "install to use", not
+/// "unavailable". Pure + unit-tested.
+pub(crate) fn dlss_verdict_state(
+    missing_file: Option<&str>,
+    series: u32,
+    minimum: u32,
+    temporal: bool,
+    os_windows: bool,
+    hags: Option<bool>,
+    probe_available: Option<bool>,
+) -> serde_json::Value {
+    let blocked = |reason: String| {
+        serde_json::json!({"available": false, "reason": reason, "state": "blocked"})
+    };
+    if !os_windows {
+        return blocked("Windows 11 required".into());
+    }
+    let r = dlss_reason(series, minimum);
+    if !r.is_empty() {
+        return blocked(r);
+    }
+    if temporal {
+        if hags == Some(false) {
+            return blocked("HAGS disabled".into());
+        }
+        if probe_available == Some(false) {
+            return blocked(
+                "DLSS Frame Generation unavailable (check HAGS and NVIDIA driver)".into(),
+            );
+        }
+    }
+    if let Some(m) = missing_file {
+        let f = m.rsplit('/').next().unwrap_or(m);
+        return serde_json::json!({"available": false, "reason": format!("not installed (missing {f}) — run Install DLSS 5"), "state": "not-installed"});
+    }
+    serde_json::json!({"available": true, "reason": "", "state": "ready"})
+}
+
+#[cfg(windows)]
+fn dlss_hags() -> Option<bool> {
+    let out = crate::base::silent_command("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers' -Name HwSchMode -ErrorAction SilentlyContinue).HwSchMode",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    match String::from_utf8_lossy(&out.stdout).trim() {
+        "2" => Some(true),
+        "1" => Some(false),
+        _ => None,
+    }
+}
+#[cfg(not(windows))]
+fn dlss_hags() -> Option<bool> {
+    None
+}
+
+#[tauri::command]
+pub async fn dlss5_check() -> serde_json::Value {
+    let repo = get_repo_dir();
+    if !repo.join("wgp.py").exists() {
+        return serde_json::json!({"ok": false, "error": "Wan2GP not installed"});
+    }
+    // All NVIDIA GPU names via nvidia-smi (upstream probes the same way).
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(out) = crate::hw::probe_command("NVIDIA_SMI", "nvidia-smi")
+        .args(["--query-gpu=name", "--format=csv,noheader"])
+        .output()
+    {
+        if out.status.success() {
+            for ln in String::from_utf8_lossy(&out.stdout).lines() {
+                let n = ln.trim();
+                if !n.is_empty() {
+                    names.push(n.to_string());
+                }
+            }
+        }
+    }
+    if names.is_empty() {
+        let g = get_gpu_info_sync();
+        if g.get("vendor").and_then(|v| v.as_str()) == Some("NVIDIA") {
+            if let Some(n) = g.get("name").and_then(|v| v.as_str()) {
+                if !n.is_empty() {
+                    names.push(n.to_string());
+                }
+            }
+        }
+    }
+    let gpu_name = names.first().cloned().unwrap_or_default();
+    let upstream_series = names
+        .iter()
+        .filter_map(|n| dlss_upstream_series(n))
+        .max()
+        .unwrap_or(0);
+    let fixed_series = names.iter().map(|n| dlss_fixed_series(n)).max().unwrap_or(0);
+    let profile = if gpu_name.is_empty() {
+        String::new()
+    } else {
+        kernel_profile_key("NVIDIA", &gpu_name)
+    };
+    let os_windows = cfg!(windows);
+    let hags = dlss_hags();
+    // Installed-file gate (same file sets as unavailable_reason()).
+    let dlss5 = repo.join("dlss5");
+    let nr_missing: Vec<&str> = DLSS5_FILES
+        .iter()
+        .filter(|(p, _, _, _)| {
+            *p == "host/dxgi.dll"
+                || *p == "host/renodx-dlss5.addon64"
+                || *p == "host/nvngx_dlssnr.dll"
+                || *p == "dlss/nvngx_dlss.dll"
+                || *p == "host/nr-depth-worker.exe"
+        })
+        .filter(|(p, _, _, _)| !dlss5.join(p).exists())
+        .map(|(p, _, _, _)| *p)
+        .collect();
+    let fg_missing: Vec<&str> = ["dlssg/nvngx_dlssg.dll", "dlssg/dlssg-worker.exe"]
+        .into_iter()
+        .filter(|p| !dlss5.join(p).exists())
+        .collect();
+    let st = dlss5_status();
+    let present = st.get("present").and_then(|v| v.as_u64()).unwrap_or(0);
+    let total = st.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+    // dlssg native probe (only when its files exist; 20s cap so a hung
+    // driver can't wedge the check).
+    let mut probe: Option<serde_json::Value> = None;
+    if fg_missing.is_empty() {
+        let worker = dlss5.join("dlssg/dlssg-worker.exe");
+        let cwd = dlss5.join("dlssg");
+        let run = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            tokio::task::spawn_blocking(move || {
+                crate::base::silent_command(&worker)
+                    .arg("--probe")
+                    .current_dir(&cwd)
+                    .output()
+            })
+            .await
+        })
+        .await;
+        if let Ok(Ok(join)) = run {
+            if let Ok(out) = join {
+                if out.status.success() {
+                    if let Ok(v) =
+                        serde_json::from_slice::<serde_json::Value>(&out.stdout)
+                    {
+                        probe = Some(serde_json::json!({
+                            "available": v.get("available").and_then(|a| a.as_bool()).unwrap_or(false),
+                            "raw": String::from_utf8_lossy(&out.stdout).trim().to_string(),
+                        }));
+                    } else {
+                        probe = Some(serde_json::json!({"available": false, "raw": "unparseable probe output"}));
+                    }
+                } else {
+                    probe = Some(serde_json::json!({"available": false, "raw": format!("exit {}", out.status)}));
+                }
+            }
+        }
+        if probe.is_none() {
+            probe = Some(serde_json::json!({"available": false, "raw": "probe timed out or failed to run"}));
+        }
+    }
+    let verdict = |missing: &[&str], series: u32, minimum: u32, temporal: bool| -> serde_json::Value {
+        let probe_avail = if temporal {
+            probe
+                .as_ref()
+                .and_then(|p| p.get("available"))
+                .and_then(|a| a.as_bool())
+        } else {
+            None
+        };
+        dlss_verdict_state(
+            missing.first().copied(),
+            series,
+            minimum,
+            temporal,
+            os_windows,
+            hags,
+            probe_avail,
+        )
+    };
+    let nr = verdict(&nr_missing, fixed_series, 30, false);
+    let fg = verdict(&fg_missing, fixed_series, 40, true);
+    let nr_upstream = verdict(&nr_missing, upstream_series, 30, false);
+    let fg_upstream = verdict(&fg_missing, upstream_series, 40, true);
+    let workstation_mismatch = fixed_series >= 30 && upstream_series < 30
+        || fixed_series >= 40 && upstream_series < 40;
+    let runtime_patch = dlss_runtime_patch_status(&repo);
+    serde_json::json!({
+        "ok": true,
+        "gpuName": gpu_name,
+        "profile": profile,
+        "upstreamSeries": upstream_series,
+        "fixedSeries": fixed_series,
+        "workstationMismatch": workstation_mismatch,
+        "osWindows": os_windows,
+        "hags": hags,
+        "files": {"present": present, "total": total, "nrMissing": nr_missing, "fgMissing": fg_missing},
+        "nr": nr,
+        "fg": fg,
+        "nrUpstream": nr_upstream,
+        "fgUpstream": fg_upstream,
+        "dlssgProbe": probe,
+        "runtimePatch": runtime_patch,
+    })
+}
+
+// ── Workstation-GPU fix (opt-in panel button) ──
+// Upstream Wan2GP `postprocessing/dlss5/runtime.py:_gpu_series()` only matches
+// "GeForce RTX" names, so workstation/datacenter cards (RTX PRO 5000
+// Blackwell, RTX 5000 Ada, RTX Ax000, L40, Hopper) falsely report
+// "RTX 30+ required". This patch mirrors the launcher's own tier inside the
+// upstream function when no GeForce matched. Idempotent, backed up, fail-closed
+// on upstream drift (same no-silent-modify contract as the setup hook).
+pub(crate) const DLSS_RUNTIME_REL: &str = "postprocessing/dlss5/runtime.py";
+pub(crate) const DLSS_RUNTIME_MARKER: &str = "Launcher workstation-GPU fix";
+const DLSS_RUNTIME_BACKUP_EXT: &str = "launcher-bak";
+// Exact upstream anchor (4-space indent). If upstream rewords these two lines
+// the patch refuses instead of guessing.
+const DLSS_RUNTIME_ANCHOR: &str = "    series = [int(match.group(1)) for match in re.finditer(r\"GeForce\\s+RTX\\s+(\\d{2})\\d{2}\", result.stdout, re.IGNORECASE)]\n    return max(series, default=0)";
+const DLSS_RUNTIME_PATCHED_BLOCK: &str = "    series = [int(match.group(1)) for match in re.finditer(r\"GeForce\\s+RTX\\s+(\\d{2})\\d{2}\", result.stdout, re.IGNORECASE)]\n    # Launcher workstation-GPU fix: upstream only matched \"GeForce RTX\" names,\n    # so workstation/datacenter cards (RTX PRO, Ada, RTX Ax000, L40, Hopper)\n    # read as series 0 and falsely report \"RTX 30+ required\". Mirror the\n    # launcher tier here when no GeForce matched.\n    if not series:\n        _up = result.stdout.upper()\n        if any(k in _up for k in (\"PRO 6000\", \"PRO 5000\", \"PRO 4000\", \"B100\", \"B200\", \"GB100\", \"H100\", \"H200\")):\n            return 50\n        if \"ADA\" in _up or \"L40\" in _up or \" L4\" in _up:\n            return 40\n        if \"RTX A\" in _up or any(k in _up for k in (\" A40\", \" A30\", \" A16\", \" A10\", \" A80\")):\n            return 30\n        if \"QUADRO\" in _up:\n            return 20\n        _m = re.search(r\"RTX\\D*?(\\d{2})\\d{2}\", _up)\n        if _m:\n            return int(_m.group(1))\n    return max(series, default=0)";
+
+/// Build the patched file text. None when already patched or when the
+/// upstream anchor drifted (caller must fail closed). Pure + unit-tested.
+pub(crate) fn dlss_patch_runtime_text(orig: &str) -> Option<String> {
+    if orig.contains(DLSS_RUNTIME_MARKER) {
+        return None;
+    }
+    if !orig.contains(DLSS_RUNTIME_ANCHOR) {
+        return None;
+    }
+    Some(orig.replacen(
+        DLSS_RUNTIME_ANCHOR,
+        DLSS_RUNTIME_PATCHED_BLOCK,
+        1,
+    ))
+}
+
+fn dlss_runtime_paths(repo: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let runtime = repo.join(DLSS_RUNTIME_REL);
+    let backup = runtime.with_extension(format!(
+        "{}.{}",
+        runtime
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("py"),
+        DLSS_RUNTIME_BACKUP_EXT
+    ));
+    (runtime, backup)
+}
+
+/// Panel status for the fix button: found / patched / backupExists.
+/// Never errors — the check must stay read-only and infallible.
+fn dlss_runtime_patch_status(repo: &std::path::Path) -> serde_json::Value {
+    let (runtime, backup) = dlss_runtime_paths(repo);
+    let text = std::fs::read_to_string(&runtime).unwrap_or_default();
+    serde_json::json!({
+        "found": runtime.exists(),
+        "patched": text.contains(DLSS_RUNTIME_MARKER),
+        "backupExists": backup.exists(),
+    })
+}
+
+#[tauri::command]
+pub fn dlss5_apply_workstation_fix() -> Result<serde_json::Value, String> {
+    mutating_try("dlss5-workstation-fix")?;
+    let done = |r: Result<serde_json::Value, String>| {
+        mutating_done();
+        r
+    };
+    let repo = get_repo_dir();
+    if !repo.join("wgp.py").exists() {
+        return done(Err("Wan2GP not installed".into()));
+    }
+    let (runtime, backup) = dlss_runtime_paths(&repo);
+    let orig = std::fs::read_to_string(&runtime)
+        .map_err(|_| "postprocessing/dlss5/runtime.py not found — update Wan2GP first".to_string())?;
+    if orig.contains(DLSS_RUNTIME_MARKER) {
+        return done(Ok(serde_json::json!({"ok": true, "already": true})));
+    }
+    let patched = dlss_patch_runtime_text(&orig).ok_or_else(|| {
+        "upstream runtime.py changed shape — refusing to patch blindly. Update the launcher or report this.".to_string()
+    })?;
+    if !backup.exists() {
+        std::fs::write(&backup, &orig)
+            .map_err(|e| format!("backup unwritable ({}): {e}", backup.display()))?;
+    }
+    std::fs::write(&runtime, &patched)
+        .map_err(|e| format!("patch failed: {e}"))?;
+    push_log(
+        "[*] DLSS workstation-GPU fix applied to postprocessing/dlss5/runtime.py (original backed up). Stop Wan2GP first if running, restart it, then Check compatibility.\n",
+        "setup",
+    );
+    done(Ok(serde_json::json!({"ok": true, "already": false})))
+}
+
+#[tauri::command]
+pub fn dlss5_revert_workstation_fix() -> Result<serde_json::Value, String> {
+    mutating_try("dlss5-workstation-fix")?;
+    let done = |r: Result<serde_json::Value, String>| {
+        mutating_done();
+        r
+    };
+    let repo = get_repo_dir();
+    if !repo.join("wgp.py").exists() {
+        return done(Err("Wan2GP not installed".into()));
+    }
+    let (runtime, backup) = dlss_runtime_paths(&repo);
+    if !backup.exists() {
+        return done(Err(
+            "No backup found — nothing to revert (the fix was never applied by this launcher).".into(),
+        ));
+    }
+    let orig = std::fs::read_to_string(&backup)
+        .map_err(|e| format!("backup unreadable: {e}"))?;
+    std::fs::write(&runtime, &orig).map_err(|e| format!("revert failed: {e}"))?;
+    push_log(
+        "[*] DLSS workstation-GPU fix reverted (upstream runtime.py restored from backup). Restart Wan2GP to pick it up.\n",
+        "setup",
+    );
+    done(Ok(serde_json::json!({"ok": true})))
+}
 // Best-effort classification of Install-DLSS5.ps1 output into checklist events.
 // The script stays the integrity authority (pinned SHA-256 + NVIDIA sig check);
 // this only mirrors its Downloading / verified / Installed lines to the UI.
+#[cfg(test)]
+mod dlss5_check_tests {
+    use super::{
+        dlss_fixed_series, dlss_patch_runtime_text, dlss_reason, dlss_upstream_series,
+        dlss_verdict_state, DLSS_RUNTIME_ANCHOR, DLSS_RUNTIME_MARKER,
+    };
+
+    #[test]
+    fn upstream_matches_geforce_only() {
+        assert_eq!(
+            dlss_upstream_series("NVIDIA GeForce RTX 4090"),
+            Some(40)
+        );
+        assert_eq!(
+            dlss_upstream_series("NVIDIA GeForce RTX 3050"),
+            Some(30)
+        );
+        // Workstation / datacenter names are invisible to upstream.
+        assert_eq!(
+            dlss_upstream_series("NVIDIA RTX PRO 5000 Blackwell"),
+            None
+        );
+        assert_eq!(
+            dlss_upstream_series("NVIDIA RTX 5000 Ada Generation"),
+            None
+        );
+        assert_eq!(dlss_upstream_series("NVIDIA RTX A6000"), None);
+    }
+
+    #[test]
+    fn fixed_tiers_workstation_cards() {
+        assert_eq!(dlss_fixed_series("NVIDIA RTX PRO 5000 Blackwell"), 50);
+        assert_eq!(dlss_fixed_series("NVIDIA RTX 5000 Ada Generation"), 40);
+        assert_eq!(dlss_fixed_series("NVIDIA RTX A6000"), 30);
+        assert_eq!(dlss_fixed_series("NVIDIA GeForce RTX 4090"), 40);
+        assert_eq!(dlss_fixed_series("NVIDIA GeForce RTX 3050"), 30);
+    }
+
+    #[test]
+    fn reason_thresholds_match_upstream_text() {
+        assert_eq!(dlss_reason(0, 30), "RTX 30+ required");
+        assert_eq!(dlss_reason(0, 40), "RTX 40+ required");
+        assert_eq!(dlss_reason(50, 30), "");
+        assert_eq!(dlss_reason(40, 40), "");
+    }
+
+    #[test]
+    fn patch_inserts_workstation_fallback_once() {
+        let orig = format!("def _gpu_series():\n{DLSS_RUNTIME_ANCHOR}\n");
+        let patched = dlss_patch_runtime_text(&orig).expect("anchor must patch");
+        assert!(patched.contains(DLSS_RUNTIME_MARKER));
+        assert!(patched.contains("PRO 5000"));
+        // Idempotent: a patched file refuses a second patch.
+        assert!(dlss_patch_runtime_text(&patched).is_none());
+    }
+
+    #[test]
+    fn patch_refuses_drifted_upstream() {
+        assert!(dlss_patch_runtime_text("def _gpu_series():\n    return 99\n").is_none());
+    }
+
+    #[test]
+    fn verdict_splits_ready_not_installed_blocked() {
+        // Capable card, files present → ready.
+        let v = dlss_verdict_state(None, 30, 30, false, true, None, None);
+        assert_eq!(v["state"], "ready");
+        assert_eq!(v["available"], true);
+        // Capable card, files missing → not-installed, NOT blocked.
+        let v = dlss_verdict_state(
+            Some("host/nr-depth-worker.exe"),
+            30,
+            30,
+            false,
+            true,
+            None,
+            None,
+        );
+        assert_eq!(v["state"], "not-installed");
+        assert_eq!(v["available"], false);
+        assert!(v["reason"].as_str().unwrap_or("").contains("Install DLSS 5"));
+        // Weak card → blocked even with files present.
+        let v = dlss_verdict_state(None, 0, 30, false, true, None, None);
+        assert_eq!(v["state"], "blocked");
+        assert_eq!(v["reason"], "RTX 30+ required");
+        // HAGS off blocks Frame Gen on a capable card.
+        let v = dlss_verdict_state(None, 50, 40, true, true, Some(false), None);
+        assert_eq!(v["state"], "blocked");
+        assert_eq!(v["reason"], "HAGS disabled");
+        // Failed native probe blocks Frame Gen.
+        let v = dlss_verdict_state(None, 50, 40, true, true, None, Some(false));
+        assert_eq!(v["state"], "blocked");
+    }
+}
+
 fn dlss5_classify(app: &tauri::AppHandle, chunk: &str) {
     let pkg = |name: &str| -> &str {
         let n = name.to_lowercase();
