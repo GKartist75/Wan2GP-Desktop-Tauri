@@ -85,7 +85,9 @@ C:\Wan2GP-Models\               ← models library
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.8.6**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.6) *(latest)* — Workstation fix hardened from real PRO 5000 feedback (CRLF checkouts patch now, refusals log the installed check for reports, upstream-fixed runtimes detected); probe summary goes compact. ⚠️ Workstation path still untested by us — confirm on PRO/A-series silicon. Details in [CHANGELOG](CHANGELOG.md).
+- [**v0.8.7**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.7) *(latest)* — Stash-free updates (upstream always wins, hand edits overwritten), Repair recovers conflicted checkouts, DLSS panel detects the merged upstream workstation fix. Details in [CHANGELOG](CHANGELOG.md).
+
+- [**v0.8.6**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.6) — Workstation fix hardened from real PRO 5000 feedback (CRLF checkouts patch now, refusals log the installed check for reports, upstream-fixed runtimes detected); probe summary goes compact. ⚠️ Workstation path still untested by us — confirm on PRO/A-series silicon. Details in [CHANGELOG](CHANGELOG.md).
 
 - [**v0.8.5**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.5) — DLSS5 card: Check compatibility verdicts (ready / not-installed / blocked) as labeled rows, opt-in workstation GPU fix for RTX PRO / Ada / RTX Ax000 (backed up, reversible). ⚠️ Workstation path untested on real hardware — confirm on PRO/A-series silicon. Details in [CHANGELOG](CHANGELOG.md).
 

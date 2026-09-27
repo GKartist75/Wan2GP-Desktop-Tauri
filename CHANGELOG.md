@@ -4,6 +4,17 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.8.7] — 2026-09-27
+
+- Update policy is now stash-free: latest upstream always wins — fetch, loud
+  warning, hard reset. Hand-changed tracked files (and any unfinished merge
+  state) are overwritten, never stashed; untracked files still never touched.
+- Verify / Repair recovers conflicted checkouts: unmerged files are detected
+  up front and reset to latest upstream (previously died in the stash step).
+- DLSS panel follows the upstream merge: when Wan2GP already tiers
+  workstation cards natively, Check says so and the fix button disables
+  itself instead of offering a redundant patch.
+
 ## [0.8.6] — 2026-09-27
 
 - Workstation GPU fix, hardened from the first real PRO 5000 report: the

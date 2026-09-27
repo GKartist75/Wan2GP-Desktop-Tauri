@@ -4114,6 +4114,7 @@ pub(crate) enum DriftKind {
     Deleted,
     StagedNew,
     Renamed,
+    Unmerged,
     Untracked,
 }
 
@@ -4136,6 +4137,10 @@ pub(crate) fn parse_git_porcelain(out: &str) -> Vec<DriftEntry> {
         }
         let kind = if xy == "??" {
             DriftKind::Untracked
+        } else if matches!(xy, "UU" | "AA" | "DD" | "UD" | "DU" | "AU" | "UA") {
+            // Unfinished merge — must be checked before Deleted (DD/UD/DU
+            // contain 'D') so repair/update route it to conflict recovery.
+            DriftKind::Unmerged
         } else if xy.starts_with('R') {
             DriftKind::Renamed
         } else if xy.contains('D') {
@@ -4235,6 +4240,30 @@ pub(crate) fn clear_untracked_merge_collisions(repo: &Path, emit: impl Fn(&str))
 ));
         }
     }
+}
+/// Paths stuck in an unfinished merge (`UU`, `AA`, `DD`, …). In this state
+/// `git stash` always fails ("needs merge"), so update/repair must route
+/// around it instead of dying in the stash step. Pure over porcelain text —
+/// see git_unmerged_paths for the live probe. Pure + unit-tested.
+pub(crate) fn unmerged_from_porcelain(out: &str) -> Vec<String> {
+    parse_git_porcelain(out)
+        .into_iter()
+        .filter(|e| e.kind == DriftKind::Unmerged)
+        .map(|e| e.path)
+        .collect()
+}
+
+/// Live probe for unmerged paths in a checkout. Empty on probe failure
+/// (callers then hit the normal git errors, unchanged behavior).
+pub(crate) fn git_unmerged_paths(repo: &Path) -> Vec<String> {
+    silent_command("git")
+        .args(["status", "--porcelain=v1"])
+        .current_dir(repo)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| unmerged_from_porcelain(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or_default()
 }
 /// True when TRACKED files differ from HEAD (untracked user files never
 /// count — neither stash nor reset may take them). Probe failure reads
@@ -4388,6 +4417,26 @@ mod wangp_git_tests {
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].kind, DriftKind::Modified);
     }
+    #[test]
+    fn porcelain_flags_unmerged_entries() {
+        // Conflict codes must read Unmerged — never Deleted (DD/UD/DU
+        // contain 'D'), so repair/update route them to conflict recovery.
+        let out = "UU postprocessing/dlss5/runtime.py\nAA clash.py\nUD gone.py\n M wgp.py\n";
+        let got = parse_git_porcelain(out);
+        assert_eq!(got[0].kind, DriftKind::Unmerged);
+        assert_eq!(got[1].kind, DriftKind::Unmerged);
+        assert_eq!(got[2].kind, DriftKind::Unmerged);
+        assert_eq!(got[3].kind, DriftKind::Modified);
+        assert_eq!(
+            super::unmerged_from_porcelain(out),
+            vec![
+                "postprocessing/dlss5/runtime.py".to_string(),
+                "clash.py".to_string(),
+                "gone.py".to_string()
+            ]
+        );
+        assert!(super::unmerged_from_porcelain(" M wgp.py\n").is_empty());
+    }
 }
 #[cfg(test)]
 mod wangp_pin_tests {
@@ -4461,51 +4510,38 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
     if let Some(n) = incoming {
         emit(&format!("[*] {n} upstream change(s) incoming…\n"));
     }
-    let mut stashed = false;
+    // No-stash policy: latest upstream is always the truth. Every tracked
+    // file is reset to exactly what was fetched — hand-changed files (and
+    // our own DLSS marker patch, and any unfinished merge state) are
+    // OVERWRITTEN, never stashed. Untracked files (settings, models, envs,
+    // workspaces) are never touched — no `git clean`, ever.
     if git_tracked_dirty(&repo) {
-        emit("[*] Local file changes detected — stashing them aside before pull…\n");
-        if !run_logged(
-            &app,
-            "git",
-            &["stash", "push", "-m", "launcher-update-autostash"],
-            Some(&repo),
-            emit,
-        )
-        .await
-        {
-            mutating_done();
-            return Err("git stash failed — your files are untouched. Resolve local changes by hand, then retry.".into());
+        let unmerged = git_unmerged_paths(&repo);
+        if unmerged.is_empty() {
+            emit("[*] Local hand-changed files detected — they will be OVERWRITTEN with latest upstream (no stash kept). Untracked files untouched.\n");
+        } else {
+            emit(&format!(
+                "[!] Unfinished merge in: {} — resetting ALL tracked files to latest upstream (hand edits overwritten, no stash kept). Untracked files untouched.\n",
+                unmerged.join(", ")
+            ));
         }
-        stashed = true;
     }
     clear_untracked_merge_collisions(&repo, emit);
-    // Prefer a fast-forward pull: a plain `git pull` manufactures a local
-    // merge commit whenever it can (and must, when diverged), and that merge
-    // commit permanently breaks hash-equality "behind" checks. ff-only keeps
-    // clean trees exactly on the upstream tip; diverged trees fall back to
-    // the merge pull below (same behavior + errors as before).
-    let pulled = if run_logged(&app, "git", &["pull", "--ff-only"], Some(&repo), emit).await {
-        true
-    } else {
-        emit("[*] Fast-forward not possible (local branch diverged) — falling back to a merge pull…\n");
-        run_logged(&app, "git", &["pull"], Some(&repo), emit).await
-    };
-    if !pulled {
+    if !run_logged(&app, "git", &["reset", "--hard", "FETCH_HEAD"], Some(&repo), emit).await
+    {
         mutating_done();
-        return Err(if stashed {
-        "git pull failed after stashing — your changes are kept in the stash (git stash list: launcher-update-autostash). Resolve by hand, then retry."
-        } else {
-        "git pull failed — offline? diverged branch? an untracked file colliding with an incoming upstream file? See console output above."
-        }
-        .into());
+        return Err("git reset to upstream failed — offline? See console output above.".into());
     }
-    if stashed && !run_logged(&app, "git", &["stash", "pop"], Some(&repo), emit).await {
+    // Drop a lingering MERGE_HEAD after a conflicted reset (harmless no-op
+    // when there is none), then prove the tree is exactly upstream.
+    run_logged(&app, "git", &["merge", "--abort"], Some(&repo), emit).await;
+    if !git_unmerged_paths(&repo).is_empty() {
         mutating_done();
-        return Err("Update pulled, but your stashed changes CONFLICT with it — the stash is KEPT (git stash list: launcher-update-autostash). Resolve the conflicts by hand, then drop the stash.".into());
+        return Err("merge state survived the reset — run Verify / Repair Wan2GP files, then retry.".into());
     }
-    // Quiet success summary (one line, always): users should be able to
-    // tell at a glance the checkout is now exactly upstream + their own
-    // restored edits. The detailed git transcript stays above in the log.
+    // Quiet success summary (one line, always): the checkout is now exactly
+    // upstream — no local edits survive (by policy), untracked untouched.
+    // The detailed git transcript stays above in the log.
     let head_short = silent_command("git")
         .args(["rev-parse", "--short", "HEAD"])
         .current_dir(&repo)
@@ -4523,8 +4559,7 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
-    let (tracked_edits, untracked) = {
-        let mut t = 0;
+    let untracked = {
         let mut u = 0;
         for line in status_short.lines() {
             if line.len() < 2 {
@@ -4532,14 +4567,12 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
             }
             if line.starts_with("??") {
                 u += 1;
-            } else {
-                t += 1;
             }
         }
-        (t, u)
+        u
     };
     emit(&format!(
-        "[✓] Wan2GP update complete — now at upstream {head_short} (100% original git) with your {tracked_edits} local file edit(s) restored on top; {untracked} personal file(s) (settings, envs, workspaces) left untouched.\n",
+        "[✓] Wan2GP update complete — now at upstream {head_short} (100% original git, hand edits overwritten, no stash kept); {untracked} personal file(s) (settings, envs, workspaces) left untouched.\n",
     ));
     // Upstream bumps (e.g. mmgp 3.7.14 → 3.8.0 with a wgp.py hard-exit on
     // mismatch) only take effect once the pinned packages are reinstalled.
@@ -4725,7 +4758,21 @@ pub async fn repair_wangp_files(app: tauri::AppHandle) -> Result<serde_json::Val
         let _ = app.emit("launch-log", m.to_string());
     };
     let had_edits = git_tracked_dirty(&repo);
-    if had_edits {
+    // Unfinished merge (e.g. our DLSS patch vs the merged upstream fix):
+    // `git stash` ALWAYS fails on unmerged entries ("needs merge"), so the
+    // old code died before ever reaching the reset. There is nothing
+    // stashable worth keeping here — take upstream as truth: fetch, hard
+    // reset (clears the merge state and overwrites every tracked file),
+    // best-effort merge --abort for a lingering MERGE_HEAD, then verify.
+    // Untracked files are still never touched.
+    let unmerged = git_unmerged_paths(&repo);
+    if !unmerged.is_empty() {
+        emit(&format!(
+            "[!] Unfinished merge in: {}. `git stash` cannot work in this state — resetting ALL tracked files to latest upstream (hand edits overwritten, untracked files kept).\n",
+            unmerged.join(", ")
+        ));
+    }
+    if had_edits && unmerged.is_empty() {
         emit("[*] Stashing local edits (recoverable: git stash list)…\n");
         if !run_logged(
             &app,
@@ -4755,6 +4802,20 @@ pub async fn repair_wangp_files(app: tauri::AppHandle) -> Result<serde_json::Val
     {
         mutating_done();
         return Err("git reset failed — see console output above.".into());
+    }
+    if !unmerged.is_empty() {
+        // Drop a lingering MERGE_HEAD (reset usually clears it; abort is a
+        // harmless no-op when there is none) and prove the merge is gone.
+        run_logged(&app, "git", &["merge", "--abort"], Some(&repo), emit).await;
+        let still = git_unmerged_paths(&repo);
+        if !still.is_empty() {
+            mutating_done();
+            return Err(format!(
+                "merge state survived the reset ({}). Resolve by hand: git checkout --theirs -- <file> (or --ours to keep yours), git add, git commit — then retry.",
+                still.join(", ")
+            ));
+        }
+        emit("[*] Unfinished merge cleared — tracked files are now exactly latest upstream.\n");
     }
     emit("[*] Tracked Wan2GP files restored to upstream. Untracked files (settings, models, envs) untouched — restart Wan2GP to run the repaired files.\n");
     if record_wangp_pin(&repo) {
@@ -6419,6 +6480,7 @@ fn dlss_runtime_patch_status(repo: &std::path::Path) -> serde_json::Value {
         "found": runtime.exists(),
         "patched": text.contains(DLSS_RUNTIME_MARKER),
         "backupExists": backup.exists(),
+        "upstreamFixed": dlss_runtime_fixed_upstream(&text),
     })
 }
 
