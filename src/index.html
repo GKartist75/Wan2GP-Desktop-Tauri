@@ -958,8 +958,8 @@
             <span class="card-title">GPU Kernel Wheels</span>
             <span class="env-type-tag" id="kernelProfileTag"></span>
             <button class="btn btn-ghost small hide-on-collapse" id="restoreKernelsBtn" title="Reinstall deepbeepmeep's setup_config wheels exactly — downgrades launcher overrides (sage safe build, GGUF floor). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
-                <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.23 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
-                <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only: install GGUF 1.0.22 torch210rocm714 HIP wheel for RX 9070/R9700 gfx1201. Needs torch 2.10.0+rocm7.14.0; replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.25 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only: install GGUF 1.0.25 torch210rocm714 HIP wheel for RX 9070/R9700 gfx1201. Needs torch 2.10.0+rocm7.14.0; replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
           </div>
           <div class="env-subsection" id="kernelWheelsSubsection" style="margin-top:0;border-top:none;padding-top:0">
             <div class="env-specs" id="kernelWheels">
@@ -1020,12 +1020,12 @@
           <div class="card-header">
             <span class="card-title">Prompt enhancement</span>
           </div>
-          <p class="path-hint">How Wan2GP enhances prompts on generation forms — applies on next Wan2GP launch, with or without Deepy.</p>
+          <p class="path-hint">How Wan2GP enhances prompts on generation forms — applies on next Wan2GP launch, with or without Deepy. The manual button is available in both modes.</p>
           <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px">
-            <label class="path-hint">Enhancement UI<br>
+            <label class="path-hint">Prompt Enhancer Usage<br>
               <select id="deepyEnhancerMode" class="input" data-keep-visible title="Prompt enhancement mode" style="margin-top:4px;min-width:260px">
-                <option value="1">Enhance Prompt button</option>
-                <option value="0">Automatic (dropdown)</option>
+                <option value="1">Manual Button Only</option>
+                <option value="0">Manual Button + Automatic on Generation</option>
               </select>
             </label>
           </div>
@@ -1058,21 +1058,45 @@
             <p class="path-hint" style="margin-top:4px"><em>You can also change these settings any time inside Wan2GP itself (Configuration → Prompt Enhancer / Deepy).</em></p>
           </div>
           <!-- Qwen LLM Quantization — shown when a local Qwen engine is picked
-               (Zero + Qwen 3/4/5, or Prime + local Qwen3.8). Writes upstream's
-               prompt_enhancer_quantization so the next launch applies it. -->
+               (Zero + Qwen 3/4/5/6, or Prime + local Qwen3.8). Writes upstream's
+               prompt_enhancer_quantization so the next launch applies it.
+               Prime + local shows ONE combined model+quantization list so every
+               possible backend is explicitly selectable (no hidden dependency
+               between two dropdowns). -->
           <div id="deepyQuantWrap" style="margin-top:10px; display:none">
-            <div class="deepy-sub-label">Qwen LLM Quantization</div>
-            <select id="deepyQuantSelect" class="input" style="margin-top:4px;min-width:260px"></select>
-            <p class="path-hint" id="deepyQuantHint" style="margin-top:6px"></p>
+            <div id="deepyQuantStdWrap">
+              <div class="deepy-sub-label">Qwen LLM Quantization</div>
+              <select id="deepyQuantSelect" class="input" style="margin-top:4px;min-width:260px"></select>
+              <p class="path-hint" id="deepyQuantHint" style="margin-top:6px"></p>
+            </div>
           </div>
           <div id="deepyPrimeOnly" style="display:none">
             <div class="deepy-cost-note">
               <span class="dot-ok">●</span> <strong>OpenCode</strong> — free, local models, no account.
               <span class="dot-bad">●</span> <strong>Claude Code / Codex</strong> — paid (subscription or API credits).
-              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 27B (local)</strong> — runs on your GPU; needs the 27B model + GGUF kernels 1.0.23 (Sync Kernels). Bonsai PTQ1 quant runs Prime on ~10 GB VRAM. Auto-sets 32k context + Summarize.
+              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 9B/27B (local)</strong> — runs on your GPU (needs GGUF kernels 1.0.25 via Sync Kernels); pick model + quantization below. Auto-sets 32k context + Summarize.
               <br>Prime plans advanced multi-step work and is required for every external LLM (it exposes WanGP's MCP tools). Zero is lightweight and local-only.
             </div>
-            <div id="deepyEngineOptions" class="deepy-engine-options"></div>
+            <div class="deepy-sub-label">Local engine</div>
+            <div id="deepyEngineLocal" class="deepy-engine-options"></div>
+            <!-- Prime-local backend: ONE combined model+quantization list nested
+                 under the local engine (Qwen3.8 and its quantization belong
+                 together, like Zero's model + quantization pair). Visible only
+                 for Prime + local Qwen3.8. -->
+            <div id="deepyPrimeBackendWrap" style="display:none;margin:10px 0 8px">
+              <div class="deepy-sub-label">Local Prime model + quantization</div>
+              <select id="deepyPrimeBackendSelect" class="input" style="margin-top:4px;min-width:260px">
+                <option value="5:gguf">27B — GGUF Q4 (default, highest quality)</option>
+                <option value="5:gguf_q3">27B — GGUF IQ3_S (middle, ~16 GB VRAM)</option>
+                <option value="5:gguf_q2">27B — GGUF Q2 (lowest memory)</option>
+                <option value="5:gguf_ptq1">27B — Bonsai PTQ1 (~10 GB VRAM, sets INT8 KV cache)</option>
+                <option value="6:gguf">9B Heretic — GGUF Q4 (~6.5 GB VRAM)</option>
+                <option value="6:gguf_q8">9B Heretic — GGUF Q8 (~11 GB, closest to full precision)</option>
+              </select>
+              <p class="path-hint" id="deepyPrimeBackendHint" style="margin-top:6px"></p>
+            </div>
+            <div class="deepy-sub-label" style="margin-top:8px">Remote engine</div>
+            <div id="deepyEngineRemote" class="deepy-engine-options"></div>
             <!-- Guided LLM engine setup for Deepy Prime (Claude Code / Codex / OpenCode).
                  Shown only when Deepy Prime is selected (this block lives inside
                  #deepyPrimeOnly). Cards render generically from services/llm-engines.js. -->
@@ -1396,7 +1420,7 @@
           </div>
           <div class="pip-install-row" style="margin-top:6px">
           <div style="display:flex;gap:6px;width:100%">
-            <input type="text" id="pipInput" class="pip-input" placeholder="package (e.g. claude-agent-sdk==0.1.40)" spellcheck="false">
+            <input type="text" id="pipInput" class="pip-input" placeholder="package (e.g. claude-agent-sdk==0.1.66)" spellcheck="false">
             <button class="pip-install-btn" id="pipInstallBtn" title="Install this package into the active environment">pip install</button>
           </div>
           <div class="pip-cmd-preview" id="pipCmdPreview" style="display:none">

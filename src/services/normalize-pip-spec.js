@@ -1,7 +1,7 @@
 /**
  * normalize-pip-spec.js — accept either a bare pip spec
- * (claude-agent-sdk==0.1.40) or a full command pasted by a user
- * (pip install claude-agent-sdk==0.1.40 / pip3 install foo /
+ * (claude-agent-sdk==0.1.66) or a full command pasted by a user
+ * (pip install claude-agent-sdk==0.1.66 / pip3 install foo /
  * python -m pip install ...) and strip the leading pip invocation plus any
  * pip flags so the preview and the real install handler see the same spec.
  * Pure + offline-testable. UX normalization only — the backend re-validates

@@ -220,6 +220,7 @@ pub fn run() {
             system::write_wgp_config,
             install::install_prerequisite,
             updates::get_wangp_upstream_info,
+            updates::wangp_contains_commit,
             updates::get_wangp_version,
             system::report_issue,
             system::config_backups_list,

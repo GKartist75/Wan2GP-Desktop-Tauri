@@ -90,7 +90,7 @@ function buildPlan(hw = {}) {
     numpyPin = 'numpy==1.26.4 (fallback path only; skipped on the ROCm 7.15 stack)'
     attention = ['SageAttention (ROCm)', 'FlashAttention (ROCm)']
     notes.push('AMD detected — TheRock ROCm 7.15 stack (torch 2.12.0+rocm7.15.0a20260728, verified working); staging float on retry.')
-    notes.push('Experimental opt-in on RX 9070/R9700 (gfx1201): HIP torch 2.10.0+rocm7.14.0 + GGUF 1.0.22 torch210rocm714 wheel via Sync kernels — needs that exact torch, validation pending, SDPA fallback expected for paged attention.')
+    notes.push('Experimental opt-in on RX 9070/R9700 (gfx1201): HIP torch 2.10.0+rocm7.14.0 + GGUF 1.0.25 torch210rocm714 wheel via Sync kernels — needs that exact torch, validation pending, SDPA fallback expected for paged attention.')
     // #5 ROCm driver minimum pre-check (upstream parity gap): ROCm 7.x needs an
     // Adrenalin/Pro driver >= ~24.5 (or the matching TheRock runtime). If we can
     // read a numeric driver version, warn when it's below the floor.

@@ -259,7 +259,7 @@ pub(crate) fn kernel_probe_failures(
 }
 
 /// Known-stale kernel versions in a kernel-probe map: GGUF builds older
-/// than the 1.0.23 floor look healthy (import ok) while silently disabling
+/// than the 1.0.25 floor look healthy (import ok) while silently disabling
 /// the SM120 async path — 6 tok/s Deepy decode instead of 37 (#2274).
 /// Triton floors are deliberately NOT flagged: RTX_20 boxes want <3.3 per
 /// upstream docs, so "old" triton is profile-relative, not stale.
@@ -503,10 +503,10 @@ mod probe_tests {
             "got {stale:?}"
         );
         let raw_floor =
-            r#"{"llamacpp-gguf-cuda": {"version": "1.0.23", "import": "ok", "extra": ""}}"#;
+            r#"{"llamacpp-gguf-cuda": {"version": "1.0.25", "import": "ok", "extra": ""}}"#;
         assert!(kernel_probe_stale(&parse_kernel_json(raw_floor).unwrap()).is_empty());
-        // 1.0.21/1.0.22 predate the 1.0.23 floor (docs prescription) — now stale.
-        for v in ["1.0.21", "1.0.22"] {
+        // 1.0.21-1.0.24 predate the 1.0.25 floor (docs prescription) — now stale.
+        for v in ["1.0.21", "1.0.22", "1.0.23", "1.0.24"] {
             let raw = format!(r#"{{"llamacpp-gguf-cuda": {{"version": "{v}", "import": "ok", "extra": ""}}}}"#);
             assert_eq!(
                 kernel_probe_stale(&parse_kernel_json(&raw).unwrap()).len(),

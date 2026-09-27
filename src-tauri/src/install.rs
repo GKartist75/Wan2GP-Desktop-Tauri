@@ -3477,7 +3477,7 @@ pub async fn restore_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,
 }
 
 /// Experimental AMD HIP GGUF wheel (upstream docs/INSTALLATION.md, Sep 2026):
-/// `llamacpp_gguf_cuda-1.0.22+torch210rocm714py311` for RX 9070-series
+/// `llamacpp_gguf_cuda-1.0.25+torch210rocm714py311` for RX 9070-series
 /// (gfx1201) on PyTorch 2.10.0+rocm7.14.0. Sync-kernels-only opt-in: the main
 /// install stays on the TheRock 7.15 stack, this swaps just the GGUF dist
 /// (same package name as the CUDA wheel, so --force-reinstall). --no-deps
@@ -3485,7 +3485,7 @@ pub async fn restore_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,
 /// import. AMD-gated; non-AMD profiles refused. Non-gfx1201 AMD allowed with
 /// a warning (upstream targets gfx1201, validation pending). URL lives in
 /// hw.rs alongside the CUDA wheels (single source of truth).
-use crate::hw::GGUF_1022_WIN_PY311_HIP as HIP_GGUF_WHEEL_URL;
+use crate::hw::GGUF_1025_WIN_PY311_HIP as HIP_GGUF_WHEEL_URL;
 
 #[tauri::command]
 pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
@@ -3511,7 +3511,7 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
     if profile != "AMD_GFX1201" {
         emit_log(&format!("[!] {profile} is not the upstream gfx1201 target (RX 9070/R9700) — installing anyway, validation pending.\n"));
     }
-    emit_log("[*] Installing experimental HIP GGUF wheel 1.0.22+torch210rocm714 (needs torch 2.10.0+rocm7.14.0; validation pending)…\n");
+    emit_log("[*] Installing experimental HIP GGUF wheel 1.0.25+torch210rocm714 (needs torch 2.10.0+rocm7.14.0; validation pending)…\n");
     let repo = get_repo_dir();
     let env = get_active_env();
     let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
@@ -3570,7 +3570,7 @@ pub(crate) struct OverrideWheels {
 
 /// Split a `setup_config.json` wheel cmd into separate pip argv items.
 /// Upstream cmds are either a bare spec (`<url>`, `sageattention==1.0.6`) or
-/// flag-prefixed (`--no-deps <url>` since the GGUF 1.0.22 wave, a56122a).
+/// flag-prefixed (`--no-deps <url>` since the GGUF 1.0.23 wave, a56122a).
 /// Passing the raw cmd string as ONE argv item makes pip fail with
 /// `no such option: --no-deps https://…` — each whitespace-separated token
 /// must be its own argument. Pure + unit-tested.
@@ -3600,7 +3600,7 @@ pub(crate) fn post_install_override_urls(
     // (cu128/py310); profiles still list `gguf` and setup.py remaps via
     // (torch_k, py_k). Check both components — either stale pin swaps to its
     // matching build (py tag picks the build; upstream's own fresh pin
-    // preferred, so a future 1.0.24 needs no launcher change).
+    // preferred, so a future 1.0.26 needs no launcher change).
     let gguf = ["gguf", "gguf_cu128"]
         .into_iter()
         .filter_map(|k| {
@@ -3863,7 +3863,18 @@ async fn sync_kernels_inner(
                 rx.recv_timeout(std::time::Duration::from_secs(15))
             {
                 if let Some(remote_hash) = remote.split_whitespace().next() {
-                    if !remote_hash.starts_with(&head) {
+                    // Equality is NOT the question: after any non-fast-forward
+                    // `git pull` the checkout carries a local merge commit, so
+                    // HEAD permanently differs from the tip even when it
+                    // contains it (perpetual false "behind" warning). Warn
+                    // only when the remote tip is not an ancestor of HEAD.
+                    let up_to_date = remote_hash.starts_with(&head)
+                        || silent_command(tool_path("git").as_str())
+                            .args(["merge-base", "--is-ancestor", remote_hash, "HEAD"])
+                            .current_dir(&repo)
+                            .output()
+                            .is_ok_and(|o| o.status.success());
+                    if !up_to_date {
                         let remote_short = remote_hash.chars().take(7).collect::<String>();
                         emit_log(&format!("[!] local checkout {head} is behind origin/main ({remote_short}) — update Wan2GP first, then re-run Sync, or you will install stale wheels\n"));
                     }
@@ -4468,7 +4479,18 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         stashed = true;
     }
     clear_untracked_merge_collisions(&repo, emit);
-    if !run_logged(&app, "git", &["pull"], Some(&repo), emit).await {
+    // Prefer a fast-forward pull: a plain `git pull` manufactures a local
+    // merge commit whenever it can (and must, when diverged), and that merge
+    // commit permanently breaks hash-equality "behind" checks. ff-only keeps
+    // clean trees exactly on the upstream tip; diverged trees fall back to
+    // the merge pull below (same behavior + errors as before).
+    let pulled = if run_logged(&app, "git", &["pull", "--ff-only"], Some(&repo), emit).await {
+        true
+    } else {
+        emit("[*] Fast-forward not possible (local branch diverged) — falling back to a merge pull…\n");
+        run_logged(&app, "git", &["pull"], Some(&repo), emit).await
+    };
+    if !pulled {
         mutating_done();
         return Err(if stashed {
         "git pull failed after stashing — your changes are kept in the stash (git stash list: launcher-update-autostash). Resolve by hand, then retry."
@@ -5182,7 +5204,7 @@ mod override_wheels_tests {
     fn flags_stale_gguf_and_post4() {
         let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "RTX_30", true);
         let gguf = w.gguf.expect("stale gguf must swap");
-        assert!(gguf.contains("1.0.23"), "got {gguf}");
+        assert!(gguf.contains("1.0.25"), "got {gguf}");
         let sage = w.sage.expect("post4 must swap when safe");
         assert!(sage.contains("post6"), "got {sage}");
     }
@@ -5190,20 +5212,20 @@ mod override_wheels_tests {
     fn quiet_when_already_current_or_opted_out() {
         // Current GGUF + safe sage → nothing to do.
         let cur = cfg_with(
-            &GGUF_1014.replace("1.0.14", "1.0.23"),
+            &GGUF_1014.replace("1.0.14", "1.0.25"),
             "v220_cu13",
             super::SAGE_SAFE_WIN_URL,
         );
         let w = post_install_override_urls(&cur, "RTX_30", true);
         assert!(w.gguf.is_none() && w.sage.is_none());
-        // 1.0.22 is now stale too (floor 1.0.23).
-        let old22 = cfg_with(
-            &GGUF_1014.replace("1.0.14", "1.0.22"),
+        // 1.0.24 is now stale too (floor 1.0.25).
+        let old24 = cfg_with(
+            &GGUF_1014.replace("1.0.14", "1.0.24"),
             "v220_cu13",
             super::SAGE_SAFE_WIN_URL,
         );
-        let w22 = post_install_override_urls(&old22, "RTX_30", true);
-        assert!(w22.gguf.is_some(), "1.0.22 must swap to 1.0.23");
+        let w24 = post_install_override_urls(&old24, "RTX_30", true);
+        assert!(w24.gguf.is_some(), "1.0.24 must swap to 1.0.25");
         // User chose upstream sage → sage untouched, gguf still swaps.
         let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "RTX_30", false);
         assert!(w.gguf.is_some() && w.sage.is_none());
@@ -5213,8 +5235,8 @@ mod override_wheels_tests {
     }
     #[test]
     fn swaps_stale_gguf_cu128_split() {
-        // Upstream 5533384: `gguf_cu128` (cu128/py310) at 1.0.23. A stale
-        // cu128 pin must swap to its matching 1.0.23 cu128 build.
+        // Upstream splits `gguf_cu128` (cu128/py310) at 1.0.25. A stale
+        // cu128 pin must swap to its matching 1.0.25 cu128 build.
         let stale_cu128 = GGUF_1014
             .replace("torch210cu130py311", "torch271cu128py310")
             .replace("py311", "py310");
@@ -5232,7 +5254,7 @@ mod override_wheels_tests {
         let w = post_install_override_urls(&cfg, "RTX_30", true);
         let gguf = w.gguf.expect("stale gguf_cu128 must swap");
         assert!(
-            gguf.contains("1.0.23") && gguf.contains("torch271cu128py310"),
+            gguf.contains("1.0.25") && gguf.contains("torch271cu128py310"),
             "got {gguf}"
         );
     }

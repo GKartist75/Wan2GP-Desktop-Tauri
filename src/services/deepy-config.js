@@ -14,9 +14,10 @@
  *   3 = Qwen3.5 VL Abliterated 4B (local, recommended)
  *   4 = Qwen3.5 VL Abliterated 9B (local)
  *   5 = Qwen3.8 VL Uncensored 27B (local)
+ *   6 = Qwen3.8 VL Uncensored 9B Heretic (local, Prime-ready ~6.5GB)
  * Deepy Zero/Prime("local model") only works if enhancer_enabled is one of
- * {3,4,5} (deepy_requirement_error), so the launcher exposes those for Zero and
- * Florence 2 (1) for Disabled.
+ * {3,4,5,6} (deepy_requirement_error; Prime needs 5 or 6), so the launcher
+ * exposes those for Zero and Florence 2 (1) for Disabled.
  * Kept free of Electron/Node-only deps so it is unit-testable. The caller
  * passes in fs / path / resolveCmd (injected); in production main.js wires
  * the real ones.
@@ -41,19 +42,20 @@ const DEEPY_MODES = {
 // enhancer_enabled id. Data-driven: one entry = one selectable option; no UI
 // branch per model. `modes` lists which Deepy modes the option is valid for.
 //   - 1 (Florence 2 + Llama 3.2 3B) is the default local model when Deepy is off.
-//   - 3/4/5 are the Qwen3.5/3.8 VL variants Deepy Zero/Prime require.
+//   - 3/4/5/6 are the Qwen3.5/3.8 VL variants Deepy Zero requires (Prime needs 5 or 6).
 const DEEPY_ENHANCER_OPTIONS = [
   { id: 1, label: 'Florence 2 + Llama 3.2 3B (local)', modes: ['disabled'], recommended: false },
   { id: 2, label: 'Florence 2 + Llama Joy 8B (local)', modes: ['disabled'], recommended: false },
   { id: 3, label: 'Qwen3.5 VL Abliterated 4B (local, recommended)', modes: ['zero'], recommended: true },
   { id: 4, label: 'Qwen3.5 VL Abliterated 9B (local)', modes: ['zero'], recommended: false },
-  { id: 5, label: 'Qwen3.8 VL Uncensored 27B (local)', modes: ['zero'], recommended: false }
+  { id: 5, label: 'Qwen3.8 VL Uncensored 27B (local)', modes: ['zero'], recommended: false },
+  { id: 6, label: 'Qwen3.8 VL Uncensored 9B (local, Prime-ready ~6.5GB)', modes: ['zero'], recommended: false }
 ]
 
 // Valid enhancer ids per Deepy mode (mirrors Wan2GP's requirement check).
 const ENHANCER_IDS_BY_MODE = {
   disabled: [1, 2],
-  zero: [3, 4, 5],
+  zero: [3, 4, 5, 6],
   prime: [] // Prime uses a remote LLM; local model not used
 }
 
@@ -67,7 +69,8 @@ const ENHANCER_ID_TO_ENGINE = {
   2: 'local_florence_llamajoy',  // Florence 2 + Llama Joy 8B
   3: 'qwen35_4b',                // Qwen3.5 VL Abliterated 4B
   4: 'qwen35_9b',                // Qwen3.5 VL Abliterated 9B
-  5: 'qwen38_27b'                // Qwen3.8 VL Uncensored 27B
+  5: 'qwen38_27b',               // Qwen3.8 VL Uncensored 27B
+  6: 'qwen38_9b'                 // Qwen3.8 VL Uncensored 9B Heretic
 }
 
 // Full Deepy Zero default preset — mirrors Wan2GP's
@@ -157,9 +160,9 @@ function readStatus(cfg) {
  * @param {string} mode     'disabled' | 'zero' | 'prime'
  * @param {string|null} engineId  UI engine id ('opencode'|'claude-code'|'codex');
  *                                 required only when mode === 'prime'
- * @param {number|null} enhancerId  local-model (enhancer_enabled) id (1/3/4/5);
+ * @param {number|null} enhancerId  local-model (enhancer_enabled) id (1/3/4/5/6);
  *                                 used for disabled/zero; for zero it must be a
- *                                 valid Qwen variant (3/4/5), else defaults to 3.
+ *                                 valid Qwen variant (3/4/5/6), else defaults to 3.
  * @returns {{ok:boolean, mode?:string, engine?:string, executable?:string, enhancerId?:number, backup?:string, message?:string, error?:string}}
  */
 function setDeepy(deps, repoDir, mode, engineId, enhancerId) {
@@ -207,7 +210,7 @@ function setDeepy(deps, repoDir, mode, engineId, enhancerId) {
     // KV-cache quantization, compaction type, tool variants) and the chosen
     // local Qwen model. Wan2GP's Deepy Zero "LLM engine" dropdown reads
     // llm_engines.deepy and DERIVES enhancer_enabled from it, so we must set
-    // BOTH to a consistent pair (here: qwen35_4b / 9b / qwen38_27b + id 3/4/5).
+    // BOTH to a consistent pair (here: qwen35_4b / 9b / qwen38_27b / qwen38_9b + id 3/4/5/6).
     cfg.llm_engines = cfg.llm_engines || {}
     cfg.llm_engines.deepy = ENHANCER_ID_TO_ENGINE[enhancer.id] || 'qwen35_4b'
     cfg.llm_engines.prompt_enhancer = 'same_as_deepy'
