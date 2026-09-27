@@ -9306,7 +9306,9 @@ $("dlss5CheckBtn")?.addEventListener("click", async () => {
       lines.push(
         r.runtimePatch && r.runtimePatch.patched
           ? "Workstation fix: applied — restart Wan2GP and Wan2GP will tier this card correctly."
-          : "Note: this card is capable, but upstream Wan2GP only matches “GeForce RTX” names — use “Apply workstation GPU fix” below, then restart Wan2GP.",
+          : r.runtimePatch && r.runtimePatch.upstreamFixed
+            ? "Wan2GP now tiers this card natively (upstream merged the fix) — no patch needed."
+            : "Note: this card is capable, but upstream Wan2GP only matches “GeForce RTX” names — use “Apply workstation GPU fix” below, then restart Wan2GP.",
       );
     box.textContent = "";
     box.style.color = "";
@@ -9362,7 +9364,9 @@ $("dlss5CheckBtn")?.addEventListener("click", async () => {
       note.textContent =
         r.runtimePatch && r.runtimePatch.patched
           ? "Workstation fix: applied — restart Wan2GP and Wan2GP will tier this card correctly. (Untested on real workstation hardware.)"
-          : "This card is capable, but upstream Wan2GP only matches “GeForce RTX” names — use “Apply workstation GPU fix” below, then restart Wan2GP. (Fix untested on real workstation hardware.)";
+          : r.runtimePatch && r.runtimePatch.upstreamFixed
+            ? "Wan2GP now tiers this card natively (upstream merged the fix) — no patch needed. Update Wan2GP if this still blocks."
+            : "This card is capable, but upstream Wan2GP only matches “GeForce RTX” names — use “Apply workstation GPU fix” below, then restart Wan2GP. (Fix untested on real workstation hardware.)";
       box.append(note);
     }
     appendLog("[DLSS5 check]\n" + lines.join("\n"));
@@ -9407,6 +9411,11 @@ function syncDlss5FixBtn(r) {
     b.disabled = false;
     b.title =
       "Restore upstream postprocessing/dlss5/runtime.py from the launcher backup";
+  } else if (p.upstreamFixed) {
+    b.textContent = "Apply workstation GPU fix";
+    b.disabled = true;
+    b.title =
+      "Upstream Wan2GP already tiers workstation cards — nothing to apply (update Wan2GP if DLSS still blocks)";
   } else {
     b.textContent = "Apply workstation GPU fix";
     b.disabled = !p.found;
