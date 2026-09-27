@@ -473,6 +473,12 @@ LTX windows default 81f/17 overlap (`8n+1` cadence, 9–481).
   for recorded video — results are content-dependent, not game-engine DLSS.
 * Requirements: Windows 11; Neural Rendering RTX 30+ (30 experimental, 40/50 primary);
   Frame Gen RTX 40+ + HAGS. Unavailable modes label their missing requirement.
+  Known upstream bug: Wan2GP's `postprocessing/dlss5/runtime.py:_gpu_series()`
+  only matches `GeForce RTX XXXX`, so workstation/datacenter cards (e.g.
+  `RTX PRO 5000 Blackwell`, `RTX 5000 Ada`, `RTX A6000`, `L40S`) falsely report
+  `RTX 30+ required` with series 0. The launcher correctly tiers these cards
+  (PRO 5000 Blackwell → RTX_50); until upstream broadens the check, patch that
+  regex or report it upstream.
 * Install: launcher DLSS5 card (or `scripts\install_dlss5.bat`), type `I ACCEPT`
   (third-party, unsigned, community-hosted binaries — your risk, verify hashes),
   **Stop WanGP first**; `-Force` backs up + replaces conflicts. Restarts WanGP after.

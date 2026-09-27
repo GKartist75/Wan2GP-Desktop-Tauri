@@ -85,7 +85,9 @@ C:\Wan2GP-Models\               ← models library
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.8.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.4) *(latest)* — Upstream v13.14 wave: GGUF 1.0.25 floor (+HIP wheel), local Deepy Prime 9B/27B support with combined model+quantization picker and Local/Remote engine grouping, Claude bridge 0.1.66, perpetual "update available" fix (containment checks + fast-forward-first pulls), Prompt Enhancer Usage labels. Details in [CHANGELOG](CHANGELOG.md).
+- [**v0.8.5**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.5) *(latest)* — DLSS5 card: Check compatibility verdicts (ready / not-installed / blocked) as labeled rows, opt-in workstation GPU fix for RTX PRO / Ada / RTX Ax000 (backed up, reversible). ⚠️ Workstation path untested on real hardware — confirm on PRO/A-series silicon. Details in [CHANGELOG](CHANGELOG.md).
+
+- [**v0.8.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.4) — Upstream v13.14 wave: GGUF 1.0.25 floor (+HIP wheel), local Deepy Prime 9B/27B support with combined model+quantization picker and Local/Remote engine grouping, Claude bridge 0.1.66, perpetual "update available" fix (containment checks + fast-forward-first pulls), Prompt Enhancer Usage labels. Details in [CHANGELOG](CHANGELOG.md).
 
 - [**v0.8.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.3) — GGUF 1.0.23 + cu128 split, Sync `--no-deps` fix (issue #44), self-updating floor + setup_config validation + post-update compat check, collapsed card update badge, Desktop follows launcher theme (issue #43). Details in [CHANGELOG](CHANGELOG.md).
 
@@ -290,6 +292,8 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 - Strict consent: type `I ACCEPT` (third-party binaries are community-hosted, unsigned, proprietary — see [docs/DLSS5.md](https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/DLSS5.md)).
 - **Force** backs up + replaces conflicting files. **Stop Wan2GP first.**
 - Needs Windows 11 + RTX 30+ (Neural Rendering, 30 experimental) / RTX 40+ (Frame Generation) + HAGS.
+- **Check compatibility** reports per-mode verdicts (ready / not-installed / blocked) with GPU tier, files, HAGS, and the frame-gen probe.
+- **Workstation GPU fix** (opt-in): patches Wan2GP's GeForce-only GPU check so RTX PRO / Ada / RTX Ax000 / L40 / Hopper cards pass DLSS gating — backed up (`*.launcher-bak`), reversible, refuses on upstream drift. ⚠️ **Untested on real workstation hardware** (tiers logic-simulated only: PRO 5000→50, 5000 Ada→40, A6000→30) — confirm on a PRO/A-series card before relying on it.
 
 ---
 

@@ -1392,8 +1392,11 @@
           <div id="dlss5Progress" style="display:none;margin-top:6px"></div>
           <div class="deepy-actions">
             <button class="btn btn-primary" id="dlss5InstallBtn" title="Open the DLSS 5 installer (consent step required)">Install DLSS 5…</button>
+            <button class="btn btn-ghost" id="dlss5CheckBtn" title="Run the DLSS 5 compatibility check (GPU tier, files, HAGS, frame-gen probe)">Check compatibility</button>
+            <button class="btn btn-ghost" id="dlss5FixBtn" title="Patch Wan2GP's GPU check so workstation cards (RTX PRO, Ada, RTX Ax000) pass DLSS gating — backed up, reversible">Apply workstation GPU fix</button>
             <label class="path-hint" style="margin-left:8px"><input type="checkbox" id="dlss5ForceChk"> Force (backup + replace existing files)</label>
           </div>
+          <div id="dlss5CheckResult" class="path-hint" style="display:none;margin-top:6px;white-space:pre-line"></div>
           <p class="path-hint" style="margin-top:4px"><em>Stop Wan2GP first — files under <code>dlss5/</code> can't be replaced while in use.</em></p>
         </div>
 

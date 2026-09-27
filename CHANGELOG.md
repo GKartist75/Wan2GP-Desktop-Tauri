@@ -4,6 +4,19 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.8.5] — 2026-09-27
+
+- DLSS5 card: new **Check compatibility** button — per-mode verdicts (ready /
+  not-installed / blocked) with GPU tier, installed files, HAGS, and the
+  native frame-gen probe, mirrored to the console; results render as labeled
+  rows. New opt-in **Apply workstation GPU fix** button patches Wan2GP's
+  GeForce-only `_gpu_series()` so RTX PRO / Ada / RTX Ax000 / L40 / Hopper
+  cards (e.g. RTX PRO 5000, RTX A6000) pass DLSS gating — original backed up
+  (`*.launcher-bak`), one-click revert, fail-closed on upstream drift.
+  ⚠️ Workstation path is **untested on real hardware** (tiers
+  logic-simulated only: PRO 5000→50, 5000 Ada→40, A6000→30; no PRO/A-series
+  card available) — please confirm on workstation silicon before relying on it.
+
 ## [0.8.4] — 2026-09-27
 
 - Upstream Wan2GP `v13.14` (Sep 27, community release): GGUF kernel floor
