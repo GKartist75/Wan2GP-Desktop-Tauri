@@ -452,7 +452,7 @@ pub(crate) fn clash_notice(main_bound: bool, deepy_free: bool) -> Option<String>
 }
 
 /// Auto-config decision (pure, unit-tested). Disabled → Zero + Qwen3.5-4B;
-/// stale enhancer 1/2 → fix to 3; Prime-local without 27B weights → BLOCK
+/// stale enhancer 1/2 → fix to 3; Prime-local without 27B/9B weights → BLOCK
 /// (fail-closed: never silently rewrite Prime to Zero — the starter owns
 /// truth about where weights live, and a wrong guess would clobber the
 /// user's explicit Prime choice on every boot); anything healthy stays
@@ -486,10 +486,14 @@ pub(crate) fn auto_config_plan(
     AutoPlan::Keep
 }
 
-/// Upstream Qwen3.8 27B text-GGUF checkpoints the local Prime engine can run
-/// on (shared/prompt_enhancer/assets.py: `QWEN38_27B_TEXT_GGUF_*`). Any one of
-/// them counts as "weights present" — the Q4_K_M / IQ3_S / IQ2_M quant menu
-/// plus the v13.13 Bonsai 2 PTQ1 checkpoint (Deepy Prime at ~10GB VRAM).
+/// Upstream Qwen3.8 text-GGUF checkpoints the local Prime engine can run on
+/// (shared/prompt_enhancer/assets.py: `QWEN38_27B_TEXT_GGUF_*` +
+/// `QWEN38_9B_TEXT_GGUF_*`). Any one of them counts as "weights present":
+/// the 27B Q4_K_M / IQ3_S / IQ2_M quant menu plus the v13.13 Bonsai 2 PTQ1
+/// checkpoint (Deepy Prime at ~10GB VRAM), or — since v13.1315 — the 9B
+/// Heretic Q4_K_M / Q8_0 checkpoints (local Prime at ~6.5GB Q4 / ~11GB Q8).
+/// The 9B files live in upstream's shared `Qwen3_5_9B_Abliterated` assets
+/// folder, not beside the 27B weights.
 const QWEN38_27B_WEIGHT_FILES: &[&str] = &[
     "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
     "Qwen3.8-27B-Uncensored-noMTP-IQ3_S.gguf",
@@ -499,6 +503,13 @@ const QWEN38_27B_WEIGHT_FILES: &[&str] = &[
 /// Upstream assets folder holding the 27B weights
 /// (shared/prompt_enhancer/assets.py: `assets_dir_name`).
 const QWEN38_27B_ASSETS_DIR: &str = "Qwen3_8_27B_Uncensored";
+/// Upstream assets folder holding the 9B Heretic weights (shared with the
+/// Qwen3.5-9B assets dir since v13.1315).
+const QWEN38_9B_ASSETS_DIR: &str = "Qwen3_5_9B_Abliterated";
+const QWEN38_9B_WEIGHT_FILES: &[&str] = &[
+    "Qwen3.8-9B-Uncensored-Heretic-Q4_K_M.gguf",
+    "Qwen3.8-9B-Uncensored-Heretic-Q8_0.gguf",
+];
 
 /// Checkpoint roots to probe for the 27B folder: `wgp_config.json`
 /// `checkpoints_paths` (absolute entries as-is; relative ones resolved against
@@ -565,20 +576,26 @@ fn profile_points_at_existing_path(v: &serde_json::Value) -> bool {
     })
 }
 
-/// True when the Qwen3.8 27B weights are on disk: either an explicit profile
-/// path (legacy, see above) or — the layout upstream actually uses — the
-/// `Qwen3_8_27B_Uncensored` assets folder under a checkpoint root holding one
-/// of the known text GGUF checkpoints. A bare folder without weights does NOT
+/// True when the Qwen3.8 weights are on disk (27B or 9B): either an explicit
+/// profile path (legacy, see above) or — the layout upstream actually uses —
+/// the `Qwen3_8_27B_Uncensored` assets folder holding one of the known 27B
+/// text GGUF checkpoints, or the `Qwen3_5_9B_Abliterated` folder holding one
+/// of the 9B Heretic checkpoints. A bare folder without weights does NOT
 /// count. Pure over (config, repo); the only impurity is the fs probe.
 pub(crate) fn qwen27b_weights_present(cfg: &serde_json::Value, repo: &std::path::Path) -> bool {
     if profile_points_at_existing_path(cfg) {
         return true;
     }
     qwen27b_search_roots(cfg, repo).iter().any(|root| {
-        let dir = root.join(QWEN38_27B_ASSETS_DIR);
-        QWEN38_27B_WEIGHT_FILES
+        let dir27 = root.join(QWEN38_27B_ASSETS_DIR);
+        if QWEN38_27B_WEIGHT_FILES
             .iter()
-            .any(|f| dir.join(f).is_file())
+            .any(|f| dir27.join(f).is_file())
+        {
+            return true;
+        }
+        let dir9 = root.join(QWEN38_9B_ASSETS_DIR);
+        QWEN38_9B_WEIGHT_FILES.iter().any(|f| dir9.join(f).is_file())
     })
 }
 
@@ -762,12 +779,12 @@ fn ensure_deepy_config_for_web() -> Result<String, String> {
                     .to_string())
             }
         }
-        // Fail-closed: local Prime without visible 27B weights must NEVER
+        // Fail-closed: local Prime without visible 27B/9B weights must NEVER
         // be silently rewritten to Zero (that clobbers an explicit user
         // choice on every boot). Block the start with an
         // actionable error instead — the file stays exactly as the user
         // left it.
-        AutoPlan::BlockMissing27B => Err("Deepy Prime (local Qwen 27B) is configured but no 27B weights were found — refusing to downgrade you to Zero. Install the Qwen3.8 VL 27B model, switch to a remote Prime engine (OpenCode/Claude/Codex), or press Apply on Deepy Zero.".to_string()),
+        AutoPlan::BlockMissing27B => Err("Deepy Prime (local Qwen3.8) is configured but no 27B/9B weights were found — refusing to downgrade you to Zero. Install the Qwen3.8 VL 27B or 9B model, switch to a remote Prime engine (OpenCode/Claude/Codex), or press Apply on Deepy Zero.".to_string()),
         AutoPlan::FixEnhancerTo3 => {
             // deepy_set validates Prime engines by UI id (opencode /
             // claude-code / codex / local-qwen38) but the stored config
@@ -2198,6 +2215,25 @@ mod tests {
         ] {
             let tmp = tempfile::tempdir().expect("fixture dir");
             let dir = tmp.path().join("ckpts").join("Qwen3_8_27B_Uncensored");
+            std::fs::create_dir_all(&dir).expect("fixture assets dir");
+            std::fs::write(dir.join(file), b"x").expect("fixture weight");
+            let repo = tmp.path().join("repo");
+            assert!(
+                qwen27b_weights_present(&qwen_cfg_for(&tmp), &repo),
+                "{file} must count as weights present"
+            );
+        }
+    }
+
+    #[test]
+    fn tri_qwen38_9b_weights_count_as_present() {
+        // v13.1315: 9B Heretic weights live in the shared Qwen3_5_9B folder.
+        for file in [
+            "Qwen3.8-9B-Uncensored-Heretic-Q4_K_M.gguf",
+            "Qwen3.8-9B-Uncensored-Heretic-Q8_0.gguf",
+        ] {
+            let tmp = tempfile::tempdir().expect("fixture dir");
+            let dir = tmp.path().join("ckpts").join("Qwen3_5_9B_Abliterated");
             std::fs::create_dir_all(&dir).expect("fixture assets dir");
             std::fs::write(dir.join(file), b"x").expect("fixture weight");
             let repo = tmp.path().join("repo");

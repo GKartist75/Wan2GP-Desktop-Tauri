@@ -967,8 +967,8 @@ pub fn deepy_status() -> serde_json::Value {
         .get("prompt_enhancer_quantization")
         .and_then(|x| x.as_str())
         .map(std::string::ToString::to_string);
-    // Prompt-enhancement UI (upstream `enhancer_mode`: 0 = Automatic dropdown,
-    // 1 = on-demand Enhance Prompt button) so the panel can pre-select.
+    // Prompt-enhancement UI (upstream `enhancer_mode`: 0 = Manual Button +
+    // Automatic on Generation, 1 = Manual Button Only) so the panel can pre-select.
     let enhancer_mode = v.get("enhancer_mode").and_then(serde_json::Value::as_i64);
     serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "promptEnhancerQuantization": quant, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode, "enhancerMode": enhancer_mode})
 }
@@ -1026,7 +1026,7 @@ fn resolve_session_pref(
     launcher_default.unwrap_or(upstream_default).into()
 }
 /// Stored Prime profile id (`llm_engines.deepy`: opencode / claude / codex /
-/// qwen38_27b / qwen35_*) → `deepy_set` UI engine id (opencode / claude-code /
+/// qwen38_27b / qwen38_9b / qwen35_*) → `deepy_set` UI engine id (opencode / claude-code /
 /// codex / local-qwen38). The auto-config enhancer-fix path reads the stored
 /// profile but must call `deepy_set` with the UI id, or Prime starts fail
 /// outright with "Prime requires an engine".
@@ -1042,18 +1042,24 @@ pub(crate) fn prime_profile_to_ui_id(profile: &str) -> &str {
     }
 }
 /// Upstream Qwen LLM quantization backend (`prompt_enhancer_quantization`):
-/// valid values per local engine (plugins/configuration/plugin.py
-/// `prompt_enhancer_quantization_ui_state`): Qwen3.8 (id 5) takes the four
-/// GGUF backends including Bonsai PTQ1 (`gguf_ptq1`, ~10GB VRAM, needs
-/// GGUF kernels 1.0.23+); Qwen3.5 4B/9B (ids 3/4) take Quanto Int8 or
-/// plain GGUF Q4. Engine-inappropriate values normalize to the engine
-/// default (mirrors upstream); `None` preserves existing config.
+/// valid values per local engine (shared/prompt_enhancer/qwen35_vl.py
+/// `get_qwen35_quantization`): Qwen3.8 27B (id 5) takes the four GGUF
+/// backends including Bonsai PTQ1 (`gguf_ptq1`, ~10GB VRAM, needs GGUF
+/// kernels 1.0.25+); Qwen3.8 9B (id 6) takes GGUF Q4 (`gguf`) or Q8
+/// (`gguf_q8`, closest to full precision, ~11GB VRAM); Qwen3.5 4B/9B
+/// (ids 3/4) take Quanto Int8 or plain GGUF Q4. Engine-inappropriate values
+/// normalize to the engine default (mirrors upstream); `None` preserves
+/// existing config.
 /// Pure + unit-tested.
 pub(crate) fn normalize_qwen_quant<'a>(quant: Option<&'a str>, enhancer: Option<i64>) -> Option<&'a str> {
     let q = quant.map(str::trim).filter(|s| !s.is_empty())?;
     match enhancer {
         Some(5) => match q {
             "gguf" | "gguf_q3" | "gguf_q2" | "gguf_ptq1" => Some(q),
+            _ => Some("gguf"),
+        },
+        Some(6) => match q {
+            "gguf" | "gguf_q8" => Some(q),
             _ => Some("gguf"),
         },
         Some(3) | Some(4) => match q {
@@ -1082,7 +1088,7 @@ pub fn deepy_set(
             .as_deref()
             .is_some_and(|s| ["opencode", "claude-code", "codex", "local-qwen38"].contains(&s))
     {
-        return serde_json::json!({"ok": false, "error": "Prime requires an engine (OpenCode / Claude Code / Codex / local Qwen3.8 27B)."});
+        return serde_json::json!({"ok": false, "error": "Prime requires an engine (OpenCode / Claude Code / Codex / local Qwen3.8 9B/27B)."});
     }
     let p = get_repo_dir().join("wgp_config.json");
     if !p.exists() {
@@ -1152,11 +1158,11 @@ pub fn deepy_set(
     let enh_id: Option<i64> = match m.as_str() {
         "prime" => None,
         "zero" => Some(match raw_id {
-            Some(3) | Some(4) | Some(5) => raw_id.unwrap(),
+            Some(3) | Some(4) | Some(5) | Some(6) => raw_id.unwrap(),
             _ => 3,
         }),
         _ => Some(match raw_id {
-            Some(1) | Some(2) | Some(3) | Some(4) | Some(5) => raw_id.unwrap(),
+            Some(1) | Some(2) | Some(3) | Some(4) | Some(5) | Some(6) => raw_id.unwrap(),
             _ => 1,
         }),
     };
@@ -1166,26 +1172,45 @@ pub fn deepy_set(
         }
     }
     // Qwen LLM quantization (upstream "Qwen LLM Quantization" dropdown):
-    // applies only with a local Qwen engine — Disabled/Zero on 3/4/5, or
-    // Prime on local Qwen3.8 (id 5). Engine-inappropriate values normalize to
-    // the engine default; absent quant preserves existing config (e.g. the
-    // auto-config fix path must not clobber a chosen Bonsai backend).
+    // applies only with a local Qwen engine — Disabled/Zero on 3/4/5/6, or
+    // Prime on local Qwen3.8 (id 5 = 27B, id 6 = 9B). Engine-inappropriate
+    // values normalize to the engine default; absent quant preserves existing
+    // config (e.g. the auto-config fix path must not clobber a chosen Bonsai
+    // backend).
+    // For local Prime the variant sticks: an explicit panel pick (27B id 5 /
+    // 9B id 6 from the Prime-local variant selector), else an explicit
+    // gguf_q8 quant or a stored enhancer 6 / qwen38_9b profile, otherwise 27B.
+    let requested_56: Option<i64> = raw_id.filter(|id| *id == 5 || *id == 6);
+    // (Zero/Disabled keep using raw_id via enh_id below; this is Prime-only.)
+    let prime_local_variant: Option<i64> = if m == "prime" && engine.as_deref() == Some("local-qwen38") {
+        if requested_56.is_some() {
+            requested_56
+        } else {
+            let stored_6 = v.get("enhancer_enabled").and_then(|x| x.as_i64()) == Some(6);
+            let stored_9b = v.get("llm_engines").and_then(|l| l.get("deepy")).and_then(|x| x.as_str()) == Some("qwen38_9b");
+            let wants_q8 = quant.as_deref().is_some_and(|q| q.trim() == "gguf_q8");
+            if wants_q8 || stored_6 || stored_9b { Some(6) } else { Some(5) }
+        }
+    } else {
+        None
+    };
     let quant_enhancer: Option<i64> = match m.as_str() {
-        "zero" | "disabled" => enh_id.filter(|id| [3, 4, 5].contains(id)),
-        "prime" if engine.as_deref() == Some("local-qwen38") => Some(5),
+        "zero" | "disabled" => enh_id.filter(|id| [3, 4, 5, 6].contains(id)),
+        "prime" => prime_local_variant,
         _ => None,
     };
     if let Some(q) = normalize_qwen_quant(quant.as_deref(), quant_enhancer) {
         v["prompt_enhancer_quantization"] = serde_json::json!(q);
         if q == "gguf_ptq1" {
             // Bonsai companion: INT8 KV cache halves cache VRAM — what makes
-            // Prime viable at ~10GB (GGUF 1.0.23+ carries the kernels).
+            // Prime viable at ~10GB (GGUF 1.0.25+ carries the kernels).
             // (Prompt enhancement mode is handled below from the panel choice.)
             v["deepy_kv_cache_quantization"] = serde_json::json!("int8");
         }
     }
-    // Prompt enhancement UI (upstream `enhancer_mode`: 0 = Automatic dropdown
-    // on every generation form, 1 = on-demand Enhance Prompt button).
+    // Prompt enhancement UI (upstream `enhancer_mode`: 0 = Manual Button +
+    // Automatic on Generation, 1 = Manual Button Only; the button stays in
+    // both modes).
     // Explicit 0/1 wins; otherwise the existing config value sticks; a missing
     // key defaults to 1 (button). Deepy tool templates carry no flags of their
     // own, so they follow it; per-model/template prompt_enhancer flags stay ""
@@ -1224,6 +1249,7 @@ pub fn deepy_set(
         3 => "qwen35_4b",
         4 => "qwen35_9b",
         5 => "qwen38_27b",
+        6 => "qwen38_9b",
         _ => "qwen35_4b",
     };
     if v.get("llm_engines").is_none() {
@@ -1232,11 +1258,14 @@ pub fn deepy_set(
     if m == "prime" {
         let eid = engine.clone().unwrap_or_else(|| "opencode".into());
         if eid == "local-qwen38" {
-            // Local Prime (b71026f): runs on Qwen3.8 VL 27B — upstream requires the
-            // 27B model plus context >= 32000 and Summarize compaction, and the
+            // Local Prime: Qwen3.8 VL 27B (id 5) or 9B Heretic (id 6, ~6.5GB
+            // Q4 / ~11GB Q8) — upstream supports both since v13.1315.
+            // Either needs context >= 32000 and Summarize compaction, and the
             // Configuration UI auto-raises both, so mirror that here.
-            v["enhancer_enabled"] = serde_json::json!(5);
-            v["llm_engines"]["deepy"] = serde_json::json!("qwen38_27b");
+            let variant = prime_local_variant.unwrap_or(5);
+            let profile = if variant == 6 { "qwen38_9b" } else { "qwen38_27b" };
+            v["enhancer_enabled"] = serde_json::json!(variant);
+            v["llm_engines"]["deepy"] = serde_json::json!(profile);
             v["llm_engines"]["prompt_enhancer"] = serde_json::json!("same_as_deepy");
             if v.get("deepy_context_tokens")
                 .and_then(serde_json::Value::as_i64)
@@ -1341,7 +1370,7 @@ pub fn deepy_set(
         return serde_json::json!({"ok": false, "error": "failed to write wgp_config.json"});
     }
     let prime_label = match engine.as_deref().unwrap_or("opencode") {
-        "local-qwen38" => "Qwen3.8 VL 27B (local)".into(),
+        "local-qwen38" => "Qwen3.8 VL 9B/27B (local)".into(),
         other => other.to_string(),
     };
     let msg = if m == "prime" {
@@ -1932,6 +1961,20 @@ mod deepy_roundtrip_tests {
         // Bonsai companions ride along: button kept + INT8 KV cache.
         assert_eq!(c["enhancer_mode"], 1);
         assert_eq!(c["deepy_kv_cache_quantization"], "int8");
+        // prime + local Qwen3.8 9B (explicit variant pick + Q8 quant sticks)
+        let r = deepy_set(
+            "prime".into(),
+            Some("local-qwen38".into()),
+            Some(serde_json::json!(6)),
+            None,
+            Some("gguf_q8".into()),
+            Some(serde_json::json!(1)),
+        );
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
+        let c = read_cfg();
+        assert_eq!(c["enhancer_enabled"], 6);
+        assert_eq!(c["llm_engines"]["deepy"], "qwen38_9b");
+        assert_eq!(c["prompt_enhancer_quantization"], "gguf_q8");
         // disabled + Qwen: standalone enhancer — engine, quant and an
         // explicit Automatic choice all stick
         let r = deepy_set(
@@ -2030,12 +2073,18 @@ mod kernel_setting_tests {
     use super::{normalize_qwen_quant, valid_memory_override};
     #[test]
     fn qwen_quant_normalizes_per_engine() {
-        // Qwen3.8 (id 5): four GGUF backends incl. Bonsai PTQ1.
+        // Qwen3.8 27B (id 5): four GGUF backends incl. Bonsai PTQ1.
         for good in ["gguf", "gguf_q3", "gguf_q2", "gguf_ptq1"] {
             assert_eq!(normalize_qwen_quant(Some(good), Some(5)), Some(good));
         }
+        // Qwen3.8 9B Heretic (id 6): GGUF Q4 + Q8 only.
+        for good in ["gguf", "gguf_q8"] {
+            assert_eq!(normalize_qwen_quant(Some(good), Some(6)), Some(good));
+        }
         // Wrong-engine values fall back to the engine default, never garbage.
         assert_eq!(normalize_qwen_quant(Some("quanto_int8"), Some(5)), Some("gguf"));
+        assert_eq!(normalize_qwen_quant(Some("gguf_ptq1"), Some(6)), Some("gguf"));
+        assert_eq!(normalize_qwen_quant(Some("gguf_q8"), Some(5)), Some("gguf"));
         assert_eq!(normalize_qwen_quant(Some("gguf_ptq1"), Some(4)), Some("quanto_int8"));
         assert_eq!(normalize_qwen_quant(Some("gguf"), Some(3)), Some("gguf"));
         // No engine / no quant preserves existing config.

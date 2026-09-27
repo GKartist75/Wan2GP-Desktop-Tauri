@@ -2,7 +2,7 @@
  * pip-spec.js — pure, offline-testable pip specifier safety validator.
  *
  * Replaces the old name-based `ALL_PACKAGES` whitelist. The old whitelist
- * blocked a legit Wan2GP-documented command (`pip install claude-agent-sdk==0.1.40`)
+ * blocked a legit Wan2GP-documented command (`pip install claude-agent-sdk==0.1.66`)
  * and forced a code change for every new LLM SDK. This validator instead
  * accepts any *well-formed, non-injectable* pip spec and rejects only
  * dangerous input.
@@ -15,7 +15,7 @@
  *
  * Accepted forms:
  *   - bare name:               claude-agent-sdk
- *   - name with pep440 pin:    claude-agent-sdk==0.1.40  (==, >=, <=, ~=, !=, >, <)
+ *   - name with pep440 pin:    claude-agent-sdk==0.1.66  (==, >=, <=, ~=, !=, >, <)
  *   - direct wheel/URL:        https://download.pytorch.org/whl/.../foo.whl
  *                              (Wan2GP's INSTALLATION.md installs GGUF kernels this way)
  * Rejected forms:

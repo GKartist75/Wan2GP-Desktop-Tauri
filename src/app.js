@@ -4578,7 +4578,7 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
       hipBtn.style.display = p.indexOf("AMD") === 0 ? "" : "none";
       if (p.indexOf("AMD") === 0 && p !== "AMD_GFX1201") {
         hipBtn.title =
-          "Experimental AMD-only: GGUF 1.0.22 torch210rocm714 HIP wheel (upstream targets gfx1201 RX 9070/R9700 — installing on " +
+          "Experimental AMD-only: GGUF 1.0.25 torch210rocm714 HIP wheel (upstream targets gfx1201 RX 9070/R9700 — installing on " +
           p +
           " is unvalidated). Needs torch 2.10.0+rocm7.14.0.";
       }
@@ -5027,7 +5027,7 @@ $("installHipGgufBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   if (
     !confirm(
-      "Install experimental HIP GGUF 1.0.22 (torch210rocm714) for RX 9070/R9700?\n\nNeeds torch 2.10.0+rocm7.14.0 — the wheel rejects other builds at import. Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
+      "Install experimental HIP GGUF 1.0.25 (torch210rocm714) for RX 9070/R9700?\n\nNeeds torch 2.10.0+rocm7.14.0 — the wheel rejects other builds at import. Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
     )
   )
     return;
@@ -5548,7 +5548,18 @@ async function loadWangpChangelog(showLoading) {
     }
 
     const updateBtn = $("updateBtn");
-    const hasUpdate = local && upstream.commits[0]?.hash !== local.hash;
+    // Hash equality alone never clears: any local merge commit (every
+    // non-fast-forward `git pull` manufactures one) differs from the tip
+    // forever. When the hashes differ, ask git whether the tip is already
+    // merged here before lighting the dot.
+    const tip = upstream.commits[0]?.hash;
+    let hasUpdate = !!(local && tip && tip !== local.hash);
+    if (hasUpdate) {
+      try {
+        const c = await window.w2gp.wangpContainsCommit(tip);
+        if (c && c.contained === true) hasUpdate = false;
+      } catch {}
+    }
     if (hasUpdate) {
       updateBtn?.classList.add("has-update");
       if (!updateBtn?.querySelector(".update-dot")) {
@@ -7079,8 +7090,8 @@ $("taskMgrBtn").addEventListener("click", () => {
 });
 
 // ── Quick pip install ──
-// Accept either a bare spec (claude-agent-sdk==0.1.40) or a full command
-// (pip install claude-agent-sdk==0.1.40) pasted by the user — strip any leading
+// Accept either a bare spec (claude-agent-sdk==0.1.66) or a full command
+// (pip install claude-agent-sdk==0.1.66) pasted by the user — strip any leading
 // pip invocation so both the preview and the real install behave identically.
 // (Renderer is a plain browser script — no require — so this is inlined; the
 // Node-side mirror lives in services/normalize-pip-spec.js for unit tests.)
@@ -7423,8 +7434,8 @@ const DEEPY_PANEL_ENGINES = [
   { id: "opencode", label: "OpenCode", paid: false },
   { id: "claude-code", label: "Claude Code", paid: true },
   { id: "codex", label: "OpenAI Codex", paid: true },
-  // ponytail: b71026f — local Prime runs on Qwen3.8 VL 27B (needs the 27B model + GGUF 1.0.23; backend auto-raises 32k context + Summarize)
-  { id: "local-qwen38", label: "Qwen3.8 VL 27B (local)", paid: false },
+  // ponytail: b71026f — local Prime runs on Qwen3.8 VL 9B/27B (needs the 9B or 27B model + GGUF 1.0.25; backend auto-raises 32k context + Summarize)
+  { id: "local-qwen38", label: "Qwen3.8 VL 9B/27B (local)", paid: false },
 ];
 
 // Local-model (Prompt Enhancer) choices shown in the Deepy panel when Deepy is
@@ -7442,18 +7453,23 @@ const DEEPY_PANEL_ENHANCERS = [
   },
   { id: 4, label: "Qwen3.5 VL Abliterated 9B (local)", modes: ["disabled", "zero"] },
   { id: 5, label: "Qwen3.8 VL Uncensored 27B (local)", modes: ["disabled", "zero"] },
+  { id: 6, label: "Qwen3.8 VL Uncensored 9B (local, Prime-ready ~6.5GB)", modes: ["disabled", "zero"] },
 ];
 
 // Qwen LLM Quantization choices per local engine id — mirrors upstream's
-// "Qwen LLM Quantization" dropdown (plugins/configuration/plugin.py
-// QWEN38_QUANTIZATION_CHOICES). Bonsai PTQ1 (gguf_ptq1) is the ~10 GB VRAM
-// checkpoint for Qwen3.8; Qwen3.5 offers Quanto Int8 or GGUF Q4.
+// "Qwen LLM Quantization" dropdown (shared/prompt_enhancer/qwen35_vl.py
+// get_qwen35_quantization). 27B Bonsai PTQ1 (gguf_ptq1) is the ~10 GB VRAM
+// checkpoint; 9B Heretic offers GGUF Q4 / Q8; Qwen3.5 offers Quanto Int8 or GGUF Q4.
 const DEEPY_QUANT_CHOICES = {
   5: [
     { id: "gguf", label: "GGUF Q4 (default, highest quality)" },
     { id: "gguf_q3", label: "GGUF IQ3_S (middle, 16 GB VRAM)" },
     { id: "gguf_q2", label: "GGUF Q2 (lowest memory)" },
-    { id: "gguf_ptq1", label: "Bonsai PTQ1 (~10 GB VRAM, needs kernels 1.0.23+)" },
+    { id: "gguf_ptq1", label: "Bonsai PTQ1 (~10 GB VRAM, needs kernels 1.0.25+)" },
+  ],
+  6: [
+    { id: "gguf", label: "GGUF Q4 (~6.5 GB VRAM, default)" },
+    { id: "gguf_q8", label: "GGUF Q8 (~11 GB VRAM, closest to full precision)" },
   ],
   4: [
     { id: "quanto_int8", label: "Quanto Int8 (recommended, better quality)" },
@@ -7464,25 +7480,76 @@ const DEEPY_QUANT_CHOICES = {
     { id: "gguf", label: "GGUF Q4 (less VRAM, needs kernels)" },
   ],
 };
-const DEEPY_QUANT_DEFAULT = { 5: "gguf", 4: "quanto_int8", 3: "quanto_int8" };
+const DEEPY_QUANT_DEFAULT = { 6: "gguf", 5: "gguf", 4: "quanto_int8", 3: "quanto_int8" };
+// Prime-local backend pick ("<enhancerId>:<quant>", e.g. "6:gguf_q8"). Null =
+// derive from the saved config (gguf_q8 or saved enhancer 6 → 9B Q4, Bonsai /
+// saved enhancer 5 → 27B entry, else 27B Q4); a manual pick sticks until the
+// saved values change (e.g. after Apply).
+let _primeBackend = null;
+let _primeBackendCtx = "";
+function primeBackendFor(savedQuant, savedEnh) {
+  const key = (savedQuant || "") + "|" + (savedEnh ?? "");
+  const valid = (v) => ["5:gguf", "5:gguf_q3", "5:gguf_q2", "5:gguf_ptq1", "6:gguf", "6:gguf_q8"].includes(v);
+  if (_primeBackend === null || _primeBackendCtx !== key || !valid(_primeBackend)) {
+    if (savedQuant === "gguf_q8") _primeBackend = "6:gguf_q8";
+    else if (savedQuant === "gguf_q3") _primeBackend = "5:gguf_q3";
+    else if (savedQuant === "gguf_q2") _primeBackend = "5:gguf_q2";
+    else if (savedQuant === "gguf_ptq1") _primeBackend = "5:gguf_ptq1";
+    else if (Number(savedEnh) === 6) _primeBackend = "6:gguf";
+    else _primeBackend = "5:gguf";
+    _primeBackendCtx = key;
+  }
+  return _primeBackend;
+}
 // Last-rendered "enhancerId|savedQuant" key — options rebuild only when the
 // engine context changes so syncApply validation never resets a choice.
 let _deepyQuantCtx = "";
-// Render the quant selector for a local Qwen engine id (3/4/5), or hide it
-// (quant untouched) for remote engines / Florence / Disabled.
-function renderDeepyQuant(enhancerId, savedQuant) {
+// Render the quant selector for a local Qwen engine id (3/4/5/6), or hide it
+// (quant untouched) for remote engines / Florence / Disabled. primeBackend
+// ("id:quant") swaps the whole block for ONE combined Prime-local list, so
+// every possible backend is explicitly visible — no hidden dependency
+// between a variant dropdown and a quant dropdown.
+function renderDeepyQuant(enhancerId, savedQuant, primeBackend) {
   const wrap = $("deepyQuantWrap");
   const sel = $("deepyQuantSelect");
   const hint = $("deepyQuantHint");
+  const beWrap = $("deepyPrimeBackendWrap");
+  const beSel = $("deepyPrimeBackendSelect");
+  const beHint = $("deepyPrimeBackendHint");
+  const stdWrap = $("deepyQuantStdWrap");
   if (!wrap || !sel) return;
+  // Prime + local lives in its own block (below the engine pick, above LLM
+  // Engines) — the shared Zero/Disabled block stays hidden for it.
+  const isPrimeLocal =
+    typeof primeBackend === "string" &&
+    primeBackend.includes(":") &&
+    !!beSel;
+  if (isPrimeLocal) {
+    wrap.style.display = "none";
+    if (beWrap) beWrap.style.display = "block";
+    if ([...beSel.options].some((o) => o.value === primeBackend))
+      beSel.value = primeBackend;
+    if (beHint)
+      beHint.textContent =
+        primeBackend === "5:gguf_ptq1"
+          ? "Bonsai PTQ1 runs Prime on ~10 GB VRAM. Weights download on first WanGP launch. Apply also sets INT8 KV cache."
+          : primeBackend === "6:gguf"
+            ? "Heretic Q4 runs Prime on ~6.5 GB VRAM — the fit for 8–12 GB GPUs. Weights download on first WanGP launch."
+            : primeBackend === "6:gguf_q8"
+              ? "Heretic Q8 (~11 GB VRAM) stays closest to full precision. Weights download on first WanGP launch."
+              : "Weights download on first WanGP launch. Needs GGUF kernels 1.0.25 (Sync Kernels).";
+    return;
+  }
+  if (beWrap) beWrap.style.display = "none";
   const choices = (enhancerId && DEEPY_QUANT_CHOICES[enhancerId]) || null;
   if (!choices) {
     wrap.style.display = "none";
     _deepyQuantCtx = "";
     return;
   }
-  const key = enhancerId + "|" + (savedQuant || "");
   wrap.style.display = "block";
+  if (stdWrap) stdWrap.style.display = "block";
+  const key = enhancerId + "|" + (savedQuant || "");
   if (key !== _deepyQuantCtx) {
     _deepyQuantCtx = key;
     sel.textContent = "";
@@ -7507,14 +7574,19 @@ function updateDeepyQuantHint(value, enhancerId) {
   if (!hint) return;
   hint.textContent =
     value === "gguf_ptq1"
-      ? "Bonsai PTQ1 runs Prime on ~10 GB VRAM (Sync Kernels for 1.0.23+). Weights download on first WanGP launch. Apply also sets INT8 KV cache."
-      : Number(enhancerId) === 5
+      ? "Bonsai PTQ1 runs Prime on ~10 GB VRAM (Sync Kernels for 1.0.25+). Weights download on first WanGP launch. Apply also sets INT8 KV cache."
+      : Number(enhancerId) === 6
+        ? "Heretic Q4 runs Prime on ~6.5 GB VRAM, Q8 (~11 GB) stays closest to full precision. Weights download on first WanGP launch."
+        : Number(enhancerId) === 5
         ? "GGUF Q4 is highest quality; Q3/Q2 trade quality for VRAM. Weights download on first WanGP launch."
         : "Quanto Int8 preserves quality; GGUF Q4 uses less memory when kernels are installed.";
 }
 
 async function refreshDeepy() {
-  const opts = $("deepyEngineOptions");
+  const opts = $("deepyPrimeOnly");
+  // Helper: the checked Prime engine radio across the Local/Remote groups.
+  const deepyEngineChecked = () =>
+    (opts && opts.querySelector("input[name=deepyEngine]:checked")) || {};
   const statusMsg = $("deepyStatusMsg");
   const applyBtn = $("deepyApplyBtn");
   const promptApplyBtn = $("deepyPromptApplyBtn");
@@ -7539,7 +7611,7 @@ async function refreshDeepy() {
   } catch {}
 
   const ready = (id) => {
-    // ponytail: local model lives in Wan2GP — it validates the 27B requirement + downloads on first use, nothing for the launcher to probe
+    // ponytail: local model lives in Wan2GP — it validates the 9B/27B requirement + downloads on first use, nothing for the launcher to probe
     if (id === "local-qwen38") return true;
     const e = engines.find((x) => x.id === id);
     if (!e) return false;
@@ -7553,6 +7625,7 @@ async function refreshDeepy() {
     claude: "claude-code",
     codex: "codex",
     qwen38_27b: "local-qwen38",
+    qwen38_9b: "local-qwen38",
   };
   const currentUi = profileToUi[currentProfile] || null;
   const currentMode = status.mode || "disabled";
@@ -7580,7 +7653,7 @@ async function refreshDeepy() {
   if ($("deepySessionReset")) $("deepySessionReset").value = curResetMode;
   if ($("deepySessionGallery")) $("deepySessionGallery").value = curGalleryMode;
   // Prompt-enhancement UI — pre-select from config; missing key defaults to
-  // the Enhance Prompt button (1).
+  // Manual Button Only (1).
   if ($("deepyEnhancerMode"))
     $("deepyEnhancerMode").value = status.enhancerMode === 0 ? "0" : "1";
   // Default engine for Prime is OpenCode (universal providers / external, free).
@@ -7644,7 +7717,10 @@ async function refreshDeepy() {
   };
   renderEnhancer(currentMode, currentEnhancer);
 
-  opts.textContent = "";
+  const engLocal = $("deepyEngineLocal");
+  const engRemote = $("deepyEngineRemote");
+  if (engLocal) engLocal.textContent = "";
+  if (engRemote) engRemote.textContent = "";
   for (const en of DEEPY_PANEL_ENGINES) {
     const isReady = ready(en.id);
     const lab = document.createElement("label");
@@ -7673,7 +7749,13 @@ async function refreshDeepy() {
       cost,
       "\n        ",
     );
-    opts.append(lab);
+    // Local Qwen3.8 groups with its model+quantization picker; the remote
+    // CLIs group with the LLM Engines setup card below them.
+    const host =
+      en.id === "local-qwen38"
+        ? engLocal || opts
+        : engRemote || opts;
+    host.append(lab);
   }
 
   statusMsg.textContent = "";
@@ -7730,8 +7812,18 @@ async function refreshDeepy() {
         title = "Pick a local model (Prompt Enhancer)";
       }
     }
-    // Qwen quant selector follows the local engine: Disabled/Zero + Qwen 3/4/5,
-    // or Prime + local Qwen3.8 (id 5). Hidden otherwise (quant untouched).
+    // Qwen quant selector follows the local engine: Disabled/Zero + Qwen 3/4/5/6,
+    // or Prime + local Qwen3.8 via ONE combined model+quantization list (all
+    // six backends explicitly visible). Hidden otherwise (quant untouched).
+    const savedEnh = Number.isInteger(currentEnhancer) ? currentEnhancer : null;
+    const isPrimeLocalPick =
+      mode === "prime" && deepyEngineChecked().value === "local-qwen38";
+    const backendPick = isPrimeLocalPick
+      ? primeBackendFor(savedQuant, savedEnh)
+      : null;
+    // Variant id anchoring the combined list (5/6) so the shared choice
+    // tables stay valid even though the per-variant lists are bypassed.
+    const beVariant = backendPick ? parseInt(backendPick.split(":")[0], 10) : NaN;
     const qEnhRaw =
       mode === "zero" || mode === "disabled"
         ? parseInt(
@@ -7739,12 +7831,20 @@ async function refreshDeepy() {
               .value,
             10,
           )
-        : mode === "prime" &&
-            ((opts.querySelector("input[name=deepyEngine]:checked") || {}).value ===
-              "local-qwen38")
-          ? 5
+        : isPrimeLocalPick
+          ? beVariant
           : NaN;
-    renderDeepyQuant([3, 4, 5].includes(qEnhRaw) ? qEnhRaw : null, savedQuant);
+    renderDeepyQuant(
+      [3, 4, 5, 6].includes(qEnhRaw) ? qEnhRaw : null,
+      savedQuant,
+      backendPick,
+    );
+    // LLM Engines setup belongs to the remote group — hidden while a local
+    // engine is picked so each group only shows its own follow-ups.
+    const llmCard = $("llmEnginesCard");
+    if (llmCard)
+      llmCard.style.display =
+        mode === "prime" && !isPrimeLocalPick ? "" : "none";
     // Both Apply buttons (Deepy card + Prompt enhancement card) share one
     // coherent config write, so they enable/disable together.
     for (const b of [applyBtn, promptApplyBtn]) {
@@ -7781,6 +7881,16 @@ async function refreshDeepy() {
   ]) {
     $(id)?.addEventListener("change", syncApply);
   }
+  // Combined Prime-local backend picker has its own handler: the pick must
+  // land in _primeBackend BEFORE syncApply re-renders, or the generic path
+  // would paint the saved pick back over it.
+  $("deepyPrimeBackendSelect")?.addEventListener("change", (e) => {
+    const v = String((e.target || {}).value || "");
+    _primeBackend = /^(5:(gguf|gguf_q3|gguf_q2|gguf_ptq1)|6:(gguf|gguf_q8))$/.test(v)
+      ? v
+      : null;
+    syncApply();
+  });
   syncApply();
 
   // One shared write for both cards: reads the whole panel state and applies
@@ -7789,8 +7899,7 @@ async function refreshDeepy() {
     const mode =
       (document.querySelector("input[name=deepyMode]:checked") || {}).value ||
       "disabled";
-    const eng = (opts.querySelector("input[name=deepyEngine]:checked") || {})
-      .value;
+    const eng = deepyEngineChecked().value;
     const enh = (
       enhancerOpts.querySelector("input[name=deepyEnhancer]:checked") || {}
     ).value;
@@ -7801,20 +7910,42 @@ async function refreshDeepy() {
       reset_mode: ($("deepySessionReset") || {}).value || "new_session",
       gallery_media_mode: ($("deepySessionGallery") || {}).value || "link",
     };
-    // Quant only when its selector is visible (local Qwen engine) — hidden
-    // means preserve whatever WanGP already has.
+    // Quant + variant: Prime + local Qwen3.8 reads the single combined
+    // backend picker ("id:quant"); Zero/Disabled read the local-model radios
+    // + quant selector. Hidden controls mean preserve whatever WanGP has.
     const quantWrap = $("deepyQuantWrap");
     const quantSel = $("deepyQuantSelect");
-    const quant =
-      quantWrap && quantWrap.style.display !== "none" && quantSel && quantSel.value
+    const beSel = $("deepyPrimeBackendSelect");
+    const beWrap = $("deepyPrimeBackendWrap");
+    const primeBackend =
+      mode === "prime" &&
+      eng === "local-qwen38" &&
+      beWrap &&
+      beWrap.style.display !== "none" &&
+      beSel &&
+      /^(5:(gguf|gguf_q3|gguf_q2|gguf_ptq1)|6:(gguf|gguf_q8))$/.test(beSel.value || "")
+        ? String(beSel.value)
+        : null;
+    const quant = primeBackend
+      ? primeBackend.split(":")[1]
+      : quantWrap && quantWrap.style.display !== "none" && quantSel && quantSel.value
         ? quantSel.value
         : null;
-    // Prompt-enhancement UI: "1" = Enhance Prompt button, "0" = Automatic.
+    // Prime + local writes the picked variant (27B id 5 / 9B id 6), never a
+    // stale Zero-mode radio hiding in the hidden enhancer block.
+    const enhForWrite =
+      primeBackend != null
+        ? parseInt(primeBackend.split(":")[0], 10)
+        : enh
+          ? parseInt(enh, 10)
+          : null;
+    // Prompt-enhancement UI: "1" = Manual Button Only, "0" = Manual Button +
+    // Automatic on Generation (the button stays in both modes).
     const enhancerMode = ($("deepyEnhancerMode") || {}).value || "1";
     const r = await window.w2gp.deepySet(
       mode,
       eng,
-      enh ? parseInt(enh, 10) : null,
+      enhForWrite,
       sessions,
       quant,
       enhancerMode,
@@ -7907,6 +8038,7 @@ function deepyWebProfileToUi(profile) {
       claude: "claude-code",
       codex: "codex",
       qwen38_27b: "local-qwen38",
+      qwen38_9b: "local-qwen38",
     }[profile] || null
   );
 }
@@ -7914,7 +8046,7 @@ function deepyWebProfileToUi(profile) {
 // Resolve which Prime engine a Deepy Web start should boot: the SAVED Prime
 // engine when one is configured (never silently switched to OpenCode), else
 // the panel default (OpenCode) when installed, else any installed remote,
-// else local Qwen3.8 27B (the boot verifies weights fail-closed). Returns
+// else local Qwen3.8 9B/27B (the boot verifies weights fail-closed). Returns
 // { engine } or { error } — the caller blocks the start on error instead of
 // writing a broken config.
 async function resolveDeepyWebPrimeEngine() {
@@ -7951,7 +8083,7 @@ async function resolveDeepyWebPrimeEngine() {
   for (const id of ["claude-code", "codex"]) {
     if (engineReady(id)) return { engine: id };
   }
-  // Last resort: local Prime — deepy_web_start verifies the 27B weights and
+  // Last resort: local Prime — deepy_web_start verifies the 9B/27B weights and
   // blocks with an actionable error when they are missing.
   return { engine: "local-qwen38" };
 }

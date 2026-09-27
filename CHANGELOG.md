@@ -4,6 +4,26 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.8.4] — 2026-09-27
+
+- Upstream Wan2GP `v13.14` (Sep 27, community release): GGUF kernel floor
+  1.0.23 → **1.0.25** (INT8-verified speculative decoding for Q4_K / Bonsai
+  PTQ1_0, SM120 async path). Sync / override / overview target the 1.0.25
+  builds (`gguf` cu130/py311 + `gguf_cu128` cu128/py310); 1.0.23/1.0.24 now
+  flag stale. HIP opt-in bumped to `1.0.25+torch210rocm714`.
+- Local Deepy Prime accepts **Qwen3.8 9B Heretic** as well as 27B: weights
+  probe covers both asset dirs (fail-closed only when neither is present),
+  Prime + local shows ONE combined model+quantization list (27B:
+  Q4/Q3/Q2/Bonsai PTQ1; 9B: Q4 ~6.5GB / Q8 ~11GB), Zero/Disabled offer the 9B
+  model (id 6) with matching `qwen38_9b` engine mapping. The Prime panel
+  groups Local (Qwen3.8 radio + its model/quant list beneath it) and Remote
+  (Codex/Claude/OpenCode radios + LLM Engines setup card, hidden while a
+  local engine is picked), mirroring Zero's model-then-quantization order.
+- Claude Code bridge pin `0.1.40` → `0.1.66` (per upstream `REMOTE_LLMS.md`).
+- Fix perpetual "update available": update badge + Sync behind-warning now
+  check containment (`merge-base --is-ancestor`) instead of hash equality,
+  so a local merge commit no longer reads as behind forever; Update tries
+  `git pull --ff-only` first and only merges when diverged.
 - Console: consecutive tqdm progress prints (e.g. Wan2GP's `Generating: 0%|…`
   LLM meter, one `\n`-terminated row per refresh) collapse into a single
   in-place row instead of flooding the log — 0% → 100% ticks on one line in

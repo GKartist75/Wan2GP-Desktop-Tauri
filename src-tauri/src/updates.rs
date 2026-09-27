@@ -144,6 +144,35 @@ pub async fn get_wangp_upstream_info() -> serde_json::Value {
     serde_json::json!({"error": "Could not fetch updates — GitHub API rate limited or offline. Add a GitHub token in Manage settings."})
 }
 #[tauri::command]
+pub fn wangp_contains_commit(hash: String) -> serde_json::Value {
+    // Containment probe for the dashboard "update available" dot and the Sync
+    // behind-warning: pure hash equality (`tip != HEAD`) never clears once the
+    // checkout carries a local merge commit — every launcher `git pull` that
+    // can't fast-forward manufactures one, so HEAD permanently differs from
+    // the upstream tip even when it CONTAINS it. `merge-base --is-ancestor`
+    // answers the real question ("is upstream already merged here?").
+    // Returns {contained: true/false/null}; null = unknown (bad hash, shallow
+    // clone without the ancestors, git failure) so callers keep the legacy
+    // equality behavior instead of hiding a real update.
+    let h = hash.trim().to_lowercase();
+    if h.len() < 4 || h.len() > 40 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+        return serde_json::json!({"contained": null});
+    }
+    let repo = get_repo_dir();
+    if !repo.join(".git").exists() {
+        return serde_json::json!({"contained": null});
+    }
+    match silent_command("git")
+        .args(["merge-base", "--is-ancestor", &h, "HEAD"])
+        .current_dir(&repo)
+        .output()
+    {
+        Ok(o) if o.status.success() => serde_json::json!({"contained": true}),
+        Ok(o) if o.status.code() == Some(1) => serde_json::json!({"contained": false}),
+        _ => serde_json::json!({"contained": null}),
+    }
+}
+#[tauri::command]
 pub async fn get_wangp_version() -> serde_json::Value {
     // Mirrors Electron: parse the WanGP version from the upstream README.
     let url = "https://raw.githubusercontent.com/deepbeepmeep/Wan2GP/main/README.md";

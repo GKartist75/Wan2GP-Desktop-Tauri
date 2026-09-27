@@ -78,7 +78,7 @@ From `INSTALLATION.md` — the launcher automates all of this; listed so you kno
 | PyTorch | 2.10.0 + CUDA 13.0/13.1 (cu130, needs R580+ driver) | 2.7.1 + CUDA 12.8 (no R580 needed) | 2.12 ROCm 7.15 TheRock | CPU / MPS (SDPA only) |
 | Triton | `triton-windows>=3.6,<3.7` (torch 2.10); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | auto | — |
 | Attention | Sage 2.2.0 (RTX 30+, Ampere+) / Sage 1.0.6 (RTX 20) / Flash 2.8.3 / Sparge 0.1.0 | SDPA | — | SDPA |
-| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.23, LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2, Comfy Kitchen via requirements | bitsandbytes | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back) | — |
+| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.25, LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2, Comfy Kitchen via requirements | bitsandbytes | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back) | — |
 
 Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
 `int8_kernels`: Auto tries Kitchen CUDA/HIP → Triton → PyTorch; `kernel_precision`
@@ -493,9 +493,9 @@ Apply via Settings dropdown -> Apply; missing LoRAs auto-download on first gen.
 
 ## Deepy + Prompt Enhancer
 
-* Zero = fast single tasks, small Qwen OK. Prime = multi-step plans, needs Qwen3.8-27B local or Codex/Claude/OpenCode remote (remote needs Prime).
+* Zero = fast single tasks, small Qwen OK. Prime = multi-step plans, needs Qwen3.8-9B/27B local or Codex/Claude/OpenCode remote (remote needs Prime).
 * Shared engine for Deepy + Enhancer + visual inspect. Remote saves VRAM, sends prompts/images/frames off-machine.
-* Local Qwen quant: 3.5 `Quanto Int8` (quality) vs `GGUF Q4` (lean); 27B `Q4` (best) / `IQ3_S` (balanced) / `Q2` (leanest) / Bonsai PTQ1 (~10 GB + INT8 KV).
+* Local Qwen quant: 3.5 `Quanto Int8` (quality) vs `GGUF Q4` (lean); 27B `Q4` (best) / `IQ3_S` (balanced) / `Q2` (leanest) / Bonsai PTQ1 (~10 GB + INT8 KV); 9B Heretic `Q4` (~6.5 GB) / `Q8` (~11 GB, closest to full precision). Prime + local shows one combined model+quantization list.
 * VRAM mode: `unload ASAP` (safest) / `unload if needed` (balanced) / `always loaded` (fast Deepy, less gen VRAM).
 * Context 16K Zero / 32K Prime / 48K+ long Prime; `Summarize` (>=32K) / `Summarize+Thinking` (>=48K).
 * Sessions: Disabled (temp) / selectable Workspace (share) / dedicated Workspace (self-contained, robot icon). Gallery media: keep-links (lean) vs copy-into-session (portable).
@@ -506,7 +506,7 @@ Apply via Settings dropdown -> Apply; missing LoRAs auto-download on first gen.
 > Qwen, no remote LLM), `prime: enabled=1/type=prime` (requires remote LLM
 > engine). Local model ids: `1=Florence2+Llama3.2-3B` (Disabled default),
 > `2=Florence2+Llama-Joy-8B`, `3=Qwen3.5-4B` (recommended), `4=Qwen3.5-9B`,
-> `5=Qwen3.8-27B`; Zero requires `{3,4,5}`. Engines: OpenCode = universal
+> `5=Qwen3.8-27B`, `6=Qwen3.8-9B Heretic`; Zero requires `{3,4,5,6}`, Prime local needs `{5,6}`. Engines: OpenCode = universal
 > provider over HTTP (`opencode serve 127.0.0.1:4096`, install outside WanGP via
 > npm, `/connect` for providers, auto-started by WanGP); Claude Code needs
 > `claude-agent-sdk==0.1.66` pinned bridge; Codex via `codex` binary + browser

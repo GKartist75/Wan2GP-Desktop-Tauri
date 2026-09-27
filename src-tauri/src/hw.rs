@@ -497,17 +497,18 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
     "CPU".into()
 }
 
-/// Docs-prescribed GGUF kernel floor: 1.0.23 adds native short-batch GGUF
-/// projection fusion and retains the precompiled RTX50xx (SM120) async-copy
-/// kernels for Q8 prefill and decode/verification
+/// Docs-prescribed GGUF kernel floor: 1.0.25 adds INT8-verified speculative
+/// decoding for Q4_K / Bonsai PTQ1_0 (9% faster Qwen3.8 Q4 vs 1.0.23, 15% faster
+/// Bonsai vs 1.0.24 on RTX 5090) and retains the precompiled RTX50xx (SM120)
+/// async-copy kernels for Q8 prefill and decode/verification
 /// (docs/INSTALLATION.md#gguf-llamacpp-cuda-kernels) and is required for Deepy
 /// Prime Bonsai PTQ1 at ~10GB VRAM. Older builds silently fall back to
 /// slow PyTorch SDPA on Deepy decode (6 tok/s vs 37: #2274, #2193), hit the
 /// Q2_K fallback assert (#2235), or 404 outright on stale URLs (#2249).
-/// Anything older resolves to the known-good 1.0.23 wheel; the floor,
+/// Anything older resolves to the known-good 1.0.25 wheel; the floor,
 /// newer builds, and unparseable URLs pass through, so the day upstream
 /// flips setup_config forward we follow it with no code change.
-pub(crate) const GGUF_FLOOR: &str = "1.0.23";
+pub(crate) const GGUF_FLOOR: &str = "1.0.25";
 
 /// Numeric dotted-version compare: true when a > b ("1.0.21" > "1.0.2",
 /// "3.8.0" > "3.3", "3.3.1" > "3.3"). Non-numeric tails ignored,
@@ -584,7 +585,7 @@ pub(crate) fn setup_config_gguf_version(cfg: &serde_json::Value) -> Option<Strin
 }
 
 /// Effective GGUF floor: the hardcoded docs floor raised to whatever
-/// setup_config already pins (max). The day upstream ships 1.0.24 in
+/// setup_config already pins (max). The day upstream ships 1.0.26 in
 /// setup_config, Sync/override/overview follow it with zero launcher
 /// changes; stale checkouts still get the hardcoded floor. Pure +
 /// unit-tested.
@@ -701,31 +702,38 @@ pub(crate) fn parse_pip_show_versions(text: &str) -> Option<String> {
 }
 
 /// GGUF wheel URLs shipped by upstream (docs/INSTALLATION.md#gguf-llamacpp-cuda-kernels).
-/// Upstream 5533384 splits the component: `gguf` (cu130/py311) + `gguf_cu128`
-/// (cu128/py310), both at 1.0.23. Profiles still list `gguf`; setup.py remaps
-/// via (torch_k, py_k) — the launcher mirrors that by picking the URL matching
-/// the stale link's py tag (py310 → cu128 build, else cu130 build).
+/// Upstream splits the component: `gguf` (cu130/py311) + `gguf_cu128`
+/// (cu128/py310), both at 1.0.25 (v13.1315/1.0.25 wave). Profiles still list
+/// `gguf`; setup.py remaps via (torch_k, py_k) — the launcher mirrors that by
+/// picking the URL matching the stale link's py tag (py310 → cu128 build,
+/// else cu130 build).
 /// Both carry upstream's `--no-deps` prefix verbatim (setup.py installs
 /// `pip {cmd}` = `pip --no-deps <wheel>` — preserves the torch env);
 /// install.rs splits the cmd into separate pip argv items.
-const GGUF_1023_WIN_PY311: &str = "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
-const GGUF_1023_WIN_PY310: &str = "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch271cu128py310-cp310-cp310-win_amd64.whl";
-/// Back-compat aliases: older call sites/tests reference the 1022 names.
+const GGUF_1025_WIN_PY311: &str = "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+const GGUF_1025_WIN_PY310: &str = "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch271cu128py310-cp310-cp310-win_amd64.whl";
+/// Back-compat aliases: older call sites/tests reference the 1022/1023 names.
 #[allow(dead_code)]
-const GGUF_1022_WIN_PY311: &str = GGUF_1023_WIN_PY311;
+const GGUF_1023_WIN_PY311: &str = GGUF_1025_WIN_PY311;
 #[allow(dead_code)]
-const GGUF_1022_WIN_PY310: &str = GGUF_1023_WIN_PY310;
+const GGUF_1023_WIN_PY310: &str = GGUF_1025_WIN_PY310;
+#[allow(dead_code)]
+const GGUF_1022_WIN_PY311: &str = GGUF_1025_WIN_PY311;
+#[allow(dead_code)]
+const GGUF_1022_WIN_PY310: &str = GGUF_1025_WIN_PY310;
 /// Experimental AMD HIP wheel (docs/INSTALLATION.md, Sep 2026): RX 9070
 /// gfx1201 on torch 2.10.0+rocm7.14.0. Same dist name as the CUDA wheel —
 /// pick by backend, never mix. Sync-kernels-only opt-in via
 /// install_hip_gguf_wheel; the GGUF floor below must never swap HIP->CUDA.
-/// NOTE: upstream 5533384 did NOT bump the HIP wheel — it stays 1.0.22.
-pub(crate) const GGUF_1022_WIN_PY311_HIP: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.22/llamacpp_gguf_cuda-1.0.22%2Btorch210rocm714py311-cp311-cp311-win_amd64.whl";
-/// GGUF floor toward the documented 1.0.23 build (short-batch projection
-/// fusion + RTX50 SM120 kernels, 50-100% Deepy decode speedup, Deepy Prime
-/// Bonsai PTQ1 support).
+/// NOTE: upstream v13.1315 bumped the HIP wheel to 1.0.25.
+pub(crate) const GGUF_1025_WIN_PY311_HIP: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210rocm714py311-cp311-cp311-win_amd64.whl";
+#[allow(dead_code)]
+pub(crate) const GGUF_1022_WIN_PY311_HIP: &str = GGUF_1025_WIN_PY311_HIP;
+/// GGUF floor toward the documented 1.0.25 build (INT8-verified speculative
+/// decoding for Q4_K / Bonsai PTQ1_0 + RTX50 SM120 kernels, 50-100% Deepy
+/// decode speedup, Deepy Prime Bonsai PTQ1 support).
 /// setup_config.json lags (1.0.14 and older in the wild, verified Sep 2026),
-/// so anything below the floor swaps to 1.0.23 — but the
+/// so anything below the floor swaps to 1.0.25 — but the
 /// floor, anything newer, and non-GGUF URLs pass through untouched, so the
 /// day upstream flips setup_config we follow it verbatim with no code
 /// change (same shape as the Sage post4/post6 swap in sync_kernels).
@@ -742,8 +750,8 @@ pub(crate) fn apply_gguf_override(url: &str) -> String {
 /// Config-aware GGUF override (preferred wherever setup_config is loaded):
 /// swaps stale pins to upstream's OWN fresh pin when setup_config already
 /// carries one (py tag picks gguf vs gguf_cu128, mirroring setup.py), else
-/// falls back to the hardcoded docs build. A future 1.0.24 therefore flows
-/// through with zero launcher changes; stale checkouts still get 1.0.23.
+/// falls back to the hardcoded docs build. A future 1.0.26 therefore flows
+/// through with zero launcher changes; stale checkouts still get 1.0.25.
 /// Pure + unit-tested.
 pub(crate) fn apply_gguf_override_cfg(url: &str, cfg: &serde_json::Value) -> String {
     let low = url.to_ascii_lowercase();
@@ -783,9 +791,9 @@ pub(crate) fn gguf_swap_target(cfg: &serde_json::Value, url: &str) -> String {
         }
     }
     if url.contains("py310") {
-        GGUF_1023_WIN_PY310.into()
+        GGUF_1025_WIN_PY310.into()
     } else {
-        GGUF_1023_WIN_PY311.into()
+        GGUF_1025_WIN_PY311.into()
     }
 }
 /// Floor-parameterized GGUF override (pure floor compare + hardcoded docs
@@ -806,9 +814,9 @@ pub(crate) fn apply_gguf_override_with(url: &str, floor: &str) -> String {
         return url.to_string();
     }
     if url.contains("py310") {
-        GGUF_1023_WIN_PY310.into()
+        GGUF_1025_WIN_PY310.into()
     } else {
-        GGUF_1023_WIN_PY311.into()
+        GGUF_1025_WIN_PY311.into()
     }
 }
 
@@ -994,11 +1002,11 @@ mod known_vram_tests {
 mod gguf_override_tests {
     use super::apply_gguf_override;
     #[test]
-    fn swaps_stale_for_1023() {
+    fn swaps_stale_for_1025() {
         let old_win = "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.14+torch210cu130py311-cp311-cp311-win_amd64.whl";
         let new = apply_gguf_override(old_win);
         assert!(
-            new.contains("gguf-v1.0.23") && new.contains("1.0.23"),
+            new.contains("gguf-v1.0.25") && new.contains("1.0.25"),
             "got {new}"
         );
         assert!(!new.contains("1.0.14"));
@@ -1006,12 +1014,12 @@ mod gguf_override_tests {
             .replace("py311", "py310")
             .replace("torch210cu130py311", "torch271cu128py310");
         assert!(apply_gguf_override(&old_310).contains("torch271cu128py310"));
-        // 1.0.21 and 1.0.22 are now below the floor (docs prescribe 1.0.23).
-        for v in ["1.0.21", "1.0.22"] {
+        // 1.0.21 through 1.0.24 are now below the floor (docs prescribe 1.0.25).
+        for v in ["1.0.21", "1.0.22", "1.0.23", "1.0.24"] {
             let old = old_win.replace("1.0.14", v);
             let swapped = apply_gguf_override(&old);
             assert!(
-                swapped.contains("gguf-v1.0.23") && swapped.contains("1.0.23"),
+                swapped.contains("gguf-v1.0.25") && swapped.contains("1.0.25"),
                 "got {swapped}"
             );
         }
@@ -1019,20 +1027,20 @@ mod gguf_override_tests {
     #[test]
     fn passes_other_urls_through() {
         for u in [
-            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23+torch210cu130py311-cp311-cp311-win_amd64.whl",
+            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25+torch210cu130py311-cp311-cp311-win_amd64.whl",
             // Newer than the floor follows upstream with no swap.
-            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.24/llamacpp_gguf_cuda-1.0.24+torch210cu130py311-cp311-cp311-win_amd64.whl",            "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl",
+            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.26/llamacpp_gguf_cuda-1.0.26+torch210cu130py311-cp311-cp311-win_amd64.whl",            "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl",
         ] { assert_eq!(apply_gguf_override(u), u); }
     }
     #[test]
     fn floor_catches_all_stale_builds() {
         // #2274 (1.0.2 silent SDPA fallback), #2235, #2249 (1.0.13 404):
-        // anything below 1.0.23 resolves to the known-good wheel.
-        for v in ["1.0.2", "1.0.7", "1.0.12", "1.0.13", "1.0.14", "1.0.21", "1.0.22"] {
+        // anything below 1.0.25 resolves to the known-good wheel.
+        for v in ["1.0.2", "1.0.7", "1.0.12", "1.0.13", "1.0.14", "1.0.21", "1.0.22", "1.0.23", "1.0.24"] {
             let u = format!("https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-{v}+torch210cu130py311-cp311-cp311-win_amd64.whl");
             let out = apply_gguf_override(&u);
             assert!(
-                out.contains("gguf-v1.0.23") && out.contains("1.0.23") && out.contains("cp311"),
+                out.contains("gguf-v1.0.25") && out.contains("1.0.25") && out.contains("cp311"),
                 "{v} got {out}"
             );
         }
@@ -1040,33 +1048,33 @@ mod gguf_override_tests {
         let old310 = "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.12+torch271cu128py310-cp310-cp310-win_amd64.whl";
         let out310 = apply_gguf_override(old310);
         assert!(
-            out310.contains("torch271cu128py310") && out310.contains("1.0.23"),
+            out310.contains("torch271cu128py310") && out310.contains("1.0.25"),
             "got {out310}"
         );
     }
     #[test]
     fn effective_floor_follows_setup_config_forward() {
         use super::{apply_gguf_override_cfg, effective_gguf_floor, setup_config_gguf_version};
-        // Current upstream shape: both components at 1.0.23 → floor stays.
+        // Current upstream shape: both components at 1.0.25 → floor stays.
         let cfg = serde_json::json!({
             "components": { "kernels": {
-                "gguf": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch210cu130py311-cp311-cp311-win_amd64.whl" } },
-                "gguf_cu128": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch271cu128py310-cp310-cp310-win_amd64.whl" } }
+                "gguf": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl" } },
+                "gguf_cu128": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch271cu128py310-cp310-cp310-win_amd64.whl" } }
             } }
         });
-        assert_eq!(setup_config_gguf_version(&cfg).as_deref(), Some("1.0.23"));
-        assert_eq!(effective_gguf_floor(&cfg), "1.0.23");
-        // Upstream ships 1.0.24 tomorrow: floor follows with no code change,
-        // and 1.0.23 installs now flag stale.
-        let cfg24 = serde_json::json!({
+        assert_eq!(setup_config_gguf_version(&cfg).as_deref(), Some("1.0.25"));
+        assert_eq!(effective_gguf_floor(&cfg), "1.0.25");
+        // Upstream ships 1.0.26 tomorrow: floor follows with no code change,
+        // and 1.0.25 installs now flag stale.
+        let cfg26 = serde_json::json!({
             "components": { "kernels": {
-                "gguf": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.24/llamacpp_gguf_cuda-1.0.24%2Btorch210cu130py311-cp311-cp311-win_amd64.whl" } }
+                "gguf": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.26/llamacpp_gguf_cuda-1.0.26%2Btorch210cu130py311-cp311-cp311-win_amd64.whl" } }
             } }
         });
-        assert_eq!(effective_gguf_floor(&cfg24), "1.0.24");
-        let u23 = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.23/llamacpp_gguf_cuda-1.0.23%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
-        let swapped = apply_gguf_override_cfg(u23, &cfg24);
-        assert!(swapped.contains("1.0.24"), "got {swapped}");
+        assert_eq!(effective_gguf_floor(&cfg26), "1.0.26");
+        let u25 = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+        let swapped = apply_gguf_override_cfg(u25, &cfg26);
+        assert!(swapped.contains("1.0.26"), "got {swapped}");
         // Stale checkout (1.0.14 pins, no cu128): hardcoded floor still applies.
         let stale = serde_json::json!({
             "components": { "kernels": {

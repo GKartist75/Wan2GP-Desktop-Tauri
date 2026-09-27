@@ -672,6 +672,7 @@
         installUpdate: () => call("install_update"),
         getWangpLocalVersion: () => call("get_wangp_local_version"),
         getWangpUpstreamInfo: () => call("get_wangp_upstream_info"),
+        wangpContainsCommit: (hash) => call("wangp_contains_commit", { hash }),
         getDesktopGitInfo: () => call("get_desktop_git_info"),
         getDesktopVersion: () => call("get_desktop_version"),
         detectElectron: () => call("detect_electron"),
