@@ -9278,6 +9278,17 @@ $("dlss5CheckBtn")?.addEventListener("click", async () => {
         : v && v.state === "not-installed"
           ? "warn"
           : false;
+    const probeBits = [];
+    if (r.dlssgProbe) {
+      probeBits.push(r.dlssgProbe.available ? "✓" : "✗");
+      if (r.dlssgProbe.maxFrames != null)
+        probeBits.push(`${r.dlssgProbe.maxFrames}x max`);
+      if (r.dlssgProbe.runtimeVersion)
+        probeBits.push(r.dlssgProbe.runtimeVersion);
+    }
+    const hagsText =
+      `${r.hags === true ? "on" : r.hags === false ? "off" : "unknown"}` +
+      (probeBits.length ? ` · probe ${probeBits.join(", ")}` : "");
     const lines = [
       `GPU: ${r.gpuName || "unknown"}${r.profile ? ` (${r.profile})` : ""}`,
       `Series seen by upstream: ${r.upstreamSeries || 0} · launcher tier: ${r.fixedSeries || 0}`,
@@ -9287,9 +9298,10 @@ $("dlss5CheckBtn")?.addEventListener("click", async () => {
         (r.files.nrMissing.length || r.files.fgMissing.length
           ? ` — missing: ${[...r.files.nrMissing, ...r.files.fgMissing].join(", ")}`
           : ""),
-      `HAGS: ${r.hags === true ? "on" : r.hags === false ? "off" : "unknown"}` +
-        (r.dlssgProbe ? ` · frame-gen probe: ${r.dlssgProbe.available ? "✓" : "✗"} ${r.dlssgProbe.raw || ""}`.trim() : ""),
+      `HAGS: ${hagsText}`,
     ];
+    if (r.dlssgProbe && r.dlssgProbe.raw)
+      lines.push(`Probe detail: ${r.dlssgProbe.raw}`);
     if (r.workstationMismatch)
       lines.push(
         r.runtimePatch && r.runtimePatch.patched
@@ -9343,14 +9355,7 @@ $("dlss5CheckBtn")?.addEventListener("click", async () => {
           : ""),
       r.files.present === r.files.total,
     );
-    checkRow(
-      "HAGS",
-      `${r.hags === true ? "on" : r.hags === false ? "off" : "unknown"}` +
-        (r.dlssgProbe
-          ? ` · probe: ${r.dlssgProbe.available ? "✓" : "✗"} ${r.dlssgProbe.raw || ""}`.trim()
-          : ""),
-      r.hags !== false,
-    );
+    checkRow("HAGS", hagsText, r.hags !== false);
     if (r.workstationMismatch) {
       const note = document.createElement("div");
       note.className = "pip-advanced-hint";
@@ -9440,18 +9445,22 @@ $("dlss5FixBtn")?.addEventListener("click", async () => {
       : await window.w2gp.dlss5ApplyWorkstationFix();
     if (res && res.ok) {
       showToast(
-        res.already
-          ? "✓ Workstation fix already applied"
-          : reverting
-            ? "✓ Workstation fix reverted — restart Wan2GP"
-            : "✓ Workstation fix applied — restart Wan2GP, then Check compatibility",
+        res.upstream
+          ? "✓ Wan2GP already tiers workstation cards — nothing to patch"
+          : res.already
+            ? "✓ Workstation fix already applied"
+            : reverting
+              ? "✓ Workstation fix reverted — restart Wan2GP"
+              : "✓ Workstation fix applied — restart Wan2GP, then Check compatibility",
       );
       appendLog(
-        res.already
-          ? "[*] Workstation fix already present — nothing changed."
-          : reverting
-            ? "[*] Workstation fix reverted — restart Wan2GP."
-            : "[*] Workstation fix applied — restart Wan2GP, then Check compatibility.",
+        res.upstream
+          ? "[*] Upstream runtime.py already handles workstation cards — no patch needed."
+          : res.already
+            ? "[*] Workstation fix already present — nothing changed."
+            : reverting
+              ? "[*] Workstation fix reverted — restart Wan2GP."
+              : "[*] Workstation fix applied — restart Wan2GP, then Check compatibility.",
       );
     } else showToast("✗ " + ((res && res.error) || "fix failed"));
   } catch (e) {
