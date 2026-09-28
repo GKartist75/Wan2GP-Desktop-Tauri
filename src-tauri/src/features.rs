@@ -34,6 +34,7 @@ pub async fn check_package_updates(
     }
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) {
         if let Some(arr) = v.as_array() {
+            let repo = get_repo_dir();
             let dist_to_key = |d: &str| -> String {
                 match d.to_lowercase().replace('-', "_").as_str() {
                     "triton_windows" => "triton".into(),
@@ -46,7 +47,8 @@ pub async fn check_package_updates(
             };
             let res: Vec<serde_json::Value> = arr.iter().map(|e| {
             let dist = e.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            serde_json::json!({"name": dist_to_key(dist), "dist": dist, "installed": e.get("version").cloned().unwrap_or(serde_json::Value::Null), "latest": e.get("latest_version").cloned().unwrap_or(serde_json::Value::Null)})
+            let pin = pinned_exact_pin(&repo, dist);
+            serde_json::json!({"name": dist_to_key(dist), "dist": dist, "installed": e.get("version").cloned().unwrap_or(serde_json::Value::Null), "latest": e.get("latest_version").cloned().unwrap_or(serde_json::Value::Null), "pinned": pin.is_some(), "pinSource": pin.unwrap_or("")})
         }).collect();
             return Ok(serde_json::Value::Array(res));
         }
@@ -90,6 +92,51 @@ pub(crate) fn required_spec_in_requirements(text: &str, dist: &str) -> Option<St
             return Some(String::new());
         }
         return Some(spec.split_whitespace().next().unwrap_or("").to_string());
+    }
+    None
+}
+/// `<dist>==` token with a left word boundary, case/underscore-insensitive —
+/// for setup_config.json cmd strings (`torch==2.10.0 torchvision==…`).
+pub(crate) fn raw_has_exact_pin(text: &str, dist: &str) -> bool {
+    let needle = dist.to_ascii_lowercase().replace('_', "-");
+    let hay = text.to_ascii_lowercase().replace('_', "-");
+    let mut from = 0;
+    while let Some(pos) = hay[from..].find(&needle) {
+        let start = from + pos;
+        let after = start + needle.len();
+        let left_ok = start == 0
+            || !hay.as_bytes()[start - 1].is_ascii_alphanumeric()
+                && hay.as_bytes()[start - 1] != b'-';
+        if left_ok && hay[after..].starts_with("==") {
+            return true;
+        }
+        from = start + needle.len().max(1);
+    }
+    false
+}
+/// Where `dist` is pinned to an exact version: constraints.txt (any operator —
+/// a deliberate pin surface), requirements.txt (`==` only, bare/`>=` lines are
+/// floors), or a setup_config.json install cmd (the torch stack lives there).
+/// Gates the per-package `↑` upgrade: `pip list --outdated` answers from PyPI,
+/// and PyPI's torch is a CPU build — latest is not the right answer for pinned
+/// dists. Returns the pin's source file.
+pub(crate) fn pinned_exact_pin(repo: &std::path::Path, dist: &str) -> Option<&'static str> {
+    if let Ok(text) = std::fs::read_to_string(repo.join("constraints.txt")) {
+        if required_spec_in_requirements(&text, dist)
+            .is_some_and(|s| !s.is_empty())
+        {
+            return Some("constraints.txt");
+        }
+    }
+    if let Ok(text) = std::fs::read_to_string(repo.join("requirements.txt")) {
+        if required_spec_in_requirements(&text, dist).is_some_and(|s| s.starts_with("==")) {
+            return Some("requirements.txt");
+        }
+    }
+    if let Ok(text) = std::fs::read_to_string(repo.join("setup_config.json")) {
+        if raw_has_exact_pin(&text, dist) {
+            return Some("setup_config.json");
+        }
     }
     None
 }
@@ -370,6 +417,16 @@ pub async fn upgrade_package(
     // AMD guard (same as install_package): refuse ROCm-breaking dists on
     // AMD profiles; vanilla `triton` maps to `triton-windows`.
     let pkg = amd_package_gate(&pkg)?;
+    // Pinned dist: refuse before pip runs. Ok({success:false}) not Err — the
+    // dashboard's ↑ handler awaits the invoke and only renders res.error.
+    if let Some(src) = pinned_exact_pin(&get_repo_dir(), &pkg) {
+        return Ok(serde_json::json!({
+            "success": false,
+            "error": format!(
+                "'{pkg}' is pinned in {src} — manual upgrade blocked (PyPI-latest breaks the pinned stack; PyPI torch is a CPU build). Use GPU Wheels Sync or Restore instead"
+            )
+        }));
+    }
     let Some(py) = env_python_bin() else {
         return Err("python not found".into());
     };
@@ -449,6 +506,78 @@ mod required_spec_tests {
         );
         assert_eq!(required_spec_in_requirements(text, "insightface"), None);
         assert_eq!(required_spec_in_requirements(text, "nope"), None);
+    }
+}
+#[cfg(test)]
+mod pinned_upgrade_tests {
+    use super::{pinned_exact_pin, raw_has_exact_pin};
+    use std::path::PathBuf;
+
+    fn temp_repo(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "wgp-pin-test-{}-{tag}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+    #[test]
+    fn constraints_any_operator_pins_requirements_only_exact() {
+        let dir = temp_repo("constraints");
+        std::fs::write(
+            dir.join("constraints.txt"),
+            "torch==2.10.0+cu130\nhuggingface-hub<2.0\nnumpy==2.1.2\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("requirements.txt"),
+            "gradio==5.29.0\nhuggingface_hub[hf_xet]\ntqdm>=4.0\n",
+        )
+        .unwrap();
+        assert_eq!(pinned_exact_pin(&dir, "torch"), Some("constraints.txt"));
+        assert_eq!(
+            pinned_exact_pin(&dir, "huggingface-hub"),
+            Some("constraints.txt")
+        );
+        assert_eq!(pinned_exact_pin(&dir, "gradio"), Some("requirements.txt"));
+        assert_eq!(pinned_exact_pin(&dir, "tqdm"), None);
+        assert_eq!(pinned_exact_pin(&dir, "pillow"), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+    #[test]
+    fn setup_config_cmd_pins_torch_stack_without_requirements_entry() {
+        let dir = temp_repo("setup_config");
+        std::fs::write(
+            dir.join("setup_config.json"),
+            r#"{"cmd": "torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu130"}"#,
+        )
+        .unwrap();
+        assert_eq!(pinned_exact_pin(&dir, "torch"), Some("setup_config.json"));
+        assert_eq!(
+            pinned_exact_pin(&dir, "torchvision"),
+            Some("setup_config.json")
+        );
+        assert_eq!(pinned_exact_pin(&dir, "triton"), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+    #[test]
+    fn no_files_means_not_pinned() {
+        let dir = temp_repo("empty");
+        assert_eq!(pinned_exact_pin(&dir, "torch"), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+    #[test]
+    fn raw_pin_match_is_boundary_and_case_aware() {
+        let text = "Torch==2.10.0 torchtune==1.0 huggingface_hub<2 gradio_client==1.10.0";
+        assert!(raw_has_exact_pin(text, "torch"));
+        assert!(raw_has_exact_pin(text, "torchtune"));
+        assert!(raw_has_exact_pin(text, "gradio-client"));
+        assert!(!raw_has_exact_pin(text, "gradio"));
+        assert!(!raw_has_exact_pin("xmytorch==1", "torch"));
+        assert!(!raw_has_exact_pin("torchvision==0.25.0", "torch"));
     }
 }
 #[cfg(test)]

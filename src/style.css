@@ -1009,6 +1009,14 @@ html[data-theme="dark"][data-accent="rose"],
  margin-left: 2px;
  white-space: nowrap;
 }
+.spec-pinned {
+ font-size: 0.6875rem;
+ color: var(--text-tertiary);
+ margin-left: 2px;
+ white-space: nowrap;
+ cursor: help;
+ opacity: 0.8;
+}
 .spec-update-btn {
  font-size: 0.6875rem;
  padding: 1px 5px;

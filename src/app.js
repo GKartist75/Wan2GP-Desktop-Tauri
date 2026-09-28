@@ -4105,7 +4105,7 @@ async function refreshDashboard() {
       window._hasActiveEnv = false;
       $("envNameHint")?.classList.remove("hidden");
       document
-        .querySelectorAll(".pkg-install-btn, .spec-latest, .spec-update-btn")
+        .querySelectorAll(".pkg-install-btn, .spec-latest, .spec-update-btn, .spec-pinned")
         .forEach((el) => {
           el.remove();
         });
@@ -4179,7 +4179,7 @@ async function refreshDashboard() {
       $("envNameHint")?.classList.add("hidden");
       // Clear old update/install buttons before re-creating
       document
-        .querySelectorAll(".spec-latest, .spec-update-btn, .pkg-install-btn")
+        .querySelectorAll(".spec-latest, .spec-update-btn, .pkg-install-btn, .spec-pinned")
         .forEach((el) => {
           el.remove();
         });
@@ -4910,6 +4910,8 @@ $("checkPkgUpdatesBtn").addEventListener("click", async function () {
     if (!valEl) return;
     const oldLatest = row.querySelector(".spec-latest");
     if (oldLatest) oldLatest.remove();
+    const oldPin = row.querySelector(".spec-pinned");
+    if (oldPin) oldPin.remove();
     const oldBtn = row.querySelector(".spec-update-btn");
     if (oldBtn) oldBtn.remove();
     if (!r.latest) return;
@@ -4917,7 +4919,17 @@ $("checkPkgUpdatesBtn").addEventListener("click", async function () {
     latestSpan.className = "spec-latest";
     latestSpan.textContent = "→ " + r.latest;
     valEl.after(latestSpan);
-    if (r.installed && r.installed !== r.latest) {
+    if (r.pinned) {
+      // Exact pin (constraints/requirements/setup_config) — PyPI-latest must
+      // not bypass it (PyPI torch is a CPU build). No ↑ offered.
+      const pinSpan = document.createElement("span");
+      pinSpan.className = "spec-pinned";
+      pinSpan.textContent = " · pinned in " + (r.pinSource || "repo pins");
+      pinSpan.title =
+        "Upgrade blocked — this package is pinned to keep the stack intact. Use GPU Wheels Sync or Restore instead.";
+      latestSpan.after(pinSpan);
+    }
+    if (r.installed && r.installed !== r.latest && !r.pinned) {
       row.classList.add("has-update");
       row.classList.remove("up-to-date");
       updateCount++;
