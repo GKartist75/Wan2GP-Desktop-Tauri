@@ -206,6 +206,21 @@ pub fn memory_profile_read() -> serde_json::Value {
     }
     serde_json::json!({"ok": true, "settings": {"video_profile": 4, "image_profile": 4, "audio_profile": 4, "vram_safety_coefficient": 0.8, "vae_config": 0, "transformer_quantization": "int8", "int8_kernels": "auto", "kernel_precision": "fast", "queue_color_scheme": "pastel"}})
 }
+/// Parse the RAM probe output: integer bytes (`68719476736`) or a legacy
+/// localized GB string (`79,8` / `79.8`). Returns GiB rounded to one decimal;
+/// `None` when unparseable or out of range (caller keeps its fallback).
+pub(crate) fn ram_gb_from_probe(stdout: &str) -> Option<f64> {
+    let v: f64 = stdout.trim().replace(',', ".").parse().ok()?;
+    let gb = if v >= 1_000_000.0 {
+        v / 1_073_741_824.0
+    } else {
+        v
+    };
+    if !(0.0..=1024.0).contains(&gb) {
+        return None;
+    }
+    Some((gb * 10.0).round() / 10.0)
+}
 #[tauri::command]
 pub fn auto_tune_detect() -> serde_json::Value {
     // real hardware detect — mirrors services/auto-tune.js detect() but sync via nvidia-smi
@@ -234,12 +249,14 @@ pub fn auto_tune_detect() -> serde_json::Value {
     // (VRAM comes from the 64-bit registry probe in hw.rs; AdapterRAM cap
     // values read as unknown, never as a fake 4GB figure.)
     let gpu_available = cuda_available || (vendor == "AMD" && !name.is_empty());
-    // RAM via powershell fallback
+    // RAM via powershell fallback. Probe returns integer BYTES: a localized
+    // `Round(x/1GB,1)` prints `79,8` on pl-PL, which f64::parse rejects →
+    // silent 32GB fallback (auto-tune then mistiered 79.8GB boxes as low).
     let ram_gb = {
         #[cfg(windows)]
         {
-            silent_command("powershell").args(["-NoProfile","-Command","[math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB,1)"]).output()
-                .ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok()).unwrap_or(32.0)
+            silent_command("powershell").args(["-NoProfile","-Command","(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"]).output()
+                .ok().and_then(|o| ram_gb_from_probe(&String::from_utf8_lossy(&o.stdout))).unwrap_or(32.0)
         }
         #[cfg(not(windows))]
         {
@@ -578,6 +595,23 @@ mod pinned_upgrade_tests {
         assert!(!raw_has_exact_pin(text, "gradio"));
         assert!(!raw_has_exact_pin("xmytorch==1", "torch"));
         assert!(!raw_has_exact_pin("torchvision==0.25.0", "torch"));
+    }
+}
+#[cfg(test)]
+mod ram_probe_tests {
+    use super::ram_gb_from_probe;
+    #[test]
+    fn parses_bytes_and_localized_gb() {
+        assert_eq!(ram_gb_from_probe("68719476736\n"), Some(64.0));
+        assert_eq!(ram_gb_from_probe("85684561555"), Some(79.8));
+        assert_eq!(ram_gb_from_probe("79,8"), Some(79.8));
+        assert_eq!(ram_gb_from_probe(" 31.9 "), Some(31.9));
+    }
+    #[test]
+    fn rejects_garbage_and_out_of_range() {
+        assert_eq!(ram_gb_from_probe(""), None);
+        assert_eq!(ram_gb_from_probe("brak danych"), None);
+        assert_eq!(ram_gb_from_probe("9999"), None);
     }
 }
 #[cfg(test)]
