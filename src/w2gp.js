@@ -689,7 +689,7 @@
         createDesktopShortcut: () => call("create_desktop_shortcut"),
         checkPackageUpdates: (v) =>
             call("check_package_updates", { versions: v }),
-        upgradePackage: (p) => call("upgrade_package", { pkg: p }),
+        upgradePackage: (p, f) => call("upgrade_package", { pkg: p, force: f }),
         installPackage: (p) => call("install_package", { pkg: p }),
         uninstallPackage: (p) => call("uninstall_package", { pkg: p }),
         checkPackage: (p) => call("check_package", { pkg: p }),

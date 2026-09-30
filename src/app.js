@@ -4105,7 +4105,9 @@ async function refreshDashboard() {
       window._hasActiveEnv = false;
       $("envNameHint")?.classList.remove("hidden");
       document
-        .querySelectorAll(".pkg-install-btn, .spec-latest, .spec-update-btn")
+        .querySelectorAll(
+          ".pkg-install-btn, .spec-latest, .spec-update-btn, .spec-pinned",
+        )
         .forEach((el) => {
           el.remove();
         });
@@ -4179,7 +4181,9 @@ async function refreshDashboard() {
       $("envNameHint")?.classList.add("hidden");
       // Clear old update/install buttons before re-creating
       document
-        .querySelectorAll(".spec-latest, .spec-update-btn, .pkg-install-btn")
+        .querySelectorAll(
+          ".spec-latest, .spec-update-btn, .pkg-install-btn, .spec-pinned",
+        )
         .forEach((el) => {
           el.remove();
         });
@@ -4854,6 +4858,44 @@ const _labelToKey = {
   Tokenizers: "tokenizers",
 };
 
+// Pinned-upgrade override dialog (explicit Yes/Cancel — no OK/Cancel trap).
+// openPinOverride resolves true on "Yes, upgrade", false on Cancel/✕/
+// backdrop click. Buttons are wired once here; text via textContent only
+// (package names come from the local pip scan — never HTML).
+let _pinOverrideResolve = null;
+function openPinOverride(title, body, recovery) {
+  const modal = $("pinOverrideModal");
+  if (!modal) return Promise.resolve(false);
+  $("pinOverrideTitle").textContent = title || "Upgrade pinned package?";
+  $("pinOverrideBody").textContent = body || "";
+  $("pinOverrideRecovery").textContent = recovery || "";
+  modal.classList.remove("hidden");
+  return new Promise((resolve) => {
+    _pinOverrideResolve = resolve;
+  });
+}
+function closePinOverride(result) {
+  $("pinOverrideModal")?.classList.add("hidden");
+  if (_pinOverrideResolve) {
+    const r = _pinOverrideResolve;
+    _pinOverrideResolve = null;
+    r(result);
+  }
+}
+$("pinOverrideCloseBtn")?.addEventListener("click", () =>
+  closePinOverride(false),
+);
+$("pinOverrideCancelBtn")?.addEventListener("click", () =>
+  closePinOverride(false),
+);
+$("pinOverrideYesBtn")?.addEventListener("click", () =>
+  closePinOverride(true),
+);
+$("pinOverrideModal")?.addEventListener("click", (ev) => {
+  if (ev.target && ev.target.id === "pinOverrideModal")
+    closePinOverride(false);
+});
+
 $("checkPkgUpdatesBtn").addEventListener("click", async function () {
   this.textContent = "Checking...";
   this.classList.add("check-updates-loading");
@@ -4912,11 +4954,101 @@ $("checkPkgUpdatesBtn").addEventListener("click", async function () {
     if (oldLatest) oldLatest.remove();
     const oldBtn = row.querySelector(".spec-update-btn");
     if (oldBtn) oldBtn.remove();
+    const oldPin = row.querySelector(".spec-pinned");
+    if (oldPin) oldPin.remove();
     if (!r.latest) return;
     const latestSpan = document.createElement("span");
     latestSpan.className = "spec-latest";
     latestSpan.textContent = "→ " + r.latest;
     valEl.after(latestSpan);
+    if (r.pinned) {
+      // Issue #54: GPU-profile / kernel-wheel dists (torch, flash_attn, …)
+      // are launcher-managed — never offer the ↑ arrow, show pinned chip.
+      row.classList.add("up-to-date");
+      row.classList.remove("has-update");
+      const pin = document.createElement("span");
+      pin.className = "spec-pinned";
+      pin.textContent = "pinned";
+      pin.title =
+        r.pinSource === "gpu-profile"
+          ? "GPU-profile managed (PyTorch CUDA/ROCm index) — single upgrade would break CUDA; use reinstall"
+          : r.pinSource === "requirements"
+            ? "Pinned by requirements.txt (" +
+              (r.pinSpec || "tested set") +
+              ") — single upgrade would deviate from the tested set; use restore"
+            : "Kernel wheel managed via setup_config.json — use Sync Kernels / reinstall";
+      pin.title += " Click to upgrade anyway (override).";
+      pin.style.cursor = "pointer";
+      pin.addEventListener("click", async function (ev) {
+        ev.stopPropagation();
+        var distName = r.dist || r.name;
+        var isTorch =
+          r.pinSource === "gpu-profile" && /torch/i.test(distName || "");
+        var recovery =
+          r.pinSource === "gpu-profile"
+            ? isTorch
+              ? "Recovery: reinstall (restore will NOT fix torch)."
+              : "Recovery: reinstall."
+            : r.pinSource === "kernel-wheel"
+              ? "Recovery: Sync Kernels / reinstall."
+              : "Recovery: restore from requirements.txt.";
+        var why =
+          r.pinSource === "gpu-profile"
+            ? "is GPU-profile managed (PyTorch CUDA/ROCm index)"
+            : r.pinSource === "requirements"
+              ? "is pinned by requirements.txt (" +
+                (r.pinSpec || "tested set") +
+                ")"
+              : "is a setup_config.json kernel wheel";
+        if (
+          !(await openPinOverride(
+            "Upgrade " + (r.name || distName) + " to " + r.latest + "?",
+            (r.name || distName) +
+              " " +
+              why +
+              " — upgrading to " +
+              r.latest +
+              " may break the env.",
+            recovery,
+          ))
+        )
+          return;
+        pin.textContent = "...";
+        var res;
+        try {
+          res = await window.w2gp.upgradePackage(distName, true);
+        } catch (e) {
+          res = {
+            success: false,
+            error: (e && e.message) || String(e || "upgrade refused"),
+          };
+        }
+        if (res && res.success) {
+          showToast(
+            "✓ " +
+              (r.name || distName) +
+              " upgraded to " +
+              r.latest +
+              " (override). " +
+              recovery,
+          );
+          setTimeout(refreshDashboard, 2000);
+        } else {
+          pin.textContent = "pinned";
+          showToast(
+            "✗ Upgrade failed: " +
+              (res && res.error ? res.error : "unknown error"),
+          );
+        }
+      });
+      latestSpan.after(pin);
+      const dot = row.querySelector(".spec-dot");
+      if (dot) {
+        dot.classList.remove("installing", "has-update", "error");
+        dot.classList.add("installed");
+      }
+      return;
+    }
     if (r.installed && r.installed !== r.latest) {
       row.classList.add("has-update");
       row.classList.remove("up-to-date");
@@ -4938,7 +5070,15 @@ $("checkPkgUpdatesBtn").addEventListener("click", async function () {
           dot.classList.remove("has-update", "installed", "error");
           dot.classList.add("installing");
         }
-        var res = await window.w2gp.upgradePackage(r.dist || r.name);
+        var res;
+        try {
+          res = await window.w2gp.upgradePackage(r.dist || r.name);
+        } catch (e) {
+          res = {
+            success: false,
+            error: (e && e.message) || String(e || "upgrade refused"),
+          };
+        }
         if (res && res.success) {
           this.textContent = "✓";
           this.classList.add("done");
