@@ -85,7 +85,9 @@ C:\Wan2GP-Models\               ← models library
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.8.8**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.8) *(latest)* — Quieter updates (no more misleading `fatal: no merge to abort` line). Details in [CHANGELOG](CHANGELOG.md).
+- [**v0.8.9**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.9) *(latest)* — Pin-aware environment updates (issue #54): torch / kernel wheels / requirements-capped packages show `pinned` instead of env-breaking upgrade arrows, with a Yes/Cancel override dialog per source. Details in [CHANGELOG](CHANGELOG.md).
+
+- [**v0.8.8**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.8) — Quieter updates (no more misleading `fatal: no merge to abort` line). Details in [CHANGELOG](CHANGELOG.md).
 
 - [**v0.8.7**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.7) — Stash-free updates (upstream always wins, hand edits overwritten), Repair recovers conflicted checkouts, DLSS panel detects the merged upstream workstation fix. Details in [CHANGELOG](CHANGELOG.md).
 

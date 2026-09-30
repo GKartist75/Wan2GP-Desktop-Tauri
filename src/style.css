@@ -1026,6 +1026,18 @@ html[data-theme="dark"][data-accent="rose"],
  background: var(--accent);
  color: var(--surface);
 }
+.spec-pinned {
+ font-size: 0.625rem;
+ padding: 1px 5px;
+ margin-left: 2px;
+ border: 1px solid var(--text-tertiary);
+ border-radius: 3px;
+ background: transparent;
+ color: var(--text-tertiary);
+ cursor: help;
+ white-space: nowrap;
+ line-height: 1.2;
+}
 .spec-dot {
  width: 6px;
  height: 6px;

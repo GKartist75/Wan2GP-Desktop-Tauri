@@ -7,6 +7,283 @@ use crate::{
 use std::path::PathBuf;
 use tauri::Emitter;
 
+/// Packages the launcher manages outside PyPI and therefore must never be
+/// offered as single-package upgrades (issue #54 follow-up).
+///
+/// Two sources, neither visible in `requirements.txt`/`constraints.txt`:
+/// - `gpu-profile`: torch / torchaudio / torchvision / triton(-windows) come
+///   from the pytorch CUDA/ROCm index pinned by the GPU profile. A bare
+///   `pip install --upgrade torch` resolves to the PyPI CPU-only wheel and
+///   silently breaks CUDA (`cuda.is_available() == False`).
+/// - `kernel-wheel`: flash-attn / sageattention / spas-sage-attn / nunchaku /
+///   llamacpp-gguf-cuda / lightx2v-kernel are `setup_config.json`
+///   `components.kernels[*].cmd.win` wheels (e.g. deepbeepmeep kernels).
+///   PyPI has no Windows wheels for flash-attn, so the upgrade resolves to
+///   the sdist and fails in the isolated build env (`No module named
+///   'torch'`); `2.8.3.post1` vs `2.8.3` is packaging-only anyway.
+///
+/// Name match is case-insensitive with `-`/`_` equivalent. A `+cuXXX` /
+/// `+rocm` / `+cuda` local version also pins any dist as `gpu-profile`.
+/// Pure + unit-tested.
+pub(crate) fn managed_pin_source(dist: &str, installed: &str) -> Option<&'static str> {
+    let norm = dist.to_ascii_lowercase().replace('_', "-");
+    let name = norm.as_str();
+    // GPU-profile-indexed dists (pytorch CUDA/ROCm index, not PyPI).
+    if name == "torch" || name == "torchaudio" || name == "torchvision" {
+        return Some("gpu-profile");
+    }
+    if name == "triton" || name == "triton-windows" {
+        return Some("gpu-profile");
+    }
+    // setup_config.json kernel wheels.
+    if name == "flash-attn"
+        || name == "sageattention"
+        || name == "spas-sage-attn"
+        || name == "nunchaku"
+        || name == "llamacpp-gguf-cuda"
+        || name == "lightx2v-kernel"
+    {
+        return Some("kernel-wheel");
+    }
+    // Local CUDA/ROCm build tag (e.g. torch 2.10.0+cu130): managed even
+    // under an unexpected dist name.
+    let local = installed.to_ascii_lowercase();
+    if local.contains("+cu") || local.contains("+rocm") || local.contains("+cuda") {
+        return Some("gpu-profile");
+    }
+    None
+}
+
+/// Dist name without any version pin (`flash-attn==2.8.3` -> `flash-attn`).
+fn dist_name_only(pkg: &str) -> &str {
+    let cut = pkg.find(|c| "<>=!~; [".contains(c));
+    match cut {
+        Some(i) => pkg[..i].trim(),
+        None => pkg.trim(),
+    }
+}
+/// Why a single-package upgrade must be refused (`None` = allowed).
+/// Managed dists (GPU-profile / kernel wheels) are always refused;
+/// requirements-capped dists (`==` pins, ceilings) are refused when the
+/// tested set is known. Floors, bare names, and unknown dists pass.
+/// `force` bypass lives in the command itself — this stays pure. Pure.
+pub(crate) fn refuse_upgrade_reason(pkg: &str, req_text: Option<&str>) -> Option<String> {
+    if let Some(src) = managed_pin_source(dist_name_only(pkg), "") {
+        let hint = match src {
+            "gpu-profile" => "reinstall the GPU profile / PyTorch CUDA build instead",
+            _ => "use Sync Kernels / reinstall instead",
+        };
+        return Some(format!(
+            "refused: '{pkg}' is {src}-managed ({hint}) — single-package upgrade would break the env"
+        ));
+    }
+    if let Some(text) = req_text {
+        if requirements_caps_dist(text, dist_name_only(pkg), None) {
+            return Some(format!(
+                "refused: '{pkg}' is pinned by requirements.txt — single-package upgrade would deviate from the tested set; use restore"
+            ));
+        }
+    }
+    None
+}
+
+/// Numeric dotted-version equality via the shared `version_gt` comparator
+/// (non-numeric tails ignored, missing components zero). Pure.
+fn version_eq(a: &str, b: &str) -> bool {
+    !crate::hw::version_gt(a, b) && !crate::hw::version_gt(b, a)
+}
+
+/// Numeric prefix match for `==1.4.*` and `~=` (`"1.4.7"` matches `"1.4"`).
+/// Pure.
+fn version_prefix_match(version: &str, prefix: &str) -> bool {
+    fn nums(s: &str) -> Vec<u64> {
+        s.split('.')
+            .map(|p| {
+                p.chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect::<String>()
+                    .parse()
+                    .unwrap_or(0)
+            })
+            .collect()
+    }
+    let (v, p) = (nums(version), nums(prefix));
+    if v.len() < p.len() {
+        return false;
+    }
+    v[..p.len()] == p[..]
+}
+
+/// Whether pip's `latest` satisfies one PEP 440 clause (`==0.36.0`,
+/// `>=1.1.1`, `~=1.4.2`, `!=2.0`, …). Unparseable clauses fail open
+/// (satisfied) so an unknown operator never hides an update. Pure.
+fn spec_clause_satisfied(clause: &str, latest: &str) -> bool {
+    let c = clause.trim();
+    if c.is_empty() {
+        return true;
+    }
+    // Operators longest-first so `>=` wins over `>`, `===` over `==`.
+    let (op, ver) = ["===", "==", "!=", "~=", "<=", ">=", "<", ">"]
+        .iter()
+        .find_map(|op| c.strip_prefix(op).map(|v| (*op, v.trim())))
+        .unwrap_or(("", c));
+    // Wildcard prefix (`==1.4.*`).
+    if op == "==" && ver.ends_with(".*") {
+        return version_prefix_match(latest, ver.trim_end_matches(".*"));
+    }
+    match op {
+        "" => true, // bare (shouldn't reach here) — fail open
+        "==" | "===" => version_eq(latest, ver),
+        "!=" => !version_eq(latest, ver),
+        ">=" => version_eq(latest, ver) || crate::hw::version_gt(latest, ver),
+        ">" => crate::hw::version_gt(latest, ver),
+        "<=" => version_eq(latest, ver) || crate::hw::version_gt(ver, latest),
+        "<" => crate::hw::version_gt(ver, latest),
+        "~=" => {
+            // Compatible release: `~=1.4.2` means `>=1.4.2, ==1.4.*`.
+            let mut parts: Vec<&str> = ver.split('.').collect();
+            if parts.len() < 2 {
+                return version_eq(latest, ver)
+                    || crate::hw::version_gt(latest, ver);
+            }
+            parts.pop();
+            let prefix = parts.join(".");
+            (version_eq(latest, ver) || crate::hw::version_gt(latest, ver))
+                && version_prefix_match(latest, &prefix)
+        }
+        _ => true,
+    }
+}
+
+/// Applicable requirement spec for a dist, honoring environment markers.
+/// Unlike `required_spec_in_requirements` (first match wins, markers
+/// ignored), marker-gated lines only apply when `py` is known and the
+/// marker holds; with unknown `py` they are skipped (fail-open: an
+/// unjudgeable line must not hide updates). Pure.
+fn applicable_spec_in_requirements(
+    text: &str,
+    dist: &str,
+    py: Option<(u32, u32)>,
+) -> Option<String> {
+    let want = dist.to_ascii_lowercase().replace('_', "-");
+    for raw_line in text.lines() {
+        let mut line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('-') {
+            continue;
+        }
+        if line.contains("://") {
+            continue;
+        }
+        if let Some(i) = line.find('#') {
+            line = line[..i].trim();
+        }
+        let (req, marker) = match line.find(';') {
+            Some(i) => (line[..i].trim(), Some(line[i + 1..].trim())),
+            None => (line, None),
+        };
+        if let Some(m) = marker {
+            match py {
+                Some(v) => {
+                    if !crate::install::pin_marker_applies(m, v) {
+                        continue;
+                    }
+                }
+                None => continue,
+            }
+        }
+        if req.is_empty() {
+            continue;
+        }
+        let cut = req.find(|c: char| "<>=!~".contains(c) || c.is_whitespace());
+        let (mut name, spec) = match cut {
+            Some(i) => (req[..i].trim(), req[i..].trim()),
+            None => (req, ""),
+        };
+        if let Some(b) = name.find('[') {
+            name = name[..b].trim();
+        }
+        if name.to_ascii_lowercase().replace('_', "-") != want {
+            continue;
+        }
+        if spec.is_empty() {
+            return Some(String::new());
+        }
+        return Some(spec.split_whitespace().next().unwrap_or("").to_string());
+    }
+    None
+}
+
+/// Requirements pin verdict: `Some(spec)` when pip's `latest` would violate
+/// the tested `requirements.txt` spec for this dist (exact `==` pins,
+/// ceilings) — the "update" must not be offered. `None` when upgradable
+/// (floors satisfied, bare names), missing, or unjudgeable. Pure.
+pub(crate) fn requirements_pin_for(
+    text: &str,
+    dist: &str,
+    latest: &str,
+    py: Option<(u32, u32)>,
+) -> Option<String> {
+    let spec = applicable_spec_in_requirements(text, dist, py)?;
+    if spec.is_empty() {
+        return None;
+    }
+    let latest = latest.trim();
+    if latest.is_empty() {
+        return None;
+    }
+    let ok = spec
+        .split(',')
+        .all(|c| spec_clause_satisfied(c.trim(), latest));
+    if ok {
+        None
+    } else {
+        Some(spec)
+    }
+}
+
+/// Whether the requirements spec caps a dist at all (any `==`/`!=`/`<`/
+/// `<=`/`~=` clause). Used by `upgrade_package`, which doesn't know pip's
+/// `latest` — a capped dist refuses every `--upgrade`. Floors (`>=`, `>`)
+/// and bare names are not caps. Pure.
+pub(crate) fn requirements_caps_dist(
+    text: &str,
+    dist: &str,
+    py: Option<(u32, u32)>,
+) -> bool {
+    let Some(spec) = applicable_spec_in_requirements(text, dist, py) else {
+        return false;
+    };
+    spec.split(',').any(|c| {
+        let c = c.trim();
+        let op = ["===", "==", "!=", "~=", "<=", ">=", "<", ">"]
+            .iter()
+            .find(|op| c.starts_with(*op));
+        // Floors (`>=`, `>`), bare fragments, and unknown operators are not
+        // caps; everything else (`==`, `!=`, `<=`, `<`, `~=`) is.
+        match op.map(|s| *s) {
+            Some("===") | Some("==") | Some("!=") | Some("~=") | Some("<=")
+            | Some("<") => true,
+            _ => false,
+        }
+    })
+}
+
+/// Active env's interpreter major.minor from the warm status cache (the
+/// dashboard's version scan already probed it). None when unknown — callers
+/// fail open on marker-gated lines rather than spawning a probe per check.
+fn cached_env_python_version() -> Option<(u32, u32)> {
+    let g = crate::base::LAST_STATUS.get()?.lock().ok()?;
+    let v = g.as_ref()?.2.get("versions")?.get("python")?.as_str()?;
+    let mut it = v.split('.').map(|p| {
+        p.chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse::<u32>()
+            .unwrap_or(0)
+    });
+    Some((it.next()?, it.next()?))
+}
+
 #[tauri::command]
 pub async fn check_package_updates(
     app: tauri::AppHandle,
@@ -44,9 +321,29 @@ pub async fn check_package_updates(
                     other => other.into(),
                 }
             };
+            // Tested-set gate (#54 follow-up): a pip `latest` that violates
+            // requirements.txt must not be offered. Missing file degrades to
+            // the managed-dist gate only.
+            let req_text =
+                std::fs::read_to_string(get_repo_dir().join("requirements.txt")).ok();
+            let py = cached_env_python_version();
             let res: Vec<serde_json::Value> = arr.iter().map(|e| {
             let dist = e.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            serde_json::json!({"name": dist_to_key(dist), "dist": dist, "installed": e.get("version").cloned().unwrap_or(serde_json::Value::Null), "latest": e.get("latest_version").cloned().unwrap_or(serde_json::Value::Null)})
+            let installed = e.get("version").and_then(|v| v.as_str()).unwrap_or("");
+            let latest = e.get("latest_version").and_then(|v| v.as_str()).unwrap_or("");
+            // Managed dists (GPU-profile / kernel wheels) always win: they
+            // are pinned even when requirements.txt is silent about them
+            // (torch / flash_attn are GPU-profile-managed, not PyPI).
+            let pin = managed_pin_source(dist, installed);
+            let (pinned, pin_source, pin_spec) = match pin {
+                Some(src) => (true, src.to_string(), String::new()),
+                None => match req_text.as_deref().and_then(|t| requirements_pin_for(t, dist, latest, py)) {
+                    Some(spec) => (true, "requirements".to_string(), spec),
+                    None => (false, String::new(), String::new()),
+                },
+            };
+            serde_json::json!({"name": dist_to_key(dist), "dist": dist, "installed": e.get("version").cloned().unwrap_or(serde_json::Value::Null), "latest": e.get("latest_version").cloned().unwrap_or(serde_json::Value::Null),
+                "pinned": pinned, "pinSource": pin_source, "pinSpec": pin_spec})
         }).collect();
             return Ok(serde_json::Value::Array(res));
         }
@@ -365,8 +662,20 @@ fn amd_package_gate(pkg: &str) -> Result<String, String> {
 pub async fn upgrade_package(
     app: tauri::AppHandle,
     pkg: String,
+    force: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     pip_spec_ok(&pkg).map_err(|e| format!("blocked: {e}"))?;
+    // Pin guards (issue #54): managed dists and requirements-capped dists
+    // refuse a bare `--upgrade`. `force` (explicit pinned-chip override in
+    // the UI, after a confirm naming the recovery path) skips both guards;
+    // the spec + AMD guards below always apply, even forced.
+    if !force.unwrap_or(false) {
+        let req_text =
+            std::fs::read_to_string(get_repo_dir().join("requirements.txt")).ok();
+        if let Some(reason) = refuse_upgrade_reason(&pkg, req_text.as_deref()) {
+            return Err(reason);
+        }
+    }
     // AMD guard (same as install_package): refuse ROCm-breaking dists on
     // AMD profiles; vanilla `triton` maps to `triton-windows`.
     let pkg = amd_package_gate(&pkg)?;
@@ -493,6 +802,155 @@ mod amd_package_gate_tests {
             amd_package_gate_result("INTEL_XPU", "flash-attn").unwrap(),
             "flash-attn"
         );
+    }
+}
+#[cfg(test)]
+mod managed_pin_source_tests {
+    use super::{dist_name_only, managed_pin_source};
+    #[test]
+    fn issue54_torch_flash_are_managed() {
+        // The exact #54 report: torch 2.10.0+cu130 and flash_attn 2.8.3.
+        assert_eq!(
+            managed_pin_source("torch", "2.10.0+cu130"),
+            Some("gpu-profile")
+        );
+        assert_eq!(managed_pin_source("flash_attn", "2.8.3"), Some("kernel-wheel"));
+        assert_eq!(managed_pin_source("flash-attn", "2.8.3"), Some("kernel-wheel"));
+    }
+    #[test]
+    fn covers_profile_and_kernel_families() {
+        for (dist, src) in [
+            ("torchaudio", "gpu-profile"),
+            ("torchvision", "gpu-profile"),
+            ("triton", "gpu-profile"),
+            ("triton-windows", "gpu-profile"),
+            ("sageattention", "kernel-wheel"),
+            ("spas-sage-attn", "kernel-wheel"),
+            ("spas_sage_attn", "kernel-wheel"),
+            ("nunchaku", "kernel-wheel"),
+            ("llamacpp_gguf_cuda", "kernel-wheel"),
+            ("lightx2v_kernel", "kernel-wheel"),
+        ] {
+            assert_eq!(managed_pin_source(dist, "1.0"), Some(src), "{dist}");
+        }
+        // Case / underscore-insensitive; version pins strip to the dist name.
+        assert_eq!(managed_pin_source("Torch", "2.10.0"), Some("gpu-profile"));
+        assert_eq!(managed_pin_source("FLASH_ATTN", "2.8.3"), Some("kernel-wheel"));
+        assert_eq!(dist_name_only("flash-attn==2.8.3"), "flash-attn");
+        assert_eq!(dist_name_only("torch>=2.10"), "torch");
+        // Local CUDA/ROCm build tags pin even unknown names.
+        assert_eq!(
+            managed_pin_source("something", "1.0+cu130"),
+            Some("gpu-profile")
+        );
+        assert_eq!(
+            managed_pin_source("something", "1.0+rocm7.14"),
+            Some("gpu-profile")
+        );
+        // Plain PyPI packages stay upgradable.
+        assert_eq!(managed_pin_source("diffusers", "0.35.0"), None);
+        assert_eq!(managed_pin_source("transformers", "4.50.0"), None);
+        assert_eq!(managed_pin_source("huggingface-hub", "0.30.0"), None);
+    }
+}
+#[cfg(test)]
+mod requirements_pin_tests {
+    use super::{refuse_upgrade_reason, requirements_caps_dist, requirements_pin_for};
+    const REQS: &str = "# Core AI stack\ndiffusers==0.36.0\ntransformers==4.54.0 #4.53.1\ntokenizers>=0.20.3\nnumpy==2.1.2\nhuggingface_hub[hf_xet]\nrembg[gpu]==2.0.65; platform_system != \"Darwin\"\n";
+    #[test]
+    fn exact_pins_block_newer_latest() {
+        // The live #54 follow-up rows: tested == pins vs pip latest.
+        assert_eq!(
+            requirements_pin_for(REQS, "diffusers", "0.40.0", None),
+            Some("==0.36.0".into())
+        );
+        assert_eq!(
+            requirements_pin_for(REQS, "transformers", "5.17.0", None),
+            Some("==4.54.0".into())
+        );
+        assert_eq!(
+            requirements_pin_for(REQS, "numpy", "2.4.6", None),
+            Some("==2.1.2".into())
+        );
+        // Already at the pin: no update offered, nothing to block.
+        assert_eq!(requirements_pin_for(REQS, "diffusers", "0.36.0", None), None);
+    }
+    #[test]
+    fn floors_bare_and_missing_stay_upgradable() {
+        assert_eq!(requirements_pin_for(REQS, "tokenizers", "0.23.2", None), None);
+        // Upstream leaves huggingface_hub uncapped: 2.0 stays offered.
+        assert_eq!(
+            requirements_pin_for(REQS, "huggingface-hub", "2.0.0", None),
+            None
+        );
+        assert_eq!(requirements_pin_for(REQS, "not-listed", "9.9.9", None), None);
+        assert_eq!(requirements_pin_for(REQS, "diffusers", "", None), None);
+    }
+    #[test]
+    fn markers_evaluated_when_interpreter_known() {
+        // Unknown interpreter: unjudgeable marker line fails open.
+        assert_eq!(requirements_pin_for(REQS, "rembg", "2.0.66", None), None);
+        // Windows + py3.11: `platform_system != "Darwin"` holds → capped.
+        assert_eq!(
+            requirements_pin_for(REQS, "rembg", "2.0.66", Some((3, 11))),
+            Some("==2.0.65".into())
+        );
+        // A python_version-gated line applies per interpreter.
+        let gated = "pkg==1.0; python_version >= \"3.10\"\n";
+        assert_eq!(
+            requirements_pin_for(gated, "pkg", "1.1", Some((3, 11))),
+            Some("==1.0".into())
+        );
+        assert_eq!(requirements_pin_for(gated, "pkg", "1.1", Some((3, 9))), None);
+    }
+    #[test]
+    fn clause_semantics_cover_ranges_and_compat() {
+        let ceil = "pkg<2\n";
+        assert_eq!(
+            requirements_pin_for(ceil, "pkg", "2.0.0", None),
+            Some("<2".into())
+        );
+        assert_eq!(requirements_pin_for(ceil, "pkg", "1.9", None), None);
+        let compat = "pkg~=1.4.2\n";
+        assert_eq!(requirements_pin_for(compat, "pkg", "1.4.7", None), None);
+        assert_eq!(
+            requirements_pin_for(compat, "pkg", "1.5.0", None),
+            Some("~=1.4.2".into())
+        );
+        let wild = "pkg==1.4.*\n";
+        assert_eq!(requirements_pin_for(wild, "pkg", "1.4.7", None), None);
+        assert_eq!(
+            requirements_pin_for(wild, "pkg", "1.5.0", None),
+            Some("==1.4.*".into())
+        );
+    }
+    #[test]
+    fn caps_dist_drives_upgrade_refusal() {
+        assert!(requirements_caps_dist(REQS, "diffusers", None));
+        assert!(requirements_caps_dist(REQS, "numpy", None));
+        assert!(requirements_caps_dist("pkg<2\n", "pkg", None));
+        assert!(requirements_caps_dist("pkg~=1.4.2\n", "pkg", None));
+        // Floors, bare names, and missing entries never refuse.
+        assert!(!requirements_caps_dist(REQS, "tokenizers", None));
+        assert!(!requirements_caps_dist(REQS, "huggingface-hub", None));
+        assert!(!requirements_caps_dist(REQS, "not-listed", None));
+        assert!(!requirements_caps_dist("pkg>1\n", "pkg", None));
+    }
+    #[test]
+    fn refuse_reason_points_at_recovery_path() {
+        // Managed dists refuse even without a requirements file; torch
+        // recovery is reinstall (restore can't fix it).
+        let r = refuse_upgrade_reason("torch", None).unwrap();
+        assert!(r.contains("gpu-profile") && r.contains("reinstall"), "{r}");
+        let r = refuse_upgrade_reason("flash_attn==2.8.3", None).unwrap();
+        assert!(r.contains("kernel-wheel"), "{r}");
+        // Capped dists refuse with a restore pointer; floors pass.
+        let r = refuse_upgrade_reason("diffusers", Some(REQS)).unwrap();
+        assert!(r.contains("requirements.txt") && r.contains("restore"), "{r}");
+        assert_eq!(refuse_upgrade_reason("tokenizers", Some(REQS)), None);
+        assert_eq!(refuse_upgrade_reason("not-listed", Some(REQS)), None);
+        // No file degrades to the managed guard only.
+        assert_eq!(refuse_upgrade_reason("diffusers", None), None);
     }
 }
 #[cfg(test)]

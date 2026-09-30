@@ -4,6 +4,23 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.8.9] — 2026-09-30
+
+- Active Environment updates are now pin-aware (issue #54): GPU-profile
+  dists (torch / torchaudio / torchvision / triton) and `setup_config.json`
+  kernel wheels (flash-attn, sage, sparge, nunchaku, GGUF, lightx2v) show a
+  `pinned` chip instead of an upgrade arrow — a bare PyPI upgrade pulled the
+  CPU-only torch wheel or the uninstallable flash-attn sdist and broke the
+  env. `requirements.txt`-capped packages (`==` pins, ceilings, marker-aware)
+  are pinned the same way; floors and bare names stay upgradable. Both
+  `upgrade_package` paths refuse pinned dists with a recovery pointer.
+- Pinned chips are clickable: an explicit **Yes / Cancel** dialog (no
+  OK/Cancel trap) names the risk and the way back per source — reinstall for
+  torch (restore cannot fix it), Sync Kernels / reinstall for wheels, restore
+  for requirements pins — and only then runs a forced upgrade.
+- Panel hint corrected: restore reinstalls the tested `requirements.txt`; a
+  broken torch needs reinstall.
+
 ## [0.8.8] — 2026-09-27
 
 - Quieter updates: the best-effort `merge --abort` cleanup after a hard

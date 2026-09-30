@@ -977,7 +977,7 @@
             <button class="btn btn-ghost small hide-on-collapse" id="envSetupBtn" style="display:none" title="Open the installer to set up a fresh environment">🧭 Run Setup</button>
             <button class="btn btn-ghost small hide-on-collapse" id="checkPkgUpdatesBtn" title="Check PyPI for package updates" style="margin-left:auto;padding:1px 6px;font-size:0.6125rem;line-height:1.4">↻ Check Updates</button>
           </div>
-          <p class="token-hint" style="margin:6px 12px 0">↻ Check Updates queries PyPI for newer versions. Updating a single package (e.g. torch) can break the env (CUDA mismatch, black frames) — use <em>restore</em> to reinstall the tested <code>requirements.txt</code>.</p>
+          <p class="token-hint" style="margin:6px 12px 0">↻ Check Updates queries PyPI for newer versions. Updating a single package can break the env (CUDA mismatch, black frames) — <em>pinned</em> packages are launcher-managed (click the chip to override at your own risk). Use <em>restore</em> to reinstall the tested <code>requirements.txt</code>; a broken torch needs <em>reinstall</em>.</p>
           <div class="env-detail">
             <div class="env-name-row">
               <span class="env-name" id="envName">—</span>
@@ -1861,6 +1861,22 @@
         <button class="btn btn-ghost" id="backupCancelBtn" title="Cancel the reinstall">Cancel</button>
         <button class="btn btn-ghost" id="backupSkipBtn" title="Wipe everything without any backup">Wipe without backup</button>
         <button class="btn btn-primary" id="backupGoBtn" title="Back up and start the fresh install">Backup &amp; continue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pinned-upgrade override (explicit Yes/Cancel — no OK/Cancel trap) -->
+  <div id="pinOverrideModal" class="modal-overlay hidden">
+    <div class="modal migration-modal">
+      <div class="modal-header">
+        <span class="modal-title" id="pinOverrideTitle">Upgrade pinned package?</span>
+        <button class="modal-close" id="pinOverrideCloseBtn" aria-label="Close" title="Cancel without upgrading">✕</button>
+      </div>
+      <p class="modal-sub" id="pinOverrideBody"></p>
+      <p class="modal-sub" id="pinOverrideRecovery" style="color:var(--signal-amber, #f59e0b)"></p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="pinOverrideCancelBtn" title="Keep the pinned version">Cancel</button>
+        <button class="btn btn-primary" id="pinOverrideYesBtn" title="Upgrade despite the pin">Yes, upgrade</button>
       </div>
     </div>
   </div>
