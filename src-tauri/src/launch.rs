@@ -666,12 +666,12 @@ runpy.run_path(sys.argv[0], run_name='__main__')
         ));
     }
     // AMD GPU profile env from setup_config.json (e.g. HSA_OVERRIDE_GFX_VERSION).
-    // Neither setup.py nor wgp.py exports these today — verified: only
-    // setup_config.json references HSA_OVERRIDE — yet the per-arch values
-    // (11.0.0/11.5.1/12.0.1) exist precisely so TheRock wheels detect the
-    // right gfx target. Set what's configured, remove stale leftovers
-    // (same reconcile pattern as the GGUF knobs above). Values come
-    // verbatim from upstream's file — never invented here.
+    // Upstream removed per-arch env overrides in the ROCm 10 refresh (the
+    // unified AMD profile carries no `env`, and multi-arch wheels resolve
+    // the gfx target themselves), so on current checkouts this only ever
+    // reconciles stale leftovers away (same pattern as the GGUF knobs
+    // above). Values still come verbatim from upstream's file when present
+    // on old checkouts — never invented here.
     {
         let gpu = get_gpu_info_sync();
         let profile = kernel_profile_key(
@@ -810,10 +810,12 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""),
         );
         if profile.starts_with("AMD") {
-            for (k, v) in [
-                ("FLASH_ATTENTION_TRITON_AMD_ENABLE", "TRUE"),
-                ("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1"),
-            ] {
+            // wgp.py sets TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL itself
+            // (setdefault); the launcher keeps a set-if-absent copy so
+            // explicit user overrides always win. FLASH_ATTENTION_TRITON_AMD
+            // is build-time only upstream (aiter submodule build) and is
+            // NOT set at launch; stale values are reconciled away off-AMD.
+            for (k, v) in [("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1")] {
                 if std::env::var(k).is_err() {
                     std::env::set_var(k, v);
                     emit(&format!("[i] GPU profile env: {k}={v}\n"));

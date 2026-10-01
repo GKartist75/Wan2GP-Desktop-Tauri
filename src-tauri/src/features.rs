@@ -456,6 +456,46 @@ pub fn memory_profile_read() -> serde_json::Value {
     }
     serde_json::json!({"ok": true, "settings": {"video_profile": 4, "image_profile": 4, "audio_profile": 4, "vram_safety_coefficient": 0.8, "vae_config": 0, "transformer_quantization": "int8", "int8_kernels": "auto", "kernel_precision": "fast", "queue_color_scheme": "pastel"}})
 }
+/// Parse the RAM probe into GB. The probe emits integer BYTES (culture-proof:
+/// no decimal separator for locales to mangle); legacy decimal-GB strings
+/// ("79,8" pl-PL / "79.8") are also accepted. Returns None on garbage
+/// (empty, non-numeric, multi-separator, non-positive, non-finite) so the
+/// caller falls back to 32.0 instead of tiering on a lie. Pure + unit-tested.
+pub(crate) fn ram_gb_from_probe(raw: &str) -> Option<f64> {
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    // Legacy decimal GB: exactly one dot/comma separator ("79,8" / "79.8").
+    if s.contains('.') || s.contains(',') {
+        if s.matches(['.', ',']).count() != 1 {
+            return None;
+        }
+        let norm: String = s
+            .chars()
+            .map(|c| if c == ',' { '.' } else { c })
+            .collect();
+        let gb: f64 = norm.parse().ok()?;
+        if !gb.is_finite() || gb <= 0.0 {
+            return None;
+        }
+        return Some(gb);
+    }
+    // Integer bytes; sub-KB values are impossible as bytes, so read tiny
+    // plain numbers as GB (defensive — real probes never emit them).
+    if !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let n: f64 = s.parse().ok()?;
+    if !n.is_finite() || n <= 0.0 {
+        return None;
+    }
+    if n < 1024.0 {
+        return Some(n);
+    }
+    Some(n / GB)
+}
 #[tauri::command]
 pub fn auto_tune_detect() -> serde_json::Value {
     // real hardware detect — mirrors services/auto-tune.js detect() but sync via nvidia-smi
@@ -484,12 +524,16 @@ pub fn auto_tune_detect() -> serde_json::Value {
     // (VRAM comes from the 64-bit registry probe in hw.rs; AdapterRAM cap
     // values read as unknown, never as a fake 4GB figure.)
     let gpu_available = cuda_available || (vendor == "AMD" && !name.is_empty());
-    // RAM via powershell fallback
+    // RAM via powershell (locale-proof): the probe returns integer BYTES —
+    // culture-proof by construction — and ram_gb_from_probe() also accepts
+    // the legacy decimal-GB strings ("79,8" pl-PL / "79.8"). The old probe
+    // (`Round(bytes/1GB,1)`) printed `79,8` under pl-PL, f64::parse rejected
+    // the comma, and the silent 32GB fallback mistiered high-RAM machines.
     let ram_gb = {
         #[cfg(windows)]
         {
-            silent_command("powershell").args(["-NoProfile","-Command","[math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB,1)"]).output()
-                .ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok()).unwrap_or(32.0)
+            silent_command("powershell").args(["-NoProfile","-Command","(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"]).output()
+                .ok().and_then(|o| ram_gb_from_probe(&String::from_utf8_lossy(&o.stdout))).unwrap_or(32.0)
         }
         #[cfg(not(windows))]
         {
@@ -613,10 +657,12 @@ pub fn auto_tune_recommend(
 }
 
 // ── Phase 2-5: remaining 65 handlers as thin stubs (real logic behind shell/fs plugins) ──
-/// AMD package gate for the install path: CUDA / bitsandbytes / vanilla
-/// PyPI triton / vanilla spas_sage_attn / PyPI sdist flash-attn break the
-/// TheRock env, so they are refused on AMD profiles with a pointer to
-/// docs/AMD-INSTALLATION.md. Vanilla `triton` maps to `triton-windows`.
+/// AMD package gate for the install path: CUDA / bitsandbytes /
+/// CUDA-built SageAttention 2 / vanilla spas_sage_attn / PyPI sdist
+/// flash-attn break the TheRock env, so they are refused on AMD profiles
+/// with a pointer to docs/AMD-INSTALLATION.md. Vanilla `triton` maps to
+/// `triton-windows`. PyPI `sageattention` 1.x is ALLOWED: it is upstream's
+/// AMD SageAttention 1 stack (`sage: v1`, pure PyPI, needs triton-windows).
 /// Non-AMD profiles pass through untouched (pure + unit-testable core).
 pub(crate) fn amd_package_gate_result(profile: &str, pkg: &str) -> Result<String, String> {
     const GUIDE: &str = "docs/AMD-INSTALLATION.md";
@@ -635,10 +681,32 @@ pub(crate) fn amd_package_gate_result(profile: &str, pkg: &str) -> Result<String
         let pin = pkg[name.len()..].to_string();
         return Ok(format!("triton-windows{pin}"));
     }
+    // Upstream AMD SageAttention 1 stack: pure-PyPI sageattention 1.x
+    // (e.g. `sageattention==1.0.6`). CUDA-built wheels (2.x, `+cu…`
+    // build tags, woct0rdho URLs) stay refused below.
+    if name == "sageattention" {
+        let spec = low.clone();
+        let is_cuda_build = spec.contains("+cu")
+            || spec.contains("cu12")
+            || spec.contains("cu13")
+            || spec.contains("woct0rdho");
+        let is_v2 = spec.contains("==2.") || spec.contains(">=2.") || spec.contains(">2.");
+        if !is_cuda_build && !is_v2 {
+            return Ok(pkg.to_string());
+        }
+    }
     let blocked = name == "bitsandbytes"
         || name == "spas-sage-attn"
         || name == "spas_sage_attn"
         || name == "sageattention"
+        // Wheel-filename form (`sageattention-<ver>+cu…-…whl`, e.g. pasted
+        // from the install guide): CUDA builds only — no ROCm sage wheel
+        // ships under this name.
+        || (name.starts_with("sageattention-")
+            && (name.contains("+cu")
+                || name.contains("cu12")
+                || name.contains("cu13")
+                || name.contains("woct0rdho")))
         || name == "flash-attn"
         || name == "flash_attn"
         || name.contains("cuda")
@@ -774,11 +842,22 @@ mod amd_package_gate_tests {
             amd_package_gate_result("AMD_GFX1201", "triton==3.4.0").unwrap(),
             "triton-windows==3.4.0"
         );
+        // Upstream AMD SageAttention 1 stack: pure-PyPI 1.x passes through.
+        assert_eq!(
+            amd_package_gate_result("AMD_GFX1201", "sageattention==1.0.6").unwrap(),
+            "sageattention==1.0.6"
+        );
+        assert_eq!(
+            amd_package_gate_result("AMD", "sageattention").unwrap(),
+            "sageattention"
+        );
         for bad in [
             "bitsandbytes",
             "spas_sage_attn",
             "spas-sage-attn",
-            "sageattention",
+            // CUDA-built SageAttention 2 stays refused (2.x / +cu tags).
+            "sageattention==2.2.0",
+            "sageattention-2.2.0+cu130torch2.9.0andhigher.post4",
             "flash-attn",
             "flash_attn",
             "nvidia-cuda-runtime-cu12",
@@ -2472,6 +2551,29 @@ mod deepy_roundtrip_tests {
     }
 }
 
+#[cfg(test)]
+mod ram_probe_tests {
+    use super::ram_gb_from_probe;
+    #[test]
+    fn integer_bytes_are_culture_proof() {
+        // 80 GiB and 32 GiB as the new probe emits them (no separator to
+        // mangle); surrounding whitespace tolerated.
+        assert_eq!(ram_gb_from_probe("85899345920"), Some(80.0));
+        assert_eq!(ram_gb_from_probe("  34359738368\n"), Some(32.0));
+    }
+    #[test]
+    fn legacy_decimal_gb_accepted_both_separators() {
+        // The pl-PL "79,8" that used to fall back to 32.0, and "79.8".
+        assert_eq!(ram_gb_from_probe("79,8"), Some(79.8));
+        assert_eq!(ram_gb_from_probe("79.8"), Some(79.8));
+    }
+    #[test]
+    fn garbage_rejected() {
+        for bad in ["", "   ", "abc", "12.3.4", "1,2,3", "12,34.56", "-5", "0", "-79,8", "NaN", "inf"] {
+            assert_eq!(ram_gb_from_probe(bad), None, "{bad:?}");
+        }
+    }
+}
 #[cfg(test)]
 mod autotune_matrix_tests {
     use super::*;

@@ -4,6 +4,18 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+- AMD ROCm 10 refresh (upstream `b8b18f8` / PR #2397): installer follows the
+  unified `AMD` profile — Python 3.12, pinned stable torch 2.13.0+rocm10
+  (`stable.repo.amd.com/whl-next`, per-box `device-gfxXXX` targets from
+  `clinfo` with a profile-based fallback), nightly whl-next fallback,
+  `triton-windows>=3.7,<3.8`, SageAttention 1.0.6 (package gate allows
+  PyPI 1.x, still refuses CUDA-built 2.x wheels), SDPA default. Old
+  `rocm65` / per-family-nightly envs must be recreated, not upgraded.
+  `HSA_OVERRIDE_GFX_VERSION` is no longer set (upstream dropped per-arch
+  overrides; stale values are removed), and `FLASH_ATTENTION_TRITON_AMD_ENABLE`
+  is no longer set at launch (build-time only upstream). HIP GGUF messaging
+  now states the separate torch 2.10 env requirement.
+
 ## [0.8.9] — 2026-09-30
 
 - Active Environment updates are now pin-aware (issue #54): GPU-profile

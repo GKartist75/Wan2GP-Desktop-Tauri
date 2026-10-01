@@ -4584,7 +4584,10 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
         hipBtn.title =
           "Experimental AMD-only: GGUF 1.0.25 torch210rocm714 HIP wheel (upstream targets gfx1201 RX 9070/R9700 — installing on " +
           p +
-          " is unvalidated). Needs torch 2.10.0+rocm7.14.0.";
+          " is unvalidated). Needs a separate torch 2.10.0+rocm7.14.0 env — it does not load in the installer's torch 2.13+rocm10 env.";
+      } else if (hipBtn.title && hipBtn.title.indexOf("does not load") === -1) {
+        hipBtn.title =
+          "Experimental AMD-only: GGUF 1.0.25 torch210rocm714 HIP wheel (gfx1201 RX 9070/R9700). Needs a separate torch 2.10.0+rocm7.14.0 env — it does not load in the installer's torch 2.13+rocm10 env.";
       }
     }
   } catch {}
@@ -5162,12 +5165,13 @@ $("restoreKernelsBtn")?.addEventListener("click", async function () {
   }
 });
 // Experimental AMD HIP GGUF wheel (sync-kernels-only opt-in, gfx1201).
-// Replaces the CUDA GGUF wheel (same dist name); needs torch 2.10+rocm7.14.
+// Replaces the CUDA GGUF wheel (same dist name); needs a separate torch
+// 2.10+rocm7.14 env — it does not load in the installer's 2.13+rocm10 env.
 $("installHipGgufBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   if (
     !confirm(
-      "Install experimental HIP GGUF 1.0.25 (torch210rocm714) for RX 9070/R9700?\n\nNeeds torch 2.10.0+rocm7.14.0 — the wheel rejects other builds at import. Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
+      "Install experimental HIP GGUF 1.0.25 (torch210rocm714) for RX 9070/R9700?\n\nNeeds a SEPARATE torch 2.10.0+rocm7.14.0 env — the wheel rejects other builds at import and does not load in the installer's torch 2.13+rocm10 env. Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
     )
   )
     return;

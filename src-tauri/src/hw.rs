@@ -1238,8 +1238,8 @@ pub(crate) fn build_install_plan(hw: &serde_json::Value) -> serde_json::Value {
         }
     } else if vendor == "AMD" {
         (
-            "ROCm 7.15 (TheRock, default)",
-            "PyTorch 2.12 (ROCm 7.15; HIP 7.14 opt-in)",
+            "ROCm 10 (TheRock, default)",
+            "PyTorch 2.13 (ROCm 10; HIP 7.14 opt-in)",
             String::new(),
         )
     } else if vendor == "APPLE" {
@@ -1376,9 +1376,9 @@ fn comp_label(code: &str) -> String {
     match code {
         "cu128" => "PyTorch 2.7.1 + CUDA 12.8".into(),
         "cu130" => "PyTorch 2.10.0 + CUDA 13.0".into(),
-        // Key stays rocm65 (upstream setup_config.json schema) — the label is
-        // what the installer actually puts down (TheRock 7.15 default; HIP
-        // 7.14 wheel is a sync-kernels-only opt-in on gfx1201).
+        // Key is rocm10 (upstream setup_config.json schema since the
+        // ROCm 10 refresh); rocm65 stays as a fallback label for old checkouts.
+        "rocm10" => "PyTorch 2.13 + ROCm 10 TheRock (HIP 7.14 opt-in)".into(),
         "rocm65" => "PyTorch 2.12 + ROCm 7.15 TheRock (HIP 7.14 opt-in)".into(),
         "mps" => "PyTorch (MPS)".into(),
         "v33" => "Triton < 3.3".into(),
@@ -1533,10 +1533,10 @@ pub(crate) fn hardware_profile_detail(vendor: &str, name: &str, vram_mb: f64) ->
         k if k.starts_with("AMD") => (
             "AMD",
             Prof {
-                python: "3.11.14",
-                torch: "ROCm 7.15 (HIP 7.14 opt-in)",
-                triton: None,
-                sage: None,
+                python: "3.12.10",
+                torch: "ROCm 10 (HIP 7.14 opt-in)",
+                triton: Some("3.7"),
+                sage: Some("1.0.6"),
                 sparge: None,
                 flash: None,
                 kernels: &[],
@@ -1934,18 +1934,19 @@ mod amd_sim_tests {
         );
         assert_eq!(
             plan.get("cuda").and_then(|v| v.as_str()),
-            Some("ROCm 7.15 (TheRock, default)")
+            Some("ROCm 10 (TheRock, default)")
         );
 
-        // Doc per-family float primary (rocm[devel] on /v2/), staging float fallback.
+        // Stable whl-next primary (pinned torch 2.13 + device extras),
+        // nightly whl-next float fallback.
         let (primary, staging) =
             crate::install::amd_therock_torch_cmds("AMD_GFX1201", "AMD Radeon AI PRO R9700")
                 .unwrap();
-        assert!(primary.contains("/v2/gfx120X-all/"), "got {primary}");
-        assert!(primary.contains("rocm[devel]"), "got {primary}");
-        assert!(primary.contains("--pre"), "got {primary}");
+        assert!(primary.contains("stable.repo.amd.com/rocm/whl-next/"), "got {primary}");
+        assert!(primary.contains("2.13.0+rocm10.0.0"), "got {primary}");
+        assert!(primary.contains("device-gfx1201"), "got {primary}");
         assert!(
-            staging.contains("/v2-staging/gfx120X-all/"),
+            staging.contains("nightly.repo.amd.com/rocm/whl-next/"),
             "got {staging}"
         );
 

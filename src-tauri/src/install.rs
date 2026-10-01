@@ -65,6 +65,17 @@ pub(crate) fn pinned_python_wanted() -> String {
             {
                 cands.push(p);
             }
+            // Unified AMD key (current upstream schema): launcher
+            // sub-profiles (AMD_GFX*) resolve through it.
+            if profile.starts_with("AMD") && profile != "AMD" {
+                if let Some(p) = v
+                    .get("gpu_profiles")
+                    .and_then(|g| g.get("AMD"))
+                    .and_then(|p| p.get("python"))
+                {
+                    cands.push(p);
+                }
+            }
             for key in ["python", "python_version"] {
                 if let Some(p) = v.get(key) {
                     cands.push(p);
@@ -99,6 +110,9 @@ pub(crate) fn pinned_python_wanted() -> String {
                     if ver.starts_with("3.11") {
                         return "3.11.14".into();
                     }
+                    if ver.starts_with("3.12") {
+                        return "3.12.10".into();
+                    }
                     if ver.starts_with("3.10") {
                         return "3.10.9".into();
                     }
@@ -112,6 +126,8 @@ pub(crate) fn pinned_python_wanted() -> String {
     let name = gpu.get("name").and_then(|v| v.as_str()).unwrap_or("");
     if kernel_profile_key(vendor, name) == "GTX_10" {
         "3.10.9".into()
+    } else if kernel_profile_key(vendor, name).starts_with("AMD") {
+        "3.12.10".into()
     } else {
         "3.11.14".into()
     }
@@ -1147,40 +1163,134 @@ fn is_network_failure(tail: &str) -> bool {
 }
 
 /// AMD TheRock torch source. Returns (primary, fallback) full torch-step
-/// commands for setup.py's `{pip} {torch_cmd}` splice.
+/// Stable ROCm torch commands for setup.py's `{pip} {torch_cmd}` splice.
 ///
-/// Primary is the doc recipe (docs/AMD-INSTALLATION.md): per-family
-/// `rocm[devel]` float on `https://rocm.nightlies.amd.com/v2/<fam>/` —
-/// `rocm[devel]` carries the ROCm SDK (llvm/clang) our AMD launch env
-/// expects. Fallback is the community v2-staging float (no rocm[devel]:
-/// per-family staging indexes carry no `rocm` win wheels).
+/// Primary is the pinned TheRock stable recipe
+/// (docs/AMD-INSTALLATION.md): torch 2.13.0+rocm10.0.0 on
+/// `https://stable.repo.amd.com/rocm/whl-next/` with per-GPU
+/// `device-gfxXXX` extras. The gfx targets come from the AMD driver's
+/// `clinfo` (same source upstream setup.py uses); when clinfo is
+/// unavailable the launcher falls back to the install profile's
+/// conventional target so setup.py's own clinfo path still resolves it.
+/// Fallback is the nightly whl-next float (`--pre`, unpinned).
 ///
-/// Resolver-ordering note (issue #15 follow-up): the upstream
-/// SageAttention author reports ONE plain-pip `... torch trio +
-/// rocm[libraries,devel]` command can loop forever (rocm-first-then-trio
-/// works). Kept as ONE command anyway: the splice is a single `cmd.win`
-/// string appended to setup.py's `{pip} install` argv (no shell — `&&`
-/// chaining is not expressible there), and setup.py drives it via
-/// `uv pip`, whose resolver differs from plain pip. The fallback stays
-/// untouched. `torch_cmds_stay_single_command` pins this shape.
+/// `--index-url` (not `--extra-index-url`) is required: with
+/// `--extra-index-url` pip prefers the newer CPU-only PyTorch from PyPI
+/// and silently installs that instead (upstream doc warning).
+/// Pure helper except for the clinfo probe; unit-tested via
+/// `amd_device_extras_for_targets`.
 pub(crate) fn amd_therock_torch_cmds(profile: &str, gpu_name: &str) -> Option<(String, String)> {
-    const V2: &str = "https://rocm.nightlies.amd.com/v2";
-    const STAGE: &str = "https://rocm.nightlies.amd.com/v2-staging";
-    let g = gpu_name.to_uppercase();
-    // Per-family float, per installer profile.
-    let fam: &str = match profile {
-        "AMD_GFX1201" => "gfx120X-all",
-        "AMD_GFX110X" => "gfx110X-all",
-        "AMD_GFX1151" if g.contains("890M") || g.contains("PHOENIX") || g.contains("1150") => {
-            "gfx1150"
-        }
-        "AMD_GFX1151" => "gfx1151",
-        "AMD_GFX103X" => "gfx103X-dgpu",
-        _ => return None,
-    };
-    let primary = format!("--pre torch torchaudio torchvision rocm[devel] --index-url {V2}/{fam}/");
-    let fallback = format!("--pre torch torchvision torchaudio --index-url {STAGE}/{fam}/");
+    if !profile.starts_with("AMD") {
+        return None;
+    }
+    // clinfo unavailable (e.g. driver without clinfo on PATH):
+    // single conventional target per install profile.
+    let extras = amd_device_extras()
+        .unwrap_or_else(|| format!("device-{}", amd_fallback_target(profile, gpu_name)));
+    let primary = format!("\"torch[{extras}]==2.13.0+rocm10.0.0\" \"torchvision[{extras}]==0.28.0+rocm10.0.0\" torchaudio==2.11.0.2+rocm10.0.0 --index-url https://stable.repo.amd.com/rocm/whl-next/");
+    let fallback = format!("--pre \"torch[{extras}]\" \"torchvision[{extras}]\" torchaudio --index-url https://nightly.repo.amd.com/rocm/whl-next/");
     Some((primary, fallback))
+}
+
+/// Conventional single gfx target per install profile / GPU name, used when
+/// `clinfo` is unavailable. Pure + unit-tested (the live path prefers
+/// [`amd_device_extras`] and setup.py re-probes via clinfo at install time).
+pub(crate) fn amd_fallback_target(profile: &str, gpu_name: &str) -> &'static str {
+    let g = gpu_name.to_uppercase();
+    if g.contains("GFX103")
+        || g.contains("RX 6")
+        || ["6300", "6400", "6450", "6500", "6600", "6650", "6700", "6750", "6800", "6850", "6900", "6950"]
+            .iter()
+            .any(|x| g.contains(x))
+    {
+        return "gfx1030";
+    }
+    if profile == "AMD_GFX1201"
+        || g.contains("9070")
+        || g.contains("9060")
+        || g.contains("9700")
+        || g.contains("1201")
+    {
+        return "gfx1201";
+    }
+    // Strix Point 890M / Phoenix narrows to gfx1150 even when the
+    // profile is the broader AMD_GFX1151.
+    if g.contains("1150") || g.contains("890M") || g.contains("PHOENIX") {
+        return "gfx1150";
+    }
+    if profile == "AMD_GFX1151" || g.contains("1151") {
+        return "gfx1151";
+    }
+    // RDNA 3 desktop by card number (names carry no gfx target).
+    if g.contains("7900") {
+        return "gfx1100";
+    }
+    if g.contains("7800") || g.contains("7700") {
+        return "gfx1101";
+    }
+    if g.contains("7600") {
+        return "gfx1102";
+    }
+    if g.contains("780M") || g.contains("760M") || g.contains("1103") {
+        return "gfx1103";
+    }
+    if profile == "AMD_GFX110X" {
+        return "gfx1100";
+    }
+    if profile == "AMD_GFX103X" {
+        return "gfx1030";
+    }
+    // Last resort: installer default target (setup.py re-probes
+    // via clinfo at install time and overrides per-GPU anyway).
+    "gfx1201"
+}
+
+/// `device-gfx...` extras from the AMD driver's `clinfo`
+/// (`"device-gfx1201"` or comma-joined `"device-gfx1036,device-gfx1201"`
+/// on multi-GPU boxes), mirroring upstream setup.py `get_amd_gpus()`.
+/// None when clinfo is missing or reports no GPU target.
+pub(crate) fn amd_device_extras() -> Option<String> {
+    let out = silent_command("clinfo").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    amd_device_extras_for_targets(&text)
+}
+
+/// Pure core of [`amd_device_extras`]: parse clinfo text into the
+/// `device-...` extras string. Boards are tracked per `Device Type:
+/// CL_DEVICE_TYPE_GPU` section; the `Name: gfx...` line yields the target.
+pub(crate) fn amd_device_extras_for_targets(clinfo: &str) -> Option<String> {
+    let mut targets: Vec<String> = Vec::new();
+    let mut is_gpu = false;
+    for line in clinfo.split('\n') {
+        let (key, _, value) = {
+            let mut parts = line.splitn(2, ':');
+            let k = parts.next().unwrap_or("").trim();
+            let v = parts.next().unwrap_or("").trim();
+            (k, ":", v)
+        };
+        if key == "Device Type" {
+            is_gpu = value.contains("CL_DEVICE_TYPE_GPU");
+        } else if is_gpu && key == "Name" && value.starts_with("gfx") {
+            let gfx = value.split(':').next().unwrap_or("").trim().to_string();
+            if !gfx.is_empty() && !targets.contains(&gfx) {
+                targets.push(gfx);
+            }
+            is_gpu = false;
+        }
+    }
+    if targets.is_empty() {
+        return None;
+    }
+    Some(
+        targets
+            .iter()
+            .map(|t| format!("device-{t}"))
+            .collect::<Vec<_>>()
+            .join(","),
+    )
 }
 
 /// Experimental AMD HIP torch source (upstream docs/INSTALLATION.md, Sep 2026):
@@ -1223,18 +1333,17 @@ pub(crate) fn apply_attention_mode_auto(cfg: &mut serde_json::Value) -> bool {
 }
 
 /// Pure helper: pip arg sequence installing triton-windows from the official
-/// PyPI wheel on AMD (`<env python> -m pip install -U triton-windows`).
-/// Float, official wheel only (cp311 wheel confirmed) — no build flags, no git
-/// URLs, no cmake/ninja/setup.py anywhere. If a vanilla `triton` dist is
+/// PyPI wheel on AMD (`<env python> -m pip install -U "triton-windows>=3.7,<3.8"`).
+/// Pinned to the 3.7.x line matching torch 2.13 (upstream setup_config `v38`);
+/// a floating latest could pull a triton major that no longer matches the
+/// ROCm torch. Official wheel only — no build flags, no git URLs, no
+/// cmake/ninja/setup.py anywhere. If a vanilla `triton` dist is
 /// installed it must be uninstalled first: both own the `triton` import
 /// namespace and overwrite each other (documented upstream conflict).
-/// Sep 2026: upstream moved to portable `triton.language.extra.libdevice`
-/// + `nearbyint` (AMD Triton crash fix) — needs triton-windows >= 3.6 on the
-/// torch 2.10 path. Floating latest satisfies this; never pin below 3.6 here.
 /// AMD-gated by the caller; Intel/NVIDIA/CPU flows never call it.
 /// Pure + unit-tested.
 pub(crate) fn triton_windows_pip_args() -> Vec<&'static str> {
-    vec!["-m", "pip", "install", "-U", "triton-windows"]
+    vec!["-m", "pip", "install", "-U", "triton-windows>=3.7,<3.8"]
 }
 
 /// After a successful AMD setup, ensure `<repo>/wgp_config.json` carries
@@ -1260,14 +1369,16 @@ pub(crate) fn ensure_attention_mode_auto(repo: &std::path::Path) -> bool {
     .is_ok()
 }
 
-/// Patch the CLONED setup_config.json's rocm65.win torch command to our
-/// TheRock command (per-family /v2/ doc-recipe float primary, staging float
-/// fallback).
-/// Upstream's entry is stale gfx110x-only 6.5-era wheels. setup.py runs
-/// `{pip} {torch_cmd}` where pip already ends in `install`, so the callers
-/// pass a complete flags + packages + index-URL string. Re-applied every
-/// install (a repo update restores upstream's file) and logged, so drift
-/// is visible.
+/// Patch the CLONED setup_config.json's ROCm torch command to our TheRock
+/// command (pinned stable whl-next primary, nightly whl-next fallback).
+/// Upstream's entry already carries the same recipe with a `{device}`
+/// placeholder that setup.py expands via clinfo; the launcher splices the
+/// fully-resolved per-box command instead so the install log shows the
+/// exact targets. Targets `rocm10` (current schema) with a `rocm65`
+/// fallback for old checkouts. setup.py runs `{pip} {torch_cmd}` where pip
+/// already ends in `install`, so the callers pass a complete flags +
+/// packages + index-URL string. Re-applied every install (a repo update
+/// restores upstream's file) and logged, so drift is visible.
 fn patch_therock_torch_cmd(repo: &std::path::Path, torch_cmd: &str) -> Result<(), String> {
     let path = repo.join("setup_config.json");
     let raw =
@@ -1275,18 +1386,24 @@ fn patch_therock_torch_cmd(repo: &std::path::Path, torch_cmd: &str) -> Result<()
     let mut cfg: serde_json::Value =
         serde_json::from_str(&raw).map_err(|e| format!("setup_config.json invalid: {e}"))?;
     let cmd = torch_cmd.to_string();
-    match cfg
+    let torch = cfg
         .get_mut("components")
-        .and_then(|c| c.get_mut("torch"))
-        .and_then(|t| t.get_mut("rocm65"))
-        .and_then(|r| r.get_mut("cmd"))
-        .and_then(|c| c.get_mut("win"))
-    {
-        Some(slot) => {
-            *slot = serde_json::Value::String(cmd);
+        .and_then(|c| c.get_mut("torch"));
+    let slot = torch.and_then(|t| {
+        if t.get("rocm10").is_some() {
+            t.get_mut("rocm10")
+        } else {
+            t.get_mut("rocm65")
+        }
+    })
+    .and_then(|r| r.get_mut("cmd"))
+    .and_then(|c| c.get_mut("win"));
+    match slot {
+        Some(s) => {
+            *s = serde_json::Value::String(cmd);
         }
         None => return Err(
-            "setup_config.json has no components.torch.rocm65.cmd.win — upstream schema changed"
+            "setup_config.json has no components.torch.rocm10.cmd.win — upstream schema changed"
                 .into(),
         ),
     }
@@ -1302,9 +1419,9 @@ fn patch_therock_torch_cmd(repo: &std::path::Path, torch_cmd: &str) -> Result<()
 /// ONLY — no cmake, no git source builds, no vendored compilers; anything
 /// without an official wheel stays refused by the AMD package gate with a docs
 /// pointer, never built from source).
-/// AMD = TheRock float (`amd_therock_torch_cmds` per-family /v2/ doc-recipe +
-/// staging fallback) + ROCm launch env (launch.rs AMD block) + triton-windows
-/// PyPI wheel (`triton_windows_pip_args`, warn-only) + package gate
+/// AMD = TheRock stable (`amd_therock_torch_cmds` pinned whl-next primary +
+/// nightly fallback) + ROCm launch env (launch.rs AMD block) + triton-windows
+/// 3.7 PyPI wheel (`triton_windows_pip_args`, warn-only) + package gate
 /// (`amd_package_gate_result` in features.rs) + attention auto
 /// (`ensure_attention_mode_auto`).
 /// Intel INTEL_XPU = CPU torch + legacy direct setup.py spawn (no forced
@@ -1315,22 +1432,28 @@ fn patch_therock_torch_cmd(repo: &std::path::Path, torch_cmd: &str) -> Result<()
 /// setup.py profiles the launcher may drive through the setup hook, read from
 /// the CLONED setup_config.json's gpu_profiles keys at runtime (issue #15:
 /// a hardcoded allowlist can't track upstream renames, and forcing an
-/// unknown key would KeyError inside setup.py). RDNA 2 (AMD_GFX103X) has no
-/// upstream key, so it aliases to AMD_GFX110X: all three AMD profiles select
-/// the same rocm65 torch slot (which the launcher patches per-plan) with no
-/// attention/kernel payloads — only HSA_OVERRIDE differs, and the launcher's
-/// own compute probe records the real winner for launch anyway. Without the
-/// alias a Win11 box (no wmic) would fall into Unknown → RTX_40 → CUDA.
+/// unknown key would KeyError inside setup.py). Upstream collapsed the
+/// per-arch AMD_GFX* profiles into a single `AMD` key (ROCm 10 refresh), so
+/// every launcher AMD sub-profile aliases to `AMD`; RDNA 2 (AMD_GFX103X)
+/// has no key of its own anywhere. Without the alias a Win11 box would
+/// fall into Unknown → RTX_40 → CUDA.
 /// Anything else (INTEL_XPU, CPU) keeps the legacy direct setup.py spawn
 /// with its own detection. Pure glue + unit-tested.
 pub(crate) fn forced_setup_profile(repo: &std::path::Path, plan_profile: &str) -> Option<String> {
     let raw = std::fs::read_to_string(repo.join("setup_config.json")).ok()?;
     let cfg: serde_json::Value = serde_json::from_str(&raw).ok()?;
     let profiles = cfg.get("gpu_profiles")?.as_object()?;
-    if plan_profile == "AMD_GFX103X" {
-        return profiles
-            .contains_key("AMD_GFX110X")
-            .then(|| "AMD_GFX110X".to_string());
+    if plan_profile.starts_with("AMD") {
+        // Prefer the exact key (old checkouts still carry AMD_GFX110X…),
+        // else the unified AMD key (current upstream schema); RDNA 2 keeps
+        // its legacy AMD_GFX110X alias on old checkouts.
+        if profiles.contains_key(plan_profile) {
+            return Some(plan_profile.to_string());
+        }
+        if plan_profile == "AMD_GFX103X" && profiles.contains_key("AMD_GFX110X") {
+            return Some("AMD_GFX110X".to_string());
+        }
+        return profiles.contains_key("AMD").then(|| "AMD".to_string());
     }
     profiles
         .contains_key(plan_profile)
@@ -2130,9 +2253,9 @@ pub async fn install(
         }
     }
     // AMD TheRock torch (doc-leading): patch the cloned setup_config.json so
-    // setup.py's own [2/3] torch step installs the per-family /v2/ doc-recipe
-    // float (torch trio + rocm[devel]) instead of the stale gfx110x-only wheels.
-    // NVIDIA path untouched.
+    // setup.py's own [2/3] torch step installs the pinned stable whl-next
+    // recipe (torch 2.13+rocm10 with per-box device-gfx targets) instead of
+    // setup.py's `{device}` placeholder float. NVIDIA path untouched.
     let amd_cmds = if plan["profile"].as_str().unwrap_or("").starts_with("AMD") {
         amd_therock_torch_cmds(
             plan["profile"].as_str().unwrap_or(""),
@@ -2144,35 +2267,36 @@ pub async fn install(
     if let Some((primary, _)) = &amd_cmds {
         match patch_therock_torch_cmd(&repo, primary) {
                 Ok(()) => {
-                    emit(&format!("[*] AMD TheRock torch: per-family /v2/ float (torch trio + rocm[devel])\n{primary}\n"));
+                    emit(&format!("[*] AMD TheRock torch: stable whl-next (torch 2.13+rocm10, per-box device targets)\n{primary}\n"));
                     // gfx1201 HIP alternative: TheRock stays the install stack;
-                    // point RX 9070/R9700 users at the sync-kernels-only HIP opt-in.
+                    // point RX 9070/R9700 users at the sync-kernels-only HIP opt-in
+                    // (separate torch 2.10 env — does not load in this 2.13 env).
                     if plan["profile"].as_str().unwrap_or("") == "AMD_GFX1201" {
                         if let Some(hip) = amd_hip_stable_cmds("AMD_GFX1201") {
-                            emit(&format!("[i] Experimental alternative for gfx1201: HIP torch 2.10+rocm7.14 ({hip}) + HIP GGUF wheel via dashboard Sync kernels → HIP GGUF (exp). Validation pending.\n"));
+                            emit(&format!("[i] Experimental alternative for gfx1201: HIP torch 2.10+rocm7.14 ({hip}) + HIP GGUF wheel via dashboard Sync kernels → HIP GGUF (exp). Separate env only — it does not load in this 2.13 env. Validation pending.\n"));
                         }
                     }
                 }
                 // Fail-closed (issue #15): without the TheRock entry setup.py
-                // installs its stale gfx110x wheels — never run it unpatched.
+                // installs its stock torch entry — never run it unpatched.
                 Err(e) => {
                     #[cfg(windows)]
                     if let Some(old) = saved_path.clone() { std::env::set_var("PATH", old); }
                     clear_setup_child_env();
                     mutating_done();
-                    return Err(format!("AMD install needs setup_config.json's TheRock torch entry, but patching it failed ({e}) — upstream schema changed. setup.py was NOT run: its stale entry would install the wrong torch. Copy diagnostics (System → Troubleshooting) and report this."));
+                    return Err(format!("AMD install needs setup_config.json's TheRock torch entry, but patching it failed ({e}) — upstream schema changed. setup.py was NOT run: its stock entry would install the wrong torch. Copy diagnostics (System → Troubleshooting) and report this."));
                 }
             }
     }
     // setup.py driver (issue #15): setup.py --auto re-detects the GPU
-    // itself via wmic.exe (removed on current Windows 11 → Unknown →
+    // itself (wmic.exe is removed on current Windows 11 → Unknown →
     // RTX_40 → CUDA stack on AMD boxes) and reads VRAM via nvidia-smi
     // only (→ 8GB default). The launcher drives it through a hook module
     // that imports setup.py, applies our verdict to its functions, and
     // calls do_install_auto() directly — upstream setup.py is never
     // modified. The forced key must exist in the CLONED setup_config.json
-    // (checked at runtime; RDNA 2 aliases to AMD_GFX110X — same rocm65
-    // slot, no upstream key of its own). Anything else (INTEL_XPU, CPU)
+    // (checked at runtime; every AMD sub-profile aliases to the unified
+    // AMD key — single rocm10 slot). Anything else (INTEL_XPU, CPU)
     // keeps the legacy direct spawn with setup.py's own detection.
     let forced_profile = forced_setup_profile(&repo, plan["profile"].as_str().unwrap_or(""));
     let hook_path: Option<std::path::PathBuf> = if let Some(key) = forced_profile.as_deref() {
@@ -2450,16 +2574,16 @@ pub async fn install(
             };
             if attempt == 2 {
                 emit("[*] Retrying setup.py (attempt 2 of 2)…\n");
-                // AMD: retry falls back to the community staging float
+                // AMD: retry falls back to the nightly whl-next float
                 // (setup_config.json lives in the repo root,
                 // not the cleared env dir — re-patch here so [2/3] uses it).
                 // The numpy pin below keys off the installed torch build,
-                // so a retry that replaced 7.15 with the staging float
-                // still gets its 1.26.4 pin.
+                // so a retry that replaced the stable pin with the nightly
+                // float still gets its legacy 1.26.4 pin when needed.
                 if let Some((_, staging)) = &amd_cmds {
                     match patch_therock_torch_cmd(&repo, staging) {
-                        Ok(()) => emit(&format!("[*] AMD retry via staging float: {staging}\n")),
-                        Err(e) => emit(&format!("[!] AMD staging patch skipped ({e}).\n")),
+                        Ok(()) => emit(&format!("[*] AMD retry via nightly fallback: {staging}\n")),
+                        Err(e) => emit(&format!("[!] AMD nightly patch skipped ({e}).\n")),
                     }
                 }
             }
@@ -2762,7 +2886,7 @@ pub async fn install(
             probe_modes(&mut winner, &mut last_err, &emit);
             if winner.is_none() && (env == "uv" || env == "venv") {
                 if let Some((_, staging)) = &amd_cmds {
-                    emit("[*] Installed ROCm torch fails compute in both HSA modes — re-seating torch to the staging float…\n");
+                    emit("[*] Installed ROCm torch fails compute in both HSA modes — re-seating torch to the nightly fallback…\n");
                     let (prog, mut args): (String, Vec<String>) = if env == "uv" {
                         (
                             uv_command(),
@@ -2826,13 +2950,11 @@ pub async fn install(
                 }
             }
         }
-        // AMD TheRock compat: the staging-float fallback path (community
-        // recipe) wants the numpy 1.26.4 pin — requirements.txt may have
-        // pulled numpy 2.x. The retired exact-pinned 7.15 primary resolved WITH
-        // numpy 2.x (verified pip closure), so downgrading under it risked
-        // breaking torch — the version check below preserves that skip for
-        // any 7.15 build still around, while the per-family /v2/ float
-        // (usually ROCm 10.x) gets the 1.26.4 pin per docs/AMD-INSTALLATION.md.
+        // AMD TheRock compat: the pinned stable stack (torch 2.13+rocm10)
+        // resolves WITH numpy 2.x (verified pip closure), so downgrading
+        // under it risks breaking torch — the version check below skips the
+        // legacy numpy 1.26.4 pin for any ROCm 10.x / 7.15 build, which the
+        // old nightly lineage needed per docs/AMD-INSTALLATION.md.
         // Warn-only: never turn a passing smoke test into a failure.
         if amd_cmds.is_some() {
             let torch_ver = silent_command(&smoke_py)
@@ -2848,8 +2970,8 @@ pub async fn install(
                     }
                 })
                 .unwrap_or_default();
-            if torch_ver.contains("rocm7.15") {
-                emit(&format!("[*] AMD env: torch {torch_ver} (ROCm 7.15, numpy 2.x compatible) — skipping numpy pin.\n"));
+            if torch_ver.contains("rocm10") || torch_ver.contains("rocm7.15") {
+                emit(&format!("[*] AMD env: torch {torch_ver} (numpy 2.x compatible) — skipping numpy pin.\n"));
             } else {
                 emit("[*] AMD env: pinning numpy==1.26.4 for ROCm torch compat…\n");
                 match silent_command(&smoke_py).args(["-m", "pip", "install", "numpy==1.26.4", "setuptools", "hf-xet"]).current_dir(&repo).output() {
@@ -6838,45 +6960,92 @@ pub async fn install_dlss5(
 
 #[cfg(test)]
 mod amd_therock_tests {
-    use super::{amd_therock_torch_cmds, apply_attention_mode_auto};
-    /// Primary is the doc per-family float with rocm[devel]; fallback is
-    /// the community v2-staging float.
-    fn check_primary(p: &str, fam: &str) {
-        assert!(p.starts_with("--pre "), "got {p}");
-        assert!(p.contains("--pre"), "got {p}");
-        assert!(p.contains("rocm[devel]"), "got {p}");
+    use super::{
+        amd_device_extras_for_targets, amd_fallback_target, amd_therock_torch_cmds,
+        apply_attention_mode_auto,
+    };
+    /// Primary is the pinned stable whl-next recipe with device extras;
+    /// fallback is the nightly whl-next float.
+    fn check_primary(p: &str) {
         assert!(
-            p.contains(&format!("/v2/{fam}/")),
-            "primary missing /v2/{fam}/: {p}"
+            p.contains("stable.repo.amd.com/rocm/whl-next/"),
+            "got {p}"
         );
+        assert!(p.contains("2.13.0+rocm10.0.0"), "got {p}");
+        assert!(p.contains("device-gfx"), "got {p}");
+        assert!(!p.contains("--extra-index-url"), "got {p}");
         for pkg in ["torch", "torchaudio", "torchvision"] {
             assert!(p.contains(pkg), "{pkg} missing: {p}");
         }
     }
     #[test]
-    fn doc_float_primary_per_profile() {
-        let (p, f) = amd_therock_torch_cmds("AMD_GFX1201", "AMD Radeon AI PRO R9700").unwrap();
-        check_primary(&p, "gfx120X-all");
-        assert!(p.contains("/v2/gfx120X-all/"), "got {p}");
-        assert!(f.contains("/v2-staging/gfx120X-all/"), "got {f}");
-        let (p, f) = amd_therock_torch_cmds("AMD_GFX110X", "AMD Radeon RX 7900 XTX").unwrap();
-        check_primary(&p, "gfx110X-all");
-        assert!(f.contains("/v2-staging/gfx110X-all/"), "got {f}");
+    fn fallback_target_per_profile() {
+        assert_eq!(
+            amd_fallback_target("AMD_GFX1201", "AMD Radeon AI PRO R9700"),
+            "gfx1201"
+        );
+        assert_eq!(
+            amd_fallback_target("AMD_GFX110X", "AMD Radeon RX 7900 XTX"),
+            "gfx1100"
+        );
         // Strix Halo gets gfx1151; Strix Point 890M narrows to gfx1150.
-        let (p, f) = amd_therock_torch_cmds("AMD_GFX1151", "AMD Ryzen AI Max+ PRO 395").unwrap();
-        check_primary(&p, "gfx1151");
-        assert!(f.contains("/v2-staging/gfx1151/"), "got {f}");
-        let (p, f) = amd_therock_torch_cmds("AMD_GFX1151", "AMD Radeon 890M").unwrap();
-        check_primary(&p, "gfx1150");
-        assert!(!p.contains("gfx1151"), "got {p}");
-        assert!(f.contains("/v2-staging/gfx1150/"), "got {f}");
-        let (p, f) = amd_therock_torch_cmds("AMD_GFX1151", "Phoenix Radeon 780M").unwrap();
-        check_primary(&p, "gfx1150");
-        assert!(f.contains("/v2-staging/gfx1150/"), "got {f}");
-        // RDNA 2 discrete float.
-        let (p, f) = amd_therock_torch_cmds("AMD_GFX103X", "AMD Radeon RX 6800 XT").unwrap();
-        check_primary(&p, "gfx103X-dgpu");
-        assert!(f.contains("/v2-staging/gfx103X-dgpu/"), "got {f}");
+        assert_eq!(
+            amd_fallback_target("AMD_GFX1151", "AMD Ryzen AI Max+ PRO 395"),
+            "gfx1151"
+        );
+        assert_eq!(
+            amd_fallback_target("AMD_GFX1151", "AMD Radeon 890M"),
+            "gfx1150"
+        );
+        assert_eq!(
+            amd_fallback_target("AMD_GFX1151", "Phoenix Radeon 780M"),
+            "gfx1150"
+        );
+        // RDNA 2 discrete.
+        assert_eq!(
+            amd_fallback_target("AMD_GFX103X", "AMD Radeon RX 6800 XT"),
+            "gfx1030"
+        );
+    }
+    #[test]
+    fn clinfo_targets_parse() {
+        // Single GPU: board name + gfx target from its Device Type section.
+        let single = "Device Type: CL_DEVICE_TYPE_GPU\nBoard name: AMD Radeon RX 9070 XT\nName: gfx1201:xnack+\n";
+        assert_eq!(
+            amd_device_extras_for_targets(single).as_deref(),
+            Some("device-gfx1201")
+        );
+        // Multi-GPU (dGPU + iGPU): both targets, comma-joined, deduplicated.
+        let multi = "Device Type: CL_DEVICE_TYPE_GPU\nBoard name: AMD Radeon RX 9070 XT\nName: gfx1201:xnack+\nDevice Type: CL_DEVICE_TYPE_CPU\nBoard name: -\nName: AMD Ryzen\nDevice Type: CL_DEVICE_TYPE_GPU\nBoard name: AMD Radeon 780M\nName: gfx1103\nDevice Type: CL_DEVICE_TYPE_GPU\nBoard name: AMD Radeon 780M\nName: gfx1103\n";
+        assert_eq!(
+            amd_device_extras_for_targets(multi).as_deref(),
+            Some("device-gfx1201,device-gfx1103")
+        );
+        // No GPU section / missing clinfo.
+        assert_eq!(amd_device_extras_for_targets(""), None);
+        assert_eq!(
+            amd_device_extras_for_targets("Device Type: CL_DEVICE_TYPE_CPU\nName: GenuineIntel\n"),
+            None
+        );
+    }
+    #[test]
+    fn doc_float_primary_per_profile() {
+        // Shape assertions only: the live fn prefers clinfo when present,
+        // so exact-target asserts live in fallback_target_per_profile.
+        for (profile, gpu) in [
+            ("AMD_GFX1201", "AMD Radeon AI PRO R9700"),
+            ("AMD_GFX110X", "AMD Radeon RX 7900 XTX"),
+            ("AMD_GFX1151", "AMD Ryzen AI Max+ PRO 395"),
+            ("AMD_GFX103X", "AMD Radeon RX 6800 XT"),
+        ] {
+            let (p, f) = amd_therock_torch_cmds(profile, gpu).unwrap();
+            check_primary(&p);
+            assert!(
+                f.contains("nightly.repo.amd.com/rocm/whl-next/"),
+                "got {f}"
+            );
+            assert!(f.contains("--pre"), "got {f}");
+        }
         assert!(amd_therock_torch_cmds("RTX_50", "NVIDIA GeForce RTX 5090").is_none());
     }
     #[test]
@@ -6943,14 +7112,10 @@ mod exit_106_tests {
     }
     #[test]
     fn torch_cmds_stay_single_command() {
-        // Resolver-loop guard: upstream SageAttention author reports ONE
-        // plain-pip `torch trio + rocm[...]` command can loop forever
-        // (rocm-first-then-trio works). Our setup_config splice is a
-        // SINGLE string appended to setup.py's `{pip} install` argv (no
-        // shell, so `&&` chaining is not expressible) and setup.py drives
-        // it via `uv pip` (resolver differs from plain pip) — kept as
-        // one command, fallback untouched. This test pins that shape so a
-        // future split is deliberate, not drift.
+        // Splice-shape guard: our setup_config torch entry is a SINGLE
+        // string appended to setup.py's `{pip} install` argv (no shell,
+        // so `&&` chaining is not expressible). This test pins that shape
+        // so a future split is deliberate, not drift.
         for (profile, gpu) in [
             ("AMD_GFX1201", "AMD Radeon AI PRO R9700"),
             ("AMD_GFX110X", "AMD Radeon RX 7900 XTX"),
@@ -6964,7 +7129,10 @@ mod exit_106_tests {
                     "single pip argv only, no shell chaining: {cmd}"
                 );
             }
-            assert!(primary.contains("rocm[devel]"), "got {primary}");
+            assert!(
+                primary.contains("--index-url https://stable.repo.amd.com/rocm/whl-next/"),
+                "got {primary}"
+            );
         }
     }
 }
@@ -7016,11 +7184,12 @@ mod pipeline_separation_tests {
     }
     #[test]
     fn triton_windows_args_are_wheels_only() {
-        // OFFICIAL WHEELS ONLY: the arg sequence is a plain PyPI float — no
+        // OFFICIAL WHEELS ONLY: the arg sequence is a plain PyPI install —
+        // pinned to the 3.7.x line matching torch 2.13 (upstream v38) — no
         // build-from-source surface of any kind.
         assert_eq!(
             triton_windows_pip_args(),
-            vec!["-m", "pip", "install", "-U", "triton-windows"]
+            vec!["-m", "pip", "install", "-U", "triton-windows>=3.7,<3.8"]
         );
         let joined = triton_windows_pip_args().join(" ");
         for banned in [
@@ -7090,15 +7259,25 @@ mod setup_hook_tests {
             Some("RTX_40")
         );
         // No upstream profile → legacy direct spawn (forcing it would KeyError).
-        // RDNA 2 aliases to the compatible AMD_GFX110X entry instead.
+        // Any AMD sub-profile aliases to the unified AMD entry (current
+        // upstream schema); RDNA 2 has no key of its own anywhere.
         assert_eq!(
             forced_setup_profile(&d, "AMD_GFX103X"),
             None,
             "alias needs the key present"
         );
-        let d2 = cfg_dir("keys2", &["AMD_GFX110X"]);
+        let d2 = cfg_dir("keys2", &["AMD"]);
         assert_eq!(
             forced_setup_profile(&d2, "AMD_GFX103X").as_deref(),
+            Some("AMD")
+        );
+        assert_eq!(
+            forced_setup_profile(&d2, "AMD_GFX1201").as_deref(),
+            Some("AMD")
+        );
+        let d3 = cfg_dir("keys3", &["AMD_GFX110X"]);
+        assert_eq!(
+            forced_setup_profile(&d3, "AMD_GFX103X").as_deref(),
             Some("AMD_GFX110X")
         );
         for k in ["INTEL_XPU", "CPU", "", "RTX_99"] {

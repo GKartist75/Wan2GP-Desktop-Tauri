@@ -12,9 +12,10 @@
  *  - NVIDIA RTX 20/30/40/50 (compute ≥ 7.0, not GTX 10/16) → PyTorch 2.10 + CUDA 13
  *  - GTX 10/16 (compute 6.1) → legacy PyTorch 2.7.1 + CUDA 12.8
  *  - NVIDIA cu130 needs driver R580+ (skipped for GTX 10/16)
- *  - AMD (Windows) → TheRock ROCm 7.15 / torch 2.12.0 default
- *    (whl-multi-arch, verified working) + numpy 1.26.4 pin on the fallback path;
- *    experimental HIP 7.14 / torch 2.10 opt-in lives in Sync kernels (gfx1201 only)
+ *  - AMD (Windows) → TheRock stable ROCm 10 / torch 2.13.0 default
+ *    (whl-next, per-box device-gfx targets, Python 3.12) + triton-windows 3.7
+ *    and SageAttention 1.0.6; experimental HIP 7.14 / torch 2.10 opt-in
+ *    (separate env, gfx1201 only) lives in Sync kernels
  *  - Apple/Intel → MPS/CPU (no CUDA)
  *  - Attention kernels: SageAttention, FlashAttention, SpargeAttention, LightX2V
  *    (RTX 50), Nunchaku+GGUF — installed by setup.py per its own matrix.
@@ -83,14 +84,15 @@ function buildPlan(hw = {}) {
     attention = ['SageAttention', 'FlashAttention', 'SpargeAttention']
     if (cap >= 9.0) attention.push('Nunchaku + GGUF', 'LightX2V')
   } else if (vendor === 'AMD') {
-    cuda = 'ROCm 7.15 (TheRock, default)'
-    torch = 'PyTorch 2.12 (ROCm 7.15)'
-    // numpy 1.26.4 pin applies only on the staging-float fallback path — the
-    // pinned 7.15 primary resolves with numpy 2.x (verified pip closure).
-    numpyPin = 'numpy==1.26.4 (fallback path only; skipped on the ROCm 7.15 stack)'
-    attention = ['SageAttention (ROCm)', 'FlashAttention (ROCm)']
-    notes.push('AMD detected — TheRock ROCm 7.15 stack (torch 2.12.0+rocm7.15.0a20260728, verified working); staging float on retry.')
-    notes.push('Experimental opt-in on RX 9070/R9700 (gfx1201): HIP torch 2.10.0+rocm7.14.0 + GGUF 1.0.25 torch210rocm714 wheel via Sync kernels — needs that exact torch, validation pending, SDPA fallback expected for paged attention.')
+    cuda = 'ROCm 10 (TheRock, default)'
+    torch = 'PyTorch 2.13 (ROCm 10)'
+    // Stable stack resolves with numpy 2.x (verified pip closure) — no pin.
+    // The legacy 1.26.4 pin survives only for pre-ROCm-10 nightly lineages.
+    numpyPin = null
+    attention = ['SageAttention 1.0.6 (ROCm)', 'SDPA (default)']
+    notes.push('AMD detected — TheRock stable ROCm 10 stack (torch 2.13.0+rocm10.0.0, per-box device-gfx targets, Python 3.12, triton-windows 3.7); nightly whl-next float on retry.')
+    notes.push('Experimental opt-in on RX 9070/R9700 (gfx1201): HIP torch 2.10.0+rocm7.14.0 + GGUF 1.0.25 torch210rocm714 wheel via Sync kernels — separate env only (does not load in the 2.13 env), validation pending, SDPA fallback expected for paged attention.')
+    notes.push('Environments created by older installer versions (rocm65 / per-family nightlies) should be replaced: create a new environment with Install and make it active — do not upgrade in place.')
     // #5 ROCm driver minimum pre-check (upstream parity gap): ROCm 7.x needs an
     // Adrenalin/Pro driver >= ~24.5 (or the matching TheRock runtime). If we can
     // read a numeric driver version, warn when it's below the floor.
@@ -146,8 +148,8 @@ function buildPlan(hw = {}) {
     numpyPin,
     driverWarning,
     notes,
-    envType: 'venv (uv, Python 3.11)',
-    python: 'Python 3.11 (uv-managed)'
+    envType: vendor === 'AMD' ? 'venv (uv, Python 3.12)' : 'venv (uv, Python 3.11)',
+    python: vendor === 'AMD' ? 'Python 3.12 (uv-managed)' : 'Python 3.11 (uv-managed)'
   }
 }
 
