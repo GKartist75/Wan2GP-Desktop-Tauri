@@ -4,6 +4,17 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.9.1] — 2026-10-01
+
+- Opt-in console log viewer on its own port (Dubon request): new
+  **C · Console logs** section in Manage → Phone & remote access serves the
+  same read-only console tail (errors, completions) as a web page on
+  `serverPort+2` by default — keep `:7860` generating in one tab while
+  watching logs in another, including from a phone on the same Wi-Fi.
+  Off by default; flip Logs page on (Same-PC) or add Phone-LAN + Apply
+  for LAN access. No new dependencies (plain std HTTP), trusted-LAN only,
+  never port-forward to the internet.
+
 ## [0.9.0] — 2026-10-01
 
 - AMD ROCm 10 refresh (upstream `b8b18f8` / PR #2397): installer follows the
