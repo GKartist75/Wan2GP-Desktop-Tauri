@@ -95,7 +95,8 @@ launcher default, one shared outputs folder), reset behavior, gallery media
 forms. Works with or without Deepy, with its own *Apply* (same coherent config
 write as the Deepy card).
 
-**Phone & remote access card** — two paths, pick one. **A · Gradio server**
+**Phone & remote access card** — A for everyday use, B and C optional.
+**A · Gradio server**
 LAN (`--listen`) toggle plus This-PC and Phone URLs — Gradio `/` and the
 synchronized `/deepy/` mobile app (Open/Copy/QR): same conversation,
 galleries, progress and queue on every device; accepted work survives
@@ -116,6 +117,13 @@ guides (Tailscale setup, protection tiers, proxy debugging, CA install).
 Upstream reference: `docs/AUTHENTICATION.md` in the Wan2GP repo (web
 login, `--public-url` reverse-proxy origins, certificates, MCP OAuth).
 All actions log `[Deepy]` lines to the Console.
+**C · Console logs** — read-only tail of the same Console as a web page on
+its own port (default server port + 2): keep generating on `:7860` in one
+tab while watching errors + completions in another, including from a phone
+on the same Wi-Fi. Off by default — flip *Logs page* on for This-PC only,
+add *Phone-LAN* + Apply for LAN (Same-PC / Phone URLs with Copy + QR).
+Trusted home Wi-Fi / Tailscale only; never port-forward it to the internet
+(no auth — it shows log lines, but takes no commands).
 
 **Left info cards collapse** via the chevron (System, Paths, Kernels,
 Environment, Prompt enhancement, Deepy, Phone & remote access, DLSS 5, pip
@@ -362,6 +370,10 @@ method syntax with hardware requirements.
   System tab) puts the full report on the clipboard for Discord/GitHub.
 - The floating console docks bottom/left/top/right, floating, or minimised
   (Manage → General → Floating Terminal Default).
+- **Remote log page** (v0.9.1+): Manage → Phone & remote access → C · Console
+  logs serves the same stream read-only on its own port (auto-refreshes
+  every 2s, `GET /logs.txt` / `/logs.json` for scripting). Same requirements
+  as phone access — same Wi-Fi, trusted network only.
 
 ---
 
