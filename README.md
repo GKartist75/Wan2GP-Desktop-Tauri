@@ -85,7 +85,9 @@ C:\Wan2GP-Models\               ← models library
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.8.9**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.9) *(latest)* — Pin-aware environment updates (issue #54): torch / kernel wheels / requirements-capped packages show `pinned` instead of env-breaking upgrade arrows, with a Yes/Cancel override dialog per source. Details in [CHANGELOG](CHANGELOG.md).
+- [**v0.9.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.0) *(latest)* — AMD ROCm 10 refresh (unified `AMD` profile, Python 3.12, pinned torch 2.13 stable). Details in [CHANGELOG](CHANGELOG.md).
+
+- [**v0.8.9**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.9) — Pin-aware environment updates (issue #54): torch / kernel wheels / requirements-capped packages show `pinned` instead of env-breaking upgrade arrows, with a Yes/Cancel override dialog per source. Details in [CHANGELOG](CHANGELOG.md).
 
 - [**v0.8.8**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.8) — Quieter updates (no more misleading `fatal: no merge to abort` line). Details in [CHANGELOG](CHANGELOG.md).
 

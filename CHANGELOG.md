@@ -4,6 +4,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.9.0] — 2026-10-01
+
 - AMD ROCm 10 refresh (upstream `b8b18f8` / PR #2397): installer follows the
   unified `AMD` profile — Python 3.12, pinned stable torch 2.13.0+rocm10
   (`stable.repo.amd.com/whl-next`, per-box `device-gfxXXX` targets from
@@ -15,6 +17,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   overrides; stale values are removed), and `FLASH_ATTENTION_TRITON_AMD_ENABLE`
   is no longer set at launch (build-time only upstream). HIP GGUF messaging
   now states the separate torch 2.10 env requirement.
+- RAM probe is locale-proof: total memory is read as integer bytes
+  (pl-PL `79,8`-style decimal strings no longer fall back to 32 GB).
 
 ## [0.8.9] — 2026-09-30
 
