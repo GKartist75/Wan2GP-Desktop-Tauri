@@ -11,13 +11,15 @@
  */
 
 /**
- * Map a detected GPU to Wan2GP's setup_config.json GPU-profile key.
- * Mirrors the upstream setup.py profile names (RTX_50, RTX_40, RTX_30, RTX_20,
- * GTX_10, AMD_GFX110X, AMD_GFX1151, AMD_GFX1201, MPS) plus INTEL_XPU for Intel
- * (CPU torch — no XPU backend exists upstream; key stable so install/launch
- * behavior is unchanged, only labels are honest). and CPU for unknown vendors. Unknown
- * hardware must NEVER alias an NVIDIA profile: the overview would promise
- * CUDA wheels the installer never installs.
+ * Map a detected GPU to a GPU-profile key.
+ * Mirrors upstream setup.py profile names (RTX_50, RTX_40, RTX_30, RTX_20,
+ * GTX_10) plus AMD sub-profiles (AMD_GFX110X, AMD_GFX1151, AMD_GFX1201,
+ * AMD_GFX103X) for per-GPU display/HIP/torch-target decisions. Upstream
+ * setup_config.json collapsed those into a single AMD key (ROCm 10
+ * refresh), so resolveKernelWheels falls back to AMD when the exact
+ * sub-key is absent. Plus INTEL_XPU for Intel (CPU torch) and CPU for
+ * unknown vendors. Unknown hardware must NEVER alias an NVIDIA profile:
+ * the overview would promise CUDA wheels the installer never installs.
  *
  * @param {{name?:string, vendor?:string}} gpu
  * @returns {string} profile key
@@ -132,7 +134,12 @@ function applyGgufOverride(key, cmd, torchCode) {
  */
 function resolveKernelWheels(cfg, gpu) {
   const profileKey = kernelProfileKey(gpu)
-  const profile = (cfg && cfg.gpu_profiles && cfg.gpu_profiles[profileKey]) || null
+  const profiles = (cfg && cfg.gpu_profiles) || {}
+  // Unified AMD key fallback (upstream ROCm 10 refresh collapsed
+  // AMD_GFX* into AMD): exact sub-key first (old checkouts), then AMD.
+  const profile = profiles[profileKey]
+    || (String(profileKey).indexOf('AMD') === 0 ? profiles.AMD : null)
+    || null
   const kernels = (profile && Array.isArray(profile.kernels)) ? profile.kernels : []
   return { profileKey, kernels }
 }
@@ -171,7 +178,10 @@ const KERNEL_DISPLAY = {
  */
 function buildOverviewWheels(cfg, gpu, osKey) {
   const { profileKey, kernels } = resolveKernelWheels(cfg, gpu)
-  const profile = (cfg && cfg.gpu_profiles && cfg.gpu_profiles[profileKey]) || null
+  const profiles = (cfg && cfg.gpu_profiles) || {}
+  const profile = profiles[profileKey]
+    || (String(profileKey).indexOf('AMD') === 0 ? profiles.AMD : null)
+    || null
   const torchCode = (profile && profile.torch) || null
   const components = (cfg && cfg.components && cfg.components.kernels) || {}
   return kernels.map((name) => {

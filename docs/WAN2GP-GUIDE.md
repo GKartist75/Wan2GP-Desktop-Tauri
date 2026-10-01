@@ -74,10 +74,10 @@ From `INSTALLATION.md` — the launcher automates all of this; listed so you kno
 
 | Stack | RTX 20–50 | GTX 10/16 | AMD RDNA 2/3/3.5/4 | Intel/Apple |
 | --- | --- | --- | --- | --- |
-| Python | 3.11.14 | 3.10.9 | 3.11 | — |
-| PyTorch | 2.10.0 + CUDA 13.0/13.1 (cu130, needs R580+ driver) | 2.7.1 + CUDA 12.8 (no R580 needed) | 2.12 ROCm 7.15 TheRock | CPU / MPS (SDPA only) |
-| Triton | `triton-windows>=3.6,<3.7` (torch 2.10); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | auto | — |
-| Attention | Sage 2.2.0 (RTX 30+, Ampere+) / Sage 1.0.6 (RTX 20) / Flash 2.8.3 / Sparge 0.1.0 | SDPA | — | SDPA |
+| Python | 3.11.14 | 3.10.9 | 3.12.10 | — |
+| PyTorch | 2.10.0 + CUDA 13.0/13.1 (cu130, needs R580+ driver) | 2.7.1 + CUDA 12.8 (no R580 needed) | 2.13.0 ROCm 10 TheRock (stable whl-next, per-box device-gfx targets) | CPU / MPS (SDPA only) |
+| Triton | `triton-windows>=3.6,<3.7` (torch 2.10); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | `triton-windows>=3.7,<3.8` (torch 2.13) | — |
+| Attention | Sage 2.2.0 (RTX 30+, Ampere+) / Sage 1.0.6 (RTX 20) / Flash 2.8.3 / Sparge 0.1.0 | SDPA | SDPA (default) / Sage 1.0.6 | SDPA |
 | Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.25, LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2, Comfy Kitchen via requirements | bitsandbytes | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back) | — |
 
 Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
