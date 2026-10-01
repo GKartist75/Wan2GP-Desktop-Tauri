@@ -1176,6 +1176,35 @@
                 </div>
                 <p class="path-hint" id="mainLanHint" style="margin-top:4px"></p>
               </div>
+              <!-- C · Console log viewer: read-only tail of the launcher console
+                   (same stream as the Console card) on its own port. Opt-in. -->
+              <div id="logServerCard" style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                  <span class="deepy-sub-label">C · Console logs (own port — errors + completions)</span>
+                  <label class="toggle-row" style="margin:0;margin-left:auto" data-keep-visible title="Serve the launcher console (errors, completions) as a read-only web page on its own port. Off by default."><input type="checkbox" id="logServerToggle"> <span>Logs page</span></label>
+                </div>
+                <div id="logServerStatus" class="pip-advanced-hint" style="margin-top:4px">Checking…</div>
+                <div class="deepyweb-urls" style="margin-top:8px">
+                  <div class="deepyweb-url-row">
+                    <span class="deepy-sub-label">Same-PC</span>
+                    <button class="deepyweb-url deepyweb-open" id="logServerSamePcOpen" title="Open the console log page on this PC">—</button>
+                    <button class="btn btn-ghost small" id="logServerSamePcCopy" title="Copy Same-PC log URL">Copy</button>
+                  </div>
+                  <div class="deepyweb-url-row">
+                    <span class="deepy-sub-label">Phone</span>
+                    <button class="deepyweb-url deepyweb-open" id="logServerPhoneOpen" title="Open the console log page on your phone. Needs Phone-LAN below, same Wi-Fi.">—</button>
+                    <button class="btn btn-ghost small" id="logServerPhoneCopy" title="Copy Phone log URL">Copy</button>
+                    <button class="btn btn-ghost small" id="logServerPhoneQr" title="Show Phone log URL as QR">QR</button>
+                  </div>
+                </div>
+                <div class="form-row" style="margin-top:6px">
+                  <label class="path-hint" for="logServerPortInput">Log port (default: server port + 2)</label>
+                  <input id="logServerPortInput" type="number" min="1" max="65535" step="1" style="width:90px" placeholder="auto">
+                  <label class="toggle-row" style="margin:0" data-keep-visible title="Bind the log page to the LAN so phones can reach it. Same risk as the Gradio LAN toggle."><input type="checkbox" id="logServerLanToggle"> <span>Phone-LAN</span></label>
+                  <button class="btn btn-ghost small" id="logServerSave">Apply</button>
+                </div>
+                <p class="path-hint" style="margin-top:4px">Read-only tail of the same console below (no control, no auth — trusted home Wi-Fi / Tailscale only, never port-forward to the internet).</p>
+              </div>
               <!-- B · Deepy Web standalone -->
               <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
                 <span class="deepy-sub-label">B · Deepy Web standalone (second process, own port)</span>

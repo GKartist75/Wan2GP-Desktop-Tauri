@@ -7,6 +7,7 @@ mod features;
 mod hw;
 mod install;
 mod launch;
+mod log_server;
 mod notifier_native;
 mod plugins;
 mod status;
@@ -311,7 +312,10 @@ pub fn run() {
             deepy_web::deepy_web_cert,
             deepy_web::deepy_web_tailscale,
             deepy_web::deepy_web_open_outputs,
-            deepy_web::main_lan_urls
+            deepy_web::main_lan_urls,
+            log_server::log_server_start,
+            log_server::log_server_stop,
+            log_server::log_server_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
