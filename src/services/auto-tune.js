@@ -72,7 +72,7 @@ async function queryNvidiaGpu() {
     return {
       name: parts[0] || 'Unknown',
       vram_mb: vramMb,
-      vram_gb: Math.round(vramMb / 1024),
+      vram_gb: Math.floor(vramMb / 1024),
       capability: parts[2] || '',
       driver: parts[3] || ''
     }

@@ -1165,20 +1165,21 @@ fn is_network_failure(tail: &str) -> bool {
 /// AMD TheRock torch source. Returns (primary, fallback) full torch-step
 /// Stable ROCm torch commands for setup.py's `{pip} {torch_cmd}` splice.
 ///
-/// Primary is the pinned TheRock stable recipe
-/// (docs/AMD-INSTALLATION.md): torch 2.13.0+rocm10.0.0 on
-/// `https://stable.repo.amd.com/rocm/whl-next/` with per-GPU
-/// `device-gfxXXX` extras. The gfx targets come from the AMD driver's
-/// `clinfo` (same source upstream setup.py uses); when clinfo is
-/// unavailable the launcher falls back to the install profile's
-/// conventional target so setup.py's own clinfo path still resolves it.
+/// Primary comes from the CLONED setup_config.json template
+/// (`components.torch.rocm10.cmd.win`, with upstream's `{device}`
+/// placeholder) — versions and the index URL are upstream's, the launcher
+/// splices only the per-box `device-gfxXXX` extras. When the template is
+/// unreadable (unexpected schema), falls back to the pinned whl-next
+/// recipe. The gfx targets come from the AMD driver's `clinfo` (same
+/// source upstream setup.py uses); when clinfo is unavailable the launcher
+/// falls back to the install profile's conventional target so setup.py's
+/// own clinfo path still resolves it.
 /// Fallback is the nightly whl-next float (`--pre`, unpinned).
 ///
 /// `--index-url` (not `--extra-index-url`) is required: with
 /// `--extra-index-url` pip prefers the newer CPU-only PyTorch from PyPI
 /// and silently installs that instead (upstream doc warning).
-/// Pure helper except for the clinfo probe; unit-tested via
-/// `amd_device_extras_for_targets`.
+/// Unit-tested via `amd_device_extras_for_targets`.
 pub(crate) fn amd_therock_torch_cmds(profile: &str, gpu_name: &str) -> Option<(String, String)> {
     if !profile.starts_with("AMD") {
         return None;
@@ -1187,6 +1188,24 @@ pub(crate) fn amd_therock_torch_cmds(profile: &str, gpu_name: &str) -> Option<(S
     // single conventional target per install profile.
     let extras = amd_device_extras()
         .unwrap_or_else(|| format!("device-{}", amd_fallback_target(profile, gpu_name)));
+    if let Ok(s) = std::fs::read_to_string(get_repo_dir().join("setup_config.json")) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+            if let Some(tmpl) = v
+                .get("components")
+                .and_then(|c| c.get("torch"))
+                .and_then(|t| t.get("rocm10"))
+                .and_then(|r| r.get("cmd"))
+                .and_then(|c| c.get("win"))
+                .and_then(|w| w.as_str())
+            {
+                if tmpl.contains("{device}") {
+                    let primary = tmpl.replace("{device}", &extras);
+                    let fallback = format!("--pre \"torch[{extras}]\" \"torchvision[{extras}]\" torchaudio --index-url https://nightly.repo.amd.com/rocm/whl-next/");
+                    return Some((primary, fallback));
+                }
+            }
+        }
+    }
     let primary = format!("\"torch[{extras}]==2.13.0+rocm10.0.0\" \"torchvision[{extras}]==0.28.0+rocm10.0.0\" torchaudio==2.11.0.2+rocm10.0.0 --index-url https://stable.repo.amd.com/rocm/whl-next/");
     let fallback = format!("--pre \"torch[{extras}]\" \"torchvision[{extras}]\" torchaudio --index-url https://nightly.repo.amd.com/rocm/whl-next/");
     Some((primary, fallback))
@@ -1205,9 +1224,16 @@ pub(crate) fn amd_fallback_target(profile: &str, gpu_name: &str) -> &'static str
     {
         return "gfx1030";
     }
+    if profile == "AMD_GFX1200"
+        || g.contains("9060")
+        || g.contains("1200")
+    {
+        // RDNA 4 Navi 44 (RX 9060 / 9060 XT) — upstream gfx1200 row, NOT
+        // gfx1201 (9070/R9700). Mixing these installs the wrong wheels.
+        return "gfx1200";
+    }
     if profile == "AMD_GFX1201"
         || g.contains("9070")
-        || g.contains("9060")
         || g.contains("9700")
         || g.contains("1201")
     {
@@ -1242,6 +1268,8 @@ pub(crate) fn amd_fallback_target(profile: &str, gpu_name: &str) -> &'static str
     }
     // Last resort: installer default target (setup.py re-probes
     // via clinfo at install time and overrides per-GPU anyway).
+    // NOTE: this fallback is only used when clinfo is unavailable; with
+    // clinfo present the live probe wins and this value is never used.
     "gfx1201"
 }
 
@@ -1306,27 +1334,30 @@ pub(crate) fn amd_hip_stable_cmds(profile: &str) -> Option<String> {
     Some("--index-url https://repo.amd.com/rocm/whl-multi-arch/ \"torch[device-gfx1201]==2.10.0+rocm7.14.0\" \"rocm[libraries,device-gfx1201]==7.14.0\"".into())
 }
 
-/// Pure helper: default `attention_mode` to "auto" on AMD when the key is
-/// missing/empty OR holds setup.py's bogus 'sage'/'sage2' default.
-/// Rationale (issue #15): upstream setup.py picks the default with
-/// `if "20" in profile_key`, which matches "AMD_GFX1201" via the "1201"
-/// substring — so every fresh AMD config says 'sage', yet AMD profiles
-/// install NO sage backend (triton/sage/sparge/flash are all null there),
-/// guaranteeing "Attention mode sage -NOT INSTALLED-". Any other value
-/// (sdpa, flash, custom, already auto, ...) is a deliberate user choice
+/// Pure helper: default `attention_mode` to "sdpa" on AMD when the key is
+/// missing/empty OR holds a stale 'auto'/'sage'/'sage2' value.
+/// Rationale: upstream setup_config's unified AMD profile declares
+/// `"attention": "sdpa"` (SDPA is the supported default on ROCm; Sage 1 is
+/// opt-in and needs triton-windows). Pre-refresh setup.py derived 'sage'
+/// from the "1201" substring while AMD profiles installed NO sage backend
+/// — guaranteeing "Attention mode sage -NOT INSTALLED-". Any other value
+/// (flash, custom, already sdpa, ...) is a deliberate user choice
 /// and is never touched. Returns true when the value was set.
-pub(crate) fn apply_attention_mode_auto(cfg: &mut serde_json::Value) -> bool {
+pub(crate) fn apply_attention_mode_sdpa(cfg: &mut serde_json::Value) -> bool {
     let needs = match cfg.get("attention_mode") {
         None => true,
         Some(serde_json::Value::String(s)) => {
             let t = s.trim();
-            t.is_empty() || t.eq_ignore_ascii_case("sage") || t.eq_ignore_ascii_case("sage2")
+            t.is_empty()
+                || t.eq_ignore_ascii_case("auto")
+                || t.eq_ignore_ascii_case("sage")
+                || t.eq_ignore_ascii_case("sage2")
         }
         Some(serde_json::Value::Null) => true,
         _ => false,
     };
     if needs {
-        cfg["attention_mode"] = serde_json::Value::String("auto".into());
+        cfg["attention_mode"] = serde_json::Value::String("sdpa".into());
         return true;
     }
     false
@@ -1347,9 +1378,10 @@ pub(crate) fn triton_windows_pip_args() -> Vec<&'static str> {
 }
 
 /// After a successful AMD setup, ensure `<repo>/wgp_config.json` carries
-/// `attention_mode: "auto"` when missing/empty. Missing file is not an
-/// error (setup.py may not have written one yet) — returns false then.
-pub(crate) fn ensure_attention_mode_auto(repo: &std::path::Path) -> bool {
+/// `attention_mode: "sdpa"` (upstream AMD default) when missing/empty/stale.
+/// Missing file is not an error (setup.py may not have written one yet) —
+/// returns false then.
+pub(crate) fn ensure_attention_mode_sdpa(repo: &std::path::Path) -> bool {
     let path = repo.join("wgp_config.json");
     let raw = match std::fs::read_to_string(&path) {
         Ok(s) => s,
@@ -1359,7 +1391,7 @@ pub(crate) fn ensure_attention_mode_auto(repo: &std::path::Path) -> bool {
         Ok(v) => v,
         Err(_) => return false,
     };
-    if !apply_attention_mode_auto(&mut cfg) {
+    if !apply_attention_mode_sdpa(&mut cfg) {
         return false;
     }
     std::fs::write(
@@ -1422,8 +1454,8 @@ fn patch_therock_torch_cmd(repo: &std::path::Path, torch_cmd: &str) -> Result<()
 /// AMD = TheRock stable (`amd_therock_torch_cmds` pinned whl-next primary +
 /// nightly fallback) + ROCm launch env (launch.rs AMD block) + triton-windows
 /// 3.7 PyPI wheel (`triton_windows_pip_args`, warn-only) + package gate
-/// (`amd_package_gate_result` in features.rs) + attention auto
-/// (`ensure_attention_mode_auto`).
+/// (`amd_package_gate_result` in features.rs) + attention sdpa (upstream
+/// AMD profile default, `ensure_attention_mode_sdpa`).
 /// Intel INTEL_XPU = CPU torch + legacy direct setup.py spawn (no forced
 /// profile: this function returns None) + zero AMD env (launch reconciles the
 /// ROCm/compiler vars and PATH prepend away on non-AMD launch) + zero kernel
@@ -2369,9 +2401,10 @@ pub async fn install(
     // Stale wgp_config.json from the 0.5.1 failure mode (CUDA-era attention
     // sage/sage2 written for an AMD box): setup.py's create_wgp_config
     // early-returns when the file exists, so a stale file would pin the
-    // wrong attention forever. AMD-correct is "" — remove only sage*,
-    // keep anything else (user-tuned or already-AMD). restore_backup()
-    // only restores when the repo file is ABSENT, so this can't clobber.
+    // wrong attention forever. Upstream regenerates "sdpa" for the unified
+    // AMD profile — remove only sage*, keep anything else (user-tuned or
+    // already-AMD). restore_backup() only restores when the repo file is
+    // ABSENT, so this can't clobber.
     if plan["profile"].as_str().unwrap_or("").starts_with("AMD") {
         let cfg_path = repo.join("wgp_config.json");
         if let Ok(raw) = std::fs::read_to_string(&cfg_path) {
@@ -2990,11 +3023,11 @@ pub async fn install(
             .unwrap_or(0);
         let _ = std::fs::write(&marker, format!("{env} {stamp}"));
     }
-    // AMD: default attention_mode to "auto" when missing/empty or holding
-    // setup.py's bogus 'sage'/'sage2' artifact default — never clobbers a
-    // deliberate user value.
-    if amd_cmds.is_some() && ensure_attention_mode_auto(&repo) {
-        emit("[i] attention_mode defaulted to auto (AMD)\n");
+    // AMD: default attention_mode to "sdpa" (upstream AMD profile default)
+    // when missing/empty or holding a stale 'auto'/'sage'/'sage2' value —
+    // never clobbers a deliberate user value.
+    if amd_cmds.is_some() && ensure_attention_mode_sdpa(&repo) {
+        emit("[i] attention_mode defaulted to sdpa (AMD)\n");
     }
     // AMD triton-windows from the official PyPI wheel (float — cp311 wheel
     // confirmed, no build involved). setup.py installs no triton on AMD
@@ -6962,7 +6995,7 @@ pub async fn install_dlss5(
 mod amd_therock_tests {
     use super::{
         amd_device_extras_for_targets, amd_fallback_target, amd_therock_torch_cmds,
-        apply_attention_mode_auto,
+        apply_attention_mode_sdpa,
     };
     /// Primary is the pinned stable whl-next recipe with device extras;
     /// fallback is the nightly whl-next float.
@@ -6983,6 +7016,16 @@ mod amd_therock_tests {
         assert_eq!(
             amd_fallback_target("AMD_GFX1201", "AMD Radeon AI PRO R9700"),
             "gfx1201"
+        );
+        // RX 9060 XT is gfx1200 (Navi 44), NOT gfx1201 (9070/R9700) —
+        // upstream AMD-INSTALLATION.md table.
+        assert_eq!(
+            amd_fallback_target("AMD_GFX1200", "AMD Radeon RX 9060 XT"),
+            "gfx1200"
+        );
+        assert_eq!(
+            amd_fallback_target("AMD", "AMD Radeon RX 9060"),
+            "gfx1200"
         );
         assert_eq!(
             amd_fallback_target("AMD_GFX110X", "AMD Radeon RX 7900 XTX"),
@@ -7034,6 +7077,7 @@ mod amd_therock_tests {
         // so exact-target asserts live in fallback_target_per_profile.
         for (profile, gpu) in [
             ("AMD_GFX1201", "AMD Radeon AI PRO R9700"),
+            ("AMD_GFX1200", "AMD Radeon RX 9060 XT"),
             ("AMD_GFX110X", "AMD Radeon RX 7900 XTX"),
             ("AMD_GFX1151", "AMD Ryzen AI Max+ PRO 395"),
             ("AMD_GFX103X", "AMD Radeon RX 6800 XT"),
@@ -7049,23 +7093,23 @@ mod amd_therock_tests {
         assert!(amd_therock_torch_cmds("RTX_50", "NVIDIA GeForce RTX 5090").is_none());
     }
     #[test]
-    fn attention_auto_only_when_missing_or_empty() {
+    fn attention_sdpa_only_when_missing_or_empty() {
         let mut missing = serde_json::json!({"video_profile": 4});
-        assert!(apply_attention_mode_auto(&mut missing));
-        assert_eq!(missing["attention_mode"], serde_json::json!("auto"));
+        assert!(apply_attention_mode_sdpa(&mut missing));
+        assert_eq!(missing["attention_mode"], serde_json::json!("sdpa"));
         let mut empty = serde_json::json!({"attention_mode": ""});
-        assert!(apply_attention_mode_auto(&mut empty));
-        assert_eq!(empty["attention_mode"], serde_json::json!("auto"));
-        // setup.py's 'sage' artifact default + genuinely deliberate values stay.
-        let mut artifact = serde_json::json!({"attention_mode": "sage"});
-        assert!(apply_attention_mode_auto(&mut artifact));
-        assert_eq!(artifact["attention_mode"], serde_json::json!("auto"));
-        let mut artifact2 = serde_json::json!({"attention_mode": "sage2"});
-        assert!(apply_attention_mode_auto(&mut artifact2));
-        assert_eq!(artifact2["attention_mode"], serde_json::json!("auto"));
-        for keep in ["sdpa", "flash", "auto", "sage3"] {
+        assert!(apply_attention_mode_sdpa(&mut empty));
+        assert_eq!(empty["attention_mode"], serde_json::json!("sdpa"));
+        // Stale values migrate to the upstream AMD default: our old "auto"
+        // shim plus setup.py's 'sage' artifact default.
+        for stale in ["auto", "AUTO", "sage", "sage2"] {
+            let mut v = serde_json::json!({"attention_mode": stale});
+            assert!(apply_attention_mode_sdpa(&mut v), "{stale} must migrate");
+            assert_eq!(v["attention_mode"], serde_json::json!("sdpa"));
+        }
+        for keep in ["sdpa", "SDPA", "flash", "sage3"] {
             let mut v = serde_json::json!({"attention_mode": keep});
-            assert!(!apply_attention_mode_auto(&mut v), "{keep} must stay");
+            assert!(!apply_attention_mode_sdpa(&mut v), "{keep} must stay");
             assert_eq!(v["attention_mode"], serde_json::json!(keep));
         }
     }
@@ -7118,6 +7162,7 @@ mod exit_106_tests {
         // so a future split is deliberate, not drift.
         for (profile, gpu) in [
             ("AMD_GFX1201", "AMD Radeon AI PRO R9700"),
+            ("AMD_GFX1200", "AMD Radeon RX 9060 XT"),
             ("AMD_GFX110X", "AMD Radeon RX 7900 XTX"),
             ("AMD_GFX1151", "AMD Radeon 890M"),
             ("AMD_GFX103X", "AMD Radeon RX 6800 XT"),

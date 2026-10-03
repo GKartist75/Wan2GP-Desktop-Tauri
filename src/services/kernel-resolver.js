@@ -13,8 +13,8 @@
 /**
  * Map a detected GPU to a GPU-profile key.
  * Mirrors upstream setup.py profile names (RTX_50, RTX_40, RTX_30, RTX_20,
- * GTX_10) plus AMD sub-profiles (AMD_GFX110X, AMD_GFX1151, AMD_GFX1201,
- * AMD_GFX103X) for per-GPU display/HIP/torch-target decisions. Upstream
+ * GTX_10) plus AMD sub-profiles (AMD_GFX110X, AMD_GFX1151, AMD_GFX1200,
+ * AMD_GFX1201, AMD_GFX103X) for per-GPU display/HIP/torch-target decisions. Upstream
  * setup_config.json collapsed those into a single AMD key (ROCm 10
  * refresh), so resolveKernelWheels falls back to AMD when the exact
  * sub-key is absent. Plus INTEL_XPU for Intel (CPU torch) and CPU for
@@ -29,11 +29,22 @@ function kernelProfileKey(gpu) {
   const vendor = (gpu && gpu.vendor || '').toUpperCase()
   if (vendor === 'APPLE') return 'MPS'
   if (vendor === 'NVIDIA') {
-    if (/ (10|16)\d{2}/.test(g)) return 'GTX_10' // GTX 10/16 → cu128, no kernel wheels
-    if (g.includes('50')) return 'RTX_50'
-    if (g.includes('40')) return 'RTX_40'
-    if (g.includes('30')) return 'RTX_30'
-    if (g.includes('20') || g.includes('QUADRO')) return 'RTX_20'
+    // Pascal and older — last generation without attention kernels.
+    if (g.includes(' 10') || g.includes(' 16') || g.includes('GTX 10') || g.includes('GTX 16')) return 'GTX_10'
+    // Workstation / datacenter BEFORE consumer tokens: "RTX 5000 Ada" is
+    // Ada (RTX_40), not Blackwell — mirrors hw.rs (the old bare-'50' check
+    // mistiered 3050/4050 and Ada cards to RTX_50).
+    if (g.includes('PRO 6000') || g.includes('PRO 5000') || g.includes('PRO 4000') || g.includes('B100') || g.includes('B200') || g.includes('GB100')) return 'RTX_50'
+    if (g.includes('H100') || g.includes('H200')) return 'RTX_50'
+    if (g.includes('ADA') || g.includes('L40') || g.includes(' L4')) return 'RTX_40'
+    if (g.includes('RTX A') || g.includes(' A40') || g.includes(' A30') || g.includes(' A16') || g.includes(' A10') || g.includes(' A80')) return 'RTX_30'
+    // Consumer GeForce — spaced generation tokens, so "RTX 3050" (Ampere)
+    // can't match Blackwell.
+    if (g.includes('RTX 50') || g.includes('RTX50')) return 'RTX_50'
+    if (g.includes('RTX 40') || g.includes('RTX40')) return 'RTX_40'
+    if (g.includes('RTX 30') || g.includes('RTX30')) return 'RTX_30'
+    if (g.includes('RTX 20') || g.includes('RTX20') || g.includes('QUADRO')) return 'RTX_20'
+    if (g.includes('20')) return 'RTX_20'
     return 'GTX_10'
   }
   if (vendor === 'AMD') {
@@ -44,9 +55,11 @@ function kernelProfileKey(gpu) {
     if (/7600|7700|7800|7900|780M/.test(g)) return 'AMD_GFX110X'
     // RDNA 3.5 APUs (gfx1150/1151): Strix Halo, Strix Point 890M, Z1/Phoenix
     if (/890M|STRIX|HALO|Z1|PHOENIX|7000/.test(g)) return 'AMD_GFX1151'
-    // RDNA 4 (gfx120X): RX 9060/9070 + Radeon AI PRO R9700 (gfx1201, Navi 48) —
-    // upstream's old mapping missed these; doc-leading per docs/AMD-INSTALLATION.md
-    if (/9000|9060|9070|9700|8000|1201/.test(g)) return 'AMD_GFX1201'
+    // RDNA 4 Navi 44 (RX 9060 / 9060 XT) is gfx1200, NOT gfx1201 —
+    // upstream AMD-INSTALLATION.md table. Must precede the 1201 arm.
+    if (/9060|GFX1200|1200/.test(g)) return 'AMD_GFX1200'
+    // RDNA 4 Navi 48 (RX 9070 / 9070 XT, R9700) + legacy tokens.
+    if (/9070|9700|9000|8000|GFX1201|1201/.test(g)) return 'AMD_GFX1201'
     return 'AMD_GFX110X'
   }
   if (vendor === 'INTEL') return 'INTEL_XPU' // Intel iGPU/Arc → CPU torch (XPU acceleration not possible); no kernel wheels, sync-safe

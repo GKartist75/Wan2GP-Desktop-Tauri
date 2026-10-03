@@ -54,7 +54,23 @@ pub fn get_status() -> serde_json::Value {
                     .unwrap_or("UNKNOWN");
                 let name = gpu.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 profile = kernel_profile_key(vendor, name);
-                if let Some(prof) = cfg.get("gpu_profiles").and_then(|p| p.get(&profile)) {
+                // Launcher AMD sub-profiles (AMD_GFX1200/1201/...) alias to
+                // upstream's unified AMD key (ROCm 10 refresh) when the exact
+                // key is absent — mirrors forced_setup_profile + the JS
+                // resolveKernelWheels fallback so the overview agrees with
+                // what actually gets installed.
+                let lookup = if cfg
+                    .get("gpu_profiles")
+                    .and_then(|p| p.get(&profile))
+                    .is_none()
+                    && profile.starts_with("AMD")
+                    && cfg.get("gpu_profiles").and_then(|p| p.get("AMD")).is_some()
+                {
+                    "AMD".to_string()
+                } else {
+                    profile.clone()
+                };
+                if let Some(prof) = cfg.get("gpu_profiles").and_then(|p| p.get(&lookup)) {
                     if let Some(kernels) = prof.get("kernels").and_then(|k| k.as_array()) {
                         // build overview wheels with label/pipName/configured so frontend shows "want <ver>" not "want ?"
                         let mut arr = Vec::new();
