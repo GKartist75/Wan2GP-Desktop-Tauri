@@ -85,7 +85,9 @@ C:\Wan2GP-Models\               ← models library
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.9.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.1) *(latest)* — Opt-in console log viewer on its own port (Manage → Phone & remote access → C · Console logs): watch errors + completions in a second tab/window, phone included. Details in [CHANGELOG](CHANGELOG.md).
+- [**v0.9.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.2) *(latest)* — AMD correctness + fail-closed memory: RX 9060 / 9060 XT install the right `gfx1200` wheels, no stale compiler/SDK env at launch, AMD attention defaults to `sdpa`, and RAM/VRAM probing fails toward smaller profiles instead of larger ones. Details in [CHANGELOG](CHANGELOG.md).
+
+- [**v0.9.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.1) — Opt-in console log viewer on its own port (Manage → Phone & remote access → C · Console logs): watch errors + completions in a second tab/window, phone included. Details in [CHANGELOG](CHANGELOG.md).
 
 - [**v0.9.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.0) — AMD ROCm 10 refresh (unified `AMD` profile, Python 3.12, pinned torch 2.13 stable). Details in [CHANGELOG](CHANGELOG.md).
 

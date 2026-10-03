@@ -4,6 +4,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.9.2] — 2026-10-03
+
 - AMD upstream parity (`b8b18f8` audit): RX 9060 / 9060 XT map to `gfx1200`
   (Navi 44), not `gfx1201` — fallback torch targets, `known_vram_mb`
   (XT 16GB / plain 8GB), and `kernel-resolver.js` fixed; no launch-time
