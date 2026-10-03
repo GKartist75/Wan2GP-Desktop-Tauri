@@ -460,7 +460,8 @@ pub fn memory_profile_read() -> serde_json::Value {
 /// no decimal separator for locales to mangle); legacy decimal-GB strings
 /// ("79,8" pl-PL / "79.8") are also accepted. Returns None on garbage
 /// (empty, non-numeric, multi-separator, non-positive, non-finite) so the
-/// caller falls back to 32.0 instead of tiering on a lie. Pure + unit-tested.
+/// caller falls back conservatively instead of tiering on a lie.
+/// Pure + unit-tested.
 pub(crate) fn ram_gb_from_probe(raw: &str) -> Option<f64> {
     const GB: f64 = 1024.0 * 1024.0 * 1024.0;
     let s = raw.trim();
@@ -482,8 +483,10 @@ pub(crate) fn ram_gb_from_probe(raw: &str) -> Option<f64> {
         }
         return Some(gb);
     }
-    // Integer bytes; sub-KB values are impossible as bytes, so read tiny
-    // plain numbers as GB (defensive — real probes never emit them).
+    // Integer bytes; sub-KB plain numbers are impossible as byte counts
+    // from the real probe, so treat them as corrupt output (None) rather
+    // than as GB — misreading "512" as 512GB tiered high-RAM and picked
+    // P1, a too-large model. Callers fall back conservatively instead.
     if !s.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
@@ -492,7 +495,7 @@ pub(crate) fn ram_gb_from_probe(raw: &str) -> Option<f64> {
         return None;
     }
     if n < 1024.0 {
-        return Some(n);
+        return None;
     }
     Some(n / GB)
 }
@@ -517,7 +520,7 @@ pub fn auto_tune_detect() -> serde_json::Value {
         .unwrap_or("0")
         .parse()
         .unwrap_or(0.0);
-    let vram_gb = (vram_mb / 1024.0).round() as i64;
+    let vram_gb = (vram_mb / 1024.0).floor() as i64;
     let cuda_available = vendor == "NVIDIA" && vram_mb > 0.0 && !name.is_empty();
     // AMD (TheRock/ROCm): no CUDA, but a named Radeon is a usable GPU —
     // surface it instead of "—" so the installer plans the ROCm path.
@@ -529,15 +532,17 @@ pub fn auto_tune_detect() -> serde_json::Value {
     // the legacy decimal-GB strings ("79,8" pl-PL / "79.8"). The old probe
     // (`Round(bytes/1GB,1)`) printed `79,8` under pl-PL, f64::parse rejected
     // the comma, and the silent 32GB fallback mistiered high-RAM machines.
+    // Failure now falls back to 16.0 (upstream setup.py's own default),
+    // which tiers very_low — fail-closed toward P5, never toward P4.
     let ram_gb = {
         #[cfg(windows)]
         {
             silent_command("powershell").args(["-NoProfile","-Command","(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"]).output()
-                .ok().and_then(|o| ram_gb_from_probe(&String::from_utf8_lossy(&o.stdout))).unwrap_or(32.0)
+                .ok().and_then(|o| ram_gb_from_probe(&String::from_utf8_lossy(&o.stdout))).unwrap_or(16.0)
         }
         #[cfg(not(windows))]
         {
-            32.0
+            16.0
         }
     };
     let cpu_count = std::thread::available_parallelism().map_or(8, std::num::NonZero::get) as i64;
@@ -593,8 +598,22 @@ pub fn auto_tune_recommend(
         .and_then(|o| o.get("failsafe"))
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
-    // No CUDA at all → explicit conservative fallback, clearly labeled (never silent P5).
-    if !failsafe && hw.get("cuda_available").and_then(|v| v.as_bool()) == Some(false) {
+    // No usable GPU at all → explicit conservative fallback, clearly
+    // labeled (never silent P5). AMD cards report cuda_available=false but
+    // gpu_available=true with real VRAM (ROCm/TheRock) — tiering them as
+    // "unavailable" forced every healthy Radeon (incl. 9060 XT) to P4.5.
+    let cuda_off = hw.get("cuda_available").and_then(|v| v.as_bool()) == Some(false);
+    let vendor_is_amd = hw
+        .get("vendor")
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_uppercase() == "AMD")
+        .unwrap_or(false);
+    let amd_usable = hw
+        .get("gpu_available")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(vendor_is_amd)
+        && vram_gb > 0.0;
+    if !failsafe && cuda_off && !amd_usable {
         return serde_json::json!({
             "video_profile": 4.5, "image_profile": 4.5, "audio_profile": 4.5,
             "vram_safety_coefficient": 0.70, "vae_config": 0, "transformer_quantization": "int8", "int8_kernels": "auto", "kernel_precision": "fast",
@@ -2573,6 +2592,15 @@ mod ram_probe_tests {
             assert_eq!(ram_gb_from_probe(bad), None, "{bad:?}");
         }
     }
+    #[test]
+    fn tiny_plain_numbers_rejected_not_gigabytes() {
+        // Truncated/error output ("512", "32") must not tier as 512GB/32GB
+        // (that picked P1/P4, too-large models) — None fails closed to the
+        // conservative fallback instead.
+        for bad in ["512", "32", "64", "8", "1023"] {
+            assert_eq!(ram_gb_from_probe(bad), None, "{bad:?}");
+        }
+    }
 }
 #[cfg(test)]
 mod autotune_matrix_tests {
@@ -2614,7 +2642,7 @@ mod autotune_matrix_tests {
         let r = rec("high", "high", 48.0, true);
         assert_eq!(r["video_profile"], 5.0);
         assert_eq!(r["vram_safety_coefficient"], 0.60);
-        // no CUDA → labeled fallback, not silent P4
+        // no usable GPU → labeled fallback, not silent P4
         let r = auto_tune_recommend(
             Some(
                 serde_json::json!({"vram_tier": "none", "ram_tier": "low", "gpu_vram_gb": 0, "cuda_available": false}),
@@ -2626,6 +2654,32 @@ mod autotune_matrix_tests {
             .as_str()
             .unwrap()
             .contains("unavailable"));
+    }
+    #[test]
+    fn amd_usable_gpus_tier_normally() {
+        // Healthy Radeon (cuda off, gpu on, real VRAM) must NOT take the
+        // no-CUDA fallback — 9060 XT 16GB + 32GB RAM tiers like NVIDIA.
+        let r = auto_tune_recommend(
+            Some(serde_json::json!({
+                "vram_tier": "low", "ram_tier": "low", "gpu_vram_gb": 16,
+                "cuda_available": false, "gpu_available": true, "vendor": "AMD",
+            })),
+            None,
+        );
+        assert_eq!(r["video_profile"], 4.0);
+        assert!(!r["_recommendation_label"]
+            .as_str()
+            .unwrap()
+            .contains("unavailable"));
+        // AMD with unknown/zero VRAM still falls back.
+        let r = auto_tune_recommend(
+            Some(serde_json::json!({
+                "vram_tier": "none", "ram_tier": "low", "gpu_vram_gb": 0,
+                "cuda_available": false, "gpu_available": false, "vendor": "AMD",
+            })),
+            None,
+        );
+        assert_eq!(r["video_profile"], 4.5);
     }
 }
 #[cfg(test)]

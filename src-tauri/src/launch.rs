@@ -70,11 +70,11 @@ pub(crate) fn terminal_title() -> Option<String> {
         .and_then(|m| m.lock().ok())
         .and_then(|g| g.clone())
 }
-// AMD ROCm PATH prepend tracking: the AMD launch env prepends the ROCm SDK
-// bin dirs to PATH in this process. On a later non-AMD launch in the same
-// process that prepend is stale (and the compiler vars below are worse), so
-// the non-AMD reconcile strips exactly what was prepended. Recorded once per
-// prepend; HSA override handling is untouched.
+// AMD ROCm PATH prepend tracking (retired): older launcher versions
+// prepended the ROCm SDK bin dirs to PATH in this process. Nothing prepends
+// anymore (upstream needs no launch-time SDK env), but the recording stays
+// so the non-AMD reconcile below can still strip prepends left by those
+// versions. HSA override handling is untouched.
 static AMD_PATH_PREPEND: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
     std::sync::OnceLock::new();
 /// Keys this launcher sets for the AMD ROCm session env. Meaningless off-AMD:
@@ -796,10 +796,11 @@ runpy.run_path(sys.argv[0], run_name='__main__')
         }
         None
     }
-    // AMD ROCm session env (doc-leading: docs/AMD-INSTALLATION.md "Running Wan2GP").
-    // Set-if-absent so explicit user overrides always win; logged like the HSA
-    // override above. On a NON-AMD launch the stale values are NOT harmless:
-    // `CC=clang-cl`, `CXX=clang-cl`, `DISTUTILS_USE_SDK=1` and a
+    // AMD ROCm session env (doc-leading: upstream docs/AMD-INSTALLATION.md
+    // post-refresh — NO compiler/SDK env at launch). Only set-if-absent
+    // attention-runtime knobs remain; everything else is diagnostics.
+    // Stale values from older launcher versions are NOT harmless on any
+    // launch: `CC=clang-cl`, `CXX=clang-cl`, `DISTUTILS_USE_SDK=1` and a
     // ROCm-prepended PATH break later Intel/CPU/NVIDIA pip builds in this
     // same launcher process — so the else branch below reconciles them
     // away (HSA handling above stays exactly as-is).
@@ -858,49 +859,20 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             // installed env (the `rocm` package dir, e.g.
             // `<env>/Lib/site-packages/rocm`). Never invent paths: when
             // the dir is absent, log and continue without failing launch.
+            // ROCm SDK diagnostics only (upstream b8b18f8): NO launch-time
+            // env is set here anymore — triton-windows resolves the SDK
+            // from the active env itself, and ROCM_HOME / PATH prepends /
+            // CC / CXX / DISTUTILS_USE_SDK belong to the retired pre-refresh
+            // guide (setting CC=clang-cl process-wide used to break later
+            // non-AMD pip builds). The non-AMD reconcile below still strips
+            // stale values left by older launcher versions. We only log.
             match amd_rocm_sdk_dir() {
-                    Some(sdk) => {
-                        let sdk_s = sdk.to_string_lossy().to_string();
-                        if std::env::var("ROCM_HOME").is_err() {
-                            std::env::set_var("ROCM_HOME", &sdk_s);
-                            emit(&format!("[i] GPU profile env: ROCM_HOME={sdk_s}\n"));
-                        }
-                        let llvm_bin = sdk.join("lib").join("llvm").join("bin");
-                        let sdk_bin = sdk.join("bin");
-                        let mut prepend: Vec<String> = Vec::new();
-                        if llvm_bin.is_dir() {
-                            prepend.push(llvm_bin.to_string_lossy().to_string());
-                        }
-                        if sdk_bin.is_dir() {
-                            prepend.push(sdk_bin.to_string_lossy().to_string());
-                        }
-                            if !prepend.is_empty() {
-                                let old = std::env::var("PATH").unwrap_or_default();
-                                let add = prepend.join(";");
-                                if !old.split(';').any(|p| p.eq_ignore_ascii_case(&add)) {
-                                    std::env::set_var("PATH", format!("{add};{old}"));
-                                    if let Ok(mut g) = AMD_PATH_PREPEND
-                                        .get_or_init(|| std::sync::Mutex::new(None))
-                                        .lock()
-                                    {
-                                        *g = Some(add.clone());
-                                    }
-                                    emit(&format!("[i] GPU profile env: PATH prepend {add}\n"));
-                                }
-                            }
-                        for (k, v) in [
-                            ("CC", "clang-cl"),
-                            ("CXX", "clang-cl"),
-                            ("DISTUTILS_USE_SDK", "1"),
-                        ] {
-                            if std::env::var(k).is_err() {
-                                std::env::set_var(k, v);
-                                emit(&format!("[i] GPU profile env: {k}={v}\n"));
-                            }
-                        }
-                    }
-                        None => emit("[!] ROCm SDK dir not found (no rocm package in the active env) — launching without ROCM_HOME/CC/CXX.\n"),
-                    }
+                Some(sdk) => emit(&format!(
+                    "[i] ROCm SDK detected at {} (no env vars set — triton resolves it from the env)\n",
+                    sdk.to_string_lossy()
+                )),
+                None => emit("[i] ROCm SDK dir not found in the active env — launching anyway (no ROCm env vars required).\n"),
+            }
         } else {
             // Non-AMD launch in a process that previously ran AMD: strip
             // the stale ROCm/compiler session env (unconditional — these

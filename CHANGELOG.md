@@ -4,6 +4,22 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+- AMD upstream parity (`b8b18f8` audit): RX 9060 / 9060 XT map to `gfx1200`
+  (Navi 44), not `gfx1201` — fallback torch targets, `known_vram_mb`
+  (XT 16GB / plain 8GB), and `kernel-resolver.js` fixed; no launch-time
+  `ROCM_HOME` / `PATH` / `CC` / `CXX` / `DISTUTILS_USE_SDK` anymore
+  (triton-windows resolves the SDK from the env); AMD `attention_mode`
+  default is now `sdpa` (upstream profile value, migrates stale
+  `auto`/`sage`/`sage2`); torch recipe reads the cloned
+  `setup_config.json` `rocm10` template (`{device}` spliced per-box).
+- Fail-closed memory tiering: RAM probe rejects truncated output (no more
+  `512` → 512GB → P1), probe failure falls back to 16GB (`very_low`, P5
+  direction — was silent 32GB → P4); VRAM tiers use `floor` (11.5GB stays
+  `tight`); overview `profileNum` follows upstream RAM+VRAM pid thresholds
+  (unknown RAM never shows P1); healthy AMD cards tier through Auto-Tune
+  instead of forced P4.5; `kernel-resolver.js` NVIDIA tokens synced to
+  spaced generation tokens (3050/4050 no longer → Blackwell).
+
 ## [0.9.1] — 2026-10-01
 
 - Opt-in console log viewer on its own port (Dubon request): new

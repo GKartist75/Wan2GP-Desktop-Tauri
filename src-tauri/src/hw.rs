@@ -14,7 +14,10 @@ pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
         if out.status.success() {
             let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if !s.is_empty() {
-                let parts: Vec<&str> = s.split(", ").collect();
+                // GPU names can contain commas — split on ',' then trim
+                // (mirrors detect_gpus; the old split(", ") mis-indexed
+                // vramMB/driverVersion on such names).
+                let parts: Vec<&str> = s.split(',').map(|p| p.trim()).collect();
                 return serde_json::json!({"vendor":"NVIDIA","name":parts.first().unwrap_or(&"").trim(),"vramMB":parts.get(1).unwrap_or(&"0 MiB").trim(),"driverVersion":parts.get(2).unwrap_or(&"").trim(),"raw":s});
             }
         }
@@ -259,7 +262,11 @@ pub(crate) fn known_vram_mb(name: &str) -> Option<u64> {
     if g.contains("R9700") {
         return Some(32 * GB);
     }
-    // RDNA 4 consumer (9070 GRE is the 12GB exception).
+    // RDNA 4 consumer (9070 GRE is the 12GB exception; 9060 XT is 16GB,
+    // plain 9060 is 8GB — upstream gfx1200 row).
+    if g.contains("9060") {
+        return Some(if g.contains("XT") { 16 * GB } else { 8 * GB });
+    }
     if g.contains("9070") {
         return Some(if g.contains("GRE") { 12 * GB } else { 16 * GB });
     }
@@ -344,10 +351,18 @@ pub(crate) fn wmi_dedicated_vram_mb(display_name: &str) -> Option<u64> {
         }
         cands.push((d, mb));
     }
-    // 1) Name match (WMI vs DriverDesc can differ slightly).
-    for (d, mb) in &cands {
-        if d.contains(&want) || want.contains(d) {
-            return Some(*mb);
+    // 1) Name match (WMI vs DriverDesc can differ slightly); max wins
+    // so a duplicated driver key can't under-report (mirrors upstream
+    // setup.py get_adapter_vram_gb, which takes the max qwMemorySize).
+    {
+        let mut best: Option<u64> = None;
+        for (d, mb) in &cands {
+            if d.contains(&want) || want.contains(d) {
+                best = Some(best.map_or(*mb, |b: u64| b.max(*mb)));
+            }
+        }
+        if let Some(mb) = best {
+            return Some(mb);
         }
     }
     // 2) Distinctive-token match (R9700/9070/…); max VRAM wins so a
@@ -476,8 +491,10 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
         {
             return "AMD_GFX1151".into();
         }
-        if g.contains("9060")
-            || g.contains("9070")
+        if g.contains("9060") || g.contains("1200") {
+            return "AMD_GFX1200".into();
+        }
+        if g.contains("9070")
             || g.contains("9700")
             || g.contains("9000")
             || g.contains("8000")
@@ -835,6 +852,15 @@ mod amd_profile_tests {
             kernel_profile_key("AMD", "AMD Radeon RX 9070 XT"),
             "AMD_GFX1201"
         );
+        // RX 9060 XT = gfx1200 (Navi 44), NOT gfx1201 — upstream table.
+        assert_eq!(
+            kernel_profile_key("AMD", "AMD Radeon RX 9060 XT"),
+            "AMD_GFX1200"
+        );
+        assert_eq!(
+            kernel_profile_key("AMD", "AMD Radeon RX 9060"),
+            "AMD_GFX1200"
+        );
         assert_eq!(
             kernel_profile_key("AMD", "AMD Radeon RX 7900 XTX"),
             "AMD_GFX110X"
@@ -978,6 +1004,8 @@ mod known_vram_tests {
         // The 0.5.1 reporter card: registry probe missed, table must hit.
         assert_eq!(known_vram_mb("AMD Radeon AI PRO R9700"), Some(32768));
         assert_eq!(known_vram_mb("AMD Radeon RX 9070 XT"), Some(16384));
+        assert_eq!(known_vram_mb("AMD Radeon RX 9060 XT"), Some(16384));
+        assert_eq!(known_vram_mb("AMD Radeon RX 9060"), Some(8192));
         assert_eq!(known_vram_mb("AMD Radeon RX 9070 GRE"), Some(12288));
         assert_eq!(known_vram_mb("AMD Radeon RX 7900 XTX"), Some(24576));
         assert_eq!(known_vram_mb("AMD Radeon RX 7900 XT"), Some(20480));
@@ -1430,13 +1458,56 @@ pub fn get_hardware_profile() -> serde_json::Value {
         .and_then(serde_json::Value::as_f64)
         .unwrap_or(0.0);
     let gpu = get_gpu_info_sync();
-    hardware_profile_detail(
+    hardware_profile_detail_with_ram(
         gpu.get("vendor")
             .and_then(|v| v.as_str())
             .unwrap_or("UNKNOWN"),
         gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""),
         vram_mb,
+        probe_ram_gb(),
     )
+}
+
+/// Best-effort total-RAM probe (GB) for the overview pid. Integer bytes
+/// via powershell on Windows (same source as upstream setup.py
+/// get_system_specs); None when the probe fails so callers tier
+/// conservatively instead of on a lie.
+#[cfg(windows)]
+pub(crate) fn probe_ram_gb() -> Option<f64> {
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let out = probe_command("POWERSHELL", "powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.bytes().all(|b| b.is_ascii_digit()) {
+        let n: f64 = s.parse().ok()?;
+        if n.is_finite() && n > 0.0 {
+            return Some(n / GB);
+        }
+        return None;
+    }
+    // Legacy decimal-GB fallback ("79,8" / "79.8").
+    if s.matches(['.', ',']).count() == 1 {
+        let norm: String = s.chars().map(|c| if c == ',' { '.' } else { c }).collect();
+        let gb: f64 = norm.parse().ok()?;
+        if gb.is_finite() && gb > 0.0 {
+            return Some(gb);
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+pub(crate) fn probe_ram_gb() -> Option<f64> {
+    None
 }
 
 /// Pure profile matrix behind get_hardware_profile (no hardware probes —
@@ -1445,7 +1516,18 @@ pub fn get_hardware_profile() -> serde_json::Value {
 /// must not promise CUDA wheels (the old `_` fallthrough did). Install,
 /// launch and smoke paths are untouched — Intel boxes keep working exactly
 /// as before (CPU torch), only the labels are honest now.
-pub(crate) fn hardware_profile_detail(vendor: &str, name: &str, vram_mb: f64) -> serde_json::Value {
+/// The `profileNum` pid follows upstream setup.py `create_wgp_config`
+/// thresholds (ram>60/>30, vram>22/>11) so the overview never contradicts an
+/// Auto-Tune / install recommendation the way the old VRAM-only `pnum` did
+/// (24GB VRAM + 8GB RAM showed P1, which needs 64GB). `ram_gb=None`
+/// (unknown) stays conservative: never P1–P3, matching upstream-with-16GB-RAM
+/// behavior.
+pub(crate) fn hardware_profile_detail_with_ram(
+    vendor: &str,
+    name: &str,
+    vram_mb: f64,
+    ram_gb: Option<f64>,
+) -> serde_json::Value {
     struct Prof {
         python: &'static str,
         torch: &'static str,
@@ -1601,12 +1683,33 @@ pub(crate) fn hardware_profile_detail(vendor: &str, name: &str, vram_mb: f64) ->
         "flash": prof.flash.map(comp_label).unwrap_or("—".into()),
         "kernels": kernel_labels,
     });
-    let pnum = if vram_gb >= 24.0 {
-        1
-    } else if vram_gb >= 12.0 {
-        4
-    } else {
-        5
+    // Upstream-parity pid (setup.py create_wgp_config): RAM and VRAM
+    // together. Unknown RAM stays conservative — never P1-P3.
+    let pnum = match ram_gb {
+        Some(ram) => {
+            let high_ram = ram > 60.0;
+            let mid_ram = ram > 30.0;
+            let huge_vram = vram_gb > 22.0;
+            let high_vram = vram_gb > 11.0;
+            if high_ram && huge_vram {
+                1
+            } else if high_ram {
+                2
+            } else if mid_ram && huge_vram {
+                3
+            } else if mid_ram && high_vram {
+                4
+            } else {
+                5
+            }
+        }
+        None => {
+            if vram_gb > 11.0 {
+                4
+            } else {
+                5
+            }
+        }
     };
     serde_json::json!({
         "profile": profile_str,
@@ -1995,8 +2098,35 @@ mod adapter_ram_tests {
     }
 }
 #[cfg(test)]
+mod overview_pid_tests {
+    use super::hardware_profile_detail_with_ram;
+    fn pnum(vendor: &str, name: &str, vram_mb: f64, ram_gb: Option<f64>) -> i64 {
+        hardware_profile_detail_with_ram(vendor, name, vram_mb, ram_gb)["profileNum"]
+            .as_i64()
+            .unwrap()
+    }
+    #[test]
+    fn upstream_parity_pid() {
+        // Mirrors setup.py create_wgp_config thresholds (ram>60/>30,
+        // vram>22/>11).
+        assert_eq!(pnum("AMD", "AMD Radeon RX 9070 XT", 16.0 * 1024.0, Some(80.0)), 2);
+        assert_eq!(pnum("AMD", "AMD Radeon RX 9070 XT", 16.0 * 1024.0, Some(32.0)), 4);
+        assert_eq!(pnum("AMD", "AMD Radeon RX 9060 XT", 16.0 * 1024.0, Some(16.0)), 5);
+        assert_eq!(pnum("NVIDIA", "NVIDIA GeForce RTX 4090", 24.0 * 1024.0, Some(80.0)), 1);
+        assert_eq!(pnum("NVIDIA", "NVIDIA GeForce RTX 4090", 24.0 * 1024.0, Some(32.0)), 3);
+    }
+    #[test]
+    fn unknown_ram_never_overpromises() {
+        // The old VRAM-only pnum showed P1 for 24GB VRAM + 8GB RAM.
+        // Unknown RAM caps at P4 (matches upstream-with-16GB-RAM).
+        assert_eq!(pnum("NVIDIA", "X", 24.0 * 1024.0, None), 4);
+        assert_eq!(pnum("AMD", "AMD Radeon RX 9060 XT", 16.0 * 1024.0, None), 4);
+        assert_eq!(pnum("AMD", "X", 8.0 * 1024.0, None), 5);
+    }
+}
+#[cfg(test)]
 mod intel_cpu_tests {
-    use super::{build_install_plan, hardware_profile_detail, kernel_profile_key};
+    use super::{build_install_plan, hardware_profile_detail_with_ram, kernel_profile_key};
     #[test]
     fn intel_stays_cpu_honest() {
         // Keys stable (setup.py never sees them; install/launch behavior unchanged).
@@ -2017,7 +2147,7 @@ mod intel_cpu_tests {
             assert_eq!(plan["torch"], serde_json::json!("PyTorch (CPU)"));
             assert_eq!(plan["profile"], serde_json::json!("INTEL_XPU"));
             // Overview: INTEL_CPU row, kernel-free (old fallthrough promised CUDA wheels).
-            let d = hardware_profile_detail("INTEL", n, 0.0);
+            let d = hardware_profile_detail_with_ram("INTEL", n, 0.0, None);
             assert_eq!(d["profile"], serde_json::json!("INTEL_CPU"));
             assert_eq!(d["kernelsRaw"].as_array().unwrap().len(), 0);
             assert!(d["detail"]["torch"].as_str().unwrap().contains("CPU"));
