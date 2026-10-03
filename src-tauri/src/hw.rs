@@ -1438,18 +1438,9 @@ fn kernel_display(key: &str) -> (&str, &str) {
 
 #[tauri::command]
 pub fn get_hardware_profile() -> serde_json::Value {
-    // Full per-profile version matrix (mirrors Electron get-hardware-profile).
-    // The Tauri port only sent python/torch, so the overview showed '—' for
-    // Triton/Sage/Sparge/Flash and bare keys for kernel wheels.
-    struct Prof {
-        python: &'static str,
-        torch: &'static str,
-        triton: Option<&'static str>,
-        sage: Option<&'static str>,
-        sparge: Option<&'static str>,
-        flash: Option<&'static str>,
-        kernels: &'static [&'static str],
-    }
+    // Full per-profile version matrix lives in
+    // hardware_profile_detail_with_ram (pure + unit-tested); this command
+    // only probes hardware and delegates.
     let gpus = detect_gpus();
     let vram_mb = gpus
         .as_array()
