@@ -1944,6 +1944,8 @@
   <script src="services/launch-args.js" defer></script>
   <script src="services/prompt-tools.js" defer></script>
   <script src="app.js" defer></script>
+  <!-- After app.js: refreshLLMEngines reads globals ($/showToast/getLLMEngines) that app.js defines. All defer scripts run in document order, so this ordering is the contract. -->
+  <script src="llm-engines-tab.js" defer></script>
   <script src="guide-tab.js" defer></script>
   <script src="launch-builder.js" defer></script>
   <script src="library-tab.js" defer></script>

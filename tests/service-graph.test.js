@@ -94,3 +94,26 @@ test('the renderer has no module loader, so no script may call require()', () =>
   const users = loaded.filter((s) => /require\(/.test(fs.readFileSync(path.join(SRC, s), 'utf8')))
   assert.deepEqual(users, [], `renderer scripts must not require(): ${users.join(', ')}`)
 })
+
+test('every renderer script referenced by index.html exists on disk', () => {
+  // A stale <script src> fails silently in a Tauri build — the file 404s, the
+  // script never runs, and the feature it owned just disappears from the UI
+  // with nothing in the console. This is the exact failure the llm-engines-tab
+  // extraction could have shipped.
+  const missing = scriptSources()
+    .filter((s) => !s.startsWith('__harness/'))
+    .filter((s) => !fs.existsSync(path.join(SRC, s)))
+  assert.deepEqual(missing, [], `index.html references missing scripts: ${missing.join(', ')}`)
+})
+
+test('llm-engines-tab.js loads after app.js (it reads app.js globals)', () => {
+  // The extraction of refreshLLMEngines out of app.js made load order a real
+  // contract: `$`, `showToast` and `getLLMEngines` are defined by app.js.
+  // All scripts are `defer`, so document order IS execution order.
+  const order = scriptSources()
+  const app = order.indexOf('app.js')
+  const tab = order.indexOf('llm-engines-tab.js')
+  assert.ok(app !== -1, 'app.js must be loaded')
+  assert.ok(tab !== -1, 'llm-engines-tab.js must be loaded')
+  assert.ok(tab > app, `llm-engines-tab.js must come after app.js (got ${tab} vs ${app})`)
+})
