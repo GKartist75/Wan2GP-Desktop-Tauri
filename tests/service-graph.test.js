@@ -113,7 +113,7 @@ test('extracted tabs load after app.js (they read app.js globals)', () => {
   const order = scriptSources()
   const app = order.indexOf('app.js')
   assert.ok(app !== -1, 'app.js must be loaded')
-  const tabs = ['llm-engines-tab.js', 'deepy-tab.js']
+  const tabs = ['llm-engines-tab.js', 'deepy-tab.js', 'deepy-web-tab.js']
   for (const tab of tabs) {
     const i = order.indexOf(tab)
     assert.ok(i !== -1, `${tab} must be loaded`)
