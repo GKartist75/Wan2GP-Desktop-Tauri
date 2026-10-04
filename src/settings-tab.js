@@ -271,3 +271,78 @@ $("cliDocsLink")?.addEventListener("click", (e) => {
     "https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/CLI.md",
   );
 });
+
+// ── Manage → General: Electron legacy section + closeSettings ──
+// Moved here from term-tab.js: these belong to the settings overlay, and
+// settings-tab.js needs closeSettings at load time (it wires the back button).
+// ponytail: one-shot detect per Manage open — registry read, no polling
+async function refreshElectronSection() {
+  const sec = $("electronSection");
+  if (!sec) return;
+  sec.style.display = "none";
+  let det = null;
+  try {
+    det = await window.w2gp.detectElectron();
+  } catch {}
+  if (!det || !det.found) return;
+  sec.style.display = "";
+  const st = $("electronStatus");
+  if (st)
+    st.textContent =
+      "Found: " +
+      (det.name || "Electron launcher") +
+      (det.version ? " v" + det.version : "") +
+      (det.installLocation ? " — " + det.installLocation : "");
+}
+$("removeElectronBtn")?.addEventListener("click", async function () {
+  const choice = await window.w2gp.confirmDialog({
+    title: "Remove Electron launcher?",
+    message: "Uninstall the legacy Electron launcher?",
+    detail:
+      "Only the old launcher app is removed. Your Wan2GP install, models, LoRAs, outputs and settings are kept and carry over automatically.",
+  });
+  if (choice !== "ok") return;
+  this.disabled = true;
+  const orig = this.textContent;
+  this.textContent = "Removing… (see console)";
+  appendLog("[*] Removing legacy Electron launcher — progress below…");
+  try {
+    const r = await window.w2gp.uninstallElectron();
+    if (r && r.ok) {
+      showToast(
+        r.removed
+          ? "✓ Electron launcher removed — data kept"
+          : "✓ Uninstaller ran (verify in Add/Remove Programs)",
+      );
+      refreshElectronSection();
+    } else {
+      showToast("✗ " + ((r && r.error) || "removal failed"));
+    }
+  } catch (e) {
+    showToast("✗ " + e.message);
+  } finally {
+    this.disabled = false;
+    this.textContent = orig;
+  }
+});
+function closeSettings() {
+  $("settingsPanel").classList.remove("open");
+  var guideOpen = $("guidePanel") && $("guidePanel").classList.contains("open");
+  // Only hide the overlay when the Guide panel isn't open either.
+  if (!guideOpen) {
+    $("settingsOverlay").classList.remove("visible");
+  }
+  // Restore full viewer bounds when leaving Manage in webview mode
+  // (skipped while the Guide panel stays open — it keeps its trim).
+  if ($("dashBody").style.display === "none" && !guideOpen) {
+    $("settingsOverlay").classList.remove("opaque");
+    // Don't reattach over an open terminal — restore the correct view state instead.
+    if (_ftVisible) showTerminal();
+    else {
+      try {
+        reshowNativeView();
+      } catch (e) {}
+    }
+  }
+}
+
