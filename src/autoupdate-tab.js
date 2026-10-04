@@ -150,6 +150,18 @@ let _autotuneHardware = null;
 let _autotuneRecommendation = null;
 let _autotuneAutoDetectDone = false; // D3: auto-run Detect once per session on first tab open
 
+/**
+ * GB for a chip: at most one decimal, never a trailing ".0". Probes return raw
+ * f64 (31.763145446777344), which reads as noise next to a rounded VRAM figure.
+ * Non-numeric / missing input renders as "—", never "NaN" or "undefined".
+ */
+function fmtGb(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  const r = Math.round(n * 10) / 10;
+  return String(Number.isInteger(r) ? r : r.toFixed(1));
+}
+
 /** Render hardware info into the card. */
 function renderAutoTuneHardware(hw) {
   const el = $("autotuneHardwareInfo");
@@ -200,9 +212,11 @@ function renderAutoTuneHardware(hw) {
   };
   wrap.append(
     chip("GPU", hw.gpu_name),
-    chip("VRAM", hw.gpu_vram_gb + " GB"),
-    chip("RAM", hw.ram_gb + " GB"),
-    chip("CUDA", hw.cuda_version || "—"),
+    // One decimal at most: ram_gb is a raw f64 (31.763145446777344 GB), and
+    // gpu_vram_gb is only rounded by luck of the probe, not by contract.
+    chip("VRAM", fmtGb(hw.gpu_vram_gb) + " GB"),
+    chip("RAM", fmtGb(hw.ram_gb) + " GB"),
+      chip("CUDA", hw.cuda_version || "—"),
     chip("Cap", hw.gpu_capability || "—"),
   );
   const brow = document.createElement("div");
