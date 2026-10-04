@@ -30,7 +30,13 @@ test('normalizePipSpec in app.js matches the tested service body', () => {
     vm.runInContext(m[0] + '\nthis.fn = normalizePipSpec;', box, { timeout: 5000 })
     return box.fn
   }
-  const inline = load(path.join(src, 'app.js'))
+  // The live copy moved with the Quick pip install section; find it wherever it is.
+  const live = fs
+    .readdirSync(src)
+    .filter((f) => f.endsWith('.js'))
+    .find((f) => /function normalizePipSpec/.test(fs.readFileSync(path.join(src, f), 'utf8')))
+  assert.ok(live, 'normalizePipSpec not found in any src/*.js')
+  const inline = load(path.join(src, live))
   const service = load(path.join(src, 'services', 'normalize-pip-spec.js'))
   const corpus = [
     'pip install claude-agent-sdk==0.1.66',
