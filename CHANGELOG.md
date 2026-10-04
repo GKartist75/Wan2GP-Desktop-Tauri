@@ -4,6 +4,46 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.10.0] — 2026-10-04
+
+- **Renderer split.** `app.js` went from 10,545 lines to 1,469: 35 `*-tab.js`
+  files now hold one panel each (installer, Deepy, Deepy Web, LLM engines, theme,
+  plugins, settings, dashboard, troubleshooting, DLSS5, migration, terminal,
+  auto-tune, and more), all loaded after `app.js` in `index.html`. Every move is
+  a pure cut-and-paste — no logic changed. What stays in `app.js` is the shell:
+  the global log buffer, overlay/card helpers, and the small launch-button
+  sections that share too much state to split cleanly.
+- **First test suite.** `cargo test --lib` (234 tests) and `npm test` (27 tests)
+  both run from a clean checkout with no extra dependencies — the frontend suite
+  uses Node's built-in `node:test`.
+- **Tests can no longer touch your install.** A `WAN2GP_DATA_DIR` seam redirects
+  `get_repo_dir()` at a tempdir, so running the suite leaves
+  `C:\Wan2GP\wgp_config.json` byte-identical. Previously the Deepy round-trip
+  test rewrote it for real and skipped its restore whenever an assertion failed.
+- **DOM harness.** `npm run harness` serves `src/` on localhost with the Tauri
+  IPC stubbed, so the real renderer boots in a browser and panels can be driven
+  and screenshotted without a build.
+- **Load-order guards.** Splitting made script order a real contract: a file
+  cannot reference a symbol a *later* file defines. `tests/load-order.test.js`
+  scans every loaded script and fails on a bare-argument read of a later symbol —
+  the class of bug that breaks boot silently. Three such bugs were caught during
+  the split and fixed (theme toggles, terminal buttons, `closeSettings`).
+- **Removed 11 dead service modules** (~2,200 lines) left over from the Electron
+  port — never loaded by `index.html` and never `require`d, their logic already
+  owned by the Rust backend or by `app.js`. `tests/service-graph.test.js` fails
+  if a new one appears. Stale comments pointing at them now point at the real
+  owners.
+- **Queue Row Colors moved** from Auto-tune to Settings → General → Appearance:
+  it is a theme preference, and the hardware scan has no opinion on it. It
+  previously showed a permanently-empty `rec:` badge.
+- **Hardware chips format properly.** The Auto-tune card rendered
+  `RAM 31.763145446777344 GB` because it concatenated the raw probe float;
+  GB values now round to one decimal and missing values show `—` instead of
+  `NaN`.
+- New Rust coverage for `log_server.rs` (log tail parsing/clamping) and
+  `updates.rs` (README version scrape, commit-hash validation), both extracted as
+  pure functions to be testable.
+
 ## [0.9.2] — 2026-10-03
 
 - AMD upstream parity (`b8b18f8` audit): RX 9060 / 9060 XT map to `gfx1200`

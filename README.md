@@ -30,6 +30,7 @@
 - [🧩 Plugin Manager & ✨ DLSS5](#-plugin-manager)
 - [🧭 Guide & 📚 Library](#-guide--library)
 - [🛠 Build from source](#-build-from-source)
+- [🧪 Tests](#-tests)
 - [⭐ Star History](#-star-history)
 - [Credits & License](#credits--license)
 
@@ -85,7 +86,9 @@ C:\Wan2GP-Models\               ← models library
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.9.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.2) *(latest)* — AMD correctness + fail-closed memory: RX 9060 / 9060 XT install the right `gfx1200` wheels, no stale compiler/SDK env at launch, AMD attention defaults to `sdpa`, and RAM/VRAM probing fails toward smaller profiles instead of larger ones. Details in [CHANGELOG](CHANGELOG.md).
+- [**v0.10.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.0) *(latest)* — Internal overhaul, no behaviour change: the renderer is split into 35 per-panel files (`app.js` 10,545 → 1,469 lines), the project gains its first test suite (`cargo test` 234, `npm test` 27) that provably cannot touch your `wgp_config.json`, plus a `npm run harness` DOM harness for driving the UI without a build. Also removes ~2,200 lines of dead Electron-era code and fixes the Auto-tune RAM chip printing `31.763145446777344 GB`. Details in [CHANGELOG](CHANGELOG.md).
+
+- [**v0.9.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.2) — AMD correctness + fail-closed memory: RX 9060 / 9060 XT install the right `gfx1200` wheels, no stale compiler/SDK env at launch, AMD attention defaults to `sdpa`, and RAM/VRAM probing fails toward smaller profiles instead of larger ones. Details in [CHANGELOG](CHANGELOG.md).
 
 - [**v0.9.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.1) — Opt-in console log viewer on its own port (Manage → Phone & remote access → C · Console logs): watch errors + completions in a second tab/window, phone included. Details in [CHANGELOG](CHANGELOG.md).
 
@@ -338,6 +341,28 @@ npx tauri build      # NSIS + MSI in src-tauri/target/release/bundle/
 ```
 
 Backend lives in `src-tauri/src/lib.rs` (`#[tauri::command]` handlers); frontend is vanilla HTML/CSS/JS in `src/` calling them via `invoke()` (`src/w2gp.js` bridge).
+
+### Tests
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml --lib   # 234 backend tests
+npm test                                               # 27 frontend tests
+```
+
+Both suites are hermetic — the backend one redirects `get_repo_dir()` at a
+tempdir, so running it leaves your `C:\Wan2GP\wgp_config.json` untouched.
+
+### Working on the UI
+
+`src/app.js` is the shell; each panel lives in its own `src/*-tab.js`, all
+listed in `index.html` after `app.js`. **That order is a contract** — a script
+cannot reference a symbol a later script defines, because all scripts are
+`defer` and therefore run in document order. `tests/load-order.test.js` enforces
+it. To see a panel without a full build:
+
+```bash
+npm run harness          # serves src/ on http://127.0.0.1:4173 with Tauri IPC stubbed
+```
 
 ---
 
