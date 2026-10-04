@@ -95,6 +95,42 @@ test('the renderer has no module loader, so no script may call require()', () =>
   assert.deepEqual(users, [], `renderer scripts must not require(): ${users.join(', ')}`)
 })
 
+test('app.js never passes an extracted tab symbol by value at top level', () => {
+  // The one real ordering hazard in this codebase: app.js loads BEFORE the
+  // *-tab.js files, so app.js cannot reference their functions at load time.
+  // Calling one inside a callback is fine; passing one as a bare argument
+  // (`addEventListener("click", toggleTheme)`) evaluates the reference
+  // immediately and throws ReferenceError. That bug shipped once already.
+  const tabFiles = fs
+    .readdirSync(SRC)
+    .filter((f) => f.endsWith('-tab.js'))
+  const names = new Set()
+  for (const f of tabFiles) {
+    const src = fs.readFileSync(path.join(SRC, f), 'utf8')
+    for (const m of src.matchAll(/^(?:async\s+)?function\s+(\w+)/gm)) names.add(m[1])
+    for (const m of src.matchAll(/^(?:const|let|var)\s+(\w+)\s*=/gm)) names.add(m[1])
+  }
+  assert.ok(names.size > 0, 'expected to find symbols in the extracted tabs')
+
+  const app = fs.readFileSync(path.join(SRC, 'app.js'), 'utf8').split('\n')
+  const hazards = []
+  let depth = 0
+  app.forEach((line, i) => {
+    if (depth === 0) {
+      for (const n of names) {
+        // bare reference: name present, not a call (no `(` right after)
+        const re = new RegExp('(^|[^\\w.$])' + n + '(?![\\w$(])')
+        if (re.test(line)) hazards.push(`app.js:${i + 1} passes ${n} — ${line.trim().slice(0, 70)}`)
+      }
+    }
+    for (const ch of line) {
+      if (ch === '{') depth++
+      else if (ch === '}') depth--
+    }
+  })
+  assert.deepEqual(hazards, [], 'load-time references into a later script:\n' + hazards.join('\n'))
+})
+
 test('every renderer script referenced by index.html exists on disk', () => {
   // A stale <script src> fails silently in a Tauri build — the file 404s, the
   // script never runs, and the feature it owned just disappears from the UI
@@ -118,6 +154,16 @@ test('extracted tabs load after app.js (they read app.js globals)', () => {
   'deepy-tab.js',
   'deepy-web-tab.js',
   'installer-tab.js',
+  'plugins-tab.js',
+  'theme-tab.js',
+  'init-tab.js',
+  'dashboard-tab.js',
+  'env-tab.js',
+  'kernelsync-tab.js',
+  'migration-tab.js',
+  'dlss5-tab.js',
+  'settings-tab.js',
+  'troubleshoot-tab.js',
 ]
   for (const tab of tabs) {
     const i = order.indexOf(tab)
