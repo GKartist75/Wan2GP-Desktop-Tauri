@@ -106,14 +106,17 @@ test('every renderer script referenced by index.html exists on disk', () => {
   assert.deepEqual(missing, [], `index.html references missing scripts: ${missing.join(', ')}`)
 })
 
-test('llm-engines-tab.js loads after app.js (it reads app.js globals)', () => {
-  // The extraction of refreshLLMEngines out of app.js made load order a real
-  // contract: `$`, `showToast` and `getLLMEngines` are defined by app.js.
-  // All scripts are `defer`, so document order IS execution order.
+test('extracted tabs load after app.js (they read app.js globals)', () => {
+  // Extracting code out of app.js made load order a real contract: $, showToast
+  // and getLLMEngines are all defined by app.js. All scripts are `defer`, so
+  // document order IS execution order.
   const order = scriptSources()
   const app = order.indexOf('app.js')
-  const tab = order.indexOf('llm-engines-tab.js')
   assert.ok(app !== -1, 'app.js must be loaded')
-  assert.ok(tab !== -1, 'llm-engines-tab.js must be loaded')
-  assert.ok(tab > app, `llm-engines-tab.js must come after app.js (got ${tab} vs ${app})`)
+  const tabs = ['llm-engines-tab.js', 'deepy-tab.js']
+  for (const tab of tabs) {
+    const i = order.indexOf(tab)
+    assert.ok(i !== -1, `${tab} must be loaded`)
+    assert.ok(i > app, `${tab} must come after app.js (got ${i} vs ${app})`)
+  }
 })
