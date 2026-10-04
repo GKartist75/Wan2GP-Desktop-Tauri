@@ -1,0 +1,4 @@
+{
+  "type": "commonjs",
+  "comment": "The root package.json is type:module (index.html loads these via <script>), but the test files require() the CommonJS services — this scopes node --test to CommonJS without touching the renderer."
+}

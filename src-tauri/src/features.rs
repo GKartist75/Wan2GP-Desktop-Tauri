@@ -2411,19 +2411,14 @@ pub fn set_notifications_enabled(enabled: bool) -> serde_json::Value {
 #[cfg(test)]
 mod deepy_roundtrip_tests {
     use super::*;
-    fn read_cfg() -> serde_json::Value {
-        serde_json::from_str(
-            &std::fs::read_to_string(get_repo_dir().join("wgp_config.json")).unwrap(),
-        )
-        .unwrap()
-    }
+    /// Minimal stand-in for a shipped Wan2GP install. Seeded without
+    /// `enhancer_mode` so the first apply exercises the documented default.
+    const SEED_CFG: &str = r#"{"llm_engines":{},"deepy_multi_session":"selectable"}"#;
     #[test]
     fn deepy_set_writes_coherent_config() {
-        let p = get_repo_dir().join("wgp_config.json");
-        if !p.exists() {
-            return;
-        } // no Wan2GP install on CI — nothing to verify
-        let original = std::fs::read(&p).unwrap();
+        let td = TestDataDir::new();
+        td.seed_wgp_config(SEED_CFG);
+        let read_cfg = || td.read_wgp_config();
         // zero + Qwen 9B + GGUF quant
         let r = deepy_set(
             "zero".into(),
@@ -2449,7 +2444,8 @@ mod deepy_roundtrip_tests {
         assert_eq!(c["deepy_vram_mode"], "unload");
         assert_eq!(c["deepy_context_tokens"], 16386);
         assert_eq!(c["deepy_tool_gen_image"], "Krea 2 Turbo (8 Steps)");
-        // Deepy enable with no explicit choice defaults to the button (1).
+        // Seed had no enhancer_mode and none was passed, so the documented
+        // button-only default (1) applies.
         assert_eq!(c["enhancer_mode"], 1);
         // explicit session prefs stick
         assert_eq!(c["deepy_session_reset_mode"], "reset_session");
@@ -2564,9 +2560,56 @@ mod deepy_roundtrip_tests {
         assert_eq!(c["llm_engines"]["deepy"], "local_florence_llamajoy");
         // disabled leaves the prompt-enhancement UI choice untouched
         assert_eq!(c["enhancer_mode"], 1);
-        // restore byte-identical
-        std::fs::write(&p, &original).unwrap();
-        assert_eq!(std::fs::read(&p).unwrap(), original);
+    }
+
+    /// `enhancer_mode` is sticky by design (see `deepy_set`): when the caller
+    /// passes no choice, the config's existing 0/1 survives instead of being
+    /// reset. The round-trip above only ever saw a fresh default, so it could
+    /// not catch a regression here.
+    ///
+    /// One `TestDataDir` per test — it serializes on a process-wide lock, so a
+    /// second one on the same thread would deadlock.
+    #[test]
+    fn enhancer_mode_sticks_when_no_choice_is_passed() {
+        let td = TestDataDir::new();
+        td.seed_wgp_config(&SEED_CFG.replace("{}", "{},\"enhancer_mode\":0"));
+        let r = deepy_set(
+            "zero".into(),
+            None,
+            Some(serde_json::json!(4)),
+            None,
+            None,
+            None,
+        );
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap(), "{r}");
+        assert_eq!(td.read_wgp_config()["enhancer_mode"], 0);
+    }
+
+    #[test]
+    fn an_out_of_range_stored_enhancer_mode_falls_back_to_the_default() {
+        let td = TestDataDir::new();
+        td.seed_wgp_config(&SEED_CFG.replace("{}", "{},\"enhancer_mode\":7"));
+        let r = deepy_set(
+            "zero".into(),
+            None,
+            Some(serde_json::json!(4)),
+            None,
+            None,
+            None,
+        );
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap(), "{r}");
+        assert_eq!(td.read_wgp_config()["enhancer_mode"], 1);
+    }
+
+    /// `deepy_set` refuses unknown modes and writes nothing.
+    #[test]
+    fn deepy_set_rejects_unknown_mode_without_touching_config() {
+        let td = TestDataDir::new();
+        let p = td.seed_wgp_config(SEED_CFG);
+        let before = std::fs::read(&p).unwrap();
+        let r = deepy_set("bogus".into(), None, None, None, None, None);
+        assert!(!r.get("ok").and_then(|v| v.as_bool()).unwrap(), "{r}");
+        assert_eq!(std::fs::read(&p).unwrap(), before);
     }
 }
 

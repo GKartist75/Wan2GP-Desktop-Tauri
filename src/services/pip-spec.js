@@ -25,7 +25,7 @@
  *
  * To add a brand-new LLM SDK with a known pin, the user just types it in the
  * Advanced box — no code change. To add a guided "engine card", drop one entry
- * into services/llm-engines.js (data, not code).
+ * into the llm_engines_list command in features.rs (data, not code).
  */
 
 // PEP 440 name: letters/digits/_/. , must start with letter, no consecutive dots.

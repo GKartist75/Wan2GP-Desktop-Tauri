@@ -1,0 +1,4 @@
+{
+  "type": "commonjs",
+  "comment": "These modules are loaded by the renderer as plain <script> tags (so they must keep using module.exports) while node --test requires them from disk. The root package.json is type:module, which would make node parse them as ESM; this scopes them back to CommonJS without changing how the browser sees them."
+}

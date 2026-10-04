@@ -4,7 +4,9 @@
   "version": "0.9.2",
   "type": "module",
   "scripts": {
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "node --test \"tests/*.test.js\"",
+    "harness": "node tests/harness/serve.js"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

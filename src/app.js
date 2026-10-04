@@ -7188,6 +7188,15 @@ function switchSettingsTab(tabName) {
     }, 30);
   }
 
+  // Appearance tab: queue row colors live here (visual pref, not auto-tuned).
+  if (tabName === "general") {
+    setTimeout(() => {
+      try {
+        queueColorsLoad();
+      } catch {}
+    }, 120);
+  }
+
   // Auto-Tune: check if Wan2GP is installed — disable if not
   if (tabName === "autotune") {
     checkAutoTuneInstalled();
@@ -7357,11 +7366,11 @@ if (_pipInstallOrig) {
 }
 
 // ── Guided LLM engine setup (Deepy Prime) ──
-// Renders ONE generic card per catalog engine (services/llm-engines.js). The
-// card shows live ✓/✗ status for the CLI and/or pip bridge, plus a one-click
-// installer (pip for Claude Code, npm for Codex/OpenCode) and, for engines with
-// a server (OpenCode), a Start/Stop server toggle. New engines = one data line
-// in services/llm-engines.js — no UI branch.
+// Renders ONE generic card per engine returned by the llm_engines_list Rust
+// command (features.rs). The card shows live ✓/✗ status for the CLI and/or pip
+// bridge, plus a one-click installer (pip for Claude Code, npm for Codex/OpenCode)
+// and, for engines with a server (OpenCode), a Start/Stop server toggle. New
+// engines = one entry in that Rust list — no UI branch.
 async function refreshLLMEngines() {
   const list = $("llmEnginesList");
   if (!list) return;
@@ -7593,7 +7602,7 @@ const DEEPY_PANEL_ENGINES = [
 ];
 
 // Local-model (Prompt Enhancer) choices shown in the Deepy panel when Deepy is
-// Disabled or Zero. Mirrors services/deepy-config.js DEEPY_ENHANCER_OPTIONS.
+// Disabled or Zero.
 // modes: which Deepy modes the option is valid for. All options are rendered in
 // the UI (the non-applicable ones are shown disabled with an annotation), so
 // the user sees the full set of possible local models.
@@ -10776,10 +10785,8 @@ function memProfileCollect() {
   const q = $("memQuant").value;
   const i8k = $("memInt8Kernels") ? $("memInt8Kernels").value : "";
   const kp = $("memKernelPrecision") ? $("memKernelPrecision").value : "";
-  const qc = $("memQueueColors") ? $("memQueueColors").value : "";
   if (i8k) s.int8_kernels = i8k;
   if (kp) s.kernel_precision = kp;
-  if (qc) s.queue_color_scheme = qc;
   if (vp) s.video_profile = Number(vp);
   if (ip) s.image_profile = Number(ip);
   if (ap) s.audio_profile = Number(ap);
@@ -10840,11 +10847,6 @@ const MEM_FIELDS = {
     sel: "memKernelPrecision",
     rec: "recKernelPrecision",
     saved: "savedKernelPrecision",
-  },
-  queue_color_scheme: {
-    sel: "memQueueColors",
-    rec: "recQueueColors",
-    saved: "savedQueueColors",
   },
 };
 const INT8_KERNEL_LABELS = {
@@ -10970,6 +10972,44 @@ $("memProfileApplyBtn")?.addEventListener("click", async () => {
 });
 
 // (memProfileLoad is called from switchSettingsTab — every entry path.)
+
+// ── Appearance: queue row colors ──
+// Lives with the other theme controls, not in Auto-tune: it is a purely visual
+// preference and the hardware scan has no opinion on it. Still written through
+// memory_profile_apply because that is the one command that writes wgp_config
+// memory keys (backend validates the value fail-closed to pastel|grey).
+async function queueColorsLoad() {
+  const sel = $("queueColorsSelect");
+  const status = $("queueColorsStatus");
+  if (!sel) return;
+  try {
+    const res = await window.w2gp.memoryProfileRead();
+    const v = res && res.ok && res.settings && res.settings.queue_color_scheme;
+    sel.value = v === "grey" ? "grey" : "pastel";
+  } catch {
+    if (status) status.textContent = "could not read";
+  }
+}
+$("queueColorsSelect")?.addEventListener("change", async (e) => {
+  const sel = e.currentTarget;
+  const status = $("queueColorsStatus");
+  const val = sel.value;
+  sel.disabled = true;
+  if (status) status.textContent = "saving…";
+  try {
+    const r = await window.w2gp.memoryProfileApply({ queue_color_scheme: val });
+    if (status) {
+      status.textContent =
+        r && r.success ? "saved ✓" : "✗ " + ((r && r.error) || "save failed");
+    }
+    if (!(r && r.success)) sel.value = "pastel";
+  } catch (err) {
+    if (status) status.textContent = "✗ " + errText(err);
+    sel.value = "pastel";
+  } finally {
+    sel.disabled = false;
+  }
+});
 
 // ── Auto-Tune: failsafe toggle → re-render recommendation live ──
 $("autotuneFailsafeChk").addEventListener("change", async () => {

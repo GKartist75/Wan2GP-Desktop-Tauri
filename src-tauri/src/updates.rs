@@ -143,6 +143,11 @@ pub async fn get_wangp_upstream_info() -> serde_json::Value {
     }
     serde_json::json!({"error": "Could not fetch updates — GitHub API rate limited or offline. Add a GitHub token in Manage settings."})
 }
+/// A git hash we are willing to hand to `merge-base --is-ancestor`: 4–40 hex
+/// chars. Anything else is treated as unknown rather than passed to git.
+fn valid_commit_hash(h: &str) -> bool {
+    !(h.len() < 4 || h.len() > 40 || !h.chars().all(|c| c.is_ascii_hexdigit()))
+}
 #[tauri::command]
 pub fn wangp_contains_commit(hash: String) -> serde_json::Value {
     // Containment probe for the dashboard "update available" dot and the Sync
@@ -155,7 +160,7 @@ pub fn wangp_contains_commit(hash: String) -> serde_json::Value {
     // clone without the ancestors, git failure) so callers keep the legacy
     // equality behavior instead of hiding a real update.
     let h = hash.trim().to_lowercase();
-    if h.len() < 4 || h.len() > 40 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+    if !valid_commit_hash(&h) {
         return serde_json::json!({"contained": null});
     }
     let repo = get_repo_dir();
@@ -180,37 +185,42 @@ pub async fn get_wangp_version() -> serde_json::Value {
         Err(_) => serde_json::Value::Null,
         Ok(r) => match r.text().await {
             Err(_) => serde_json::Value::Null,
-            Ok(body) => {
-                let lower = body.to_lowercase();
-                let mut out: Option<String> = None;
-                let mut i = 0;
-                while let Some(pos) = lower[i..].find("wangp") {
-                    let j = i + pos + 5;
-                    let rest = body[j..].trim_start_matches([' ', '\t', '-']);
-                    let rest = rest.strip_prefix('v').unwrap_or(rest);
-                    let mut ver = String::new();
-                    for ch in rest.chars() {
-                        if ch.is_ascii_digit() || ch == '.' {
-                            ver.push(ch);
-                        } else {
-                            break;
-                        }
-                    }
-                    let dots = ver.chars().filter(|&c| c == '.').count();
-                    if (1..=2).contains(&dots) && !ver.is_empty() {
-                        out = Some(ver.trim_matches('.').to_string());
-                        break;
-                    }
-                    i = j;
-                    if i >= lower.len() {
-                        break;
-                    }
-                }
-                out.map(serde_json::Value::String)
+            Ok(body) => parse_wangp_version(&body)
+                    .map(serde_json::Value::String)
                     .unwrap_or(serde_json::Value::Null)
-            }
         },
     }
+}
+/// Scrape the WanGP version out of the upstream README, mirroring the Electron
+/// launcher: find the first "wangp" whose following token starts with 1–2 dots
+/// of digits. Pure — split out so the scan is unit-testable without a network.
+fn parse_wangp_version(body: &str) -> Option<String> {
+    let lower = body.to_lowercase();
+    let mut out: Option<String> = None;
+    let mut i = 0;
+    while let Some(pos) = lower[i..].find("wangp") {
+        let j = i + pos + 5;
+        let rest = body[j..].trim_start_matches([' ', '\t', '-']);
+        let rest = rest.strip_prefix('v').unwrap_or(rest);
+        let mut ver = String::new();
+        for ch in rest.chars() {
+            if ch.is_ascii_digit() || ch == '.' {
+                ver.push(ch);
+            } else {
+                break;
+            }
+        }
+        let dots = ver.chars().filter(|&c| c == '.').count();
+        if (1..=2).contains(&dots) && !ver.is_empty() {
+            out = Some(ver.trim_matches('.').to_string());
+            break;
+        }
+        i = j;
+        if i >= lower.len() {
+            break;
+        }
+    }
+    out
 }
 // ── Legacy Electron launcher removal ──
 // Finds the old Electron-based launcher (any DisplayName containing "wan2gp"
@@ -352,4 +362,69 @@ pub fn install_update(app: tauri::AppHandle) -> Result<serde_json::Value, String
     upd.install(&bytes).map_err(|e| e.to_string())?;
     let _ = ver;
     Ok(serde_json::json!({"ok": true}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commit_hash_must_be_4_to_40_hex_chars() {
+        assert!(valid_commit_hash("a1b2c3d"));
+        assert!(valid_commit_hash(&"a".repeat(40)));
+        // Abbreviations are legal git inputs.
+        assert!(valid_commit_hash("a1b2"));
+        assert!(!valid_commit_hash("abc"));
+        assert!(!valid_commit_hash(&"a".repeat(41)));
+        assert!(!valid_commit_hash("a1b2c3z"));
+        assert!(!valid_commit_hash(""));
+    }
+
+    #[test]
+    fn version_scrape_reads_the_token_immediately_after_wangp() {
+        assert_eq!(
+            parse_wangp_version("WanGP v1.3.5 released."),
+            Some("1.3.5".to_string())
+        );
+        assert_eq!(
+            parse_wangp_version("upstream WanGP 2.10 is current"),
+            Some("2.10".to_string())
+        );
+    }
+
+    #[test]
+    fn version_scrape_tolerates_separators_and_case() {
+        assert_eq!(parse_wangp_version("WANGP - 2.0"), Some("2.0".to_string()));
+    }
+
+    #[test]
+    fn version_scrape_skips_prose_mentions_of_wangp() {
+        // "WanGP is great" has no version token; the scan must move on to the
+        // next occurrence rather than returning junk or giving up.
+        assert_eq!(
+            parse_wangp_version("WanGP is great. See WanGP v1.2.3 for details."),
+            Some("1.2.3".to_string())
+        );
+    }
+
+    #[test]
+    fn version_scrape_needs_a_dotted_version_right_after_the_name() {
+        // A single component carries no dot, so the scanner does not accept it.
+        assert_eq!(parse_wangp_version("wanGP v3"), None);
+        // "version" is consumed as the token, so its digits never count.
+        assert_eq!(
+            parse_wangp_version("# Wan2GP\n\nWanGP version v1.3.5 released."),
+            None
+        );
+        // Three dots is not a version this scanner accepts.
+        assert_eq!(parse_wangp_version("WanGP 1.2.3.4"), None);
+    }
+
+    #[test]
+    fn version_scrape_returns_none_when_no_version_is_present() {
+        assert_eq!(parse_wangp_version(""), None);
+        assert_eq!(parse_wangp_version("WanGP is great"), None);
+        // A trailing "wangp" with nothing after it must not panic.
+        assert_eq!(parse_wangp_version("WanGP"), None);
+    }
 }

@@ -182,7 +182,27 @@ pub(crate) fn data_dir_override_file_electron() -> PathBuf {
     home_dir().join(".wan2gp-desktop-data-dir")
 }
 
+/// `WAN2GP_DATA_DIR` short-circuits data-dir resolution. Test seam only: it lets
+/// the suite point `get_repo_dir()` at a tempdir so no test reads or rewrites a
+/// real install's `wgp_config.json`. Never set in production.
+pub(crate) fn data_dir_env_override() -> Option<PathBuf> {
+    let s = std::env::var("WAN2GP_DATA_DIR").ok()?;
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let p = PathBuf::from(s);
+    if p.is_absolute() {
+        Some(p)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn get_data_dir_uncached() -> PathBuf {
+    if let Some(p) = data_dir_env_override() {
+        return p;
+    }
     let ov = data_dir_override_file();
     let ov_e = data_dir_override_file_electron();
     for pth in [ov.clone(), ov_e.clone()] {
@@ -233,6 +253,70 @@ pub(crate) fn get_data_dir() -> PathBuf {
         *g = (v.clone(), std::time::Instant::now());
     }
     v
+}
+/// Drop the 5s data/repo dir caches. Tests only — each hermetic test resolves a
+/// different tempdir, so a cached value from a sibling test would leak into it.
+pub(crate) fn reset_dir_caches() {
+    if let Some(c) = CACHED_DATA_DIR.get() {
+        if let Ok(mut g) = c.lock() {
+            *g = (PathBuf::new(), std::time::Instant::now());
+        }
+    }
+    if let Some(c) = CACHED_REPO_DIR.get() {
+        if let Ok(mut g) = c.lock() {
+            *g = (PathBuf::new(), std::time::Instant::now());
+        }
+    }
+}
+
+/// Redirect `get_repo_dir()` at a throwaway tempdir for the length of one test.
+///
+/// The env var it sets is process-global, so every test that touches a config
+/// file takes this and serializes on the internal lock — that is what keeps
+/// concurrent `cargo test` threads from resolving each other's tempdirs. Both
+/// dir caches are dropped on acquire and on drop, so a value cached by a
+/// sibling test never leaks in or out.
+#[cfg(test)]
+pub(crate) struct TestDataDir {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    _tmp: tempfile::TempDir,
+}
+
+#[cfg(test)]
+impl TestDataDir {
+    pub(crate) fn new() -> Self {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let lock = LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        std::env::set_var("WAN2GP_DATA_DIR", tmp.path());
+        reset_dir_caches();
+        Self {
+            _lock: lock,
+            _tmp: tmp,
+        }
+    }
+
+    /// Write `wgp_config.json` into the tempdir so the path helpers see an
+    /// install. Returns the file path.
+    pub(crate) fn seed_wgp_config(&self, body: &str) -> PathBuf {
+        let p = get_repo_dir().join("wgp_config.json");
+        std::fs::write(&p, body).expect("seed wgp_config.json");
+        p
+    }
+
+    /// Read the tempdir's `wgp_config.json` back as JSON.
+    pub(crate) fn read_wgp_config(&self) -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(get_repo_dir().join("wgp_config.json")).unwrap())
+            .unwrap()
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestDataDir {
+    fn drop(&mut self) {
+        std::env::remove_var("WAN2GP_DATA_DIR");
+        reset_dir_caches();
+    }
 }
 pub(crate) fn default_data_dir() -> PathBuf {
     // Check existing installs on drives CDEFG (Windows)

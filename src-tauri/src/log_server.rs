@@ -96,6 +96,23 @@ load();setInterval(()=>{{if(document.getElementById('auto').checked)load();}},20
     )
 }
 
+/// How many trailing log lines `/logs.txt?n=N` asked for. Clamped to 50–2000
+/// so one request cannot ask the viewer to render the whole ring buffer.
+fn parse_log_tail(path: &str) -> usize {
+    path.split("n=")
+        .nth(1)
+        .and_then(|s| s.split('&').next().unwrap_or("").parse().ok())
+        .unwrap_or(600)
+        .clamp(50, 2000)
+}
+
+/// Last `want` lines, oldest first. Slicing from the end keeps the ring
+/// buffer's insertion order, which is what the viewer renders.
+fn tail_text(lines: Vec<String>, want: usize) -> String {
+    let start = lines.len().saturating_sub(want);
+    lines[start..].join("\n")
+}
+
 fn serve_one(mut stream: std::net::TcpStream, port: u64) {
     let mut buf = [0u8; 4096];
     stream
@@ -118,16 +135,9 @@ fn serve_one(mut stream: std::net::TcpStream, port: u64) {
         )
     } else {
         // /logs.txt?n=600 — plain text tail, polled by the viewer page.
-        let want: usize = path
-            .split("n=")
-            .nth(1)
-            .and_then(|s| s.split('&').next().unwrap_or("").parse().ok())
-            .unwrap_or(600)
-            .clamp(50, 2000);
+        let want = parse_log_tail(path);
         let lines = log_lines();
-        let start = lines.len().saturating_sub(want);
-        let text = lines[start..].join("\n");
-        ("200 OK", "text/plain; charset=utf-8", text)
+        ("200 OK", "text/plain; charset=utf-8", tail_text(lines, want))
     };
     let resp = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
@@ -261,4 +271,52 @@ fn log_server_status_inner() -> serde_json::Value {
 #[tauri::command]
 pub async fn log_server_status() -> Result<serde_json::Value, String> {
     Ok(log_server_status_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tail_count_parses_the_n_parameter() {
+        assert_eq!(parse_log_tail("/logs.txt?n=600"), 600);
+        assert_eq!(parse_log_tail("/logs.txt?n=100"), 100);
+    }
+
+    #[test]
+    fn tail_count_ignores_extra_query_params() {
+        assert_eq!(parse_log_tail("/logs.txt?n=250&x=1"), 250);
+    }
+
+    #[test]
+    fn tail_count_defaults_and_clamps() {
+        // No n=, garbage, empty → the viewer's own default.
+        assert_eq!(parse_log_tail("/logs.txt"), 600);
+        assert_eq!(parse_log_tail("/logs.txt?n=abc"), 600);
+        assert_eq!(parse_log_tail("/logs.txt?n="), 600);
+        // Clamped both ways so one request cannot render the whole buffer.
+        assert_eq!(parse_log_tail("/logs.txt?n=1"), 50);
+        assert_eq!(parse_log_tail("/logs.txt?n=99999"), 2000);
+    }
+
+    #[test]
+    fn tail_text_keeps_the_newest_lines_in_insertion_order() {
+        let lines: Vec<String> = (1..=10).map(|i| i.to_string()).collect();
+        assert_eq!(tail_text(lines.clone(), 3), "8\n9\n10");
+        // Asking for more than exist returns everything.
+        assert_eq!(
+            tail_text(lines, 100),
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10"
+        );
+    }
+
+    #[test]
+    fn tail_text_handles_an_empty_buffer() {
+        assert_eq!(tail_text(Vec::new(), 600), "");
+    }
+
+    #[test]
+    fn viewer_page_names_its_port() {
+        assert!(viewer_html(7862).contains("Wan2GP console :7862"));
+    }
 }
