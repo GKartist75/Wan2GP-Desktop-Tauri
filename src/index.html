@@ -142,7 +142,7 @@
           <label class="toggle-row"><input type="checkbox" id="autoStartToggle"> <span>Auto-start with Windows</span></label>
           <p class="token-hint">Launch Wan2GP Desktop automatically when you log in.</p>
           <label class="toggle-row" style="margin-top:8px"><input type="checkbox" id="followSystemThemeToggle"> <span>Follow system theme</span></label>
-          <p class="token-hint">Automatically switch between dark and light themes based on your Windows setting. Disables manual theme toggle.</p>
+          <p class="token-hint">Automatically switch between dark and light themes based on your Windows setting. While on, the theme button switches back to manual control.</p>
           <label class="toggle-row" style="margin-top:8px"><input type="checkbox" id="notificationsToggle" checked> <span>Desktop notifications</span></label>
           <p class="token-hint">Show a notification when Wan2GP server is ready or stops.</p>
           <label class="toggle-row" style="margin-top:8px"><input type="checkbox" id="autoUpdateToggle"> <span>Check for updates on launch</span></label>
@@ -518,6 +518,35 @@
             <span class="token-hint" id="tsTritonStatus" style="margin-left:8px"></span>
           </div>
         </div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>v17 RAM / VRAM</h3>
+          <p class="token-hint">MMGP v4 tools, straight from upstream's troubleshooting guide. Out-of-memory remedies write through the same gated path as Performance Settings (snapshotted, and never a value WanGP would ignore); the known-good recipe only <em>proposes</em> — you still press Apply Overrides, and anything you tuned elsewhere is never clobbered.</p>
+          <div class="token-field" style="margin-top:8px;flex-direction:column;align-items:stretch;gap:6px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <span class="token-hint" style="font-weight:600">Out of memory</span>
+              <button class="btn btn-ghost small" id="tsHeadSplitBtn" title="Attention Head Split: Medium. Upstream measures ~2 GB less VRAM for up to ~3% slower steps on MiniMax H3 at 1920x1088 / 362 frames (~4 GB with H3 + Sol, ~2.5 GB with VDN). Quality is the same, but the result is not identical to Off: details, and sometimes the motion, can differ. Applies to the next generation.">Attention Head Split → Medium</button>
+              <button class="btn btn-ghost small" id="tsLowerRamBtn" title="Lower Reserved RAM for Pinning to 25% and keep Smart Memory Pinning On — upstream's fix for a PC short of RAM.">Lower Reserved RAM</button>
+              <button class="btn btn-ghost small" id="tsFailsafeP5Btn" title="Switch every profile to P5 (fail safe). The same action as Failsafe above.">Drop to P5</button>
+            </div>
+            <span class="token-hint" id="tsOomStatus"></span>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">
+              <span class="token-hint" style="font-weight:600">Known-good for this GPU</span>
+              <button class="btn btn-ghost small" id="tsKnownGoodBtn" title="Ask upstream's guide which attention mode, profile and compile setting this GPU class is tuned for.">Show upstream recipe</button>
+              <button class="btn btn-ghost small" id="tsKnownGoodApplyBtn" title="Write the recipe into Performance Settings and open that panel so you can review and Apply it.">Load into Performance Settings</button>
+            </div>
+            <span class="token-hint" id="tsKnownGoodStatus"></span>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">
+              <span class="token-hint" style="font-weight:600">VRAM on Windows</span>
+              <button class="btn btn-ghost small" id="tsVramListBtn" title="Per-process VRAM usage (scripts/gpumem.cmd) — WDDM hides it from nvidia-smi.">Who is using VRAM</button>
+              <button class="btn btn-ghost small" id="tsVramTrimBtn" title="Ask Windows to trim idle VRAM allocations (scripts/gputrim.cmd). Briefly applies memory pressure — the screen can flash.">Trim idle VRAM</button>
+            </div>
+            <span class="token-hint" id="tsVramStatus"></span>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:0.75rem;color:var(--text-secondary);cursor:pointer" title="Launch WanGP with --verbose 2 so the console captures upstream's own diagnostics instead of guessing from summary lines. Takes effect on the next launch.">
+              <input type="checkbox" id="tsVerboseChk" style="accent-color:var(--accent)">
+              Verbose WanGP logging (next launch)
+            </label>
+          </div>
+        </div>
         <div class="settings-section">
           <h3>uv Wheel Cache</h3>
           <p class="token-hint">Wan2GP installs into a Python venv on the same drive as your install. <code>uv</code> keeps a wheel cache here (<code>.uv-cache</code>) so future updates are fast — it can grow to several GB. Free the space if you don't need to keep it.</p>
@@ -649,7 +678,8 @@
             <span class="card-title">Performance Settings</span>
             <button class="btn btn-primary small" id="memProfileApplyBtn" style="margin-left:auto" title="Write these performance settings to wgp_config.json">Apply Overrides</button>
           </div>
-          <p class="token-hint" style="padding:4px 12px 0">Detect scans your hardware and calibrates these mmgp knobs in <code>wgp_config.json</code>. Each dropdown defaults to the <strong>recommended</strong> value — change any to override. <span class="tag-rec">rec</span> = recommended, <span class="tag-saved">saved</span> = currently written to disk.</p>
+          <p class="token-hint" style="padding:4px 12px 0">Detect scans your hardware and calibrates these mmgp knobs in <code>wgp_config.json</code>. Each dropdown defaults to the <strong>recommended</strong> value — change any to override. <span class="tag-rec">rec</span> = recommended, <span class="tag-saved">saved</span> = currently written to disk. Values changed inside WanGP show up here as <span class="tag-saved">saved</span> — Detect only proposes, <strong>Apply Overrides</strong> is what writes.</p>
+            <p class="token-hint" style="padding:4px 12px 0;margin:0"><strong>v17 RAM/VRAM controls:</strong> the allocator needs a restart · Smart Memory Pinning reloads the model · Head Split only engages on long sequences (8192+ tokens) and its output is not bit-identical to Off — details, sometimes motion, can differ · Dynamic preload needs the MMGP allocator and is not used with Profile 4+ · most of the v17 gain assumes Sage2/2+ attention · all of them are NVIDIA-only (upstream skips them on AMD/Intel), so Detect leaves them unset on those cards.</p>
           <label style="display:flex;align-items:center;gap:8px;padding:8px 12px 0;font-size:0.75rem;color:var(--text-secondary);cursor:pointer"
                  title="Force the P5 minimum-compatibility profile — slower, but maximizes the chance generation works (e.g. a 10GB card that still crashes on P4+). Check and press Detect to re-seed these fields with P5 values.">
             <input type="checkbox" id="autotuneFailsafeChk" style="accent-color:var(--signal-yellow)">
@@ -660,8 +690,13 @@
               <label class="token-hint">Video Profile</label>
               <select id="memVideoProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="1">1</option><option value="2">2</option><option value="3">3</option>
-                <option value="3.5">3.5</option><option value="4">4</option><option value="4.5">4.5</option><option value="5">5</option>
+                <option value="1">P1 — whole models in VRAM, all in Reserved RAM (fastest; most RAM &amp; VRAM)</option>
+                <option value="2">P2 — all in Reserved RAM, sent part by part (needs a lot of RAM)</option>
+                  <option value="3">P3 — whole models in VRAM, main models in Reserved RAM</option>
+                <option value="3.5">P3+ — P3 with no Reserved RAM (recommended for audio)</option>
+                <option value="4">P4 — main models in Reserved RAM, sent part by part (recommended)</option>
+                <option value="4.5">P4+ — P4 one part at a time, ~1 GB less VRAM, slightly slower</option>
+                <option value="5">P5 — almost no Reserved RAM (fail safe; slow on short steps)</option>
               </select>
               <div class="mem-hint"><span id="recVideoProfile" class="tag-rec">rec: —</span><span id="savedVideoProfile" class="tag-saved">saved: —</span></div>
             </div>
@@ -669,8 +704,13 @@
               <label class="token-hint">Image Profile</label>
               <select id="memImageProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="1">1</option><option value="2">2</option><option value="3">3</option>
-                <option value="3.5">3.5</option><option value="4">4</option><option value="4.5">4.5</option><option value="5">5</option>
+                <option value="1">P1 — whole models in VRAM, all in Reserved RAM (fastest; most RAM &amp; VRAM)</option>
+                <option value="2">P2 — all in Reserved RAM, sent part by part (needs a lot of RAM)</option>
+                  <option value="3">P3 — whole models in VRAM, main models in Reserved RAM</option>
+                <option value="3.5">P3+ — P3 with no Reserved RAM</option>
+                <option value="4">P4 — main models in Reserved RAM, sent part by part (recommended)</option>
+                <option value="4.5">P4+ — P4 one part at a time, ~1 GB less VRAM, slightly slower</option>
+                <option value="5">P5 — almost no Reserved RAM (fail safe; slow on short steps)</option>
               </select>
               <div class="mem-hint"><span id="recImageProfile" class="tag-rec">rec: —</span><span id="savedImageProfile" class="tag-saved">saved: —</span></div>
             </div>
@@ -678,8 +718,13 @@
               <label class="token-hint">Audio Profile</label>
               <select id="memAudioProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="1">1</option><option value="2">2</option><option value="3">3</option>
-                <option value="3.5">3.5</option><option value="4">4</option><option value="4.5">4.5</option><option value="5">5</option>
+                <option value="1">P1 — whole models in VRAM, all in Reserved RAM</option>
+                <option value="2">P2 — all in Reserved RAM, sent part by part</option>
+                  <option value="3">P3 — whole models in VRAM, main models in Reserved RAM</option>
+                <option value="3.5">P3+ — P3 with no Reserved RAM (recommended for audio)</option>
+                <option value="4">P4 — main models in Reserved RAM, sent part by part</option>
+                <option value="4.5">P4+ — P4 one part at a time, ~1 GB less VRAM, slightly slower</option>
+                <option value="5">P5 — almost no Reserved RAM (fail safe)</option>
               </select>
               <div class="mem-hint"><span id="recAudioProfile" class="tag-rec">rec: —</span><span id="savedAudioProfile" class="tag-saved">saved: —</span></div>
             </div>
@@ -726,6 +771,93 @@
               </select>
               <div class="mem-hint"><span id="recKernelPrecision" class="tag-rec">rec: —</span><span id="savedKernelPrecision" class="tag-saved">saved: —</span></div>
             </div>
+            <!-- v17 (MMGP v4) RAM/VRAM controls. Mirrors WanGP's own
+                 Configuration > RAM/VRAM Management panel one-for-one. -->
+            <div class="mem-field">
+              <label class="token-hint" title="Which attention kernel WanGP uses. Upstream v17.01 is explicit that quite a few of its optimizations depend on Sage2/2+. Needs the matching wheel — Sync GPU Wheels installs SageAttention 2.2.0 for RTX 30/40/50 and 1.0.6 for RTX 20. Left unset on AMD/Intel, where there is no Sage build upstream.">Attention Mode</label>
+              <select id="memAttentionMode" class="input">
+                <option value="">— unset —</option>
+                <option value="sage2">SageAttention 2 / 2+ (recommended — v17 gains depend on it)</option>
+                  <option value="sage">SageAttention 1 (Turing only)</option>
+                  <option value="flash">FlashAttention (quality first, less VRAM)</option>
+                  <option value="sdpa">SDPA (PyTorch default, always available)</option>
+                </select>
+                <div class="mem-hint"><span id="recAttentionMode" class="tag-rec">rec: —</span><span id="savedAttentionMode" class="tag-saved">saved: —</span></div>
+              </div>
+              <div class="mem-field">
+              <label class="token-hint" title="MMGP Optimized VRAM Allocator — recycles VRAM that is no longer used, which lowers peak VRAM on long videos, large images and Deepy. Applied at startup, so it needs a restart.">VRAM Allocator (restart)</label>
+              <select id="memVramAllocator" class="input">
+                <option value="">— unset —</option>
+                <option value="vmm_spill">MMGP Optimized, with RAM spilling (default)</option>
+                <option value="vmm">MMGP Optimized, OOM when VRAM is full</option>
+                <option value="default">PyTorch allocator</option>
+              </select>
+              <div class="mem-hint"><span id="recVramAllocator" class="tag-rec">rec: —</span><span id="savedVramAllocator" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="Attends one group of attention heads at a time. Medium saves about 2 GB of VRAM for up to about 3% slower steps on MiniMax H3 at 1920x1088 / 362 frames. Quality is the same, but the result is not identical to Off: details, and sometimes the motion, can differ. Only engages on long sequences (8192+ tokens).">Attention Head Split</label>
+              <select id="memHeadSplit" class="input">
+                <option value="">— unset —</option>
+                <option value="0">Off (default)</option>
+                <option value="1">Low — saves some VRAM</option>
+                <option value="2">Medium — good balance, ~10% slower</option>
+                <option value="3">High — saves the most VRAM</option>
+              </select>
+              <div class="mem-hint"><span id="recHeadSplit" class="tag-rec">rec: —</span><span id="savedHeadSplit" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="Reads model files ahead of their use, so they are not already in RAM on first load. Windows may then keep more file data in cache.">Read Ahead (Windows)</label>
+              <select id="memReadAhead" class="input">
+                <option value="">— unset —</option>
+                <option value="true">On</option>
+                <option value="false">Off</option>
+              </select>
+              <div class="mem-hint"><span id="recReadAhead" class="tag-rec">rec: —</span><span id="savedReadAhead" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="Speeds up the models the memory profile does not keep in Reserved RAM, using 1–2 GB of it. Changing this reloads the model.">Smart Memory Pinning</label>
+              <select id="memSmartPinning" class="input">
+                <option value="">— unset —</option>
+                <option value="true">On (default) — faster, uses 1–2 GB more Reserved RAM</option>
+                <option value="false">Off</option>
+              </select>
+              <div class="mem-hint"><span id="recSmartPinning" class="tag-rec">rec: —</span><span id="savedSmartPinning" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="Video steps are usually long enough to hide the model transfers, so the profile's own choice is fastest here.">VRAM Preload — Video</label>
+              <select id="memVideoPreload" class="input">
+                <option value="">— unset —</option>
+                <option value="default">Default (recommended for video)</option>
+                <option value="dynamic">Dynamic</option>
+                <option value="manual">Manual</option>
+              </select>
+              <div class="mem-hint"><span id="recVideoPreload" class="tag-rec">rec: —</span><span id="savedVideoPreload" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="Image steps are short, so the transfers set the speed — Dynamic keeps as much of the model in VRAM as each generation leaves free. Needs the MMGP Optimized allocator; not used with Profile 4+.">VRAM Preload — Image</label>
+              <select id="memImagePreload" class="input">
+                <option value="">— unset —</option>
+                <option value="default">Default</option>
+                <option value="dynamic">Dynamic (recommended for images)</option>
+                <option value="manual">Manual</option>
+              </select>
+              <div class="mem-hint"><span id="recImagePreload" class="tag-rec">rec: —</span><span id="savedImagePreload" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="Shown by WanGP for Profiles 2, 4 and 5 only — Profiles 1, 3 and 3+ load whole models and have nothing to preload.">VRAM Preload — Audio</label>
+              <select id="memAudioPreload" class="input">
+                <option value="">— unset —</option>
+                <option value="default">Default (recommended for audio)</option>
+                <option value="dynamic">Dynamic</option>
+                <option value="manual">Manual</option>
+              </select>
+              <div class="mem-hint"><span id="recAudioPreload" class="tag-rec">rec: —</span><span id="savedAudioPreload" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="Share of RAM that pinning may lock. Auto is 40% on Windows and 80% on Linux. Lower it and keep Smart Memory Pinning On if you are short of RAM.">Reserved RAM for Pinning (% — 0 = Auto)</label>
+              <input type="number" id="memReservedPct" class="input" min="0" max="100" step="5" placeholder="0 = Auto">
+              <div class="mem-hint"><span id="recReservedPct" class="tag-rec">rec: —</span><span id="savedReservedPct" class="tag-saved">saved: —</span></div>
+            </div>
             </div>
           <div class="mem-hint" style="padding:10px 12px 0">
             <span class="token-hint" style="font-weight:600">Profile matrix (reference)</span>
@@ -734,8 +866,9 @@
             <tr><th>VRAM \ RAM</th><th style="text-align:center">high<br><span class="tier-range">≥64GB</span></th><th style="text-align:center">low<br><span class="tier-range">≥32GB</span></th><th style="text-align:center">very low<br><span class="tier-range">&lt;32GB</span></th></tr>
             <tr><td>high<br><span class="tier-range">≥24GB</span></td><td style="text-align:center;color:#6ee7b7">P1</td><td style="text-align:center">P3</td><td style="text-align:center;color:#67e8f9">P3+</td></tr>
             <tr><td>low<br><span class="tier-range">12–23GB</span></td><td style="text-align:center">P2</td><td style="text-align:center">P4</td><td style="text-align:center;color:#f87171">P5</td></tr>
-            <tr><td>tight<br><span class="tier-range">&lt;12GB</span></td><td style="text-align:center">P4</td><td style="text-align:center;color:#67e8f9">P4+</td><td style="text-align:center;color:#f87171">P5</td></tr>
+            <tr><td>tight<br><span class="tier-range">&lt;12GB</span></td><td style="text-align:center;color:#6ee7b7">P4</td><td style="text-align:center;color:#6ee7b7">P4</td><td style="text-align:center;color:#6ee7b7">P4</td></tr>
           </table>
+          <p class="token-hint" style="padding:8px 12px 0;margin:0">v17 / MMGP v4 recalibrates the tight row: Profile 4 now uses up to 50% less VRAM, so a card under 12 GB rides P4 plus Attention Head Split and the MMGP allocator instead of dropping to P4+/P5. Use <strong>Prefer failsafe</strong> above to force P5 back.</p>
           <div id="memProfileStatus" class="token-hint" style="padding:8px 12px 12px;min-height:1em"></div>
         </div>
       </div>

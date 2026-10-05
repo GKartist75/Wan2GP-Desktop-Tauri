@@ -2620,6 +2620,28 @@ pub async fn install(
                     }
                 }
             }
+            // setup.py builds a uv env with `uv venv …` through
+            // subprocess.run(shell=True), which resolves `uv` on PATH — not
+            // from the absolute path we used to provision Python. Our uv lives
+            // privately in <dataDir>/.tools precisely so it never collides with
+            // another app's copy, which means setup.py cannot see it unless uv
+            // also happens to be installed system-wide. Live without that:
+            // "'uv' is not recognized as an internal or external command" →
+            // CalledProcessError → install dies. Prepend our tools dir for the
+            // child; the existing saved_path restore below puts PATH back.
+            if saved_path.is_none() {
+                saved_path = Some(std::env::var("PATH").unwrap_or_default());
+            }
+            if let Some(uv) = owned_uv() {
+                if let Some(dir) = std::path::Path::new(&uv).parent() {
+                    let add = dir.to_string_lossy().to_string();
+                    let cur = std::env::var("PATH").unwrap_or_default();
+                    if !cur.split(';').any(|p| p.eq_ignore_ascii_case(&add)) {
+                        std::env::set_var("PATH", format!("{add};{cur}"));
+                    }
+                    emit(&format!("[*] launcher uv on PATH for setup.py: {add}\n"));
+                }
+            }
             let (mut rx, child) = match app
                 .shell()
                 .command(&py)
@@ -3140,6 +3162,12 @@ pub async fn install(
     // overrides so a fresh install doesn't land stale with instant
     // dashboard warnings. Warn-only inside (never fails the install).
     sync_post_install_overrides(&app, &repo).await;
+    // Fresh-install seeding: fill the Performance Settings keys this box
+    // should have from day one (v17 levers included), so the first launch is
+    // already calibrated instead of waiting for a Detect click. Setdefault
+    // only, and install() only — an update must never re-seed over settings
+    // the user tuned here or inside WanGP.
+    seed_install_memory_defaults(&repo, &emit);
     // Remember where the working install lives (next to the data-dir override
     // in the home dir, so it survives drive changes). If the drive letter
     // changes or the drive disconnects later, first-run warns instead of
@@ -4071,6 +4099,8 @@ async fn sync_kernels_inner(
         }
     }
     let mut failed: Vec<String> = Vec::new();
+    let mut synced = 0usize;
+    let mut current = 0usize;
     for k in all_kernels {
         if let Some(name) = k.as_str() {
             // find wheel url — nunchaku/gguf are under components.kernels, sage is under components.sage[profile.sage]
@@ -4192,7 +4222,28 @@ async fn sync_kernels_inner(
                     }
                 }
             }
-            let m = format!("[*] sync kernel {name}\n");
+            // Already at the wanted version? Skip the download. pip re-fetches a
+              // direct-URL wheel every run, so a no-op Sync used to pull
+              // 282 MB (nunchaku 111.7 + gguf 153.5 + sage 16.7) for wheels
+              // already installed at exactly those versions. Probe trouble
+              // never skips — unknown components and failed probes install,
+              // which is the pre-existing behaviour.
+              if let Some(want) = kernel_spec_version(&url) {
+                  let dists = kernel_dist_names(name);
+                  if !dists.is_empty() {
+                      let py_probe = py.to_string_lossy().to_string();
+                      if let Some(have) = pip_show_version(&py_probe, dists).await {
+                          if base_version(&have) == base_version(&want) {
+                              let m = format!("[*] sync kernel {name} — already at {have}, skipped\n");
+                              crate::base::push_log(&m, "setup");
+                              let _ = app.emit("launch-log", m);
+                              current += 1;
+                              continue;
+                          }
+                      }
+                  }
+              }
+              let m = format!("[*] sync kernel {name}\n");
             crate::base::push_log(&m, "setup");
             let _ = app.emit("launch-log", m);
             let emit_k = |s: &str| {
@@ -4217,10 +4268,16 @@ async fn sync_kernels_inner(
             .await
             {
                 failed.push(name.to_string());
+            } else {
+                synced += 1;
             }
         }
     }
     mutating_done();
+        emit_log(&format!(
+            "[✓] kernel sync complete — {synced} synced, {current} already current, {} failed\n",
+            failed.len()
+        ));
     if !failed.is_empty() {
         return Err(format!(
             "kernel sync failed for: {} — see console output",
@@ -4533,6 +4590,54 @@ pub(crate) fn wangp_head_short(repo: &Path) -> Option<String> {
 mod wangp_git_tests {
     use super::{parse_git_porcelain, DriftEntry, DriftKind};
     #[test]
+    fn kernel_spec_version_reads_wheels_and_pins() {
+        assert_eq!(
+            super::kernel_spec_version(
+                "--no-deps https://x/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl"
+            )
+            .as_deref(),
+            Some("1.0.25")
+        );
+        assert_eq!(
+            super::kernel_spec_version(
+                "https://x/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl"
+            )
+            .as_deref(),
+            Some("2.2.0")
+        );
+        assert_eq!(
+            super::kernel_spec_version("nunchaku==1.2.1+cu13.0torch2.10").as_deref(),
+            Some("1.2.1+cu13.0torch2.10")
+        );
+        // No version to compare → never skip (fail-open to installing).
+        assert_eq!(super::kernel_spec_version("--no-deps https://x/pkg.whl"), None);
+        assert_eq!(super::kernel_spec_version(""), None);
+    }
+
+    #[test]
+    fn base_version_strips_local_build_tags() {
+        assert_eq!(super::base_version("1.0.25+torch210cu130py311"), "1.0.25");
+        assert_eq!(super::base_version("2.2.0+cu130torch2.10.0andhigher.post6"), "2.2.0");
+        assert_eq!(super::base_version("3.6.0.post26"), "3.6.0.post26");
+    }
+
+    #[test]
+    fn kernel_dist_names_covers_known_components_only() {
+        assert_eq!(super::kernel_dist_names("gguf"), &["llamacpp-gguf-cuda"]);
+        assert_eq!(super::kernel_dist_names("nunchaku_cu13"), &["nunchaku"]);
+        assert_eq!(super::kernel_dist_names("sage"), &["sageattention"]);
+        assert!(super::kernel_dist_names("some_future_kernel").is_empty());
+    }
+
+    #[test]
+    fn changed_path_count_ignores_blank_lines() {
+        assert_eq!(super::changed_path_count("a\nb\n"), 2);
+        assert_eq!(super::changed_path_count("a\r\n\r\nb\r\n"), 2);
+        assert_eq!(super::changed_path_count("\n\n"), 0);
+        assert_eq!(super::changed_path_count(""), 0);
+    }
+
+    #[test]
     fn porcelain_parses_mixed_working_tree() {
         let out = " M wgp.py\n D deleted.py\n?? new-local.txt\n";
         assert_eq!(
@@ -4623,6 +4728,119 @@ mod wangp_pin_tests {
         assert_eq!(rollback_plan(Some(&h), false), Ok(h));
     }
 }
+/// Fresh-install seeding of the Performance Settings keys, so the first
+    /// launch is already calibrated for this box instead of waiting for a
+    /// Detect click. Setdefault-only (see `seed_memory_defaults`) and called
+    /// from `install()` alone — an update must never re-seed over settings the
+    /// user tuned here or inside WanGP.
+    ///
+    /// Creates wgp_config.json when it does not exist yet: upstream
+    /// filldefaults whatever is missing on first launch, so a partial
+    /// document is the normal shape, not a corrupt one. Silent on any
+    /// trouble — a failed seed never fails an install.
+    fn seed_install_memory_defaults(repo: &Path, emit: &dyn Fn(&str)) {
+        let cfg_path = repo.join("wgp_config.json");
+        let mut cfg = std::fs::read_to_string(&cfg_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        let rec =
+            crate::features::auto_tune_recommend(Some(crate::features::auto_tune_detect()), None);
+        let seeded = crate::features::seed_memory_defaults(&mut cfg, &rec);
+        if seeded.is_empty() {
+            return;
+        }
+        if atomic_write(
+            &cfg_path,
+            &serde_json::to_string_pretty(&cfg).unwrap_or_default(),
+        )
+        .is_err()
+        {
+            emit("[i] could not seed the recommended performance settings — set them from Performance Settings when convenient.\n");
+            return;
+        }
+        emit(&format!(
+            "[i] seeded {} recommended performance setting(s) for this hardware: {}\n",
+            seeded.len(),
+            seeded.join(", ")
+        ));
+    }
+
+    /// Files that differ between the current checkout and what was just
+/// fetched. NEVER `rev-list --count HEAD..@{u}`: the install clone is
+/// `--depth 1`, so git records a shallow boundary at the old HEAD and
+/// the first fetch walks the whole upstream history back through it —
+/// the range then counts every ancestor git re-downloaded (1828 on the
+/// v17 update, whose real delta was 4 commits) instead of what is
+/// landing. A tree diff needs no history at all, so it is true in a
+/// shallow and a full repo alike. None when git fails or nothing differs.
+fn changed_file_count(repo: &Path) -> Option<usize> {
+    let n = silent_command("git")
+        .args(["diff", "--name-only", "HEAD", "FETCH_HEAD"])
+        .current_dir(repo)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| changed_path_count(&String::from_utf8_lossy(&o.stdout)))?;
+    (n > 0).then_some(n)
+}
+
+/// Non-blank lines of `git diff --name-only` output. Pure + unit-tested.
+pub(crate) fn changed_path_count(out: &str) -> usize {
+    out.lines().filter(|l| !l.trim().is_empty()).count()
+}
+
+/// Dist name(s) pip knows for a setup_config kernel component. Component
+/// keys are upstream's (`gguf`, `sage`, `nunchaku_cu13`), dist names are
+/// pip's. Empty for anything unmapped — the caller then always installs,
+/// so an unknown component can never be reported as already current.
+fn kernel_dist_names(name: &str) -> &'static [&'static str] {
+    match name {
+        "gguf" | "gguf_cu128" => &["llamacpp-gguf-cuda"],
+        "sage" | "sageattention" => &["sageattention"],
+        "nunchaku" | "nunchaku_cu13" => &["nunchaku"],
+        "flash" | "flash_attn" => &["flash-attn"],
+        "lightx2v" | "light2xv" => &["lightx2v-kernel"],
+        "triton" => &["triton-windows", "triton"],
+        _ => &[],
+    }
+}
+
+/// Version named by a kernel install spec: an exact pin
+/// (`sageattention==1.0.6`) or a wheel filename
+/// (`llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-...whl` →
+/// `1.0.25`). None when the spec names no version. Pure + unit-tested.
+pub(crate) fn kernel_spec_version(spec: &str) -> Option<String> {
+    let token = spec.split_whitespace().last()?;
+    if token.ends_with(".whl") {
+        let stem = token.trim_end_matches(".whl");
+        let mut parts = stem.split('-');
+        parts.next()?; // dist name
+        let ver = parts.next()?;
+        let ver = ver
+            .split_once("%2B")
+            .or_else(|| ver.split_once('+'))
+            .map(|(a, _)| a)
+            .unwrap_or(ver);
+        return (!ver.is_empty() && ver.chars().all(|c| c.is_ascii_digit() || c == '.'))
+            .then(|| ver.to_string());
+    }
+    let (_, v) = token.split_once("==")?;
+    let v = v.trim();
+    (!v.is_empty()).then(|| v.to_string())
+}
+
+/// Base version before a local build tag: `1.0.25+torch210cu130py311`
+/// → `1.0.25`, `2.2.0+cu130torch2.10.post6` → `2.2.0`. Pure.
+pub(crate) fn base_version(v: &str) -> String {
+    v.trim()
+        .split(|c| c == '+' || c == '%')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
 #[tauri::command]
 pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     mutating_try("update")?;
@@ -4654,16 +4872,9 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         mutating_done();
         return Err("git fetch failed — offline? See console output above.".into());
     }
-    let incoming = silent_command("git")
-        .args(["rev-list", "--count", "HEAD..@{u}"])
-        .current_dir(&repo)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| s != "0" && !s.is_empty());
+    let incoming = changed_file_count(&repo);
     if let Some(n) = incoming {
-        emit(&format!("[*] {n} upstream change(s) incoming…\n"));
+        emit(&format!("[*] {n} upstream file(s) differ — updating…\n"));
     }
     // No-stash policy: latest upstream is always the truth. Every tracked
     // file is reset to exactly what was fetched — hand-changed files (and
@@ -4757,6 +4968,12 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
     for d in &pin_diff {
         emit(&format!("    {d}\n"));
     }
+    // v17 (09a7c6c8) vendored mmgp into the repo and dropped `mmgp==3.8.2`
+    // from requirements.txt. `pip install -r` never removes a dist, so the
+    // old wheel lingers in site-packages while wgp.py imports the in-repo
+    // mmgp/ folder instead (verified: `import mmgp` resolves to the repo,
+    // but importlib.metadata.version('mmgp') still reports the stale 3.8.2).
+    let mmgp_unpinned = pin_diff.iter().any(|d| d.starts_with("-mmgp=="));
     let mut requirements = "unchanged";
     let mut pip_ok = true;
     let mut req_error: Option<&str> = None;
@@ -4792,6 +5009,23 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
                 } else {
                     requirements = "reinstalled";
                 }
+                  if mmgp_unpinned {
+                    match silent_command(&py)
+                        .args(["-m", "pip", "uninstall", "-y", "mmgp"])
+                        .current_dir(&repo)
+                        .output()
+                    {
+                        Ok(o) if o.status.success() => emit(
+                            "[i] mmgp is now bundled in the repo (no longer a pip package) — removed the stale mmgp install.\n",
+                        ),
+                        Ok(_) => emit(
+                            "[i] mmgp is now bundled in the repo; a stale mmgp pip install may remain (harmless — the repo's mmgp/ takes precedence).\n",
+                        ),
+                        Err(err) => emit(&format!(
+                            "[i] mmgp is now bundled in the repo; could not remove the stale pip install ({err}) — harmless, the repo's mmgp/ takes precedence.\n"
+                        )),
+                    }
+                }
             }
         }
     }
@@ -4811,11 +5045,21 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         Some(cfg) => {
             let c = crate::hw::validate_setup_config_shape(&cfg);
             let floor = crate::hw::effective_gguf_floor(&cfg);
-            let pinned = crate::hw::setup_config_gguf_version(&cfg)
-                .unwrap_or_else(|| "?".to_string());
-            emit(&format!(
-                "[*] launcher compat: setup_config gguf {pinned} (floor {floor}) — re-run Sync GPU Wheels to land new wheels\n"
-            ));
+            // Only speak when there is something to act on. This fired on
+            // every update ("gguf 1.0.25 (floor 1.0.25) — re-run Sync") with
+            // nothing to sync, which taught readers to skip the whole block.
+            match crate::hw::setup_config_gguf_version(&cfg) {
+                Some(pinned) if pinned == floor => {}
+                Some(pinned) if crate::hw::version_gt(&pinned, &floor) => emit(&format!(
+                    "[*] launcher compat: upstream ships gguf {pinned}, launcher floor {floor} — re-run Sync GPU Wheels to land it\n"
+                )),
+                Some(pinned) => emit(&format!(
+                    "[!] launcher compat: setup_config gguf {pinned} is older than the launcher floor {floor} — Sync GPU Wheels swaps it up\n"
+                )),
+                None => emit(
+                    "[!] launcher compat: no gguf wheel pin in setup_config.json — Sync GPU Wheels falls back to the launcher floor\n",
+                ),
+            }
             c
         }
     };

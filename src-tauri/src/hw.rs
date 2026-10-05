@@ -514,6 +514,26 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
     "CPU".into()
 }
 
+/// Upstream's attention mode per GPU class.
+///
+/// v17.01 states plainly that "quite a few optimizations depends on" Sage2/2+,
+/// so this belongs alongside the memory profiles in a recommendation. It stays
+/// a RECOMMENDATION: an `attention_mode` already on disk is shown as `saved`
+/// and only changes if the user applies. sage3 is out (needs Blackwell and
+/// py>=3.12; Sync GPU Wheels gates it off). None for AMD/Intel — upstream has
+/// no Sage build on the ROCm path, which defaults to sdpa. Pure + unit-tested.
+pub(crate) fn attention_for_profile(profile_key: &str) -> Option<&'static str> {
+    match profile_key {
+        // sm89 (Ada/Ampere) and sm120 (Blackwell) — Sage 2.2.0
+        "RTX_50" | "RTX_40" | "RTX_30" => Some("sage2"),
+        // Turing — SageAttention 1.0.6
+        "RTX_20" => Some("sage"),
+        // "Sage does not support GTX 10XX in WanGP"
+        "GTX_10" => Some("sdpa"),
+        _ => None,
+    }
+}
+
 /// Docs-prescribed GGUF kernel floor: 1.0.25 adds INT8-verified speculative
 /// decoding for Q4_K / Bonsai PTQ1_0 (9% faster Qwen3.8 Q4 vs 1.0.23, 15% faster
 /// Bonsai vs 1.0.24 on RTX 5090) and retains the precompiled RTX50xx (SM120)

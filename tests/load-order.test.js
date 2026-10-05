@@ -16,6 +16,51 @@ const path = require('node:path')
 
 const SRC = path.join(__dirname, '..', 'src')
 
+// An unclosed <div> nests everything after it inside that element and closes
+// the grid container early: the panel renders but the app comes up black, with
+// no console error pointing at the real line. That happened twice while adding
+// the v17 controls, so the invariant is now a test rather than a memory.
+// Only counts real <div> tags — <!doctype>, <div/> and text are excluded, and
+// <script>/<style> bodies are stripped first so JS comparison operators inside
+// them cannot be mistaken for markup.
+test('index.html div tags balance', () => {
+  const html = fs.readFileSync(path.join(SRC, 'index.html'), 'utf8')
+  const markup = html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+  const opens = (markup.match(/<div\b(?![^>]*\/>)[^>]*>/gi) || []).length
+  const closes = (markup.match(/<\/div\s*>/gi) || []).length
+  assert.equal(
+    opens,
+    closes,
+    `index.html has ${opens} <div> but ${closes} </div> — the DOM will nest and the app can render black`,
+  )
+})
+
+test('every id the Auto-Tune panel reads exists exactly once', () => {
+  const html = fs.readFileSync(path.join(SRC, 'index.html'), 'utf8')
+  // A duplicated id silently breaks $(id) lookups: the panel would repaint the
+  // first one while the tags it writes to belong to the second.
+  const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1])
+  const dupes = ids.filter((id, i) => ids.indexOf(id) !== i)
+  assert.deepEqual([...new Set(dupes)], [], `duplicate ids in index.html`)
+  // The controls the v17 work added must all still be present — a rename in
+  // one file without the other is exactly the silent failure above.
+  for (const id of [
+    'memAttentionMode',
+    'memVramAllocator',
+    'memHeadSplit',
+    'memReadAhead',
+    'memSmartPinning',
+    'memVideoPreload',
+    'memImagePreload',
+    'memAudioPreload',
+    'memReservedPct',
+  ]) {
+    assert.ok(ids.includes(id), `index.html is missing #${id}`)
+  }
+})
 const loadedScripts = () => {
   const html = fs.readFileSync(path.join(SRC, 'index.html'), 'utf8')
   return [...html.matchAll(/<script[^>]*src="([^"]+)"/g)]

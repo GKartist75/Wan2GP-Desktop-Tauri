@@ -636,6 +636,9 @@
         tsGpuCompute: () => call("troubleshoot_gpu_compute"),
         tsTritonClear: (fb) =>
             call("troubleshoot_triton_clear", { fallbackSdpa: !!fb }),
+          tsKnownGood: () => call("troubleshoot_known_good"),
+          tsOomRemedy: (a) => call("troubleshoot_oom_remedy", { action: a }),
+          tsVramDiag: (a) => call("troubleshoot_vram_diag", { action: a }),
         notifierConfig: () => call("notifier_config"),
         notifierSet: (c) => call("notifier_set", { cfg: c }),
         notifierTest: (c) => call("notifier_test", { cfg: c }),

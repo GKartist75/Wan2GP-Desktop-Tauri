@@ -1,7 +1,8 @@
 //! P0 Troubleshooting panel backend (upstream docs/TROUBLESHOOTING.md).
-//! Six small read-only-first commands behind Manage → Troubleshooting:
-//! failsafe apply, CUDA smoke test, port status/fix, debug bundle,
-//! Triton import test + cache clear (with optional SDPA fallback).
+//! Read-only-first commands behind Manage → Troubleshooting: failsafe apply,
+//! CUDA smoke test, port status/fix, debug bundle, Triton import test + cache
+//! clear (optional SDPA fallback), upstream's per-GPU known-good recipe, the
+//! v17 OOM remedies, and the v17 Windows VRAM diagnostics.
 use crate::base::*;
 use crate::{
     hw::{get_gpu_info_sync, kernel_profile_key},
@@ -603,8 +604,27 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
     } else {
         String::new()
     };
-    let md = format!(
-        "**Launcher** v{ver} ({os}/{arch})\n**GPU** {gpu} ({vendor}, {vram} MB VRAM)\n**Python** {py}\n**Torch** {torch} + CUDA {cuda_v} (cuda_available={cuda_ok}){amd}\n**Launch** port={port} server={server} share={share} gpu={gpudev} args=`{args}`\n**Profiles** video={vp} image={ip} audio={ap} quant={q}\n**Log tail**\n```\n{tail}\n```",
+    let v17_line = format!(
+        "\n**v17 RAM/VRAM** mmgp={mmgp} allocator={alloc} head_split={hs} smart_pinning={pin} read_ahead={ra} reserved_pct={res} preload v/i/a={pv}/{pi}/{pa}\n**Kernels** attention={att} int8={i8} precision={prec} compile={comp}",
+        mmgp = crate::status::pyproject_version(
+            &std::fs::read_to_string(repo.join("mmgp").join("pyproject.toml")).unwrap_or_default(),
+        )
+        .unwrap_or_else(|| "(not vendored)".into()),
+        alloc = pick("vram_allocator"),
+        hs = pick("attention_head_split"),
+        pin = pick("smart_memory_pinning"),
+        ra = pick("read_ahead"),
+        res = pick("perc_reserved_mem_max"),
+        pv = pick("video_preload_mode"),
+        pi = pick("image_preload_mode"),
+        pa = pick("audio_preload_mode"),
+        att = pick("attention_mode"),
+        i8 = pick("int8_kernels"),
+        prec = pick("kernel_precision"),
+        comp = pick("compile"),
+);
+let md = format!(
+        "**Launcher** v{ver} ({os}/{arch})\n**GPU** {gpu} ({vendor}, {vram} MB VRAM)\n**Python** {py}\n**Torch** {torch} + CUDA {cuda_v} (cuda_available={cuda_ok}){amd}\n**Launch** port={port} server={server} share={share} gpu={gpudev} verbose={verbose} args=`{args}`\n**Profiles** video={vp} image={ip} audio={ap} quant={q}{v17}\n**Log tail**\n```\n{tail}\n```",
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
         gpu = gpu.get("name").and_then(|v| v.as_str()).unwrap_or("?"),
@@ -615,11 +635,13 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
         server = dc.get("serverName").and_then(|v| v.as_str()).unwrap_or("localhost"),
         share = dc.get("share").and_then(serde_json::Value::as_bool).unwrap_or(false),
         gpudev = dc.get("gpuDevice").and_then(|v| v.as_str()).unwrap_or("auto"),
+        verbose = dc.get("verboseLogging").and_then(serde_json::Value::as_bool).unwrap_or(false),
         args = dc.get("launchArgs").and_then(|v| v.as_str()).unwrap_or(""),
         vp = pick("video_profile"),
         ip = pick("image_profile"),
         ap = pick("audio_profile"),
         q = pick("transformer_quantization"),
+        v17 = v17_line,
         amd = amd_line,
         tail = if tail.is_empty() { "(no errors in session log)".to_string() } else { tail.join("\n") },
     );
@@ -700,9 +722,236 @@ pub fn troubleshoot_triton_clear(fallback_sdpa: Option<bool>) -> Result<serde_js
     )
 }
 
+/// Upstream's known-good recipe per GPU class (docs/TROUBLESHOOTING.md →
+/// Performance Issues → GPU-Specific Optimizations).
+///
+/// Only returns keys verified to exist in a live v17 `wgp_config.json`.
+/// Tea Cache and fp16 have NO config key upstream — they are per-generation
+/// choices made inside WanGP — so they come back as a note rather than being
+/// written as settings WanGP would silently ignore. None for AMD/Intel/CPU:
+/// upstream ships no CLI recipe for those, and the launcher's own AMD path
+/// owns them, so we fail closed instead of inventing one.
+/// Pure + unit-tested.
+pub(crate) fn known_good_recipe(profile_key: &str) -> Option<serde_json::Value> {
+    let (profile, compile, note) = match profile_key {
+        "GTX_10" => (4.0, false, "Tea Cache 1.5, in WanGP's generation settings"),
+        "RTX_20" => (
+            4.0,
+            false,
+            "Needs SageAttention 1.0.6 (Sync GPU Wheels); Tea Cache 1.5 in WanGP",
+        ),
+        "RTX_30" | "RTX_40" => (
+            3.0,
+            true,
+            "Needs SageAttention 2.2.0 (Sync GPU Wheels); Tea Cache 2.0 in WanGP",
+        ),
+        "RTX_50" => (
+            4.0,
+            false,
+            "Upstream pairs this with fp16 — set it per generation in WanGP",
+        ),
+        _ => return None,
+    };
+    // One definition of "which attention does this card want" — the same one
+    // Auto-Tune recommends from, so the two can never disagree.
+    let attention = crate::hw::attention_for_profile(profile_key)?;
+    Some(serde_json::json!({
+        "settings": {"attention_mode": attention, "video_profile": profile, "compile": compile},
+        "note": note,
+    }))
+}
+
+/// Which GPU class this machine is, plus upstream's recipe for it. Read-only:
+/// applying the recipe is the dashboard's Apply Overrides, so the same
+/// rec/saved contract applies and a value tuned elsewhere is never clobbered.
+#[tauri::command]
+pub fn troubleshoot_known_good() -> serde_json::Value {
+    let gpu = get_gpu_info_sync();
+    let key = kernel_profile_key(
+        gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
+        gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+    );
+    match known_good_recipe(&key) {
+        Some(r) => serde_json::json!({"ok": true, "profileKey": key, "recipe": r}),
+        None => serde_json::json!({
+            "ok": true, "profileKey": key, "recipe": serde_json::Value::Null,
+            "reason": "Upstream publishes no known-good command line for this GPU class — keep what Performance Settings recommends."
+        }),
+    }
+}
+
+/// One-click remedies for the two memory failures upstream documents, mapped
+/// onto config keys that actually exist. `head_split_medium` is upstream's own
+/// numbers (H3 1920x1088 / 362 frames: about 2 GB less VRAM for up to about
+/// 3% slower steps). `lower_reserved_ram` pairs a smaller pinning share with
+/// Smart Memory Pinning, which upstream recommends for "your PC runs short of
+/// RAM". P5 stays on the existing failsafe button. Pure + unit-tested.
+pub(crate) fn oom_remedy_settings(action: &str) -> Option<serde_json::Value> {
+    match action {
+        "head_split_medium" => Some(serde_json::json!({"attention_head_split": 2})),
+        "lower_reserved_ram" => Some(serde_json::json!({
+            "perc_reserved_mem_max": 25,
+            "smart_memory_pinning": true,
+        })),
+        _ => None,
+    }
+}
+
+/// Apply an OOM remedy through the SAME gated path as Performance Settings, so
+/// it snapshots, validates and can never write a value WanGP would ignore.
+#[tauri::command]
+pub fn troubleshoot_oom_remedy(action: Option<String>) -> serde_json::Value {
+    let a = action.unwrap_or_default();
+    let Some(settings) = oom_remedy_settings(&a) else {
+        return serde_json::json!({"ok": false, "error": format!("unknown remedy '{a}'")});
+    };
+    let r = crate::features::memory_profile_apply(settings);
+    let mut out = r.clone();
+    out["remedy"] = serde_json::Value::String(a);
+    out
+}
+
+/// v17 Windows VRAM diagnostics, shipped in the checkout as
+/// `scripts/gpumem.cmd` (per-process VRAM, sorted) and `scripts/gputrim.cmd`
+/// (ask Windows to trim idle allocations, then re-report). `gputrim.cmd` shells
+/// out to bare `python`, so the active env's Scripts directory goes first on
+/// PATH — otherwise it resolves to some other interpreter, or none. Trim is
+/// user-initiated on purpose: it briefly applies memory pressure and the
+/// screen can flash.
+#[tauri::command]
+pub fn troubleshoot_vram_diag(action: Option<String>) -> serde_json::Value {
+    let repo = get_repo_dir();
+    let script = match action.as_deref().unwrap_or("list") {
+        "list" => "gpumem.cmd",
+        "trim" => "gputrim.cmd",
+        other => return serde_json::json!({"ok": false, "error": format!("unknown action '{other}'")}),
+    };
+    let path = repo.join("scripts").join(script);
+    if !path.exists() {
+        return serde_json::json!({
+            "ok": false,
+            "error": format!("{script} not found — update Wan2GP to a v17 or newer checkout"),
+        });
+    }
+    let mut cmd = silent_command("cmd");
+    cmd.arg("/C").arg(&path).current_dir(&repo);
+    if let Some(py) = active_python() {
+        if let Some(scripts) = py.parent() {
+            let old = std::env::var("PATH").unwrap_or_default();
+            cmd.env("PATH", format!("{};{}", scripts.display(), old));
+        }
+    }
+    match cmd.output() {
+        Ok(o) => {
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            serde_json::json!({
+                "ok": o.status.success(),
+                "script": script,
+                "exit": o.status.code(),
+                "output": text.trim(),
+            })
+        }
+        Err(e) => serde_json::json!({"ok": false, "script": script, "error": e.to_string()}),
+    }
+}
+
 #[cfg(test)]
 mod troubleshoot_tests {
     use super::*;
+    #[test]
+    fn known_good_recipe_covers_every_nvidia_class() {
+        // Attention + profile + compile, exactly as documented.
+        let gtx = known_good_recipe("GTX_10").unwrap();
+        assert_eq!(gtx["settings"]["attention_mode"], "sdpa");
+        assert_eq!(gtx["settings"]["video_profile"], 4.0);
+        assert_eq!(gtx["settings"]["compile"], false);
+
+        let r20 = known_good_recipe("RTX_20").unwrap();
+        assert_eq!(r20["settings"]["attention_mode"], "sage");
+
+        for k in ["RTX_30", "RTX_40"] {
+            let r = known_good_recipe(k).unwrap();
+            assert_eq!(r["settings"]["attention_mode"], "sage2");
+            assert_eq!(r["settings"]["video_profile"], 3.0);
+            assert_eq!(r["settings"]["compile"], true);
+        }
+
+        let r50 = known_good_recipe("RTX_50").unwrap();
+        assert_eq!(r50["settings"]["attention_mode"], "sage2");
+        assert_eq!(r50["settings"]["video_profile"], 4.0);
+    }
+
+    /// No upstream recipe for these — failing closed beats inventing settings.
+    /// Auto-Tune's recommendation and the Troubleshooting recipe must agree —
+    /// they read the same definition, so this pins both against one table.
+    #[test]
+    fn recipe_and_autotune_agree_on_attention() {
+        for (key, want) in [
+            ("GTX_10", "sdpa"),
+            ("RTX_20", "sage"),
+            ("RTX_30", "sage2"),
+            ("RTX_40", "sage2"),
+            ("RTX_50", "sage2"),
+        ] {
+            assert_eq!(crate::hw::attention_for_profile(key), Some(want), "{key}");
+            let r = known_good_recipe(key).unwrap();
+            assert_eq!(r["settings"]["attention_mode"], want, "recipe for {key}");
+        }
+        // No Sage build upstream on the ROCm / CPU paths.
+        for k in ["AMD_GFX1201", "AMD_GFX110X", "INTEL_XPU", "CPU", ""] {
+            assert_eq!(crate::hw::attention_for_profile(k), None, "{k}");
+        }
+    }
+
+    #[test]
+    fn known_good_recipe_refuses_unknown_and_non_nvidia() {
+        for k in ["AMD_GFX1201", "AMD_GFX110X", "INTEL_XPU", "CPU", "", "RTX_99"] {
+            assert!(known_good_recipe(k).is_none(), "{k} must have no recipe");
+        }
+    }
+
+    /// Every key a recipe writes must be appliable, or Apply would report
+    /// success and drop it (the allowlist bug).
+    #[test]
+    fn recipe_keys_are_appliable_and_valid() {
+        for key in ["GTX_10", "RTX_20", "RTX_30", "RTX_40", "RTX_50"] {
+            let r = known_good_recipe(key).unwrap();
+            let s = r["settings"].as_object().unwrap();
+            for (k, v) in s {
+                assert!(
+                    crate::features::MEMORY_OVERRIDE_KEYS.contains(&k.as_str()),
+                    "{key}: {k} is not in the Apply allowlist"
+                );
+                assert!(
+                    crate::features::valid_memory_override(k, v),
+                    "{key}: {k}={v} would be rejected"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn oom_remedies_are_valid_and_writable() {
+        for action in ["head_split_medium", "lower_reserved_ram"] {
+            let s = oom_remedy_settings(action).unwrap();
+            for (k, v) in s.as_object().unwrap() {
+                assert!(
+                    crate::features::MEMORY_OVERRIDE_KEYS.contains(&k.as_str()),
+                    "{action}: {k} not appliable"
+                );
+                assert!(
+                    crate::features::valid_memory_override(k, v),
+                    "{action}: {k}={v} rejected"
+                );
+            }
+        }
+        assert!(oom_remedy_settings("nonsense").is_none());
+    }
+
     #[test]
     fn merge_flags_dedupes() {
         let m = merge_launch_flags(

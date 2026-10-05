@@ -1140,6 +1140,10 @@ pub async fn deepy_web_start(
         port,
         server_name: "localhost".to_string(),
         sessions_dir: sessions_dir.to_string_lossy().to_string(),
+        verbose: crate::base::load_config_value()
+            .get("verboseLogging")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true),
     };
     let mut args = crate::launch::build_wgp_args(&base);
     args.insert(1, "--deepy-server".to_string());

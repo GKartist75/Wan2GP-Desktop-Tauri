@@ -235,24 +235,43 @@ pub(crate) fn get_data_dir_uncached() -> PathBuf {
     default_data_dir()
 }
 pub(crate) fn get_data_dir() -> PathBuf {
-    let cache = CACHED_DATA_DIR.get_or_init(|| {
-        Mutex::new((
-            PathBuf::new(),
-            std::time::Instant::now()
-                .checked_sub(std::time::Duration::from_hours(1))
-                .unwrap(),
-        ))
-    });
-    if let Ok(g) = cache.lock() {
-        if g.1.elapsed() < std::time::Duration::from_secs(5) && !g.0.as_os_str().is_empty() {
-            return g.0.clone();
+    #[cfg(not(test))]
+    {
+        let cache = CACHED_DATA_DIR.get_or_init(|| {
+            Mutex::new((
+                PathBuf::new(),
+                std::time::Instant::now()
+                    .checked_sub(std::time::Duration::from_hours(1))
+                    .unwrap(),
+            ))
+        });
+        if let Ok(g) = cache.lock() {
+            if g.1.elapsed() < std::time::Duration::from_secs(5)
+                && !g.0.as_os_str().is_empty()
+            {
+                return g.0.clone();
+            }
         }
+        let v = get_data_dir_uncached();
+        if let Ok(mut g) = cache.lock() {
+            *g = (v.clone(), std::time::Instant::now());
+        }
+        v
     }
-    let v = get_data_dir_uncached();
-    if let Ok(mut g) = cache.lock() {
-        *g = (v.clone(), std::time::Instant::now());
+    // Hermetic tests point WAN2GP_DATA_DIR at a per-test tempdir. The 5s
+    // cache is a production poll floor and is only cross-test staleness here:
+    // TestDataDir serializes the tests that HOLD the guard, but a sibling test
+    // that resolves a dir without it can repopulate the cache with another
+    // test's (already deleted) tempdir — or with the real install — and the
+    // next TestDataDir test then reads that stale path. That is exactly how
+    // deepy_set_writes_coherent_config intermittently read the real
+    // wgp_config.json's enhancer_mode instead of its seed's default. Tests are
+    // fast, so dropping the cache under cfg(test) removes the whole class
+    // rather than sequencing around it.
+    #[cfg(test)]
+    {
+        get_data_dir_uncached()
     }
-    v
 }
 /// Drop the 5s data/repo dir caches. Tests only — each hermetic test resolves a
 /// different tempdir, so a cached value from a sibling test would leak into it.
@@ -383,24 +402,35 @@ pub(crate) fn get_repo_dir_uncached() -> PathBuf {
     base
 }
 pub(crate) fn get_repo_dir() -> PathBuf {
-    let cache = CACHED_REPO_DIR.get_or_init(|| {
-        Mutex::new((
-            PathBuf::new(),
-            std::time::Instant::now()
-                .checked_sub(std::time::Duration::from_hours(1))
-                .unwrap(),
-        ))
-    });
-    if let Ok(g) = cache.lock() {
-        if g.1.elapsed() < std::time::Duration::from_secs(5) && !g.0.as_os_str().is_empty() {
-            return g.0.clone();
+    #[cfg(not(test))]
+    {
+        let cache = CACHED_REPO_DIR.get_or_init(|| {
+            Mutex::new((
+                PathBuf::new(),
+                std::time::Instant::now()
+                    .checked_sub(std::time::Duration::from_hours(1))
+                    .unwrap(),
+            ))
+        });
+        if let Ok(g) = cache.lock() {
+            if g.1.elapsed() < std::time::Duration::from_secs(5)
+                && !g.0.as_os_str().is_empty()
+            {
+                return g.0.clone();
+            }
         }
+        let v = get_repo_dir_uncached();
+        if let Ok(mut g) = cache.lock() {
+            *g = (v.clone(), std::time::Instant::now());
+        }
+        v
     }
-    let v = get_repo_dir_uncached();
-    if let Ok(mut g) = cache.lock() {
-        *g = (v.clone(), std::time::Instant::now());
+    // See get_data_dir: the dir cache is a production poll floor, and pure
+    // cross-test staleness under cfg(test).
+    #[cfg(test)]
+    {
+        get_repo_dir_uncached()
     }
-    v
 }
 pub(crate) fn get_config_file() -> PathBuf {
     get_data_dir().join("desktop-config.json")

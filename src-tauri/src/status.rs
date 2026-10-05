@@ -183,6 +183,7 @@ except Exception as e:
             }
         }
     }
+    apply_vendored_mmgp(&mut versions, &repo);
     // fill installed into wheels now that versions are known
     let mut final_wheels = Vec::new();
     if let Some(arr) = pending_wheels.as_array() {
@@ -256,6 +257,115 @@ pub fn check_git() -> serde_json::Value {
 // ── Phase 1: paths / config / hardware / install checks ──
 /// Map an installed `onnxruntime-gpu` onto the `onnxruntime` version row
 /// (issue #15 follow-up): the probe queries both dist names; when only
+/// mmgp stopped shipping as a pip dist in upstream v17 (09a7c6c8): it is the
+/// in-repo `mmgp/` folder now, and requirements.txt dropped `mmgp==3.8.2`.
+/// Overwrite whatever the pip probe reported with the vendored version, so
+/// the dashboard shows the code that actually runs — never a stale 3.8.2 left
+/// in site-packages (wgp.py shadows it, the probe would not) — and drop the
+/// key entirely on a pre-v17 checkout with no `mmgp/` folder.
+pub(crate) fn apply_vendored_mmgp(
+    versions: &mut serde_json::Map<String, serde_json::Value>,
+    repo: &std::path::Path,
+) {
+    let toml =
+        std::fs::read_to_string(repo.join("mmgp").join("pyproject.toml")).unwrap_or_default();
+    match pyproject_version(&toml) {
+        Some(v) => {
+            // v17.01 rebuilt the allocator (mmgp/allocator/vmm_alloc.cpp +59/-11
+            // and a new DLL) WITHOUT bumping pyproject.toml, so "4.0.0" alone
+            // cannot tell you which allocator you are running. The DLL is ~94 KB,
+            // so a content hash costs less than any probe — append it so two
+            // builds of the same version stay distinguishable in bug reports.
+            let shown = match allocator_build_id(&repo.join("mmgp").join("allocator")) {
+                Some(id) => format!("{v} (alloc {id})"),
+                None => v,
+            };
+            versions.insert("mmgp".into(), serde_json::Value::String(shown));
+        }
+        None => {
+            versions.remove("mmgp");
+        }
+    }
+}
+
+/// Short build id of the vendored prebuilt allocator: FNV-1a over the
+/// platform's binary, first 6 hex. Size is folded in so a truncated or absent
+/// file is obvious rather than looking like a valid build. None when the
+/// checkout predates the vendored allocator (or is not Windows/Linux).
+/// Pure + unit-tested.
+pub(crate) fn allocator_build_id(dir: &std::path::Path) -> Option<String> {
+    let name = if cfg!(windows) {
+        "vmm_alloc_win_amd64.dll"
+    } else if cfg!(target_os = "macos") {
+        return None;
+    } else {
+        "vmm_alloc_linux_x86_64.so"
+    };
+    let bytes = std::fs::read(dir.join(name)).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in &bytes {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    Some(format!("{:x}/{}k", h & 0xffffff, bytes.len() / 1024))
+}
+
+#[cfg(test)]
+mod allocator_build_tests {
+    use super::allocator_build_id;
+    /// The allocator fingerprint must distinguish two builds that share a
+    /// version — v17.01 shipped a new DLL without bumping pyproject.toml — and
+    /// must never invent one for a missing or empty binary.
+    #[test]
+    fn allocator_build_id_separates_builds_and_refuses_nothing() {
+        if cfg!(target_os = "macos") {
+            return;
+        }
+        let dir =
+            std::env::temp_dir().join(format!("wan2gp-alloc-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = if cfg!(windows) {
+            "vmm_alloc_win_amd64.dll"
+        } else {
+            "vmm_alloc_linux_x86_64.so"
+        };
+        // No binary at all → None (pre-allocator checkout).
+        assert_eq!(allocator_build_id(&dir), None);
+        // Empty file is not a build.
+        std::fs::write(dir.join(name), b"").unwrap();
+        assert_eq!(allocator_build_id(&dir), None);
+        // Same content → same id; different content → different id.
+        std::fs::write(dir.join(name), b"build-one").unwrap();
+        let a = allocator_build_id(&dir).unwrap();
+        assert_eq!(a, allocator_build_id(&dir).unwrap(), "fingerprint is stable");
+        std::fs::write(dir.join(name), b"build-two!").unwrap();
+        let b = allocator_build_id(&dir).unwrap();
+        assert_ne!(a, b, "two builds sharing a version must not collide");
+        assert!(a.ends_with("k"), "size folded into the id: {a}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+    /// `version = "4.0.0"` from a pyproject.toml body. First `version =` line
+/// wins; `requires-python` and dependency entries never match. Pure +
+/// unit-tested.
+pub(crate) fn pyproject_version(text: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .filter_map(|l| l.strip_prefix("version"))
+        .find_map(|l| l.split_once('='))
+        .map(|(_, v)| {
+            v.trim()
+                .trim_matches(|c| c == '"' || c == '\'')
+                .to_string()
+        })
+        .filter(|v| !v.is_empty())
+}
+
 /// the -gpu dist is installed, its version satisfies the row. Never
 /// overwrites a real `onnxruntime` version, and never touches the
 /// installed package. Pure + unit-tested.

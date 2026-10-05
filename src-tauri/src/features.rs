@@ -427,34 +427,42 @@ pub fn check_package(pkg: String) -> serde_json::Value {
 }
 #[tauri::command]
 pub fn memory_profile_read() -> serde_json::Value {
-    // read wgp_config.json memory profile — ponytail: return current profile or default
+    // Read back EXACTLY the keys the panel owns, and only the ones actually
+    // on disk. This used to be a hand-written list that predated the eight v17
+    // keys: they saved perfectly and then rendered "saved: —" forever, because
+    // this function never returned them. Same failure mode as the Apply
+    // allowlist — a literal list that nobody extends.
+    //
+    // It also used to fabricate a default (4 / 0.8 / "int8"…) for any missing
+    // key, which painted "saved: 4" on a config that had no such key. Absent
+    // now reads as absent; `memProfileLoad` seeds empty dropdowns from what is
+    // really there.
+    let empty = serde_json::json!({"ok": true, "settings": {}});
     let p = get_repo_dir().join("wgp_config.json");
-    if let Ok(s) = std::fs::read_to_string(&p) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
-            // int8_kernels replaced the legacy enable_int8_kernels upstream
-            // (v13.13 migration deletes the old key on launch). Prefer the
-            // new key; map a lingering legacy value for display so
-            // pre-update configs still read correctly.
-            let int8 = v.get("int8_kernels").cloned().unwrap_or_else(|| {
-                match v.get("enable_int8_kernels").and_then(|x| x.as_i64()) {
-                    Some(0) => serde_json::json!("disabled"),
-                    _ => serde_json::json!("auto"),
-                }
-            });
-            return serde_json::json!({"ok": true, "settings": {
-                "video_profile": v.get("video_profile").cloned().unwrap_or(serde_json::json!(4)),
-                "image_profile": v.get("image_profile").cloned().unwrap_or(serde_json::json!(4)),
-                "audio_profile": v.get("audio_profile").cloned().unwrap_or(serde_json::json!(4)),
-                "vram_safety_coefficient": v.get("vram_safety_coefficient").cloned().unwrap_or(serde_json::json!(0.8)),
-                "vae_config": v.get("vae_config").cloned().unwrap_or(serde_json::json!(0)),
-                "transformer_quantization": v.get("transformer_quantization").cloned().unwrap_or(serde_json::json!("int8")),
-                "int8_kernels": int8,
-                "kernel_precision": v.get("kernel_precision").cloned().unwrap_or(serde_json::json!("fast")),
-                "queue_color_scheme": v.get("queue_color_scheme").cloned().unwrap_or(serde_json::json!("pastel"))
-            }});
+    let Ok(s) = std::fs::read_to_string(&p) else {
+        return empty;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) else {
+        return empty;
+    };
+    let mut settings = serde_json::Map::new();
+    for key in MEMORY_OVERRIDE_KEYS {
+        // int8_kernels replaced the legacy enable_int8_kernels upstream (its
+        // v13.13 migration deletes the old key on launch). Prefer the new key;
+        // map a lingering legacy value so pre-update configs still read right.
+        if *key == "int8_kernels" && v.get("int8_kernels").is_none() {
+            let legacy = match v.get("enable_int8_kernels").and_then(|x| x.as_i64()) {
+                Some(0) => serde_json::json!("disabled"),
+                _ => serde_json::json!("auto"),
+            };
+            settings.insert((*key).to_string(), legacy);
+            continue;
+        }
+        if let Some(val) = v.get(*key) {
+            settings.insert((*key).to_string(), val.clone());
         }
     }
-    serde_json::json!({"ok": true, "settings": {"video_profile": 4, "image_profile": 4, "audio_profile": 4, "vram_safety_coefficient": 0.8, "vae_config": 0, "transformer_quantization": "int8", "int8_kernels": "auto", "kernel_precision": "fast", "queue_color_scheme": "pastel"}})
+    serde_json::json!({"ok": true, "settings": settings})
 }
 /// Parse the RAM probe into GB. The probe emits integer BYTES (culture-proof:
 /// no decimal separator for locales to mangle); legacy decimal-GB strings
@@ -635,8 +643,11 @@ pub fn auto_tune_recommend(
             ("low", "low") => 4.0,
             ("low", "very_low") => 5.0,
             ("tight", "high") => 4.0,
-            ("tight", "low") => 4.5,
-            _ => 5.0,
+            // v17 + MMGP v4: Profile 4 is up to 50% lower peak VRAM and
+            // 11 GB now does 1080p H3, so the tight tier no longer has to
+            // fall back to P4+/P5 once the v17 levers below are on.
+            ("tight", "low") => 4.0,
+            _ => 4.0,
         };
         let c = if vram_tier == "tight" || vram_tier == "none" {
             0.7
@@ -646,11 +657,24 @@ pub fn auto_tune_recommend(
         (p, c)
     };
     // Fast-LM-decoder rule: ≥12GB VRAM needs int-profile 1/3 for audio, else inherit.
-    let audio = if vram_gb >= 12.0 && ![1.0, 3.0].contains(&profile) {
-        3.0
-    } else {
-        profile
-    };
+    // Upstream v17: "Profile 3+ is recommended for audio models (their default)" —
+// audio models fit whole in VRAM, where the language model many of them
+// include runs much faster and can use the CUDA Graph or vLLM engines.
+//
+// Do NOT gate this on VRAM the way the video/image tiers are gated: those are
+// calibrated against 14B video models, and audio models are an order of
+// magnitude smaller, so a card that earns P4 for video comfortably holds one
+// whole. Gating on vram_gb (>= 12) therefore sent a 10 GB RTX 3080 — where
+// upstream's own default applies — to P4 for audio and cost it the fast path.
+// The real safety valve is the failsafe switch and a genuinely tiny card: when
+// video itself is already at P5 there is nothing left to spare, so audio
+// follows it down. P1 and P3 are left alone — they already load whole and
+// keep Reserved RAM. (Was 3.0, gated on vram_gb >= 12.)
+let audio = if [2.0, 4.0, 4.5].contains(&profile) {
+    3.5
+} else {
+    profile
+};
     let label = if failsafe {
         "Failsafe · P5 (maximum compatibility)".to_string()
     } else {
@@ -658,21 +682,67 @@ pub fn auto_tune_recommend(
             "1" => "HighRAM · HighVRAM",
             "2" => "HighRAM · LowVRAM",
             "3" => "LowRAM · HighVRAM",
-            "3.5" => "VeryLowRAM · HighVRAM",
-            "4" => "LowRAM · LowVRAM",
+            "3.5" => "VeryLowRAM · HighVRAM (upstream: recommended for audio)",
+            "4" => "LowRAM · LowVRAM (upstream: recommended)",
             "4.5" => "LowRAM · LowVRAM+",
             _ => "VerylowRAM · LowVRAM",
         }
         .to_string()
     };
-    serde_json::json!({
+    // v17 (MMGP v4) levers. All of them are CUDA-only in practice:
+    // shared/cuda_memory.apply_startup_settings returns early when
+    // torch.version.hip is set or CUDA is unavailable, so writing them on
+    // AMD/Intel/CPU would persist a setting that silently does nothing.
+    let mut extra = serde_json::Map::new();
+    if hw.get("cuda_available").and_then(|v| v.as_bool()) == Some(true) {
+        extra.insert("vram_allocator".into(), serde_json::json!("vmm_spill"));
+        // Head Split Medium (2) buys ~20% VRAM for <=10% slower steps
+        // (docs/CLI.md, README v17) — the right trade exactly where the
+        // tight tier used to need a lower profile instead. Only engages at
+        // >= 8192 tokens upstream, so it costs nothing on short clips.
+        extra.insert(
+            "attention_head_split".into(),
+            serde_json::json!(if vram_tier == "tight" { 2 } else { 0 }),
+        );
+        // Upstream v17.01: "first make sure you use Sage2/2+ Attention as quite a
+    // few optimizations depends on it" — so the attention mode is part of the
+    // recommendation, not just a troubleshooting dropdown. NVIDIA only; the
+    // AMD/ROCm path has no Sage build and defaults to sdpa upstream.
+    if hw.get("cuda_available").and_then(|v| v.as_bool()) == Some(true) {
+        let key = crate::hw::kernel_profile_key(
+            hw.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
+            hw.get("gpu_name").and_then(|v| v.as_str()).unwrap_or(""),
+        );
+        if let Some(a) = crate::hw::attention_for_profile(&key) {
+            extra.insert("attention_mode".into(), serde_json::json!(a));
+        }
+    }
+    extra.insert("read_ahead".into(), serde_json::json!(cfg!(windows)));
+        extra.insert("smart_memory_pinning".into(), serde_json::json!(true));
+        // WanGP's own RAM/VRAM advice: "For image models, use Profile 4 or 5
+        // with a Dynamic or Manual VRAM Preload ... Video steps are usually
+        // long enough to hide the transfers." Audio rides P3+, which loads
+        // each model whole and hides the control entirely.
+        extra.insert("video_preload_mode".into(), serde_json::json!("default"));
+        extra.insert("image_preload_mode".into(), serde_json::json!("dynamic"));
+        extra.insert("audio_preload_mode".into(), serde_json::json!("default"));
+        // 0 = Auto (upstream: 40% on Windows, 80% on Linux).
+        extra.insert("perc_reserved_mem_max".into(), serde_json::json!(0));
+    }
+    let mut out = serde_json::json!({
         "video_profile": profile, "image_profile": profile, "audio_profile": audio,
         "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8", "int8_kernels": "auto", "kernel_precision": "fast",
         "_recommendation_label": label,
         "_recommendation_reason": "Auto-tuned for your hardware",
         "packages": ["torch","triton","sageattention"],
         "kernels": ["nunchaku","gguf"]
-    })
+    });
+    if let Some(obj) = out.as_object_mut() {
+        for (k, v) in extra {
+            obj.insert(k, v);
+        }
+    }
+    out
 }
 
 // ── Phase 2-5: remaining 65 handlers as thin stubs (real logic behind shell/fs plugins) ──
@@ -1995,6 +2065,24 @@ pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool 
         "int8_kernels" => ["auto", "disabled", "triton", "kitchen"].contains(&s),
         // shared/kernels/kernel_policy.py CHOICES ("strict"/"fast")
         "kernel_precision" => ["fast", "strict"].contains(&s),
+        // shared/cuda_memory.py VRAM_ALLOCATOR_CHOICES
+        "vram_allocator" => ["default", "vmm", "vmm_spill"].contains(&s),
+        // shared/attention_kit.py HEAD_SPLIT_CHOICES: int 0..3
+        "attention_head_split" => matches!(val.as_u64(), Some(0..=3)),
+        // bool knobs added with the MMGP v4 runtime
+        "read_ahead" | "smart_memory_pinning" => val.is_boolean(),
+        // wgp.py preload_mode() — "default" | "dynamic" | "manual"
+        "video_preload_mode" | "image_preload_mode" | "audio_preload_mode" => {
+            ["default", "dynamic", "manual"].contains(&s)
+        }
+        "video_preload_in_VRAM" | "image_preload_in_VRAM" | "audio_preload_in_VRAM" => {
+            matches!(val.as_i64(), Some(n) if (0..=200_000).contains(&n))
+        }
+        // wgp.py: perc_reserved_mem_max is a PERCENT as of v17 (0 = automatic)
+        "perc_reserved_mem_max" => matches!(val.as_f64(), Some(n) if (0.0..=100.0).contains(&n)),
+        // wgp.py attention_modes_installed + check_attn
+        "attention_mode" => ["sdpa", "flash", "sage", "sage2", "sage3", "radial"].contains(&s),
+        "compile" => val.is_boolean(),
         // wgp.py queue table: "pastel" renders per-row hues, anything else
         // renders the theme-following alternating grey rows. Fail-closed to
         // the two known names so garbage never reaches wgp_config.json.
@@ -2002,6 +2090,62 @@ pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool 
         _ => true,
     }
 }
+/// Keys the Performance Settings panel owns in `wgp_config.json`. Single
+/// source of truth for the Apply allowlist (a key missing here is silently
+/// dropped, not validated) and for install-time seeding.
+pub(crate) const MEMORY_OVERRIDE_KEYS: &[&str] = &[
+    "video_profile",
+    "image_profile",
+    "audio_profile",
+    "vram_safety_coefficient",
+    "vae_config",
+    "transformer_quantization",
+    "int8_kernels",
+    "kernel_precision",
+    "queue_color_scheme",
+    // v17 (MMGP v4) RAM/VRAM controls.
+    "vram_allocator",
+    "attention_head_split",
+    "read_ahead",
+    "smart_memory_pinning",
+    "video_preload_mode",
+    "image_preload_mode",
+    "audio_preload_mode",
+    "perc_reserved_mem_max",
+    // Troubleshooting "known-good recipe" writes these two; both verified to
+    // exist in a live v17 wgp_config.json.
+    "attention_mode",
+    "compile",
+];
+
+/// Merge a recommendation into a `wgp_config` document for a FRESH install,
+/// so the first launch already runs with the hardware-aware values instead of
+/// upstream's generic defaults.
+///
+/// Setdefault-only, and it is called from `install()` alone: a key already on
+/// disk belongs to the user or to WanGP and is never touched, which is what
+/// keeps "the launcher auto-recommends" from becoming "the launcher
+/// overwrites". Keys the recommendation does not carry (every CUDA-only lever
+/// on AMD/Intel/CPU) and keys that fail `valid_memory_override` are skipped.
+pub(crate) fn seed_memory_defaults(
+    cfg: &mut serde_json::Value,
+    rec: &serde_json::Value,
+) -> Vec<String> {
+    let Some(map) = cfg.as_object_mut() else {
+        return Vec::new();
+    };
+    let mut seeded = Vec::new();
+    for key in MEMORY_OVERRIDE_KEYS {
+        let Some(v) = rec.get(*key) else { continue };
+        if !valid_memory_override(key, v) || map.contains_key(*key) {
+            continue;
+        }
+        map.insert((*key).to_string(), v.clone());
+        seeded.push((*key).to_string());
+    }
+    seeded
+}
+
 #[tauri::command]
 pub fn memory_profile_apply(settings: serde_json::Value) -> serde_json::Value {
     // mirrors Electron memory_profile:apply — writes to wgp_config.json and returns applied keys
@@ -2015,19 +2159,21 @@ pub fn memory_profile_apply(settings: serde_json::Value) -> serde_json::Value {
             return serde_json::json!({"ok": false, "success": false, "error": format!("corrupted: {}", e)})
         }
     };
+    // WanGP keeps its own copy of wgp_config.json in memory and rewrites the
+    // file on any settings change inside its UI. Writing while it runs is a
+    // lost update in whichever direction the user did not expect — the panel
+    // would report success and the value would silently revert. Refuse and
+    // name the fix; we own start/stop, so stopping first is one click.
+    if crate::launch::wangp_running() {
+        return serde_json::json!({
+            "ok": false,
+            "success": false,
+            "error": "WanGP is running — stop it first, then apply. It rewrites wgp_config.json from its own copy and would overwrite these values.",
+        });
+    }
     let mut applied: Vec<String> = Vec::new();
-    for key in [
-        "video_profile",
-        "image_profile",
-        "audio_profile",
-        "vram_safety_coefficient",
-        "vae_config",
-        "transformer_quantization",
-        "int8_kernels",
-        "kernel_precision",
-        "queue_color_scheme",
-    ] {
-        if let Some(val) = settings.get(key) {
+    for key in MEMORY_OVERRIDE_KEYS {
+        if let Some(val) = settings.get(*key) {
             if !valid_memory_override(key, val) {
                 return serde_json::json!({"ok": false, "success": false, "error": format!("{key}: invalid value")});
             }
@@ -2662,13 +2808,17 @@ mod autotune_matrix_tests {
         let cases = [
             (("high", "high"), (1.0, 1.0)),
             (("high", "low"), (3.0, 3.0)),
-            (("high", "very_low"), (3.5, 3.0)), // P3+ with audio fast-decoder rule
-            (("low", "high"), (2.0, 3.0)),
-            (("low", "low"), (4.0, 3.0)),
-            (("low", "very_low"), (5.0, 3.0)),
-            (("tight", "high"), (4.0, 4.0)),
-            (("tight", "low"), (4.5, 4.5)),
-            (("tight", "very_low"), (5.0, 5.0)),
+            (("high", "very_low"), (3.5, 3.5)), // P3+ is the audio default upstream
+            (("low", "high"), (2.0, 3.5)),
+            (("low", "low"), (4.0, 3.5)),
+            // Video already at P5 → nothing left to spare; audio follows down.
+            (("low", "very_low"), (5.0, 5.0)),
+            (("tight", "high"), (4.0, 3.5)),
+            // v17 + MMGP v4: the tight tier rides P4 with the levers on, and
+            // audio still gets P3+ — audio models fit whole where a 14B video
+            // model would not.
+            (("tight", "low"), (4.0, 3.5)),
+            (("tight", "very_low"), (4.0, 3.5)),
         ];
         for ((vt, rt), (v, a)) in cases {
             let r = rec(vt, rt, if vt == "tight" { 8.0 } else { 16.0 }, false);
@@ -2698,6 +2848,178 @@ mod autotune_matrix_tests {
             .unwrap()
             .contains("unavailable"));
     }
+    /// v17 levers are CUDA-only: shared/cuda_memory.apply_startup_settings
+    /// early-returns on HIP and on !cuda_available, so AMD/Intel must not
+    /// have them persisted as if they did something.
+    #[test]
+    fn v17_levers_are_cuda_only() {
+        let cuda = auto_tune_recommend(
+            Some(serde_json::json!({
+                "vram_tier": "tight", "ram_tier": "low", "gpu_vram_gb": 10.0,
+                "cuda_available": true, "vendor": "NVIDIA",
+            })),
+            None,
+        );
+        assert_eq!(cuda["vram_allocator"], "vmm_spill");
+        assert_eq!(cuda["attention_head_split"], 2, "tight VRAM buys head split");
+        assert_eq!(cuda["image_preload_mode"], "dynamic");
+        assert_eq!(cuda["smart_memory_pinning"], true);
+        // Plenty of VRAM: head split off, everything else unchanged.
+        let roomy = auto_tune_recommend(
+            Some(serde_json::json!({
+                "vram_tier": "high", "ram_tier": "high", "gpu_vram_gb": 24.0,
+                "cuda_available": true, "vendor": "NVIDIA",
+            })),
+            None,
+        );
+        assert_eq!(roomy["attention_head_split"], 0);
+
+        let amd = auto_tune_recommend(
+            Some(serde_json::json!({
+                "vram_tier": "low", "ram_tier": "low", "gpu_vram_gb": 16.0,
+                "cuda_available": false, "gpu_available": true, "vendor": "AMD",
+            })),
+            None,
+        );
+        for k in [
+            "vram_allocator",
+            "attention_head_split",
+            "read_ahead",
+            "smart_memory_pinning",
+            "image_preload_mode",
+        ] {
+            assert!(amd.get(k).is_none(), "AMD must not be given {k}");
+        }
+
+        // No usable GPU: the labeled fallback path must stay free of them too.
+        let none = auto_tune_recommend(
+            Some(serde_json::json!({
+                "vram_tier": "none", "ram_tier": "low", "gpu_vram_gb": 0,
+                "cuda_available": false, "gpu_available": false,
+            })),
+            None,
+        );
+        for k in ["vram_allocator", "attention_head_split", "image_preload_mode"] {
+            assert!(none.get(k).is_none(), "CPU-only must not be given {k}");
+        }
+    }
+
+    /// Install-time seeding must fill gaps and never overwrite: an existing
+    /// value belongs to the user or to WanGP.
+    #[test]
+    fn seed_memory_defaults_fills_only_absent_keys() {
+        let mut cfg = serde_json::json!({"video_profile": 5, "clear_file_list": 5});
+        let rec = serde_json::json!({
+            "video_profile": 4.0,
+            "image_profile": 4.0,
+            "vram_allocator": "vmm_spill",
+            "attention_head_split": 2,
+            "smart_memory_pinning": true,
+            "read_ahead": true,
+            "video_preload_mode": "default",
+            "image_preload_mode": "dynamic",
+            "audio_preload_mode": "default",
+            "perc_reserved_mem_max": 0,
+        });
+        let seeded = seed_memory_defaults(&mut cfg, &rec);
+        // The user's P5 survives; everything absent is filled.
+        assert_eq!(cfg["video_profile"], 5);
+        assert_eq!(cfg["image_profile"], 4.0);
+        assert_eq!(cfg["vram_allocator"], "vmm_spill");
+        assert_eq!(cfg["attention_head_split"], 2);
+        assert_eq!(cfg["image_preload_mode"], "dynamic");
+        assert_eq!(cfg["perc_reserved_mem_max"], 0);
+        assert_eq!(cfg["clear_file_list"], 5, "unrelated keys untouched");
+        assert!(!seeded.contains(&"video_profile".to_string()));
+        assert!(seeded.contains(&"vram_allocator".to_string()));
+
+        // Second run is a no-op: seeding twice must not re-report or change.
+        let again = seed_memory_defaults(&mut cfg, &rec);
+        assert!(again.is_empty(), "idempotent: {again:?}");
+    }
+
+    #[test]
+    fn seed_memory_defaults_skips_absent_and_invalid() {
+        let mut cfg = serde_json::json!({});
+        // AMD/CPU recommendation carries none of the CUDA-only levers.
+        let amd = auto_tune_recommend(
+            Some(serde_json::json!({
+                "vram_tier": "low", "ram_tier": "low", "gpu_vram_gb": 16.0,
+                "cuda_available": false, "gpu_available": true, "vendor": "AMD",
+            })),
+            None,
+        );
+        let seeded = seed_memory_defaults(&mut cfg, &amd);
+        assert!(cfg.get("vram_allocator").is_none());
+        assert!(cfg.get("attention_head_split").is_none());
+        assert!(seeded.contains(&"video_profile".to_string()));
+
+        // Fail-closed: a bad value never reaches the file even if a
+        // recommendation somehow carried it.
+        let mut cfg2 = serde_json::json!({});
+        let bad = serde_json::json!({"vram_allocator": "turbo"});
+        assert!(seed_memory_defaults(&mut cfg2, &bad).is_empty());
+        assert!(cfg2.get("vram_allocator").is_none());
+    }
+
+    /// The Apply allowlist must carry every v17 key — a key missing from
+    /// MEMORY_OVERRIDE_KEYS is validated and then silently dropped.
+    #[test]
+    fn apply_allowlist_covers_every_v17_key() {
+        for key in [
+            "vram_allocator",
+            "attention_head_split",
+            "read_ahead",
+            "smart_memory_pinning",
+            "video_preload_mode",
+            "image_preload_mode",
+            "audio_preload_mode",
+            "perc_reserved_mem_max",
+        ] {
+            assert!(MEMORY_OVERRIDE_KEYS.contains(&key), "{key} not appliable");
+        }
+    }
+
+    /// The other half of the allowlist contract: what Apply writes, Read must
+    /// return. `memory_profile_read` used a hand-written list that predated the
+    /// v17 keys — they saved and then displayed "saved: —" forever.
+    #[test]
+    fn memory_profile_read_returns_written_keys_and_invents_none() {
+        let td = TestDataDir::new();
+        td.seed_wgp_config(
+            r#"{"video_profile":4,"vram_allocator":"vmm_spill","attention_head_split":2,"read_ahead":true,"smart_memory_pinning":true,"video_preload_mode":"default","image_preload_mode":"dynamic","audio_preload_mode":"default","perc_reserved_mem_max":0,"enable_int8_kernels":0,"unrelated":"x"}"#,
+        );
+        let settings = memory_profile_read()
+            .get("settings")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        // Everything on disk comes back, v17 keys included.
+        for (k, v) in [
+            ("video_profile", serde_json::json!(4)),
+            ("vram_allocator", serde_json::json!("vmm_spill")),
+            ("attention_head_split", serde_json::json!(2)),
+            ("read_ahead", serde_json::json!(true)),
+            ("smart_memory_pinning", serde_json::json!(true)),
+            ("video_preload_mode", serde_json::json!("default")),
+            ("image_preload_mode", serde_json::json!("dynamic")),
+            ("audio_preload_mode", serde_json::json!("default")),
+            ("perc_reserved_mem_max", serde_json::json!(0)),
+            // legacy int8 toggle still maps to the replacement key
+            ("int8_kernels", serde_json::json!("disabled")),
+        ] {
+            assert_eq!(settings.get(k), Some(&v), "{k} missing from read-back");
+        }
+        // And nothing is invented for keys that were never written — the old
+        // code painted "saved: 4" on a config with no video_profile at all.
+        for k in ["vae_config", "queue_color_scheme", "kernel_precision"] {
+            assert!(settings.get(k).is_none(), "{k} was never written");
+        }
+        assert!(
+            settings.get("unrelated").is_none(),
+            "unrelated keys must not leak into the panel"
+        );
+    }
+
     #[test]
     fn amd_usable_gpus_tier_normally() {
         // Healthy Radeon (cuda off, gpu on, real VRAM) must NOT take the

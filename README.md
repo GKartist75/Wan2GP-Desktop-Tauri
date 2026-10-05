@@ -23,6 +23,7 @@
 - [Screenshots](#screenshots)
 - [Why Tauri?](#why-tauri)
 - [What you get](#what-you-get)
+- [🛟 Troubleshooting](#-troubleshooting--from-upstreams-guide-as-buttons)
 - [⚡ Auto-Tune](#-auto-tune--one-click-right-profile)
 - [📊 Monitoring & control](#-monitoring--control)
 - [🔧 GPU kernels](#-gpu-kernels--what-gets-installed-per-gpu)
@@ -86,7 +87,9 @@ C:\Wan2GP-Models\               ← models library
 
 > Full history: [CHANGELOG.md](CHANGELOG.md)
 
-- [**v0.10.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.0) *(latest)* — Internal overhaul, no behaviour change: the renderer is split into 35 per-panel files (`app.js` 10,545 → 1,469 lines), the project gains its first test suite (`cargo test` 234, `npm test` 27) that provably cannot touch your `wgp_config.json`, plus a `npm run harness` DOM harness for driving the UI without a build. Also removes ~2,200 lines of dead Electron-era code and fixes the Auto-tune RAM chip printing `31.763145446777344 GB`. Details in [CHANGELOG](CHANGELOG.md).
+- [**v0.10.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.1) *(latest)* — **Upstream v17 (MMGP v4) parity.** WanGP v17 makes Profile 4 up to 50% cheaper in VRAM and does 1080p on an 11 GB card, and asks the user to hand-enable five new settings; the launcher now calibrates them per hardware instead. Nine new controls (Attention Mode, VRAM Allocator, Attention Head Split, Read Ahead, Smart Memory Pinning, VRAM Preload for video/image/audio, Reserved RAM) join Auto-Tune with the same rec/saved contract as everything else — Detect proposes, Apply writes, and a value you change inside WanGP is never clobbered. A card under 12 GB now rides **P4 + head split** instead of falling back to failsafe, audio defaults to P3+, attention mode follows the card (Sage2/2+ on RTX 30/40/50, where most of the v17 gain lives), and AMD/Intel get none of the CUDA-only levers rather than settings that would silently do nothing. Also: the update log stops misreporting its own size (it claimed 1828 upstream changes for a 4-commit update, an artifact of our shallow clone), Sync GPU Wheels stops re-downloading wheels you already have (281.9 MB per no-op run), mmgp is reported from where it actually runs and with a build fingerprint so two allocator builds stop both reading 4.0.0, and Troubleshooting gains upstream's per-GPU known-good recipe, one-click OOM remedies, Windows VRAM diagnostics and verbose logging.
+
+- [**v0.10.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.0) — Internal overhaul, no behaviour change: the renderer is split into 35 per-panel files (`app.js` 10,545 → 1,469 lines), the project gains its first test suite (`cargo test` 234, `npm test` 27) that provably cannot touch your `wgp_config.json`, plus a `npm run harness` DOM harness for driving the UI without a build. Also removes ~2,200 lines of dead Electron-era code and fixes the Auto-tune RAM chip printing `31.763145446777344 GB`. Details in [CHANGELOG](CHANGELOG.md).
 
 - [**v0.9.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.2) — AMD correctness + fail-closed memory: RX 9060 / 9060 XT install the right `gfx1200` wheels, no stale compiler/SDK env at launch, AMD attention defaults to `sdpa`, and RAM/VRAM probing fails toward smaller profiles instead of larger ones. Details in [CHANGELOG](CHANGELOG.md).
 
@@ -191,6 +194,20 @@ Same launcher, same Wan2GP, same features — lightweight native shell. It uses 
 
 ---
 
+## 🛟 Troubleshooting — from upstream's guide, as buttons
+
+**Manage → Troubleshooting** is built from WanGP's own `docs/TROUBLESHOOTING.md`, but turned into controls instead of copy-paste command lines. Read-only checks first; anything that writes backs up or asks.
+
+- **Diagnostics** — CUDA/GPU smoke test, real GEMM + INT8 compute check, Triton import test, port status (who owns the busy port) with a one-click fix, Windows long-paths status and one-click enable.
+- **Failsafe (P5)** — drops every profile to the minimum-compatibility one, backs up `wgp_config.json` first, and sets an SDPA fallback so the next boot works.
+- **Known-good settings for this GPU** *(new in v0.10.1)* — upstream's per-class recipe for your card: `sdpa`/P4 on GTX 10xx, `sage`/P4 on RTX 20xx, `compile`/`sage2`/P3 on RTX 30–40xx, `sage2`/P4 on RTX 50xx. Shown before anything is written. Only keys that really exist in `wgp_config.json` are used — Tea Cache and fp16 have no config key upstream, so they are reported as *"set this in WanGP"* rather than written as settings that would silently do nothing. AMD/Intel get no recipe; upstream publishes none.
+- **Out-of-memory remedies** *(new)* — one click for Attention Head Split → Medium (upstream's figure: ~2 GB less VRAM for ≤3% slower steps on H3 1080p/362 frames; output is the same quality but details — and sometimes the motion — can differ) or Lower Reserved RAM with Smart Memory Pinning on. Both go through the same validated, backed-up write path as Auto-Tune.
+- **Windows VRAM diagnostics** *(new)* — **Who is using VRAM** lists per-process GPU memory (`gpumem.cmd`; WDDM hides this from `nvidia-smi`), and **Trim idle VRAM** asks Windows to release idle allocations (`gputrim.cmd`). Trim is behind a confirmation: it briefly applies memory pressure and the screen can flash.
+- **Verbose logging** *(new)* — launch WanGP with `--verbose 2` so the console captures upstream's own diagnostics instead of the launcher guessing from summary lines.
+- **Debug bundle** — one click copies a markdown report for Discord or GitHub: GPU, Python, Torch + CUDA, launch args, profiles, an error-only log tail, AMD HSA evidence, and since v0.10.1 the v17 state (mmgp version, allocator, head split, pinning, read-ahead, reserved-RAM %, preload modes).
+
+---
+
 ## ⚡ Auto-Tune — one click, right profile
 
 **Manage → Auto-Tune** (or ⚡ on the dashboard) scans GPU/VRAM/RAM/kernels and recommends the optimal `wgp_config.json` settings. All three profile dropdowns (video/image/audio) stay editable before you Apply.
@@ -201,11 +218,45 @@ Same launcher, same Wan2GP, same features — lightweight native shell. It uses 
 | --- | --- | --- | --- |
 | **≥24 GB** | P1 max perf | P3 | P3+ RAM saver |
 | **12–23 GB** | P2 | **P4 balanced** | P5 |
-| **<12 GB** | P4 | P4+ VRAM saver | **P5 failsafe** |
+| **<12 GB** | **P4** | **P4** | **P4** |
+
+> The `<12 GB` row changed in v0.10.1. Upstream v17 (MMGP v4) makes Profile 4 up to 50% cheaper in peak VRAM — enough that a card under 12 GB no longer has to drop to P4+ or the failsafe net. Auto-Tune gives those machines **P4 plus Attention Head Split** instead, which buys ~20% more VRAM for a few percent of speed. **Prefer failsafe** still forces P5 everywhere.
+
+> **Two honest caveats about the tight-VRAM recommendation.** First, upstream now says plainly: *"make sure you use Sage2/2+ Attention as quite a few optimizations depends on it"* — most of the v17 gain assumes Sage 2, and Auto-Tune does not switch your attention mode (that stays yours, via Performance Settings or the known-good recipe). Second, Attention Head Split does not reproduce the input exactly: *"the result is of the same quality but not identical to Off: details, and sometimes the motion, can differ."* We recommend it by default because VRAM headroom is the failure mode that stops generation outright, but it is a visible trade, not a free win — set it to Off in one click if you want bit-identical output.
+
+**Audio gets P3+ almost everywhere, even when video does not.** Upstream's own default for audio is Profile 3+ — audio models fit whole in VRAM, where the language model many of them include runs much faster and can use the CUDA Graph or vLLM engines. Auto-Tune does **not** gate that on the VRAM tiers above, because those are calibrated against 14B video models and audio models are an order of magnitude smaller: a card that earns P4 for video comfortably holds one whole. Audio therefore lands on P3+ from any video/image profile of P2, P4 or P4+. Two exceptions, both deliberate — **P5 follows down** (when video itself is at the failsafe net there is nothing left to spare), and **P1/P3 are left alone** (they already load whole and keep Reserved RAM).
 
 **Settings written to `wgp_config.json`**
 
 `video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `int8_kernels` (Auto / Comfy Kitchen / Triton / Disabled — upstream v13.13 replacement for the old numeric toggle), `kernel_precision` (fast approximate / strict), `vae_config` (always Auto: 16GB+ / 8GB+ / 6GB+ presets), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** checkbox forces P5 for hardware where the recommendation still crashes.
+
+**Upstream v17 RAM/VRAM settings (new in v0.10.1)** — WanGP v17 ships these but leaves them off by default, asking every user to switch them on by hand. Auto-Tune calibrates them instead:
+
+| Setting | Key | Auto-Tune writes | Notes |
+| --- | --- | --- | --- |
+| Attention Mode | `attention_mode` | `sage2` (RTX 30/40/50), `sage` (RTX 20), `sdpa` (GTX 10) | Upstream v17.01 is explicit that *"quite a few optimizations depends on"* Sage2/2+. Needs the matching wheel — Sync GPU Wheels installs SageAttention 2.2.0 for RTX 30/40/50 and 1.0.6 for RTX 20 |
+| VRAM Allocator | `vram_allocator` | `vmm_spill` | **Needs a restart.** Recycles VRAM that is no longer used; with spilling, a generation slightly too large for the card can still finish, slowly |
+| Attention Head Split | `attention_head_split` | `2` (Medium) under 12 GB, else Off | Upstream measures ~2 GB less VRAM for ≤3% slower steps on H3 1920×1088 / 362 frames (~4 GB with H3 + Sol attention, ~2.5 GB with VDN). **Quality is the same but the result is not identical to Off — details, and sometimes the motion, can differ.** Only engages on long sequences (8192+ tokens) |
+| Read Ahead | `read_ahead` | on (Windows) | Reads model files ahead of use, so they are already in RAM on first load |
+| Smart Memory Pinning | `smart_memory_pinning` | on | 1–2 GB of Reserved RAM to reach the GPU nearly as fast. Changing it reloads the model |
+| VRAM Preload | `video/image/audio_preload_mode` | video `default`, image `dynamic`, audio `default` | Per output type. See below — this is the one where video and image genuinely differ |
+| Reserved RAM for Pinning | `perc_reserved_mem_max` | `0` (Auto) | 0 = 40% on Windows, 80% on Linux. Upstream treats this as a **percentage** since v17 |
+
+**Why video gets `default` and image gets `dynamic`** — this is upstream's advice, quoted:
+
+> "For image models, use Profile 4 or 5 with a *Dynamic* or Manual VRAM Preload for faster generations. Their steps are short, so the transfers set the speed. … **Video steps are usually long enough to hide the transfers.**"
+> — WanGP → Configuration → RAM/VRAM Management
+
+> "*Dynamic* helps most where transfers set the speed: **images and low resolutions, with short steps**. Video steps are usually long enough to hide the transfers, so *Default* is about as fast for videos."
+> — docs/CLI.md
+
+Preload exists to stop re-copying model blocks every denoising step, so it only pays when a step is short enough for those copies to dominate. A 1024×1024 image at a handful of steps is dominated by them. A five-second video at 337 frames has thousands, and the cost amortises away — filling VRAM buys no speed while costing you headroom. Two caveats if you override video to `dynamic`: it **only engages with the MMGP Optimized allocator** (switching the allocator to `default` makes it silently inert), and **VRAM stays filled during denoising**, so other GPU programs get less while a generation runs.
+
+**These are CUDA-only.** WanGP's allocator returns early on ROCm and on CPU-only torch, so on AMD and Intel Auto-Tune leaves every one of them unset rather than persisting a setting that silently does nothing. Head split stays off on AMD too — the VRAM figures upstream publishes are CUDA-derived.
+
+Conditions are stated in the panel itself, not left to be discovered: the allocator needs a restart, pinning reloads the model, head split only engages at ≥8192 tokens, and `dynamic` preload needs the MMGP allocator and does not apply under Profile 4+.
+
+**Ownership is explicit.** Detect only proposes. **Apply Overrides** is the only thing that writes, and it refuses while WanGP is running — WanGP keeps its own copy of `wgp_config.json` and rewrites the file on any change inside its UI, so writing then would be a lost update in whichever direction you did not expect. A fresh install seeds the recommended values once, with setdefault semantics, so day one is already calibrated; an update never re-seeds over settings you tuned.
 
 ---
 

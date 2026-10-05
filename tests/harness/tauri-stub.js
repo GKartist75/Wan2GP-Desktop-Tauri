@@ -48,6 +48,14 @@
     modelFolder: 'C:\\Wan2GP\\models', outputFolder: 'C:\\Wan2GP\\outputs',
     theme: 'dark', accent: 'mono', launcherGpu: 'auto',
   }
+  // Config can be seeded from the URL (?theme=light&themeFollowSystem=1) so a
+  // persisted preference survives a reload and can be exercised at all.
+  // Without it CONFIG is hardcoded dark, which hides every theme-persistence bug.
+  try {
+    var q = new URLSearchParams(location.search)
+    if (q.has('theme')) CONFIG.theme = q.get('theme')
+    if (q.has('themeFollowSystem')) CONFIG.themeFollowSystem = q.get('themeFollowSystem') === '1'
+  } catch (e) {}
   var calls = []
   function payload(name, args) {
     // The boot path only reaches the dashboard (and therefore every status poll,
@@ -64,7 +72,23 @@
     if (name === 'config_load') return CONFIG
     if (name === 'get_desktop_version') return '0.9.2'
     if (name === 'detect_gpu' || name === 'get_gpu_info') return STATUS.gpu
-    if (name === 'auto_tune_recommend') return { ok: true, tiers: { ramTier: 'high', vramTier: 'high' }, notes: [] }
+    if (name === 'auto_tune_recommend') {
+        // Real shape (features.rs auto_tune_recommend), including the v17 keys,
+        // so the Performance Settings rec/saved path is actually exercised.
+        return {
+          ok: true,
+          video_profile: 4, image_profile: 4, audio_profile: 4,
+          vram_safety_coefficient: 0.7, vae_config: 0,
+          transformer_quantization: 'int8', int8_kernels: 'auto', kernel_precision: 'fast',
+          vram_allocator: 'vmm_spill', attention_head_split: 2,
+          read_ahead: true, smart_memory_pinning: true,
+          video_preload_mode: 'default', image_preload_mode: 'dynamic', audio_preload_mode: 'default',
+          perc_reserved_mem_max: 0,
+          _recommendation_label: 'LowRAM · LowVRAM (upstream: recommended)',
+          _recommendation_reason: 'Auto-tuned for your hardware',
+          packages: ['torch', 'triton', 'sageattention'], kernels: ['nunchaku', 'gguf'],
+        }
+      }
     if (name === 'deepy_status') return { ok: true, available: true, mode: 'prime', deepyEnabled: true, deepyType: 'prime', currentEngine: 'opencode', promptEnhancer: true, enhancerEnabled: 4, promptEnhancerQuantization: 'gguf', sessionMode: 'selectable', sessionResetMode: 'reset_session', sessionGalleryMediaMode: 'copy', enhancerMode: 1, engines: [], profiles: {} }
     if (name === 'plugins_list') return { ok: true, plugins: [] }
     if (name === 'config_backups_list') return { ok: true, backups: [] }
@@ -76,6 +100,20 @@
     if (name === 'log_server_status') return { ok: true, running: false, port: 7862, lan: false, samePc: null, phone: null, phoneUnavailable: true }
     if (name === 'uv_cache_info') return { ok: true, sizeGb: 0 }
     if (name === 'deepy_web_status') return { ok: true, running: false, mode: 'disabled' }
+    // v17 RAM/VRAM troubleshooting. Stubbed to a real RTX_30 answer so the
+    // known-good panel can be driven in the browser; the OOM remedy returns
+    // the same applied-list shape the real command does.
+    if (name === 'troubleshoot_known_good')
+      return { ok: true, profileKey: 'RTX_30', recipe: { settings: { attention_mode: 'sage2', video_profile: 3, compile: true }, note: 'Needs SageAttention 2.2.0 (Sync GPU Wheels); Tea Cache 2.0 in WanGP' } }
+    if (name === 'troubleshoot_oom_remedy') {
+        var REMEDY = { head_split_medium: { attention_head_split: 2 }, lower_reserved_ram: { perc_reserved_mem_max: 25, smart_memory_pinning: true } }
+        var set = REMEDY[(args && args.action) || ''] || {}
+        var r = payload('memory_profile_apply', { settings: set })
+        r.remedy = (args && args.action) || ''
+        return r
+      }
+    if (name === 'troubleshoot_vram_diag')
+      return { ok: true, script: (args && args.action) === 'trim' ? 'gputrim.cmd' : 'gpumem.cmd', exit: 0, output: 'PID  Name          MB\n 4828  python.exe   5120\n\n8192 MiB used / 10240 MiB total' }
     return { ok: true }
   }
   window.__TAURI__ = {

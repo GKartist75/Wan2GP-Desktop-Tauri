@@ -16,8 +16,36 @@ function memProfileCollect() {
   const q = $("memQuant").value;
   const i8k = $("memInt8Kernels") ? $("memInt8Kernels").value : "";
   const kp = $("memKernelPrecision") ? $("memKernelPrecision").value : "";
+  const am = $("memAttentionMode") ? $("memAttentionMode").value : "";
+  // v17 (MMGP v4) — CUDA-only upstream, so Detect never recommends these on
+  // AMD/Intel; a manual pick here is still honoured. One control per setting,
+  // mirroring WanGP's Configuration > RAM/VRAM Management panel.
+  const va = $("memVramAllocator") ? $("memVramAllocator").value : "";
+  const hs = $("memHeadSplit") ? $("memHeadSplit").value : "";
+  const ra = $("memReadAhead") ? $("memReadAhead").value : "";
+  const sp = $("memSmartPinning") ? $("memSmartPinning").value : "";
+  const vpm = $("memVideoPreload") ? $("memVideoPreload").value : "";
+  const ipm = $("memImagePreload") ? $("memImagePreload").value : "";
+  const apm = $("memAudioPreload") ? $("memAudioPreload").value : "";
+  const prm = $("memReservedPct") ? $("memReservedPct").value : "";
   if (i8k) s.int8_kernels = i8k;
   if (kp) s.kernel_precision = kp;
+  if (am) s.attention_mode = am;
+  if (va) s.vram_allocator = va;
+  if (hs !== "") s.attention_head_split = Number(hs);
+  if (ra) s.read_ahead = ra === "true";
+  if (sp) s.smart_memory_pinning = sp === "true";
+  if (vpm) s.video_preload_mode = vpm;
+  if (ipm) s.image_preload_mode = ipm;
+  if (apm) s.audio_preload_mode = apm;
+  if (prm !== "") {
+    const pct = Number(prm);
+    if (!(pct >= 0 && pct <= 100)) {
+      setMemStatus("Reserved RAM must be 0 (auto) to 100 percent", true);
+      return null;
+    }
+    s.perc_reserved_mem_max = pct;
+  }
   if (vp) s.video_profile = Number(vp);
   if (ip) s.image_profile = Number(ip);
   if (ap) s.audio_profile = Number(ap);
@@ -79,6 +107,53 @@ const MEM_FIELDS = {
     rec: "recKernelPrecision",
     saved: "savedKernelPrecision",
   },
+  // v17 (MMGP v4) — same rec/saved contract as every other knob: Detect
+  // recommends, Apply writes, a value changed inside WanGP shows as saved.
+  attention_mode: {
+    sel: "memAttentionMode",
+    rec: "recAttentionMode",
+    saved: "savedAttentionMode",
+  },
+  vram_allocator: {
+    sel: "memVramAllocator",
+    rec: "recVramAllocator",
+    saved: "savedVramAllocator",
+  },
+  attention_head_split: {
+    sel: "memHeadSplit",
+    rec: "recHeadSplit",
+    saved: "savedHeadSplit",
+  },
+  read_ahead: {
+    sel: "memReadAhead",
+    rec: "recReadAhead",
+    saved: "savedReadAhead",
+  },
+  smart_memory_pinning: {
+    sel: "memSmartPinning",
+    rec: "recSmartPinning",
+    saved: "savedSmartPinning",
+  },
+  video_preload_mode: {
+    sel: "memVideoPreload",
+    rec: "recVideoPreload",
+    saved: "savedVideoPreload",
+  },
+  image_preload_mode: {
+    sel: "memImagePreload",
+    rec: "recImagePreload",
+    saved: "savedImagePreload",
+  },
+  audio_preload_mode: {
+    sel: "memAudioPreload",
+    rec: "recAudioPreload",
+    saved: "savedAudioPreload",
+  },
+  perc_reserved_mem_max: {
+    sel: "memReservedPct",
+    rec: "recReservedPct",
+    saved: "savedReservedPct",
+  },
 };
 const INT8_KERNEL_LABELS = {
   auto: "Auto (default)",
@@ -94,6 +169,31 @@ const QUEUE_COLOR_LABELS = {
   pastel: "Pastel rainbow (default)",
   grey: "Theme grey",
 };
+// v17 (MMGP v4) labels — wording follows upstream's own
+// Configuration > RAM/VRAM Management panel and the README v17 section, so
+// this panel and WanGP describe the same setting the same way.
+const VRAM_ALLOCATOR_LABELS = {
+  vmm_spill: "MMGP Optimized, with RAM spilling (default)",
+  vmm: "MMGP Optimized, out-of-memory when VRAM is full",
+  default: "PyTorch allocator",
+};
+const HEAD_SPLIT_LABELS = {
+  0: "Off (default)",
+  1: "Low — saves some VRAM",
+  2: "Medium — good balance, ~10% slower",
+  3: "High — saves the most VRAM",
+};
+const ATTENTION_MODE_LABELS = {
+  sage2: "SageAttention 2 / 2+ (recommended — v17 gains depend on it)",
+  sage: "SageAttention 1 (Turing only)",
+  flash: "FlashAttention (quality first, less VRAM)",
+  sdpa: "SDPA (PyTorch default, always available)",
+};
+const PRELOAD_MODE_LABELS = {
+  default: "Default — the profile's own choice",
+  dynamic: "Dynamic — fill the VRAM each generation leaves free",
+  manual: "Manual — use the VRAM Preload amount",
+};
 function fmtVal(key, v) {
   if (v == null || v === "") return "—";
   if (key === "vae_config") return v + (Number(v) === 0 ? " (AUTO)" : "");
@@ -103,6 +203,17 @@ function fmtVal(key, v) {
     return KERNEL_PRECISION_LABELS[v] || String(v);
   if (key === "queue_color_scheme")
     return QUEUE_COLOR_LABELS[v] || String(v);
+  if (key === "vram_allocator")
+    return VRAM_ALLOCATOR_LABELS[v] || String(v);
+  if (key === "attention_mode") return ATTENTION_MODE_LABELS[v] || String(v);
+  if (key === "attention_head_split")
+    return HEAD_SPLIT_LABELS[Number(v)] || String(v);
+  if (key.endsWith("_preload_mode"))
+    return PRELOAD_MODE_LABELS[v] || String(v);
+  if (key === "read_ahead" || key === "smart_memory_pinning")
+    return v === true ? "On" : v === false ? "Off" : String(v);
+  if (key === "perc_reserved_mem_max")
+    return Number(v) === 0 ? "Auto" : Number(v) + "%";
   return String(v);
 }
 
@@ -147,6 +258,20 @@ function memProfileFromRecommendation(rec) {
         rec.int8_kernels ||
         (rec.enable_int8_kernels === 0 ? "disabled" : "auto"),
       kernel_precision: rec.kernel_precision || "fast",
+        // v17.01: "quite a few optimizations depends on" Sage2/2+, so the
+        // attention mode is part of the recommendation. Absent on AMD/Intel
+        // (no Sage build upstream there), leaving it "— unset —".
+        attention_mode: rec.attention_mode,
+        // v17 levers. Absent on AMD/Intel/CPU (upstream's allocator
+        // early-returns there), which leaves those dropdowns on "— unset —".
+      vram_allocator: rec.vram_allocator,
+      attention_head_split: rec.attention_head_split,
+      read_ahead: rec.read_ahead,
+      smart_memory_pinning: rec.smart_memory_pinning,
+      video_preload_mode: rec.video_preload_mode,
+      image_preload_mode: rec.image_preload_mode,
+      audio_preload_mode: rec.audio_preload_mode,
+      perc_reserved_mem_max: rec.perc_reserved_mem_max,
     },
     { mode: "recommend" },
   );
@@ -186,13 +311,19 @@ $("memProfileApplyBtn")?.addEventListener("click", async () => {
   setMemStatus("");
   try {
     const res = await window.w2gp.memoryProfileApply(s);
-    if (res && res.ok)
+    if (res && res.ok) {
+      // Re-read from disk so the `saved:` tags show what Apply just wrote.
+      // Without this they keep whatever the panel was loaded with, and a value
+      // that genuinely changed (audio P4 → P3+) sits there showing `rec: 3.5`
+      // beside a stale `saved: 4` until the panel is reopened.
+      await memProfileLoad();
       setMemStatus(
         "✓ Applied: " +
           res.applied.join(", ") +
           " — restart Wan2GP to take effect.",
         false,
       );
+    }
     else setMemStatus("✗ " + ((res && res.error) || "apply failed"), true);
   } catch (e) {
     setMemStatus("✗ " + e.message, true);

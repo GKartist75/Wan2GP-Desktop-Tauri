@@ -50,9 +50,13 @@ pub(crate) struct WgpLaunchBase {
     pub port: u64,
     pub server_name: String,
     pub sessions_dir: String,
+    /// Troubleshooting → Verbose logging: appends `--verbose 2` so the
+    /// launcher's console captures upstream's detail instead of guessing at
+    /// a problem from the summary lines.
+    pub verbose: bool,
 }
 pub(crate) fn build_wgp_args(base: &WgpLaunchBase) -> Vec<String> {
-    vec![
+    let mut args = vec![
         "wgp.py".to_string(),
         "--server-port".to_string(),
         base.port.to_string(),
@@ -60,7 +64,12 @@ pub(crate) fn build_wgp_args(base: &WgpLaunchBase) -> Vec<String> {
         base.server_name.clone(),
         "--deepy-sessions-dir".to_string(),
         base.sessions_dir.clone(),
-    ]
+    ];
+    if base.verbose {
+        args.push("--verbose".to_string());
+        args.push("2".to_string());
+    }
+    args
 }
 static TERMINAL_TITLE: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
     std::sync::OnceLock::new();
@@ -417,6 +426,10 @@ pub async fn launch(
         "--advanced".into(),
         "--multiple-images".into(),
     ];
+    if cfg.get("verboseLogging").and_then(serde_json::Value::as_bool) == Some(true) {
+        args.push("--verbose".into());
+        args.push("2".into());
+    }
     if share {
         args.push("--share".into());
     }
@@ -1206,6 +1219,34 @@ pub(crate) fn close_port_sweep() -> Vec<u32> {
     }
     killed
 }
+/// Is a WanGP still alive that could rewrite `wgp_config.json` under us?
+///
+/// Two cheap signals, neither can hang: the PID this launcher spawned (with
+/// `process_signature` so a recycled PID fails closed) and the configured
+/// server port, which also catches a WanGP the user started themselves.
+/// Used by `memory_profile_apply` — WanGP keeps its own copy of the config in
+/// memory and rewrites the file on any settings change inside its UI, so
+/// whichever side persists last wins.
+pub(crate) fn wangp_running() -> bool {
+    if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
+        if pid != 0 && pid != std::process::id() && process_signature(pid).is_some() {
+            return true;
+        }
+    }
+    let port = load_config_value()
+        .get("serverPort")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(7860);
+    use std::net::ToSocketAddrs;
+    let timeout = std::time::Duration::from_millis(300);
+    match format!("127.0.0.1:{port}").to_socket_addrs() {
+        Ok(mut addrs) => addrs
+            .next()
+            .is_some_and(|a| std::net::TcpStream::connect_timeout(&a, timeout).is_ok()),
+        Err(_) => false,
+    }
+}
+
 pub(crate) fn stop_wangp_fast() {
     if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
         if pid != 0 && pid != std::process::id() {

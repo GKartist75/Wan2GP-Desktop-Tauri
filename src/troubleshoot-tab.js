@@ -302,3 +302,148 @@ async function tsTritonClear(fallback) {
 }
 $("tsTritonClearBtn")?.addEventListener("click", () => tsTritonClear(false));
 $("tsTritonSdpaBtn")?.addEventListener("click", () => tsTritonClear(true));
+
+// ── v17 RAM/VRAM (upstream TROUBLESHOOTING.md → Memory Issues, v17 additions) ──
+// Every write goes through memoryProfileApply: fail-closed gate + snapshot,
+// so a remedy can never land a value WanGP would ignore.
+async function tsApplyRemedy(action, label) {
+  tsStatus("tsOomStatus", "Applying " + label + "…");
+  try {
+    const r = await window.w2gp.tsOomRemedy(action);
+    if (r && r.ok) {
+      const keys = (r.applied || []).join(", ") || "(nothing to change)";
+      tsStatus("tsOomStatus", "✓ " + label + " — wrote " + keys + ". Relaunch WanGP if the setting needs a restart.");
+      appendLog("[✓] " + label + " → " + keys);
+      showToast("✓ " + label);
+    } else {
+      tsStatus("tsOomStatus", "✗ " + ((r && r.error) || "failed"));
+    }
+  } catch (e) {
+    tsStatus("tsOomStatus", "✗ " + escHtml(errText(e)));
+  }
+}
+$("tsHeadSplitBtn")?.addEventListener("click", () =>
+  tsApplyRemedy("head_split_medium", "Attention Head Split → Medium"),
+);
+$("tsLowerRamBtn")?.addEventListener("click", () =>
+  tsApplyRemedy("lower_reserved_ram", "Reserved RAM → 25% with Smart Pinning on"),
+);
+$("tsFailsafeP5Btn")?.addEventListener("click", async () => {
+  this.disabled = true;
+  tsStatus("tsOomStatus", "Applying failsafe…");
+  try {
+    const r = await window.w2gp.tsFailsafeApply();
+    tsStatus("tsOomStatus", "✓ P5 failsafe applied" + (r.backup ? " (backup: " + r.backup + ")" : "") + " — relaunch WanGP.");
+    appendLog("[✓] Failsafe P5 applied" + (r.backup ? " → " + r.backup : ""));
+    showToast("✓ Failsafe P5 applied");
+  } catch (e) {
+    tsStatus("tsOomStatus", "✗ " + escHtml(errText(e)));
+  }
+  this.disabled = false;
+});
+
+// Known-good recipe: report first (read-only), load only on the second click.
+async function tsFetchKnownGood() {
+  try {
+    return await window.w2gp.tsKnownGood();
+  } catch (e) {
+    tsStatus("tsKnownGoodStatus", "✗ " + errText(e));
+    return null;
+  }
+}
+$("tsKnownGoodBtn")?.addEventListener("click", async function () {
+  this.disabled = true;
+  tsStatus("tsKnownGoodStatus", "Reading upstream's guide…");
+  try {
+    const r = await tsFetchKnownGood();
+    if (!r) return;
+    if (!r.recipe) {
+      tsStatus("tsKnownGoodStatus", escHtml(r.reason || "No upstream recipe for this GPU class."));
+      return;
+    }
+    const s = r.recipe.settings;
+    tsStatus(
+      "tsKnownGoodStatus",
+      "For " + escHtml(r.profileKey) + ": attention " + escHtml(String(s.attention_mode)) +
+        ", video profile " + escHtml(String(s.video_profile)) +
+        ", compile " + (s.compile ? "on" : "off") + ". " + escHtml(r.recipe.note || ""),
+    );
+  } finally {
+    this.disabled = false;
+  }
+});
+$("tsKnownGoodApplyBtn")?.addEventListener("click", async function () {
+  this.disabled = true;
+  try {
+    const r = await tsFetchKnownGood();
+    if (!r) return;
+    if (!r.recipe) {
+      tsStatus("tsKnownGoodStatus", escHtml(r.reason || "No upstream recipe for this GPU class."));
+      return;
+    }
+    const applied = await window.w2gp.memoryProfileApply(r.recipe.settings);
+    if (applied && applied.ok) {
+      tsStatus("tsKnownGoodStatus", "✓ Wrote " + (applied.applied || []).join(", ") + " — review the rec/saved tags in Performance Settings, where you can still change anything.");
+      appendLog("[✓] Known-good recipe for " + r.profileKey + " → " + (applied.applied || []).join(", "));
+      showToast("✓ Known-good settings written");
+    } else {
+      tsStatus("tsKnownGoodStatus", "✗ " + ((applied && applied.error) || "apply failed"));
+    }
+  } catch (e) {
+    tsStatus("tsKnownGoodStatus", "✗ " + escHtml(errText(e)));
+  } finally {
+    this.disabled = false;
+  }
+});
+
+// VRAM diagnostics — upstream ships these two scripts in the checkout.
+async function tsVramDiag(action, label) {
+  tsStatus("tsVramStatus", "Running " + label + "…");
+  try {
+    const r = await window.w2gp.tsVramDiag(action);
+    if (r && r.ok) {
+      tsStatus("tsVramStatus", "✓ " + (r.output || "(no output)"));
+      appendLog("[✓] " + label + "\n" + (r.output || ""));
+    } else {
+      tsStatus("tsVramStatus", "✗ " + ((r && (r.error || r.output)) || "failed"));
+    }
+  } catch (e) {
+    tsStatus("tsVramStatus", "✗ " + escHtml(errText(e)));
+  }
+}
+$("tsVramListBtn")?.addEventListener("click", () => tsVramDiag("list", "gpumem.cmd"));
+$("tsVramTrimBtn")?.addEventListener("click", async () => {
+  const choice = await window.w2gp.confirmDialog({
+    title: "Trim idle VRAM?",
+    message:
+      "Applies memory pressure briefly to encourage Windows to move idle GPU allocations to system RAM. The screen can flash, and GPU apps can stall for a moment. Continue?",
+  });
+  if (choice !== "ok" && choice !== 0) {
+    tsStatus("tsVramStatus", "Cancelled.");
+    return;
+  }
+  tsVramDiag("trim", "gputrim.cmd");
+});
+
+// Verbose logging — `--verbose 2` on the next launch, both the main server
+// and the standalone Deepy Web child.
+$("tsVerboseChk")?.addEventListener("change", async function () {
+  const on = this.checked;
+  try {
+    const cfg = await window.w2gp.configLoad();
+    cfg.verboseLogging = on;
+    await window.w2gp.configSave(cfg);
+    tsStatus("tsOomStatus", "");
+    showToast(on ? "Verbose logging on — next launch is detailed" : "Verbose logging off");
+    appendLog("[*] verboseLogging = " + on + " (applies on next launch)");
+  } catch (e) {
+    this.checked = !on;
+    showToast("✗ " + errText(e));
+  }
+});
+(async function tsLoadVerbose() {
+  try {
+    const cfg = await window.w2gp.configLoad();
+    if ($("tsVerboseChk")) $("tsVerboseChk").checked = cfg.verboseLogging === true;
+  } catch {}
+})();

@@ -4,6 +4,179 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.10.1] — 2026-10-05
+
+### Upstream v17 parity (`b8b18f81` → `09a7c6c8`)
+
+Re-audited every commit deepbeepmeep landed since the AMD/ROCm refresh. The
+install stack is untouched upstream — `docs/INSTALLATION.md`,
+`docs/AMD-INSTALLATION.md`, `setup.py` and `setup_config.json` did not change —
+so no torch, Triton, Sage, Flash, Nunchaku, LightX2V or GGUF pin moves. What
+v17 changed is `requirements.txt` (mmgp leaves pip), the `wgp_config.json`
+schema (v1.25), and the MMGP v4 runtime.
+
+- **The update log stopped lying about its own size.** `rev-list --count
+  HEAD..@{u}` is meaningless on our `--depth 1` clone: git records a shallow
+  boundary at the old HEAD, so the first fetch walks the whole upstream
+  history back through it and the range counts every ancestor re-downloaded.
+  A fresh install's first update reported **1828 incoming changes for a
+  4-commit delta** (the "incoming" commits were dated 2025-10 → 2026-10). Now
+  a tree diff between HEAD and FETCH_HEAD, which needs no history at all.
+- **The launcher-compat line speaks only when there is something to do.** It
+  fired on every update with the same text ("gguf 1.0.25 (floor 1.0.25) —
+  re-run Sync GPU Wheels") even when upstream already equalled the floor and
+  the wheel was installed. Silent when nothing is pending.
+- **mmgp is reported from where it actually runs.** v17 vendors MMGP v4 into
+  the repo and drops `mmgp==3.8.2` from requirements.txt, but `pip install -r`
+  never removes a dist — the old wheel sat in site-packages while `import mmgp`
+  loaded the in-repo copy. The dashboard reported `mmgp 3.8.2` for v4 code. The
+  version now comes from `mmgp/pyproject.toml`, and an update that unpins mmgp
+  removes the stale install and says so.
+- **Sync GPU Wheels stops re-downloading what you already have.** The sync
+  loop appended a blind `--upgrade`, so every wheel was re-fetched on every
+  run: a no-op sync pulled **281.9 MB** (Nunchaku 111.7 + GGUF 153.5 + Sage
+  16.7) for wheels already installed at exactly those versions. Sync now
+  compares the wanted version against what pip reports and skips, reusing the
+  existing Triton no-downgrade guard's shape. Unknown components and failed
+  probes still install. Sync also closes with a
+  *synced / already current / failed* summary instead of trailing off on a
+  download line.
+
+### Getting the most out of v17 on any hardware
+
+The README asks every user to turn on five MMGP v4 settings by hand. The
+launcher now calibrates them, per hardware, and still lets the user override —
+in the launcher or inside WanGP.
+
+- **Fail-closed config gate.** `valid_memory_override` now rejects anything
+  outside `vram_allocator` (default/vmm/vmm_spill), `attention_head_split`
+  (0–3), `read_ahead`, `smart_memory_pinning`, the per-output preload modes,
+  the preload amounts and `perc_reserved_mem_max` (0–100 percent as of v17).
+  The Apply allowlist was also missing every one of these keys, so Apply
+  reported success while dropping them; both now share one key list.
+- **The tight-VRAM tier no longer falls back to the safety net.** MMGP v4
+  makes Profile 4 up to 50% cheaper in VRAM and does 1080p H3 on 11 GB, so a
+  card under 12 GB rides **P4 plus Attention Head Split** instead of P4+/P5.
+  "Prefer failsafe" still forces P5.
+- **Audio defaults to Profile 3+** — upstream's own default for audio models
+  ("they are usually small enough to fit entirely in VRAM, where the language
+  model many of them include runs much faster"). Not gated on the VRAM tiers:
+  those are calibrated against 14B video models and audio models are an order
+  of magnitude smaller, so a 10 GB card earns P4 for video and still gets P3+
+  for audio. Audio follows video down to P5 when video is at the failsafe net.
+- **Per-vendor gating.** `shared/cuda_memory.apply_startup_settings` returns
+  early on HIP and when CUDA is unavailable, so the allocator and Dynamic
+  Preload cannot work on AMD/Intel/CPU. Detect leaves those keys unset there
+  rather than persisting settings that silently do nothing.
+- **Eight new Performance Settings controls**, mirroring WanGP's own
+  Configuration → RAM/VRAM Management panel one-for-one: VRAM Allocator,
+  Attention Head Split, Read Ahead, Smart Memory Pinning, VRAM Preload for
+  Video/Image/Audio, and Reserved RAM for Pinning. Same rec/saved contract as
+  every other knob — Detect proposes, Apply writes, and a value changed inside
+  WanGP shows as `saved` rather than being clobbered. Profile dropdowns now
+  carry upstream's v17 descriptions.
+- **Fresh installs start calibrated.** Install seeds the recommended keys into
+  `wgp_config.json` with setdefault semantics only — it runs on fresh install
+  alone, never on update, and never overwrites a key already on disk.
+
+- **The app could come up black after adding the Attention Mode control.** The
+  edit nested a new field inside the VRAM Allocator's `mem-field` and left the
+  outer one unclosed, so every control after it nested one level deeper and
+  the grid container closed early — no console error, no clue which line. Two
+  structural guards now make it loud instead: `index.html` `<div>` tags must
+  balance, and every id the Auto-Tune panel reads must exist exactly once (a
+  duplicate id silently repaints one control while writing tags to another).
+- **Auto-Tune now recommends an attention mode.** Upstream v17.01 says plainly
+  that *"quite a few optimizations depends on"* Sage2/2+, so the attention mode
+  belongs with the memory profiles rather than only in Troubleshooting: RTX
+  30/40/50 → `sage2`, RTX 20 → `sage`, GTX 10 → `sdpa`, and nothing on
+  AMD/Intel where there is no Sage build upstream. Still a recommendation —
+  Detect proposes, Apply writes, and a mode you already chose stays yours.
+  Auto-Tune and the known-good recipe now read one definition of it, so they
+  cannot disagree.
+- **The dashboard distinguishes MMGP allocator builds.** v17.01 rebuilt
+  `mmgp/allocator/vmm_alloc.cpp` and its prebuilt DLL **without** bumping
+  `mmgp/pyproject.toml`, so two different allocators both reported `4.0.0`. The
+  version now carries a short content hash of the platform binary
+  (`4.0.0 (alloc 1a2b3c/94k)`), so a bug report says which allocator was
+  actually loaded.
+  
+### Troubleshooting gets the v17 and GPU-class remedies
+
+Upstream's `docs/TROUBLESHOOTING.md` is mostly copy-paste command lines. These
+turn the parts that map onto a real control into buttons, keeping the existing
+rule that Detect proposes and Apply writes.
+
+- **Known-good settings for this GPU.** Upstream hands out four per-class
+  command lines (GTX 10XX `sdpa`/P4, RTX 20XX `sage`/P4, RTX 30–40XX
+  `compile`/`sage2`/P3, RTX 50XX `sage2`/P4). The launcher now reads the same
+  recipe for the detected card and shows it before writing anything. Only keys
+  verified to exist in a live v17 `wgp_config.json` are written — Tea Cache and
+  fp16 have no config key upstream, so they come back as a note pointing at
+  WanGP instead of a setting that would silently do nothing. AMD/Intel/CPU get
+  no recipe: upstream publishes none, and the launcher's AMD path owns them.
+- **Out-of-memory remedies as one click.** Attention Head Split → Medium
+  (upstream's figure: ~2 GB less VRAM for ≤3% slower steps on H3 1920×1088 /
+  362 frames) and Lower Reserved RAM with Smart Memory Pinning on. Both go
+  through the same fail-closed gate and snapshot as Performance Settings.
+- **Windows VRAM diagnostics.** `scripts/gpumem.cmd` (per-process VRAM, which
+  WDDM hides from `nvidia-smi`) and `scripts/gputrim.cmd` (ask Windows to trim
+  idle allocations, behind a confirmation — it briefly applies memory pressure).
+  `gputrim.cmd` shells out to bare `python`, so the active env's Scripts
+  directory goes first on PATH.
+- **Verbose logging** — a checkbox that launches WanGP with `--verbose 2`, on
+  both the main server and the standalone Deepy Web child, so bug reports carry
+  upstream's own diagnostics.
+- **Debug bundle knows about v17**: mmgp version, allocator, head split, smart
+  pinning, read-ahead, reserved-RAM percent, the three preload modes, plus the
+  attention mode and compile flag.
+
+### Fixes found while wiring the above
+
+Two of these are the same bug twice: a hardcoded key list that nobody extends.
+The panel owns its keys in one place now, and both directions derive from it.
+
+- **Apply silently dropped every v17 key.** The write path had an allowlist
+  that predated the MMGP v4 settings: Apply reported success, listed the keys,
+  and wrote none of them.
+- **The panel could not show what it had saved.** `memory_profile_read` had
+  the same defect on the read side, so a value that saved correctly still
+  rendered as `saved: —`; it also invented a default for any key that was
+  never written, painting `saved: 4` on configs that had no such key. It now
+  returns exactly the panel-owned keys that are on disk, and nothing else.
+- **`saved:` tags went stale after Apply.** The tags were captured when the
+  panel opened, so a value that genuinely changed sat there showing the old
+  one — audio read `rec: 3.5` beside `saved: 4`. Apply now re-reads from disk
+  before it reports.
+- **Apply Overrides refused nothing while WanGP was running.** WanGP keeps its
+  own copy of `wgp_config.json` and rewrites the file on any settings change
+  inside its UI, so writing then is a lost update in whichever direction the
+  user did not expect — the panel reported success and the value silently
+  reverted. Apply, the OOM remedies and the known-good loader now refuse with a
+  message naming the fix. Detection uses the PID the launcher spawned plus the
+  configured port, so a WanGP started by hand is caught too.
+- **Audio defaulted to the video profile instead of P3+.** Upstream's default
+  for audio is Profile 3+; Auto-Tune gated that on VRAM calibrated for 14B
+  video models, so a 10 GB card that earns P4 for video lost the CUDA Graph /
+  vLLM fast path for its audio models. Audio now keys off the video profile.
+- **Install died when uv was not installed system-wide.** setup.py builds a uv
+  environment with `uv venv …` through `subprocess.run(shell=True)`, which
+  resolves `uv` on `PATH` — not from the absolute path the launcher used to
+  provision Python. The launcher deliberately keeps its own uv private in
+  `<dataDir>/.tools` so it never collides with another app's copy, but nothing
+  put that directory on the child's `PATH`. With uv unlinked the install failed
+  at step 1/3 with *"'uv' is not recognized as an internal or external
+  command"* → `CalledProcessError`. The tools directory is now prepended for
+  the setup child (and logged, so it is visible next time) and the existing
+  `PATH` save/restore puts it back afterwards.
+- **Hermetic tests could read the real install.** `get_data_dir()` /
+  `get_repo_dir()` cached for 5 s, and `TestDataDir` only serializes the tests
+  that hold its guard — a sibling test resolving a directory without it could
+  repopulate that cache with another test's deleted tempdir or with the real
+  `C:\Wan2GP`, which is how the Deepy round-trip test intermittently saw the
+  real `enhancer_mode` instead of its seed's default. Both now bypass the cache
+  under `cfg(test)`; 8 consecutive full runs, no failures.
+
 ## [0.10.0] — 2026-10-04
 
 - **Renderer split.** `app.js` went from 10,545 lines to 1,469: 35 `*-tab.js`
