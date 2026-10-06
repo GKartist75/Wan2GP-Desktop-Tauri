@@ -1443,9 +1443,11 @@ $("manageUpdateWan2gpBtn")?.addEventListener("click", async function () {
   try {
     const r = await window.w2gp.update();
     if (s)
-      s.textContent = r
-        ? "✓ Update finished — check Dashboard log"
-        : "✗ Update failed";
+      s.textContent = !r
+        ? "✗ Update failed"
+        : r.updated === false
+          ? "✓ Already up to date — nothing to update"
+          : "✓ Update finished — check Dashboard log";
   } catch (e) {
     if (s) s.textContent = "✗ " + (e.message || e);
   } finally {

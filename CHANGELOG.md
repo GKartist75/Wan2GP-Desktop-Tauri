@@ -28,6 +28,33 @@ the theme for itself instead of asking one question.
   `applyTheme` writes, alongside accent and the scales — instead of `theme`,
   which the preload never wrote, so the mirror was stuck on its last value.
 
+### Update: a second Update press says so instead of re-doing everything
+
+Pressing **Update Wan2GP** on a checkout that already *is* upstream printed a
+wall of work-sounding output — "66 upstream file(s) differ", the hand-changed
+warning, `HEAD is now at <same sha>` — for a tree that had nothing to land. Run
+it twice and the two logs are indistinguishable, which reads as a repo that
+refuses to update rather than one that is current.
+
+- **No-op updates short-circuit.** `changed_file_count` now distinguishes
+  "0 files differ" from "the git probe failed" (`Some(0)` vs `None`); on
+  `Some(0)` with no hand-edited tracked files the update emits one
+  `[=] Already at upstream <sha> — nothing to update.` line, runs the
+  dependency drift probe (still useful) and returns `updated: false`. A probe
+  failure keeps the old unconditional path — fail-open, never skip an update
+  because git hiccuped. Hand-edited files with an already-current checkout
+  still get the no-stash reset, and say so.
+- **The launcher's own backup folder stopped counting as your files.** Git
+  reports `.launcher-update-backup/` as one `??` entry, so it was tallied as a
+  "personal file" (inflating the count) and never mentioned again. The update
+  summary and **Verify** now exclude it, report how many files are parked there,
+  and `verify_wangp_files` returns `updateBackup`. The Dashboard and Manage
+  buttons also say "Already up to date" instead of "Update finished".
+
+Nothing was lost in the reported run: the six files were untracked local copies
+of upstream's new LTX-2.5 VFX files, the guard moved them aside exactly as
+designed, and the checkout landed on `ec9566a6` with everything tracked.
+
 ### Upstream v17.10 parity (`09a7c6c8` → `ec9566a`, 2026-10-06)
 
 Four upstream commits landed after v17.00: `1074cc3` + `0e58385` ("fixes") and

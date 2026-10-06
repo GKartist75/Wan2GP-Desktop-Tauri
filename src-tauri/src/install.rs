@@ -4376,6 +4376,44 @@ pub(crate) fn parse_git_porcelain(out: &str) -> Vec<DriftEntry> {
     entries
 }
 
+/// Folder inside the repo where `clear_untracked_merge_collisions`
+/// parks files that upstream is about to add at the same path. Git
+/// reports the whole folder as ONE `??` entry, so counting it as a
+/// personal file both inflated that number ("10 personal files" for
+/// 9) and hid a folder the user has to know about.
+pub(crate) const UPDATE_BACKUP_DIR: &str = ".launcher-update-backup";
+/// True for the backup folder itself and anything under it (pure).
+pub(crate) fn is_update_backup_path(path: &str) -> bool {
+    let p = path.trim().trim_matches('/');
+    p == UPDATE_BACKUP_DIR || p.starts_with(&format!("{UPDATE_BACKUP_DIR}/"))
+}
+/// Untracked entries that are the USER's files, i.e. everything git
+/// reports except the launcher's own backup folder (pure).
+pub(crate) fn count_personal_untracked(entries: &[DriftEntry]) -> usize {
+    entries
+        .iter()
+        .filter(|e| e.kind == DriftKind::Untracked && !is_update_backup_path(&e.path))
+        .count()
+}
+/// Files currently parked in the backup folder (recursive). 0 when it
+/// does not exist — the common case.
+pub(crate) fn kept_update_backups(repo: &Path) -> usize {
+    fn walk(d: &Path, n: usize) -> usize {
+        let Ok(rd) = std::fs::read_dir(d) else {
+            return n;
+        };
+        rd.flatten().fold(n, |acc, e| {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, acc)
+            } else {
+                acc + 1
+            }
+        })
+    }
+    walk(&repo.join(UPDATE_BACKUP_DIR), 0)
+}
+
 /// Untracked files that upstream is about to ADD at the same path abort
 /// a bare pull with "would be overwritten by merge" (0.6.6 report: a
 /// locally generated `shared/gradio/import_files.pyi`). Move them aside
@@ -4630,6 +4668,18 @@ mod wangp_git_tests {
     }
 
     #[test]
+    fn update_backup_folder_is_not_a_personal_file() {
+        use super::{count_personal_untracked, is_update_backup_path, parse_git_porcelain};
+        assert!(is_update_backup_path(".launcher-update-backup"));
+        assert!(is_update_backup_path(".launcher-update-backup/defaults/x.json"));
+        assert!(!is_update_backup_path(".launcher-update-backup-old/x.json"));
+        assert!(!is_update_backup_path("defaults/x.json"));
+        assert!(!is_update_backup_path("launcher-update-backup/x.json"));
+        let entries = parse_git_porcelain(
+            "?? .launcher-update-backup/\n?? wgp_config.json\n?? models/\n M wgp.py\n",
+        );
+        assert_eq!(count_personal_untracked(&entries), 2);
+    }
     fn changed_path_count_ignores_blank_lines() {
         assert_eq!(super::changed_path_count("a\nb\n"), 2);
         assert_eq!(super::changed_path_count("a\r\n\r\nb\r\n"), 2);
@@ -4773,16 +4823,18 @@ mod wangp_pin_tests {
 /// the range then counts every ancestor git re-downloaded (1828 on the
 /// v17 update, whose real delta was 4 commits) instead of what is
 /// landing. A tree diff needs no history at all, so it is true in a
-/// shallow and a full repo alike. None when git fails or nothing differs.
+/// shallow and a full repo alike.
+/// `Some(0)` = the checkout already IS what was fetched (the "already
+/// up to date" case the caller short-circuits on). `None` = the probe
+/// failed, and the caller must keep going exactly as before.
 fn changed_file_count(repo: &Path) -> Option<usize> {
-    let n = silent_command("git")
+    silent_command("git")
         .args(["diff", "--name-only", "HEAD", "FETCH_HEAD"])
         .current_dir(repo)
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| changed_path_count(&String::from_utf8_lossy(&o.stdout)))?;
-    (n > 0).then_some(n)
+        .map(|o| changed_path_count(&String::from_utf8_lossy(&o.stdout)))
 }
 
 /// Non-blank lines of `git diff --name-only` output. Pure + unit-tested.
@@ -4873,7 +4925,33 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         return Err("git fetch failed — offline? See console output above.".into());
     }
     let incoming = changed_file_count(&repo);
-    if let Some(n) = incoming {
+    let dirty = git_tracked_dirty(&repo);
+    // Nothing to land AND nothing hand-edited: say so and stop. Pressing
+    // Update again used to print a wall of work-sounding output for a
+    // checkout that was already exactly upstream — the same "66 upstream
+    // file(s) differ" line twice in a row read as a repo that refused to
+    // update. `changed_file_count` is None when git failed, which must
+    // keep the old unconditional path (fail-open, never skip an update on
+    // a probe error).
+    if let Some(0) = incoming {
+        if !dirty {
+            let head = wangp_head_short(&repo).unwrap_or_else(|| "?".into());
+            emit(&format!("[=] Already at upstream {head} — nothing to update.\n"));
+            let (_dep, drift) = post_update_dep_check(&repo, &req_path, &emit);
+            let kept = kept_update_backups(&repo);
+            if kept > 0 {
+                emit(&format!("[i] {kept} file(s) kept in {UPDATE_BACKUP_DIR}/ from an earlier update (nothing deleted).\n"));
+            }
+            mutating_done();
+            return Ok(serde_json::json!({
+                "ok": true, "success": true, "updated": false,
+                "requirements": "unchanged", "pinDiff": Vec::<String>::new(),
+                "depCheck": "ok", "drift": drift, "compat": Vec::<String>::new(),
+                "updateBackup": kept,
+            }));
+        }
+        emit("[*] Checkout matches upstream — resetting hand-edited files anyway (no-stash policy).\n");
+    } else if let Some(n) = incoming {
         emit(&format!("[*] {n} upstream file(s) differ — updating…\n"));
     }
     // No-stash policy: latest upstream is always the truth. Every tracked
@@ -4881,7 +4959,7 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
     // our own DLSS marker patch, and any unfinished merge state) are
     // OVERWRITTEN, never stashed. Untracked files (settings, models, envs,
     // workspaces) are never touched — no `git clean`, ever.
-    if git_tracked_dirty(&repo) {
+    if dirty {
         let unmerged = git_unmerged_paths(&repo);
         if unmerged.is_empty() {
             emit("[*] Local hand-changed files detected — they will be OVERWRITTEN with latest upstream (no stash kept). Untracked files untouched.\n");
@@ -4929,21 +5007,16 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
-    let untracked = {
-        let mut u = 0;
-        for line in status_short.lines() {
-            if line.len() < 2 {
-                continue;
-            }
-            if line.starts_with("??") {
-                u += 1;
-            }
-        }
-        u
-    };
+    let untracked = count_personal_untracked(&parse_git_porcelain(&status_short));
+    let kept = kept_update_backups(&repo);
     emit(&format!(
         "[✓] Wan2GP update complete — now at upstream {head_short} (100% original git, hand edits overwritten, no stash kept); {untracked} personal file(s) (settings, envs, workspaces) left untouched.\n",
     ));
+    if kept > 0 {
+        emit(&format!(
+            "[i] {kept} file(s) this launcher moved aside are still in {UPDATE_BACKUP_DIR}/ (nothing deleted) — nothing to do unless you want your own version back.\n"
+        ));
+    }
     // Upstream bumps (e.g. mmgp 3.7.14 → 3.8.0 with a wgp.py hard-exit on
     // mismatch) only take effect once the pinned packages are reinstalled.
     // Reinstall on change only — a slow no-op pip run on every update.
@@ -5112,10 +5185,7 @@ pub async fn verify_wangp_files() -> Result<serde_json::Value, String> {
         .iter()
         .filter(|e| e.kind != DriftKind::Untracked)
         .count();
-    let untracked = entries
-        .iter()
-        .filter(|e| e.kind == DriftKind::Untracked)
-        .count();
+    let untracked = count_personal_untracked(&entries);
     let dirty: Vec<serde_json::Value> = entries
         .iter()
         .filter(|e| e.kind != DriftKind::Untracked)
@@ -5128,6 +5198,7 @@ pub async fn verify_wangp_files() -> Result<serde_json::Value, String> {
     "dirty": dirty,
     "dirtyTotal": dirty_total,
     "untracked": untracked,
+    "updateBackup": kept_update_backups(&repo),
     "head": wangp_head_short(&repo)
         .map(serde_json::Value::String)
         .unwrap_or(serde_json::Value::Null),
