@@ -4,6 +4,10 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.10.2] — 2026-10-06
+
+Theme persistence, no-op update honesty, and upstream v17.10 parity.
+
 ### Theme: a manual light pick survives a relaunch
 
 The main window shipped `data-theme="dark"` hardcoded in `index.html`, and only
