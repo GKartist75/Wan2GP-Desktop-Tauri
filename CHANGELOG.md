@@ -4,6 +4,22 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+### Auto-Tune panel: the rec:/saved: chips stop painting over the next field
+
+The Performance Settings grid is two columns of dropdowns, each followed by a
+`rec:` and a `saved:` chip. Both chips are `white-space: nowrap`, and the grid
+item defaulted to `min-width: auto`, so a long recommendation ("SageAttention 2
+/ 2+ (recommended — v17 gains depend on it)", "MMGP Optimized, with RAM
+spilling (default — falls back to shared GPU memory)") pushed past its column
+and printed straight over the neighbouring field. Widening the allocator label
+in 0.10.2 made it visible.
+
+- `.mem-field` gets `min-width: 0`, `.mem-hint` wraps, and each chip is capped
+  at its column with an ellipsis.
+- Nothing is lost: the chip's `title` carries the full text (set next to
+  `textContent` in `memProfilePopulate`), so a clipped value stays readable on
+  hover.
+
 ## [0.10.2] — 2026-10-06
 
 Theme persistence, no-op update honesty, and upstream v17.10 parity.

@@ -217,6 +217,14 @@ function fmtVal(key, v) {
   return String(v);
 }
 
+// A rec:/saved: chip that outgrew its column is ellipsised by the stylesheet,
+// so the full text rides along in the title: nothing is lost, nothing paints
+// over the neighbouring field.
+function setTag(el, text) {
+  el.textContent = text;
+  el.title = text;
+}
+
 function memProfilePopulate(settings, opts = {}) {
   if (!settings) return;
   // opts.mode: 'recommend' fills the dropdown + rec tags; 'saved' fills rec tags from detect AND saved tags from disk.
@@ -230,11 +238,11 @@ function memProfilePopulate(settings, opts = {}) {
         sel.value =
           v != null && v !== "" ? String(v) : key === "vae_config" ? "0" : "";
       const rec = $(f.rec);
-      if (rec) rec.textContent = "rec: " + fmtVal(key, v);
+      if (rec) setTag(rec, "rec: " + fmtVal(key, v));
     } else if (opts.mode === "saved") {
       // Show what's currently written to disk (preferred/saved).
       const saved = $(f.saved);
-      if (saved) saved.textContent = "saved: " + fmtVal(key, v);
+      if (saved) setTag(saved, "saved: " + fmtVal(key, v));
     }
   }
 }
