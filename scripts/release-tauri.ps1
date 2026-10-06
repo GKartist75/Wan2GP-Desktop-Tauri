@@ -69,7 +69,18 @@ $latestPath = "src-tauri\target\release\bundle\nsis\latest.json"
 [System.IO.File]::WriteAllText($latestPath, ($latest | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
 if ([System.IO.File]::ReadAllBytes($latestPath)[0] -eq 0xEF) { throw "latest.json still starts with a BOM - the updater cannot parse it" }
 
-# 4) Publish (latest.json must be on a published release — /latest/download/ 404s on drafts)
+# 4) Tag FIRST, on the commit that was actually built. `gh release create`
+# makes the tag at the repo's DEFAULT BRANCH head when the tag does not exist
+# yet, so releasing from a feature branch silently tags master's head instead —
+# that happened for v0.10.3 (tag landed on 8bdab92, the release was ac20e95).
+# Creating it here keeps the tag, the signed assets and the release on one
+# commit, and pushes the branch before anything goes public.
+$branch = (git branch --show-current).Trim()
+if ($branch) { git push -u origin $branch }
+if (-not (git tag -l $tag)) { git tag $tag HEAD }
+if ((git ls-remote --tags origin "refs/tags/$tag").Trim() -eq "") { git push origin "refs/tags/$tag" }
+
+# 5) Publish (latest.json must be on a published release — /latest/download/ 404s on drafts)
 $msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | Where-Object { $_.Name -like "*$Version*" } | Select-Object -First 1
 if (-not $msi) { $msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | Sort-Object LastWriteTime -Descending | Select-Object -First 1 }
 # ponytail: gh drops an empty --notes value ("flag needs an argument"), so only pass it when set.
@@ -77,7 +88,4 @@ $notesArgs = @()
 if ($Notes -and $Notes.Trim()) { $notesArgs = @("--notes", $Notes) }
 gh release create $tag $setup.FullName ($setup.FullName + ".sig") $msi.FullName $latestPath `
   --repo GKartist75/Wan2GP-Desktop-Tauri --title $tag @notesArgs
-# ponytail: bare `git push` fails on branches without upstream tracking — push explicitly.
-$branch = (git branch --show-current).Trim()
-if ($branch) { git push -u origin $branch }
 Write-Host "Released $tag - updater will pick it up from latest.json" -ForegroundColor Green
