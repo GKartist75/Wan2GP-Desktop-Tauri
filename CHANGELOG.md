@@ -4,6 +4,12 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.10.3] — 2026-10-06
+
+Three report-driven fixes: the Auto-Tune panel's overlapping chips, a Restore
+that never said what it installed, and the wheel-sync skip guard that had never
+once fired.
+
 ### Sync GPU Wheels: the skip guard never fired on a real wheel URL
 
 The 0.10.1 fix that stops a no-op Sync re-downloading 281.9 MB (nunchaku 111.7
