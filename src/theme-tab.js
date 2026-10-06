@@ -5,12 +5,30 @@
 // so loading this file after app.js is safe.
 
 // ── Theme ──
+// resolveTheme is the single source of truth for which theme belongs on
+// screen: the persisted choice, or the OS preference while follow-system is
+// on. Startup, the manual toggle, the OS-change listener and the settings
+// toggle all resolve through it. When each of those decided for itself, a
+// manual light pick was silently undone on the next launch.
+function resolveTheme(cfg, prefersDark) {
+  const c = cfg || {};
+  if (c.themeFollowSystem) return prefersDark ? "dark" : "light";
+  return c.theme === "light" ? "light" : "dark";
+}
+function systemPrefersDark() {
+  try {
+    return matchMedia("(prefers-color-scheme: dark)").matches;
+  } catch {
+    return false;
+  }
+}
 function applyTheme(theme) {
+  const t = theme === "light" ? "light" : "dark";
   const html = document.documentElement;
   document.querySelectorAll(".theme-toggle").forEach((btn) => {
     const sun = btn.querySelector(".sun-icon");
     const moon = btn.querySelector(".moon-icon");
-    if (theme === "dark") {
+    if (t === "dark") {
       if (sun) sun.style.display = "none";
       if (moon) moon.style.display = "";
     } else {
@@ -18,16 +36,28 @@ function applyTheme(theme) {
       if (moon) moon.style.display = "none";
     }
   });
-  if (theme === "dark") html.setAttribute("data-theme", "dark");
+  if (t === "dark") html.setAttribute("data-theme", "dark");
   else html.removeAttribute("data-theme");
+  // Mirrored for the floating terminal (own BrowserView, no config channel),
+  // exactly like accent and the scales.
+  try {
+    localStorage.setItem("w2gp.theme", t);
+  } catch {}
 }
 
 async function toggleTheme() {
   const cfg = await window.w2gp.configLoad();
-  const next = cfg.theme === "dark" ? "light" : "dark";
+  const next =
+    resolveTheme(cfg, systemPrefersDark()) === "dark" ? "light" : "dark";
   cfg.theme = next;
+  // A manual pick outranks follow-system. Leaving the flag on means the next
+  // launch — and every later OS theme change — reverts to the system theme
+  // and throws this choice away.
+  cfg.themeFollowSystem = false;
   await window.w2gp.configSave(cfg);
   applyTheme(next);
+  const el = $("followSystemThemeToggle");
+  if (el) el.checked = false;
 }
 
 // ── Appearance: theme color + UI/terminal text scale. Exactly 5 themes:

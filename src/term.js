@@ -17,7 +17,7 @@ const MAX = 5000;
 // preload exposes no config channel, so read localStorage here.
 const _theme = (() => {
   try {
-    return localStorage.getItem("theme");
+    return localStorage.getItem("w2gp.theme");
   } catch {
     return null;
   }

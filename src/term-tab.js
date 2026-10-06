@@ -406,12 +406,15 @@ function initSettingsToggles() {
   $("followSystemThemeToggle")?.addEventListener("change", async () => {
     const el = $("followSystemThemeToggle");
     await window.w2gp.setThemeFollowSystem(el.checked);
-    if (el.checked)
-      applyTheme(
-        matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
-      );
-    showToast(
-      el.checked ? "Theme will follow system" : "Manual theme control restored",
+      // Apply in BOTH directions. Switching it on jumps to the system theme;
+      // switching it off has to fall back to the persisted choice, or the
+      // window keeps showing the system theme until the next relaunch.
+    const cfg = await window.w2gp.configLoad().catch(() => ({}));
+    applyTheme(resolveTheme(cfg, systemPrefersDark()));
+      showToast(
+      el.checked
+        ? "Theme will follow system"
+        : "Manual theme control restored",
     );
   });
   $("notificationsToggle")?.addEventListener("change", async () => {
