@@ -173,7 +173,7 @@ const QUEUE_COLOR_LABELS = {
 // Configuration > RAM/VRAM Management panel and the README v17 section, so
 // this panel and WanGP describe the same setting the same way.
 const VRAM_ALLOCATOR_LABELS = {
-  vmm_spill: "MMGP Optimized, with RAM spilling (default)",
+  vmm_spill: "MMGP Optimized, with RAM spilling (default — falls back to shared GPU memory)",
   vmm: "MMGP Optimized, out-of-memory when VRAM is full",
   default: "PyTorch allocator",
 };
@@ -258,7 +258,7 @@ function memProfileFromRecommendation(rec) {
         rec.int8_kernels ||
         (rec.enable_int8_kernels === 0 ? "disabled" : "auto"),
       kernel_precision: rec.kernel_precision || "fast",
-        // v17.01: "quite a few optimizations depends on" Sage2/2+, so the
+        // v17.10 (ec9566a): "quite a few optimizations depends on" Sage2/2+, so the
         // attention mode is part of the recommendation. Absent on AMD/Intel
         // (no Sage build upstream there), leaving it "— unset —".
         attention_mode: rec.attention_mode,

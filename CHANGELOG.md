@@ -4,6 +4,69 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+### Theme: a manual light pick survives a relaunch
+
+The main window shipped `data-theme="dark"` hardcoded in `index.html`, and only
+the dark branches of the four theme paths ever wrote that attribute, so a user
+who picked light came back to dark on the next launch. Each path also decided
+the theme for itself instead of asking one question.
+
+- **One resolver, four callers.** `resolveTheme(cfg, prefersDark)` in
+  `theme-tab.js` is the single source of truth: the persisted choice, or the OS
+  preference while follow-system is on. Startup (`init-tab.js`), the manual
+  toggle, the OS-change listener and the settings toggle (`term-tab.js`) all go
+  through it, and `applyTheme` normalises to dark/light before touching
+  `data-theme` — so the light branch now actually *removes* the attribute.
+- **A manual pick outranks follow-system.** `toggleTheme` clears
+  `themeFollowSystem` and unticks the settings switch. Leaving the flag on meant
+  the next launch — and every later OS theme change — reverted to the system
+  theme and threw the choice away.
+- **The follow-system toggle now applies in both directions.** Turning it off
+  falls back to the persisted choice instead of leaving the system theme on
+  screen until the next relaunch.
+- **The floating terminal follows.** `term.js` reads `w2gp.theme` — the key
+  `applyTheme` writes, alongside accent and the scales — instead of `theme`,
+  which the preload never wrote, so the mirror was stuck on its last value.
+
+### Upstream v17.10 parity (`09a7c6c8` → `ec9566a`, 2026-10-06)
+
+Four upstream commits landed after v17.00: `1074cc3` + `0e58385` ("fixes") and
+`c2b4743` + `ec9566a` ("LTX VFX + mem allocator fixes", `WanGP_version =
+17.10`). 90 files, almost all runtime and model code.
+
+**No install-stack movement.** `requirements.txt`, `setup.py`,
+`setup_config.json`, `docs/INSTALLATION.md` and `docs/AMD-INSTALLATION.md` are
+untouched in this range, so no torch, Triton, Sage, Flash, Nunchaku, LightX2V
+or GGUF pin moves and the launcher-compat line correctly stays silent. No AMD
+work either.
+
+- **Reserved RAM auto is 60% on Linux now, not 80%**
+  (`mmgp/offload.py` `_get_perc_reserved_mem_max`; Windows stays 40%). The
+  Reserved RAM tooltip said 80%; the panel now matches upstream, and its input
+  caps at 80 like WanGP's own slider.
+- **RAM spilling no longer stops at the RAM floor.** The allocator now takes
+  `vmm_configure(..., 3 if spill else 0)`: pinned system RAM first, then the
+  CUDA driver's own allocation (shared GPU memory on Windows). Only `vmm`
+  without spilling raises an out-of-memory error, and a new `driver_spilled`
+  stat reports the fallback. The allocator labels and tooltip say so.
+- **Other programs keep their VRAM.** The MMGP allocator now takes VRAM another
+  program is not using only when a generation would otherwise run out, instead
+  of budgeting for it up front (documented in `docs/CLI.md` and
+  `mmgp/README.md`); the tooltip carries the wording.
+- **New `rgba_video_output` output setting** (`png_zip` | `prores_4444`) with
+  `prores_ks` / `yuva444p10le` / 16-bit alpha, plus `shared/utils/rgba_video.py`
+  and imageio `macro_block_size: 1` so mattes stay pixel-aligned with their
+  source. The launcher leaves the key alone — it is WanGP's own Outputs
+  setting, not a RAM/VRAM one — so nothing here can clobber it.
+- **Two new LTX-2.5 VFX presets** (`ltx2_25_22B_alpha_gen`,
+  `ltx2_25_22B_layout_to_render`) reach the Guide tab as a new "Transparent
+  video (alpha) / VFX" goal, alongside `alpha2`. The 2.5 base preset's preload
+  LoRA moved to `ltx-2.5-22b-ic-lora-sdr-to-hdr-scene-emb.safetensors`.
+- **Attention Head Split numbers refreshed** for H3 with Sol (~4 GB at Medium)
+  and the VDN models (~2.5 GB) — the tooltips already carried them.
+- TinyVAE `decoders.json` is gone; handlers declare `tiny_vae_architecture`
+  and the preview family list widened. No launcher surface.
+
 ## [0.10.1] — 2026-10-05
 
 ### Upstream v17 parity (`b8b18f81` → `09a7c6c8`)

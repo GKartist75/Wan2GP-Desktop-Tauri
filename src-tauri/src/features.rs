@@ -726,7 +726,8 @@ let audio = if [2.0, 4.0, 4.5].contains(&profile) {
         extra.insert("video_preload_mode".into(), serde_json::json!("default"));
         extra.insert("image_preload_mode".into(), serde_json::json!("dynamic"));
         extra.insert("audio_preload_mode".into(), serde_json::json!("default"));
-        // 0 = Auto (upstream: 40% on Windows, 80% on Linux).
+        // 0 = Auto (upstream: 40% on Windows, 60% on Linux — v17.10 / ec9566a
+                  // lowered Linux from 80%, so a Linux Auto now pins less than v17.00 did).
         extra.insert("perc_reserved_mem_max".into(), serde_json::json!(0));
     }
     let mut out = serde_json::json!({
