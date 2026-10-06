@@ -822,6 +822,105 @@ pub(crate) async fn run_logged(
     code == Some(0)
 }
 
+/// Same as `run_logged`, but also returns everything the child printed on
+/// stdout. Restore needs it: pip's `Successfully installed …` line is the only
+/// statement of what actually changed, and it scrolls past in the console
+/// (the log viewer's tail gets cut long before it on a requirements run).
+/// Returns (success, stdout).
+pub(crate) async fn run_logged_capture(
+    app: &tauri::AppHandle,
+    prog: &str,
+    args: &[&str],
+    dir: Option<&Path>,
+    emit: impl Fn(&str),
+) -> (bool, String) {
+    use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+    let mut cmd = app.shell().command(prog);
+    cmd = cmd.args(args);
+    if let Some(d) = dir {
+        cmd = cmd.current_dir(d);
+    }
+    let (mut rx, _) = match cmd.spawn() {
+        Ok(t) => t,
+        Err(e) => {
+            emit(&format!("[!] spawn failed ({prog}): {e}\n"));
+            return (false, String::new());
+        }
+    };
+    let mut code: Option<i32> = None;
+    let mut out = String::new();
+    while let Some(ev) = rx.recv().await {
+        match ev {
+            CommandEvent::Stdout(b) => {
+                let s = String::from_utf8_lossy(&b).into_owned();
+                out.push_str(&s);
+                emit(&s);
+            }
+            CommandEvent::Stderr(b) => emit(&String::from_utf8_lossy(&b)),
+            CommandEvent::Terminated(p) => {
+                code = p.code;
+            }
+            CommandEvent::Error(e) => emit(&format!("[!] {e}\n")),
+            _ => {}
+        }
+    }
+    (code == Some(0), out)
+}
+
+/// The `Successfully installed a-1.0 b-2.0` distribution list from a pip run.
+/// pip prints the names on the SAME line as the marker and wraps onto
+/// continuation lines when the list is long, so both shapes are handled and
+/// the scan stops at the blank line or the `-> In <pkg> …` legend that follows.
+/// Empty when nothing was installed (every pin already satisfied) or pip
+/// failed. Pure + unit-tested.
+pub(crate) fn pip_installed_from_output(out: &str) -> Vec<String> {
+    const MARKER: &str = "Successfully installed";
+    let mut res: Vec<String> = Vec::new();
+    let mut in_summary = false;
+    for line in out.lines() {
+        let t = line.trim();
+        if !in_summary {
+            if let Some(rest) = t.strip_prefix(MARKER) {
+                in_summary = true;
+                res.extend(rest.split_whitespace().map(|s| s.to_string()));
+            }
+            continue;
+        }
+        if t.is_empty() || t.starts_with('-') {
+            break;
+        }
+        res.extend(t.split_whitespace().map(|s| s.to_string()));
+    }
+    res
+}
+
+#[cfg(test)]
+mod pip_output_tests {
+    use super::pip_installed_from_output;
+
+    #[test]
+    fn reads_the_installed_list_across_wrapped_lines() {
+        let out = "Collecting foo\nSuccessfully installed insightface-0.7.3 chumpy-0.71\nsmplfitter-0.2.10\n\nWARNING: something\n";
+        assert_eq!(
+            pip_installed_from_output(out),
+            vec!["insightface-0.7.3", "chumpy-0.71", "smplfitter-0.2.10"]
+        );
+    }
+
+    #[test]
+    fn empty_when_nothing_was_installed_or_pip_failed() {
+        assert!(pip_installed_from_output("Requirement already satisfied: torch\n").is_empty());
+        assert!(pip_installed_from_output("ERROR: Could not find a version\n").is_empty());
+        assert!(pip_installed_from_output("").is_empty());
+    }
+
+    #[test]
+    fn stops_at_the_requirement_legend() {
+        let out = "Successfully installed a-1 b-2\n-> Downloading x\n";
+        assert_eq!(pip_installed_from_output(out), vec!["a-1", "b-2"]);
+    }
+}
+
 #[cfg(test)]
 mod backup_tests {
     use super::backups_to_delete;

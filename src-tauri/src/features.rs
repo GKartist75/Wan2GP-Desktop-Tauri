@@ -1206,18 +1206,22 @@ pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::V
     let emit = |m: &str| {
         let _ = app.emit("launch-log", m.to_string());
     };
-    if !run_logged(
+    let (ok, out) = run_logged_capture(
         &app,
         &py_s,
         &["-m", "pip", "install", "-r", "requirements.txt"],
         Some(&repo),
         emit,
     )
-    .await
-    {
+    .await;
+    if !ok {
         return Err("requirements restore failed — see console output".into());
     }
-    Ok(serde_json::json!({"ok": true, "success": true}))
+    // Say what landed. pip states it only in its own `Successfully installed`
+    // line, which scrolls past the console viewer's tail on a full
+    // requirements run — so a 1 MB download and a no-op used to read alike.
+    let installed: Vec<String> = crate::base::pip_installed_from_output(&out);
+    Ok(serde_json::json!({"ok": true, "success": true, "installed": installed}))
 }
 #[tauri::command]
 pub fn llm_engines_list() -> serde_json::Value {

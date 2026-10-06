@@ -4,6 +4,23 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+### Restore names what it installed, and stops printing a line twice
+
+- **Restore says what landed.** `restore_requirements` ran
+  `pip install -r requirements.txt`, streamed it to the console, and returned a
+  bare ok — the panel reported "Requirements restored." whether pip had just
+  installed three wheels or had changed nothing at all. pip's only statement of
+  the outcome is its own `Successfully installed …` line, and that scrolls past
+  the console viewer's tail on a full requirements run (it was not even visible
+  in the log that prompted this). The command now also captures stdout,
+  `pip_installed_from_output` reads the distribution list, and both Restore
+  entry points print it: `Restored: insightface-0.7.3, chumpy-0.71,
+  smplfitter-0.2.10`, or `Requirements already matched — nothing installed.`
+- **The moved-aside-files note appeared twice** per update — once from the
+  backend, once again from the Dashboard handler. The frontend copy is gone;
+  the backend line (`[i] N file(s) kept in .launcher-update-backup/ …`) is the
+  single one.
+
 ### Auto-Tune panel: the rec:/saved: chips stop painting over the next field
 
 The Performance Settings grid is two columns of dropdowns, each followed by a

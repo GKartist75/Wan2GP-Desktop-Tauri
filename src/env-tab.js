@@ -80,7 +80,12 @@ function refreshEnvUnlink(hasRepo) {
       try {
         var r = await window.w2gp.restoreRequirements();
         if (r && r.success) {
-          appendLog("[*] Requirements restored.");
+          var got = r.installed;
+          appendLog(
+            Array.isArray(got) && got.length
+              ? "[*] Restored: " + got.join(", ")
+              : "[*] Requirements already matched — nothing installed.",
+          );
           hideDriftBanner();
           setTimeout(refreshDashboard, 2000);
         } else showToast((r && r.error) || "Failed");

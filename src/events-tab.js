@@ -17,10 +17,6 @@ $("updateBtn").addEventListener("click", async () => {
         ? "[=] Wan2GP already up to date — nothing to update"
         : "[*] Wan2GP update complete",
     );
-    if (r && r.updated === false && r.updateBackup > 0)
-      appendLog(
-        `[*] ${r.updateBackup} file(s) kept in .launcher-update-backup/ from an earlier update`,
-      );
     if (r && r.requirements === "reinstalled") {
       appendLog("[*] requirements.txt changed — pinned packages reinstalled");
       const pd = r && r.pinDiff;

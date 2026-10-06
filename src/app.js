@@ -995,7 +995,15 @@ $("driftRestoreBtn")?.addEventListener("click", async () => {
   try {
     const rr = await window.w2gp.restoreRequirements();
     if (rr && rr.success) {
-      appendLog("[*] Requirements restored.");
+      // Name what landed. pip's own summary scrolls off the console tail on
+      // a full requirements run, so without this "restored" covered both a
+      // no-op and a real download.
+      const got = rr.installed;
+      appendLog(
+        Array.isArray(got) && got.length
+          ? "[*] Restored: " + got.join(", ")
+          : "[*] Requirements already matched — nothing installed.",
+      );
       hideDriftBanner();
       setTimeout(refreshDashboard, 2000);
     } else showToast("✗ Restore failed: " + ((rr && rr.error) || "unknown"));
