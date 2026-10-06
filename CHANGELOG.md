@@ -4,6 +4,37 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+### Sync GPU Wheels: the skip guard never fired on a real wheel URL
+
+The 0.10.1 fix that stops a no-op Sync re-downloading 281.9 MB (nunchaku 111.7
++ GGUF 153.5 + Sage 16.7) compared `base_version(installed)` with the version
+parsed out of the spec — and the parse **always returned None** for a real
+upstream wheel, because it split the whole spec token on `-`. A wheel URL
+carries hyphens in the host, the owner and the tag
+(`github.com/nunchaku-ai/…/gguf-v1.0.25/…`), so the "version" it found was
+`ai/nunchaku/releases/download/v1.2.1/nunchaku`. No version, no skip, and the
+guard fell through to installing every wheel on every run — reported honestly
+as `3 synced, 0 already current`. The old unit test passed a bare filename
+(`https://x/pkg-1.0.whl`), which has no hyphen before the name, so it never
+caught this.
+
+- `kernel_spec_version_full` parses the **file name** out of the URL first
+  (`%2B` decoded to `+`) and keeps the local build tag.
+- `kernel_version_matches` compares the exact version, falling back to the base
+  version only when the spec carries no tag — so the base-only comparison can no
+  longer swallow a real change.
+- That fallback was a second bug: with base versions only, turning the Sage safe
+  toggle off in Manage → Settings (post6 → post4) compared `2.2.0` with
+  `2.2.0` and skipped, so the setting silently did nothing. Same base version,
+  different wheel — now it reinstalls.
+- The superseded base-only `kernel_spec_version` is gone; its test moved to the
+  new function with a real hyphenated URL added.
+
+Four new tests, including the three RTX_30 wheels as setup_config spells them
+against what `pip show` actually prints for them (verified on a live
+`env_uv`: `1.2.1+cu13.0torch2.10`, `1.0.25+torch210cu130py311`,
+`2.2.0+cu130torch2.10.0andhigher.post6`).
+
 ### Restore names what it installed, and stops printing a line twice
 
 - **Restore says what landed.** `restore_requirements` ran

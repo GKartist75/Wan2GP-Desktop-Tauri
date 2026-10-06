@@ -4228,12 +4228,12 @@ async fn sync_kernels_inner(
               // already installed at exactly those versions. Probe trouble
               // never skips — unknown components and failed probes install,
               // which is the pre-existing behaviour.
-              if let Some(want) = kernel_spec_version(&url) {
+              if let Some(want) = kernel_spec_version_full(&url) {
                   let dists = kernel_dist_names(name);
                   if !dists.is_empty() {
                       let py_probe = py.to_string_lossy().to_string();
                       if let Some(have) = pip_show_version(&py_probe, dists).await {
-                          if base_version(&have) == base_version(&want) {
+                          if kernel_version_matches(&have, &want) {
                               let m = format!("[*] sync kernel {name} — already at {have}, skipped\n");
                               crate::base::push_log(&m, "setup");
                               let _ = app.emit("launch-log", m);
@@ -4630,26 +4630,34 @@ mod wangp_git_tests {
     #[test]
     fn kernel_spec_version_reads_wheels_and_pins() {
         assert_eq!(
-            super::kernel_spec_version(
+            super::kernel_spec_version_full(
                 "--no-deps https://x/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl"
             )
             .as_deref(),
-            Some("1.0.25")
+            Some("1.0.25+torch210cu130py311")
         );
         assert_eq!(
-            super::kernel_spec_version(
+            super::kernel_spec_version_full(
                 "https://x/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl"
             )
             .as_deref(),
-            Some("2.2.0")
+            Some("2.2.0+cu130torch2.10.0andhigher.post6")
         );
         assert_eq!(
-            super::kernel_spec_version("nunchaku==1.2.1+cu13.0torch2.10").as_deref(),
+            super::kernel_spec_version_full("nunchaku==1.2.1+cu13.0torch2.10").as_deref(),
+            Some("1.2.1+cu13.0torch2.10")
+        );
+        // A hyphenated host/owner/tag in the path is not part of the version.
+        assert_eq!(
+            super::kernel_spec_version_full(
+                "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl"
+            )
+            .as_deref(),
             Some("1.2.1+cu13.0torch2.10")
         );
         // No version to compare → never skip (fail-open to installing).
-        assert_eq!(super::kernel_spec_version("--no-deps https://x/pkg.whl"), None);
-        assert_eq!(super::kernel_spec_version(""), None);
+        assert_eq!(super::kernel_spec_version_full("--no-deps https://x/pkg.whl"), None);
+        assert_eq!(super::kernel_spec_version_full(""), None);
     }
 
     #[test]
@@ -4858,28 +4866,42 @@ fn kernel_dist_names(name: &str) -> &'static [&'static str] {
     }
 }
 
-/// Version named by a kernel install spec: an exact pin
-/// (`sageattention==1.0.6`) or a wheel filename
-/// (`llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-...whl` →
-/// `1.0.25`). None when the spec names no version. Pure + unit-tested.
-pub(crate) fn kernel_spec_version(spec: &str) -> Option<String> {
+/// The version exactly as the wheel spells it, local build tag included
+/// (`2.2.0+cu130torch2.10.0andhigher.post6`), or `None` when the spec names
+/// no version. An exact pin (`sageattention==1.0.6`) passes through.
+///
+/// Only the FILE NAME is split on '-'. A full URL carries hyphens in the host,
+/// the owner and the tag (`github.com/nunchaku-ai/…/gguf-v1.0.25/…`), so
+/// splitting the whole token made every real upstream wheel parse as "no
+/// version" — and the no-op-sync guard, which only skips on a parsed version,
+/// fell through and pip re-downloaded 282 MB of already-installed wheels.
+/// Pure + unit-tested.
+pub(crate) fn kernel_spec_version_full(spec: &str) -> Option<String> {
     let token = spec.split_whitespace().last()?;
-    if token.ends_with(".whl") {
-        let stem = token.trim_end_matches(".whl");
-        let mut parts = stem.split('-');
-        parts.next()?; // dist name
-        let ver = parts.next()?;
-        let ver = ver
-            .split_once("%2B")
-            .or_else(|| ver.split_once('+'))
-            .map(|(a, _)| a)
-            .unwrap_or(ver);
-        return (!ver.is_empty() && ver.chars().all(|c| c.is_ascii_digit() || c == '.'))
-            .then(|| ver.to_string());
+    if !token.ends_with(".whl") {
+        let (_, v) = token.split_once("==")?;
+        let v = v.trim();
+        return (!v.is_empty()).then(|| v.to_string());
     }
-    let (_, v) = token.split_once("==")?;
-    let v = v.trim();
-    (!v.is_empty()).then(|| v.to_string())
+    let file = token.rsplit(['/', '\\']).next().unwrap_or(token);
+    let mut parts = file.trim_end_matches(".whl").split('-');
+    parts.next()?; // dist name
+    let raw = parts.next()?;
+    (!raw.is_empty()).then(|| raw.replace("%2B", "+"))
+}
+
+/// Does the installed dist already satisfy the wanted wheel? Exact match wins
+/// (so flipping the Sage safe toggle between post6 and post4 really
+/// reinstalls); the base version is only compared when the URL carries no
+/// local build tag, because two different builds of one base version are
+/// different wheels, not the same one. Pure + unit-tested.
+pub(crate) fn kernel_version_matches(installed: &str, wanted_full: &str) -> bool {
+    let have = installed.trim();
+    let want = wanted_full.trim();
+    if have == want {
+        return true;
+    }
+    !wanted_full.contains('+') && base_version(have) == base_version(want)
 }
 
 /// Base version before a local build tag: `1.0.25+torch210cu130py311`
@@ -5700,6 +5722,71 @@ fn post_update_dep_check(
             drift.join(", ")
         ));
         ("drift", drift)
+    }
+}
+#[cfg(test)]
+mod kernel_skip_tests {
+    use super::{base_version, kernel_dist_names, kernel_spec_version_full, kernel_version_matches};
+
+    /// The three wheels an RTX_30 sync touches, exactly as setup_config.json
+    /// spells them, against what `pip show` really prints for them. The
+    /// no-op-sync guard compares these two base versions — if either half
+    /// stops parsing, the guard silently falls through and pip re-downloads
+    /// 282 MB of wheels that are already installed (2026-10-06 report).
+    #[test]
+    fn rtx30_wheels_compare_equal_to_what_pip_show_reports() {
+        let cases = [
+            (
+                "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl",
+                "1.2.1+cu13.0torch2.10",
+            ),
+            (
+                "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl",
+                "1.0.25+torch210cu130py311",
+            ),
+            (
+                "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl",
+                "2.2.0+cu130torch2.10.0andhigher.post6",
+            ),
+        ];
+        for (spec, installed) in cases {
+            let want = kernel_spec_version_full(spec).unwrap_or_else(|| panic!("no version in {spec}"));
+            assert!(
+                kernel_version_matches(installed, &want),
+                "{spec}: wanted {want} vs installed {installed}"
+            );
+            assert_eq!(base_version(&want), base_version(installed));
+        }
+    }
+
+    #[test]
+    fn sage_safe_toggle_reinstalls_the_other_build() {
+        let post6 = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl";
+        let post4 = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl";
+        let have = "2.2.0+cu130torch2.10.0andhigher.post6";
+        assert!(kernel_version_matches(have, &kernel_spec_version_full(post6).unwrap()));
+        // User turns the safe toggle off: same base version, different wheel —
+        // must NOT be skipped, or the setting silently does nothing.
+        assert!(!kernel_version_matches(have, &kernel_spec_version_full(post4).unwrap()));
+    }
+
+    #[test]
+    fn untagged_specs_still_compare_on_the_base_version() {
+        let spec = "https://example.com/kernels/releases/download/v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+        let full = kernel_spec_version_full(spec).unwrap();
+        assert_eq!(full, "1.0.25+torch210cu130py311");
+        assert!(kernel_version_matches("1.0.25+torch210cu130py311", &full));
+        assert!(!kernel_version_matches("1.0.24+torch210cu130py311", &full));
+    }
+
+    #[test]
+    fn every_synced_component_has_a_pip_dist_name() {
+        for name in ["gguf", "sage", "nunchaku_cu13", "flash", "triton"] {
+            assert!(
+                !kernel_dist_names(name).is_empty(),
+                "{name} has no dist name — the guard can never skip it"
+            );
+        }
     }
 }
 #[cfg(test)]
