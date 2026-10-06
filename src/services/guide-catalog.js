@@ -108,6 +108,15 @@ const GUIDE_GOALS = [
     ]
   },
   {
+    id: 'vfx-alpha',
+    label: 'Transparent video (alpha) / VFX',
+    picks: [
+      { model: 'ltx2_25_22B_alpha_gen', why: 'Extract a soft alpha matte from any video, then export the original RGB with transparency.', frames: 121, steps: 8, guidance: 1, tip: 'Configuration / Outputs / RGBA Video Output picks PNG frames in a ZIP (default) or ProRes 4444 MOV; the gallery video is the grayscale matte.' },
+      { model: 'alpha2', why: 'Generate transparent video directly — hair, glow and smoke keep fine alpha.', frames: 81, steps: 25, guidance: 5, tip: 'Gallery shows a checkerboard preview over the alpha; the RGBA frames are the real output.' },
+      { model: 'ltx2_25_22B_layout_to_render', why: 'Turn a viewport animation or playblast into a finished shot, with one appearance reference setting the look.', frames: 121, steps: 8, guidance: 1, tip: 'Two phases with tiling: phase 1 lays out the scene, phase 2 refines it in overlapping 50% tiles — the way to reach 4K.' }
+    ]
+  },
+  {
     id: 'sfx',
     label: 'Ambience / sound effects',
     picks: [
@@ -119,7 +128,8 @@ const GUIDE_GOALS = [
 /**
  * Display names from WanGP defaults/*.json (model.name). The toolbar search
  * matches these — copying the id (e.g. t2v_2_2) is useless there, so the UI
- * copies the full name. Verified 2026-09-21.
+ * copies the full name. Verified 2026-09-21; the three vfx-alpha entries
+ * re-verified against upstream v17.10 (ec9566a) on 2026-10-06.
  */
 const MODEL_NAMES = {
   't2v_1.3B': 'Wan2.1 Text2video 1.3B',
@@ -144,7 +154,10 @@ const MODEL_NAMES = {
   index_tts2: 'TTS Index TTS 2',
   ace_step_v1_5_xl: 'Music ACE-Step v1.5 XL Turbo 4B',
   minimax_music3: 'Music MiniMax Music 3',
-  stable_audio3_small: 'Music Stable Audio 3 Small Music'
+  stable_audio3_small: 'Music Stable Audio 3 Small Music',
+    ltx2_25_22B_alpha_gen: 'LTX-2 2.5 Alpha Gen 22B',
+  ltx2_25_22B_layout_to_render: 'LTX-2 2.5 Layout to Render 22B',
+  alpha2: 'Wan2.1 Alpha v2.0 14B'
 }
 
 /**

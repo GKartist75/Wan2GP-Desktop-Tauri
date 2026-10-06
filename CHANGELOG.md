@@ -4,6 +4,170 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.10.3] — 2026-10-06
+
+Three report-driven fixes: the Auto-Tune panel's overlapping chips, a Restore
+that never said what it installed, and the wheel-sync skip guard that had never
+once fired.
+
+### Sync GPU Wheels: the skip guard never fired on a real wheel URL
+
+The 0.10.1 fix that stops a no-op Sync re-downloading 281.9 MB (nunchaku 111.7
++ GGUF 153.5 + Sage 16.7) compared `base_version(installed)` with the version
+parsed out of the spec — and the parse **always returned None** for a real
+upstream wheel, because it split the whole spec token on `-`. A wheel URL
+carries hyphens in the host, the owner and the tag
+(`github.com/nunchaku-ai/…/gguf-v1.0.25/…`), so the "version" it found was
+`ai/nunchaku/releases/download/v1.2.1/nunchaku`. No version, no skip, and the
+guard fell through to installing every wheel on every run — reported honestly
+as `3 synced, 0 already current`. The old unit test passed a bare filename
+(`https://x/pkg-1.0.whl`), which has no hyphen before the name, so it never
+caught this.
+
+- `kernel_spec_version_full` parses the **file name** out of the URL first
+  (`%2B` decoded to `+`) and keeps the local build tag.
+- `kernel_version_matches` compares the exact version, falling back to the base
+  version only when the spec carries no tag — so the base-only comparison can no
+  longer swallow a real change.
+- That fallback was a second bug: with base versions only, turning the Sage safe
+  toggle off in Manage → Settings (post6 → post4) compared `2.2.0` with
+  `2.2.0` and skipped, so the setting silently did nothing. Same base version,
+  different wheel — now it reinstalls.
+- The superseded base-only `kernel_spec_version` is gone; its test moved to the
+  new function with a real hyphenated URL added.
+
+Four new tests, including the three RTX_30 wheels as setup_config spells them
+against what `pip show` actually prints for them (verified on a live
+`env_uv`: `1.2.1+cu13.0torch2.10`, `1.0.25+torch210cu130py311`,
+`2.2.0+cu130torch2.10.0andhigher.post6`).
+
+### Restore names what it installed, and stops printing a line twice
+
+- **Restore says what landed.** `restore_requirements` ran
+  `pip install -r requirements.txt`, streamed it to the console, and returned a
+  bare ok — the panel reported "Requirements restored." whether pip had just
+  installed three wheels or had changed nothing at all. pip's only statement of
+  the outcome is its own `Successfully installed …` line, and that scrolls past
+  the console viewer's tail on a full requirements run (it was not even visible
+  in the log that prompted this). The command now also captures stdout,
+  `pip_installed_from_output` reads the distribution list, and both Restore
+  entry points print it: `Restored: insightface-0.7.3, chumpy-0.71,
+  smplfitter-0.2.10`, or `Requirements already matched — nothing installed.`
+- **The moved-aside-files note appeared twice** per update — once from the
+  backend, once again from the Dashboard handler. The frontend copy is gone;
+  the backend line (`[i] N file(s) kept in .launcher-update-backup/ …`) is the
+  single one.
+
+### Auto-Tune panel: the rec:/saved: chips stop painting over the next field
+
+The Performance Settings grid is two columns of dropdowns, each followed by a
+`rec:` and a `saved:` chip. Both chips are `white-space: nowrap`, and the grid
+item defaulted to `min-width: auto`, so a long recommendation ("SageAttention 2
+/ 2+ (recommended — v17 gains depend on it)", "MMGP Optimized, with RAM
+spilling (default — falls back to shared GPU memory)") pushed past its column
+and printed straight over the neighbouring field. Widening the allocator label
+in 0.10.2 made it visible.
+
+- `.mem-field` gets `min-width: 0`, `.mem-hint` wraps, and each chip is capped
+  at its column with an ellipsis.
+- Nothing is lost: the chip's `title` carries the full text (set next to
+  `textContent` in `memProfilePopulate`), so a clipped value stays readable on
+  hover.
+
+## [0.10.2] — 2026-10-06
+
+Theme persistence, no-op update honesty, and upstream v17.10 parity.
+
+### Theme: a manual light pick survives a relaunch
+
+The main window shipped `data-theme="dark"` hardcoded in `index.html`, and only
+the dark branches of the four theme paths ever wrote that attribute, so a user
+who picked light came back to dark on the next launch. Each path also decided
+the theme for itself instead of asking one question.
+
+- **One resolver, four callers.** `resolveTheme(cfg, prefersDark)` in
+  `theme-tab.js` is the single source of truth: the persisted choice, or the OS
+  preference while follow-system is on. Startup (`init-tab.js`), the manual
+  toggle, the OS-change listener and the settings toggle (`term-tab.js`) all go
+  through it, and `applyTheme` normalises to dark/light before touching
+  `data-theme` — so the light branch now actually *removes* the attribute.
+- **A manual pick outranks follow-system.** `toggleTheme` clears
+  `themeFollowSystem` and unticks the settings switch. Leaving the flag on meant
+  the next launch — and every later OS theme change — reverted to the system
+  theme and threw the choice away.
+- **The follow-system toggle now applies in both directions.** Turning it off
+  falls back to the persisted choice instead of leaving the system theme on
+  screen until the next relaunch.
+- **The floating terminal follows.** `term.js` reads `w2gp.theme` — the key
+  `applyTheme` writes, alongside accent and the scales — instead of `theme`,
+  which the preload never wrote, so the mirror was stuck on its last value.
+
+### Update: a second Update press says so instead of re-doing everything
+
+Pressing **Update Wan2GP** on a checkout that already *is* upstream printed a
+wall of work-sounding output — "66 upstream file(s) differ", the hand-changed
+warning, `HEAD is now at <same sha>` — for a tree that had nothing to land. Run
+it twice and the two logs are indistinguishable, which reads as a repo that
+refuses to update rather than one that is current.
+
+- **No-op updates short-circuit.** `changed_file_count` now distinguishes
+  "0 files differ" from "the git probe failed" (`Some(0)` vs `None`); on
+  `Some(0)` with no hand-edited tracked files the update emits one
+  `[=] Already at upstream <sha> — nothing to update.` line, runs the
+  dependency drift probe (still useful) and returns `updated: false`. A probe
+  failure keeps the old unconditional path — fail-open, never skip an update
+  because git hiccuped. Hand-edited files with an already-current checkout
+  still get the no-stash reset, and say so.
+- **The launcher's own backup folder stopped counting as your files.** Git
+  reports `.launcher-update-backup/` as one `??` entry, so it was tallied as a
+  "personal file" (inflating the count) and never mentioned again. The update
+  summary and **Verify** now exclude it, report how many files are parked there,
+  and `verify_wangp_files` returns `updateBackup`. The Dashboard and Manage
+  buttons also say "Already up to date" instead of "Update finished".
+
+Nothing was lost in the reported run: the six files were untracked local copies
+of upstream's new LTX-2.5 VFX files, the guard moved them aside exactly as
+designed, and the checkout landed on `ec9566a6` with everything tracked.
+
+### Upstream v17.10 parity (`09a7c6c8` → `ec9566a`, 2026-10-06)
+
+Four upstream commits landed after v17.00: `1074cc3` + `0e58385` ("fixes") and
+`c2b4743` + `ec9566a` ("LTX VFX + mem allocator fixes", `WanGP_version =
+17.10`). 90 files, almost all runtime and model code.
+
+**No install-stack movement.** `requirements.txt`, `setup.py`,
+`setup_config.json`, `docs/INSTALLATION.md` and `docs/AMD-INSTALLATION.md` are
+untouched in this range, so no torch, Triton, Sage, Flash, Nunchaku, LightX2V
+or GGUF pin moves and the launcher-compat line correctly stays silent. No AMD
+work either.
+
+- **Reserved RAM auto is 60% on Linux now, not 80%**
+  (`mmgp/offload.py` `_get_perc_reserved_mem_max`; Windows stays 40%). The
+  Reserved RAM tooltip said 80%; the panel now matches upstream, and its input
+  caps at 80 like WanGP's own slider.
+- **RAM spilling no longer stops at the RAM floor.** The allocator now takes
+  `vmm_configure(..., 3 if spill else 0)`: pinned system RAM first, then the
+  CUDA driver's own allocation (shared GPU memory on Windows). Only `vmm`
+  without spilling raises an out-of-memory error, and a new `driver_spilled`
+  stat reports the fallback. The allocator labels and tooltip say so.
+- **Other programs keep their VRAM.** The MMGP allocator now takes VRAM another
+  program is not using only when a generation would otherwise run out, instead
+  of budgeting for it up front (documented in `docs/CLI.md` and
+  `mmgp/README.md`); the tooltip carries the wording.
+- **New `rgba_video_output` output setting** (`png_zip` | `prores_4444`) with
+  `prores_ks` / `yuva444p10le` / 16-bit alpha, plus `shared/utils/rgba_video.py`
+  and imageio `macro_block_size: 1` so mattes stay pixel-aligned with their
+  source. The launcher leaves the key alone — it is WanGP's own Outputs
+  setting, not a RAM/VRAM one — so nothing here can clobber it.
+- **Two new LTX-2.5 VFX presets** (`ltx2_25_22B_alpha_gen`,
+  `ltx2_25_22B_layout_to_render`) reach the Guide tab as a new "Transparent
+  video (alpha) / VFX" goal, alongside `alpha2`. The 2.5 base preset's preload
+  LoRA moved to `ltx-2.5-22b-ic-lora-sdr-to-hdr-scene-emb.safetensors`.
+- **Attention Head Split numbers refreshed** for H3 with Sol (~4 GB at Medium)
+  and the VDN models (~2.5 GB) — the tooltips already carried them.
+- TinyVAE `decoders.json` is gone; handlers declare `tiny_vae_architecture`
+  and the preview family list widened. No launcher surface.
+
 ## [0.10.1] — 2026-10-05
 
 ### Upstream v17 parity (`b8b18f81` → `09a7c6c8`)

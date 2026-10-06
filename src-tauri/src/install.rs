@@ -4228,12 +4228,12 @@ async fn sync_kernels_inner(
               // already installed at exactly those versions. Probe trouble
               // never skips — unknown components and failed probes install,
               // which is the pre-existing behaviour.
-              if let Some(want) = kernel_spec_version(&url) {
+              if let Some(want) = kernel_spec_version_full(&url) {
                   let dists = kernel_dist_names(name);
                   if !dists.is_empty() {
                       let py_probe = py.to_string_lossy().to_string();
                       if let Some(have) = pip_show_version(&py_probe, dists).await {
-                          if base_version(&have) == base_version(&want) {
+                          if kernel_version_matches(&have, &want) {
                               let m = format!("[*] sync kernel {name} — already at {have}, skipped\n");
                               crate::base::push_log(&m, "setup");
                               let _ = app.emit("launch-log", m);
@@ -4374,6 +4374,44 @@ pub(crate) fn parse_git_porcelain(out: &str) -> Vec<DriftEntry> {
         entries.push(DriftEntry { path, kind });
     }
     entries
+}
+
+/// Folder inside the repo where `clear_untracked_merge_collisions`
+/// parks files that upstream is about to add at the same path. Git
+/// reports the whole folder as ONE `??` entry, so counting it as a
+/// personal file both inflated that number ("10 personal files" for
+/// 9) and hid a folder the user has to know about.
+pub(crate) const UPDATE_BACKUP_DIR: &str = ".launcher-update-backup";
+/// True for the backup folder itself and anything under it (pure).
+pub(crate) fn is_update_backup_path(path: &str) -> bool {
+    let p = path.trim().trim_matches('/');
+    p == UPDATE_BACKUP_DIR || p.starts_with(&format!("{UPDATE_BACKUP_DIR}/"))
+}
+/// Untracked entries that are the USER's files, i.e. everything git
+/// reports except the launcher's own backup folder (pure).
+pub(crate) fn count_personal_untracked(entries: &[DriftEntry]) -> usize {
+    entries
+        .iter()
+        .filter(|e| e.kind == DriftKind::Untracked && !is_update_backup_path(&e.path))
+        .count()
+}
+/// Files currently parked in the backup folder (recursive). 0 when it
+/// does not exist — the common case.
+pub(crate) fn kept_update_backups(repo: &Path) -> usize {
+    fn walk(d: &Path, n: usize) -> usize {
+        let Ok(rd) = std::fs::read_dir(d) else {
+            return n;
+        };
+        rd.flatten().fold(n, |acc, e| {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, acc)
+            } else {
+                acc + 1
+            }
+        })
+    }
+    walk(&repo.join(UPDATE_BACKUP_DIR), 0)
 }
 
 /// Untracked files that upstream is about to ADD at the same path abort
@@ -4592,26 +4630,34 @@ mod wangp_git_tests {
     #[test]
     fn kernel_spec_version_reads_wheels_and_pins() {
         assert_eq!(
-            super::kernel_spec_version(
+            super::kernel_spec_version_full(
                 "--no-deps https://x/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl"
             )
             .as_deref(),
-            Some("1.0.25")
+            Some("1.0.25+torch210cu130py311")
         );
         assert_eq!(
-            super::kernel_spec_version(
+            super::kernel_spec_version_full(
                 "https://x/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl"
             )
             .as_deref(),
-            Some("2.2.0")
+            Some("2.2.0+cu130torch2.10.0andhigher.post6")
         );
         assert_eq!(
-            super::kernel_spec_version("nunchaku==1.2.1+cu13.0torch2.10").as_deref(),
+            super::kernel_spec_version_full("nunchaku==1.2.1+cu13.0torch2.10").as_deref(),
+            Some("1.2.1+cu13.0torch2.10")
+        );
+        // A hyphenated host/owner/tag in the path is not part of the version.
+        assert_eq!(
+            super::kernel_spec_version_full(
+                "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl"
+            )
+            .as_deref(),
             Some("1.2.1+cu13.0torch2.10")
         );
         // No version to compare → never skip (fail-open to installing).
-        assert_eq!(super::kernel_spec_version("--no-deps https://x/pkg.whl"), None);
-        assert_eq!(super::kernel_spec_version(""), None);
+        assert_eq!(super::kernel_spec_version_full("--no-deps https://x/pkg.whl"), None);
+        assert_eq!(super::kernel_spec_version_full(""), None);
     }
 
     #[test]
@@ -4630,6 +4676,18 @@ mod wangp_git_tests {
     }
 
     #[test]
+    fn update_backup_folder_is_not_a_personal_file() {
+        use super::{count_personal_untracked, is_update_backup_path, parse_git_porcelain};
+        assert!(is_update_backup_path(".launcher-update-backup"));
+        assert!(is_update_backup_path(".launcher-update-backup/defaults/x.json"));
+        assert!(!is_update_backup_path(".launcher-update-backup-old/x.json"));
+        assert!(!is_update_backup_path("defaults/x.json"));
+        assert!(!is_update_backup_path("launcher-update-backup/x.json"));
+        let entries = parse_git_porcelain(
+            "?? .launcher-update-backup/\n?? wgp_config.json\n?? models/\n M wgp.py\n",
+        );
+        assert_eq!(count_personal_untracked(&entries), 2);
+    }
     fn changed_path_count_ignores_blank_lines() {
         assert_eq!(super::changed_path_count("a\nb\n"), 2);
         assert_eq!(super::changed_path_count("a\r\n\r\nb\r\n"), 2);
@@ -4773,16 +4831,18 @@ mod wangp_pin_tests {
 /// the range then counts every ancestor git re-downloaded (1828 on the
 /// v17 update, whose real delta was 4 commits) instead of what is
 /// landing. A tree diff needs no history at all, so it is true in a
-/// shallow and a full repo alike. None when git fails or nothing differs.
+/// shallow and a full repo alike.
+/// `Some(0)` = the checkout already IS what was fetched (the "already
+/// up to date" case the caller short-circuits on). `None` = the probe
+/// failed, and the caller must keep going exactly as before.
 fn changed_file_count(repo: &Path) -> Option<usize> {
-    let n = silent_command("git")
+    silent_command("git")
         .args(["diff", "--name-only", "HEAD", "FETCH_HEAD"])
         .current_dir(repo)
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| changed_path_count(&String::from_utf8_lossy(&o.stdout)))?;
-    (n > 0).then_some(n)
+        .map(|o| changed_path_count(&String::from_utf8_lossy(&o.stdout)))
 }
 
 /// Non-blank lines of `git diff --name-only` output. Pure + unit-tested.
@@ -4806,28 +4866,42 @@ fn kernel_dist_names(name: &str) -> &'static [&'static str] {
     }
 }
 
-/// Version named by a kernel install spec: an exact pin
-/// (`sageattention==1.0.6`) or a wheel filename
-/// (`llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-...whl` →
-/// `1.0.25`). None when the spec names no version. Pure + unit-tested.
-pub(crate) fn kernel_spec_version(spec: &str) -> Option<String> {
+/// The version exactly as the wheel spells it, local build tag included
+/// (`2.2.0+cu130torch2.10.0andhigher.post6`), or `None` when the spec names
+/// no version. An exact pin (`sageattention==1.0.6`) passes through.
+///
+/// Only the FILE NAME is split on '-'. A full URL carries hyphens in the host,
+/// the owner and the tag (`github.com/nunchaku-ai/…/gguf-v1.0.25/…`), so
+/// splitting the whole token made every real upstream wheel parse as "no
+/// version" — and the no-op-sync guard, which only skips on a parsed version,
+/// fell through and pip re-downloaded 282 MB of already-installed wheels.
+/// Pure + unit-tested.
+pub(crate) fn kernel_spec_version_full(spec: &str) -> Option<String> {
     let token = spec.split_whitespace().last()?;
-    if token.ends_with(".whl") {
-        let stem = token.trim_end_matches(".whl");
-        let mut parts = stem.split('-');
-        parts.next()?; // dist name
-        let ver = parts.next()?;
-        let ver = ver
-            .split_once("%2B")
-            .or_else(|| ver.split_once('+'))
-            .map(|(a, _)| a)
-            .unwrap_or(ver);
-        return (!ver.is_empty() && ver.chars().all(|c| c.is_ascii_digit() || c == '.'))
-            .then(|| ver.to_string());
+    if !token.ends_with(".whl") {
+        let (_, v) = token.split_once("==")?;
+        let v = v.trim();
+        return (!v.is_empty()).then(|| v.to_string());
     }
-    let (_, v) = token.split_once("==")?;
-    let v = v.trim();
-    (!v.is_empty()).then(|| v.to_string())
+    let file = token.rsplit(['/', '\\']).next().unwrap_or(token);
+    let mut parts = file.trim_end_matches(".whl").split('-');
+    parts.next()?; // dist name
+    let raw = parts.next()?;
+    (!raw.is_empty()).then(|| raw.replace("%2B", "+"))
+}
+
+/// Does the installed dist already satisfy the wanted wheel? Exact match wins
+/// (so flipping the Sage safe toggle between post6 and post4 really
+/// reinstalls); the base version is only compared when the URL carries no
+/// local build tag, because two different builds of one base version are
+/// different wheels, not the same one. Pure + unit-tested.
+pub(crate) fn kernel_version_matches(installed: &str, wanted_full: &str) -> bool {
+    let have = installed.trim();
+    let want = wanted_full.trim();
+    if have == want {
+        return true;
+    }
+    !wanted_full.contains('+') && base_version(have) == base_version(want)
 }
 
 /// Base version before a local build tag: `1.0.25+torch210cu130py311`
@@ -4873,7 +4947,33 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         return Err("git fetch failed — offline? See console output above.".into());
     }
     let incoming = changed_file_count(&repo);
-    if let Some(n) = incoming {
+    let dirty = git_tracked_dirty(&repo);
+    // Nothing to land AND nothing hand-edited: say so and stop. Pressing
+    // Update again used to print a wall of work-sounding output for a
+    // checkout that was already exactly upstream — the same "66 upstream
+    // file(s) differ" line twice in a row read as a repo that refused to
+    // update. `changed_file_count` is None when git failed, which must
+    // keep the old unconditional path (fail-open, never skip an update on
+    // a probe error).
+    if let Some(0) = incoming {
+        if !dirty {
+            let head = wangp_head_short(&repo).unwrap_or_else(|| "?".into());
+            emit(&format!("[=] Already at upstream {head} — nothing to update.\n"));
+            let (_dep, drift) = post_update_dep_check(&repo, &req_path, &emit);
+            let kept = kept_update_backups(&repo);
+            if kept > 0 {
+                emit(&format!("[i] {kept} file(s) kept in {UPDATE_BACKUP_DIR}/ from an earlier update (nothing deleted).\n"));
+            }
+            mutating_done();
+            return Ok(serde_json::json!({
+                "ok": true, "success": true, "updated": false,
+                "requirements": "unchanged", "pinDiff": Vec::<String>::new(),
+                "depCheck": "ok", "drift": drift, "compat": Vec::<String>::new(),
+                "updateBackup": kept,
+            }));
+        }
+        emit("[*] Checkout matches upstream — resetting hand-edited files anyway (no-stash policy).\n");
+    } else if let Some(n) = incoming {
         emit(&format!("[*] {n} upstream file(s) differ — updating…\n"));
     }
     // No-stash policy: latest upstream is always the truth. Every tracked
@@ -4881,7 +4981,7 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
     // our own DLSS marker patch, and any unfinished merge state) are
     // OVERWRITTEN, never stashed. Untracked files (settings, models, envs,
     // workspaces) are never touched — no `git clean`, ever.
-    if git_tracked_dirty(&repo) {
+    if dirty {
         let unmerged = git_unmerged_paths(&repo);
         if unmerged.is_empty() {
             emit("[*] Local hand-changed files detected — they will be OVERWRITTEN with latest upstream (no stash kept). Untracked files untouched.\n");
@@ -4929,21 +5029,16 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
-    let untracked = {
-        let mut u = 0;
-        for line in status_short.lines() {
-            if line.len() < 2 {
-                continue;
-            }
-            if line.starts_with("??") {
-                u += 1;
-            }
-        }
-        u
-    };
+    let untracked = count_personal_untracked(&parse_git_porcelain(&status_short));
+    let kept = kept_update_backups(&repo);
     emit(&format!(
         "[✓] Wan2GP update complete — now at upstream {head_short} (100% original git, hand edits overwritten, no stash kept); {untracked} personal file(s) (settings, envs, workspaces) left untouched.\n",
     ));
+    if kept > 0 {
+        emit(&format!(
+            "[i] {kept} file(s) this launcher moved aside are still in {UPDATE_BACKUP_DIR}/ (nothing deleted) — nothing to do unless you want your own version back.\n"
+        ));
+    }
     // Upstream bumps (e.g. mmgp 3.7.14 → 3.8.0 with a wgp.py hard-exit on
     // mismatch) only take effect once the pinned packages are reinstalled.
     // Reinstall on change only — a slow no-op pip run on every update.
@@ -5112,10 +5207,7 @@ pub async fn verify_wangp_files() -> Result<serde_json::Value, String> {
         .iter()
         .filter(|e| e.kind != DriftKind::Untracked)
         .count();
-    let untracked = entries
-        .iter()
-        .filter(|e| e.kind == DriftKind::Untracked)
-        .count();
+    let untracked = count_personal_untracked(&entries);
     let dirty: Vec<serde_json::Value> = entries
         .iter()
         .filter(|e| e.kind != DriftKind::Untracked)
@@ -5128,6 +5220,7 @@ pub async fn verify_wangp_files() -> Result<serde_json::Value, String> {
     "dirty": dirty,
     "dirtyTotal": dirty_total,
     "untracked": untracked,
+    "updateBackup": kept_update_backups(&repo),
     "head": wangp_head_short(&repo)
         .map(serde_json::Value::String)
         .unwrap_or(serde_json::Value::Null),
@@ -5629,6 +5722,71 @@ fn post_update_dep_check(
             drift.join(", ")
         ));
         ("drift", drift)
+    }
+}
+#[cfg(test)]
+mod kernel_skip_tests {
+    use super::{base_version, kernel_dist_names, kernel_spec_version_full, kernel_version_matches};
+
+    /// The three wheels an RTX_30 sync touches, exactly as setup_config.json
+    /// spells them, against what `pip show` really prints for them. The
+    /// no-op-sync guard compares these two base versions — if either half
+    /// stops parsing, the guard silently falls through and pip re-downloads
+    /// 282 MB of wheels that are already installed (2026-10-06 report).
+    #[test]
+    fn rtx30_wheels_compare_equal_to_what_pip_show_reports() {
+        let cases = [
+            (
+                "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl",
+                "1.2.1+cu13.0torch2.10",
+            ),
+            (
+                "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl",
+                "1.0.25+torch210cu130py311",
+            ),
+            (
+                "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl",
+                "2.2.0+cu130torch2.10.0andhigher.post6",
+            ),
+        ];
+        for (spec, installed) in cases {
+            let want = kernel_spec_version_full(spec).unwrap_or_else(|| panic!("no version in {spec}"));
+            assert!(
+                kernel_version_matches(installed, &want),
+                "{spec}: wanted {want} vs installed {installed}"
+            );
+            assert_eq!(base_version(&want), base_version(installed));
+        }
+    }
+
+    #[test]
+    fn sage_safe_toggle_reinstalls_the_other_build() {
+        let post6 = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl";
+        let post4 = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl";
+        let have = "2.2.0+cu130torch2.10.0andhigher.post6";
+        assert!(kernel_version_matches(have, &kernel_spec_version_full(post6).unwrap()));
+        // User turns the safe toggle off: same base version, different wheel —
+        // must NOT be skipped, or the setting silently does nothing.
+        assert!(!kernel_version_matches(have, &kernel_spec_version_full(post4).unwrap()));
+    }
+
+    #[test]
+    fn untagged_specs_still_compare_on_the_base_version() {
+        let spec = "https://example.com/kernels/releases/download/v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+        let full = kernel_spec_version_full(spec).unwrap();
+        assert_eq!(full, "1.0.25+torch210cu130py311");
+        assert!(kernel_version_matches("1.0.25+torch210cu130py311", &full));
+        assert!(!kernel_version_matches("1.0.24+torch210cu130py311", &full));
+    }
+
+    #[test]
+    fn every_synced_component_has_a_pip_dist_name() {
+        for name in ["gguf", "sage", "nunchaku_cu13", "flash", "triton"] {
+            assert!(
+                !kernel_dist_names(name).is_empty(),
+                "{name} has no dist name — the guard can never skip it"
+            );
+        }
     }
 }
 #[cfg(test)]

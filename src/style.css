@@ -888,6 +888,9 @@ html[data-theme="dark"][data-accent="rose"],
  display: flex;
  flex-direction: column;
  gap: 3px;
+  /* Grid items default to min-width:auto, so a long nowrap tag could push
+     the column past its track and paint over the neighbouring field. */
+  min-width: 0;
 }
 .mem-field > label.token-hint {
  margin-bottom: 0;
@@ -897,17 +900,25 @@ html[data-theme="dark"][data-accent="rose"],
 }
 .mem-hint {
  display: flex;
- gap: 8px;
- font-size: 0.6625rem;
- line-height: 1.4;
+ flex-wrap: wrap;
+ align-items: flex-start;
+ gap: 3px 8px;
+  font-size: 0.6625rem;
+  line-height: 1.4;
+  min-width: 0;
 }
 .tag-rec,
 .tag-saved {
- display: inline-block;
+ display: block;
  padding: 0 5px;
- border-radius: 4px;
- font-variant: tabular-nums;
- white-space: nowrap;
+  border-radius: 4px;
+  font-variant: tabular-nums;
+  white-space: nowrap;
+  /* Ellipsis inside the column instead of overflowing into the next one;
+     the full text stays reachable through the tag's title attribute. */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tag-rec {
  background: #1e3a2e;

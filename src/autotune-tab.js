@@ -173,7 +173,7 @@ const QUEUE_COLOR_LABELS = {
 // Configuration > RAM/VRAM Management panel and the README v17 section, so
 // this panel and WanGP describe the same setting the same way.
 const VRAM_ALLOCATOR_LABELS = {
-  vmm_spill: "MMGP Optimized, with RAM spilling (default)",
+  vmm_spill: "MMGP Optimized, with RAM spilling (default — falls back to shared GPU memory)",
   vmm: "MMGP Optimized, out-of-memory when VRAM is full",
   default: "PyTorch allocator",
 };
@@ -217,6 +217,14 @@ function fmtVal(key, v) {
   return String(v);
 }
 
+// A rec:/saved: chip that outgrew its column is ellipsised by the stylesheet,
+// so the full text rides along in the title: nothing is lost, nothing paints
+// over the neighbouring field.
+function setTag(el, text) {
+  el.textContent = text;
+  el.title = text;
+}
+
 function memProfilePopulate(settings, opts = {}) {
   if (!settings) return;
   // opts.mode: 'recommend' fills the dropdown + rec tags; 'saved' fills rec tags from detect AND saved tags from disk.
@@ -230,11 +238,11 @@ function memProfilePopulate(settings, opts = {}) {
         sel.value =
           v != null && v !== "" ? String(v) : key === "vae_config" ? "0" : "";
       const rec = $(f.rec);
-      if (rec) rec.textContent = "rec: " + fmtVal(key, v);
+      if (rec) setTag(rec, "rec: " + fmtVal(key, v));
     } else if (opts.mode === "saved") {
       // Show what's currently written to disk (preferred/saved).
       const saved = $(f.saved);
-      if (saved) saved.textContent = "saved: " + fmtVal(key, v);
+      if (saved) setTag(saved, "saved: " + fmtVal(key, v));
     }
   }
 }
@@ -258,7 +266,7 @@ function memProfileFromRecommendation(rec) {
         rec.int8_kernels ||
         (rec.enable_int8_kernels === 0 ? "disabled" : "auto"),
       kernel_precision: rec.kernel_precision || "fast",
-        // v17.01: "quite a few optimizations depends on" Sage2/2+, so the
+        // v17.10 (ec9566a): "quite a few optimizations depends on" Sage2/2+, so the
         // attention mode is part of the recommendation. Absent on AMD/Intel
         // (no Sage build upstream there), leaving it "— unset —".
         attention_mode: rec.attention_mode,

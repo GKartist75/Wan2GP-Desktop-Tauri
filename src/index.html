@@ -774,7 +774,7 @@
             <!-- v17 (MMGP v4) RAM/VRAM controls. Mirrors WanGP's own
                  Configuration > RAM/VRAM Management panel one-for-one. -->
             <div class="mem-field">
-              <label class="token-hint" title="Which attention kernel WanGP uses. Upstream v17.01 is explicit that quite a few of its optimizations depend on Sage2/2+. Needs the matching wheel — Sync GPU Wheels installs SageAttention 2.2.0 for RTX 30/40/50 and 1.0.6 for RTX 20. Left unset on AMD/Intel, where there is no Sage build upstream.">Attention Mode</label>
+              <label class="token-hint" title="Which attention kernel WanGP uses. Upstream v17.10 is explicit that quite a few of its optimizations depend on Sage2/2+. Needs the matching wheel — Sync GPU Wheels installs SageAttention 2.2.0 for RTX 30/40/50 and 1.0.6 for RTX 20. Left unset on AMD/Intel, where there is no Sage build upstream.">Attention Mode</label>
               <select id="memAttentionMode" class="input">
                 <option value="">— unset —</option>
                 <option value="sage2">SageAttention 2 / 2+ (recommended — v17 gains depend on it)</option>
@@ -785,10 +785,10 @@
                 <div class="mem-hint"><span id="recAttentionMode" class="tag-rec">rec: —</span><span id="savedAttentionMode" class="tag-saved">saved: —</span></div>
               </div>
               <div class="mem-field">
-              <label class="token-hint" title="MMGP Optimized VRAM Allocator — recycles VRAM that is no longer used, which lowers peak VRAM on long videos, large images and Deepy. Applied at startup, so it needs a restart.">VRAM Allocator (restart)</label>
+              <label class="token-hint" title="MMGP Optimized VRAM Allocator — recycles VRAM that is no longer used, which lowers peak VRAM on long videos, large images and Deepy. VRAM used by other programs is left to them; only when a generation would otherwise run out does it take what they are not using. Applied at startup, so it needs a restart.">VRAM Allocator (restart)</label>
               <select id="memVramAllocator" class="input">
                 <option value="">— unset —</option>
-                <option value="vmm_spill">MMGP Optimized, with RAM spilling (default)</option>
+                <option value="vmm_spill">MMGP Optimized, with RAM spilling (default — falls back to shared GPU memory when RAM runs out)</option>
                 <option value="vmm">MMGP Optimized, OOM when VRAM is full</option>
                 <option value="default">PyTorch allocator</option>
               </select>
@@ -854,8 +854,8 @@
               <div class="mem-hint"><span id="recAudioPreload" class="tag-rec">rec: —</span><span id="savedAudioPreload" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
-              <label class="token-hint" title="Share of RAM that pinning may lock. Auto is 40% on Windows and 80% on Linux. Lower it and keep Smart Memory Pinning On if you are short of RAM.">Reserved RAM for Pinning (% — 0 = Auto)</label>
-              <input type="number" id="memReservedPct" class="input" min="0" max="100" step="5" placeholder="0 = Auto">
+              <label class="token-hint" title="Share of RAM that pinning may lock. Auto is 40% on Windows and 60% on Linux (upstream lowered Linux from 80% in v17.10). WanGP's own slider stops at 80, so this stops there too. Lower it and keep Smart Memory Pinning On if you are short of RAM.">Reserved RAM for Pinning (% — 0 = Auto)</label>
+              <input type="number" id="memReservedPct" class="input" min="0" max="80" step="5" placeholder="0 = Auto">
               <div class="mem-hint"><span id="recReservedPct" class="tag-rec">rec: —</span><span id="savedReservedPct" class="tag-saved">saved: —</span></div>
             </div>
             </div>

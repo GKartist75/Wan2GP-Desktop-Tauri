@@ -10,7 +10,13 @@ $("updateBtn").addEventListener("click", async () => {
   $("updateBtn").textContent = "Working...";
   try {
     const r = await window.w2gp.update();
-    appendLog("[*] Wan2GP update complete");
+    // A no-op update (checkout already exactly upstream) says so instead
+    // of printing a "complete" line for work that never happened.
+    appendLog(
+      r && r.updated === false
+        ? "[=] Wan2GP already up to date — nothing to update"
+        : "[*] Wan2GP update complete",
+    );
     if (r && r.requirements === "reinstalled") {
       appendLog("[*] requirements.txt changed — pinned packages reinstalled");
       const pd = r && r.pinDiff;

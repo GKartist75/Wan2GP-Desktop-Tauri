@@ -73,11 +73,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const cfg =
       cfgPreload || (await window.w2gp.configLoad().catch(() => ({})));
-    if (cfg.themeFollowSystem)
-      applyTheme(
-        matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
-      );
-    else if (cfg.theme === "dark") applyTheme("dark");
+    // Resolve unconditionally: applyTheme also clears the hardcoded
+      // data-theme="dark" that index.html ships, so a persisted light theme
+      // actually survives a relaunch.
+      applyTheme(resolveTheme(cfg, systemPrefersDark()));
     loadAppear(cfg);
     initAppearControls(); // top-bar palette + A± need no settings panel
     // System theme follow (real matchMedia — backend only persists the preference).
@@ -90,11 +89,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           try {
             const c = await window.w2gp.configLoad();
             if (c.themeFollowSystem)
-              applyTheme(
-                matchMedia("(prefers-color-scheme: dark)").matches
-                  ? "dark"
-                  : "light",
-              );
+              applyTheme(resolveTheme(c, systemPrefersDark()));
           } catch {}
         },
       );
