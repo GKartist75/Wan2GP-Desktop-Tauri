@@ -62,7 +62,12 @@ $latest = [ordered]@{
   }
 }
 $latestPath = "src-tauri\target\release\bundle\nsis\latest.json"
-$latest | ConvertTo-Json -Depth 6 | Set-Content $latestPath
+# No BOM, ever: the Tauri updater parses this file with serde_json, and a UTF-8
+# BOM makes it fail with "error decoding response body" instead of showing the
+# update. `Set-Content -Encoding UTF8` under PowerShell 5.1 writes EF BB BF —
+# a v0.10.3 release shipped that way and every client's update check errored.
+[System.IO.File]::WriteAllText($latestPath, ($latest | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
+if ([System.IO.File]::ReadAllBytes($latestPath)[0] -eq 0xEF) { throw "latest.json still starts with a BOM - the updater cannot parse it" }
 
 # 4) Publish (latest.json must be on a published release — /latest/download/ 404s on drafts)
 $msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | Where-Object { $_.Name -like "*$Version*" } | Select-Object -First 1
