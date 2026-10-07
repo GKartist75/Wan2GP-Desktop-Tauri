@@ -795,6 +795,15 @@
               <div class="mem-hint"><span id="recVramAllocator" class="tag-rec">rec: —</span><span id="savedVramAllocator" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
+              <label class="token-hint" title="MMGP Optimized RAM Allocator — hands the RAM of freed CPU tensors (decoded frames, converted weights, frames waiting to be saved) back to the system when the queue is done, a model is released or the RAM runs short, instead of keeping it in PyTorch's allocator for the rest of the session; on Windows it also commits only what a tensor needs, where PyTorch's can commit up to twice as much. Up to 2 GB is kept for reuse between generations of the same model, so nothing is released mid-generation unless RAM runs short. PyTorch Default keeps that RAM for reuse instead. Works on Windows and Linux with PyTorch 2.6 to 2.15 — elsewhere WanGP says so at startup and uses PyTorch's. Applied at startup, so it needs a restart.">RAM Allocator (restart)</label>
+              <select id="memRamAllocator" class="input">
+                <option value="">— unset —</option>
+                <option value="mmgp">MMGP Optimized (default — the RAM of freed tensors goes back to the system)</option>
+                <option value="default">PyTorch allocator (keeps the RAM of freed tensors for reuse)</option>
+              </select>
+              <div class="mem-hint"><span id="recRamAllocator" class="tag-rec">rec: —</span><span id="savedRamAllocator" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
               <label class="token-hint" title="Attends one group of attention heads at a time. Medium saves about 2 GB of VRAM for up to about 3% slower steps on MiniMax H3 at 1920x1088 / 362 frames. Quality is the same, but the result is not identical to Off: details, and sometimes the motion, can differ. Only engages on long sequences (8192+ tokens).">Attention Head Split</label>
               <select id="memHeadSplit" class="input">
                 <option value="">— unset —</option>

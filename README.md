@@ -234,17 +234,18 @@ Same launcher, same Wan2GP, same features — lightweight native shell. It uses 
 
 `video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `int8_kernels` (Auto / Comfy Kitchen / Triton / Disabled — upstream v13.13 replacement for the old numeric toggle), `kernel_precision` (fast approximate / strict), `vae_config` (always Auto: 16GB+ / 8GB+ / 6GB+ presets), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** checkbox forces P5 for hardware where the recommendation still crashes.
 
-**Upstream v17 RAM/VRAM settings (new in v0.10.1)** — WanGP v17 ships these but leaves them off by default, asking every user to switch them on by hand. Auto-Tune calibrates them instead:
+**Upstream v17 RAM/VRAM settings (new in v0.10.1)** — WanGP v17 ships several of these off by default, asking every user to switch them on by hand. Auto-Tune calibrates them instead:
 
 | Setting | Key | Auto-Tune writes | Notes |
 | --- | --- | --- | --- |
 | Attention Mode | `attention_mode` | `sage2` (RTX 30/40/50), `sage` (RTX 20), `sdpa` (GTX 10) | Upstream v17.01 is explicit that *"quite a few optimizations depends on"* Sage2/2+. Needs the matching wheel — Sync GPU Wheels installs SageAttention 2.2.0 for RTX 30/40/50 and 1.0.6 for RTX 20 |
 | VRAM Allocator | `vram_allocator` | `vmm_spill` | **Needs a restart.** Recycles VRAM that is no longer used; with spilling, a generation slightly too large for the card can still finish, slowly |
+| RAM Allocator | `ram_allocator` | nothing (manual) | **Needs a restart.** New in upstream v17.17, where `mmgp` is already the default: it hands the RAM of freed CPU tensors back to the system when the queue is done, a model is released or RAM runs short, where PyTorch's allocator keeps it for the rest of the session (and on Windows can commit up to twice what a tensor needs). Pick `default` to keep PyTorch's behaviour. Windows/Linux with PyTorch 2.6-2.15; elsewhere WanGP falls back and says so at startup |
 | Attention Head Split | `attention_head_split` | `2` (Medium) under 12 GB, else Off | Upstream measures ~2 GB less VRAM for ≤3% slower steps on H3 1920×1088 / 362 frames (~4 GB with H3 + Sol attention, ~2.5 GB with VDN). **Quality is the same but the result is not identical to Off — details, and sometimes the motion, can differ.** Only engages on long sequences (8192+ tokens) |
 | Read Ahead | `read_ahead` | on (Windows) | Reads model files ahead of use, so they are already in RAM on first load |
 | Smart Memory Pinning | `smart_memory_pinning` | on | 1–2 GB of Reserved RAM to reach the GPU nearly as fast. Changing it reloads the model |
 | VRAM Preload | `video/image/audio_preload_mode` | video `default`, image `dynamic`, audio `default` | Per output type. See below — this is the one where video and image genuinely differ |
-| Reserved RAM for Pinning | `perc_reserved_mem_max` | `0` (Auto) | 0 = 40% on Windows, 80% on Linux. Upstream treats this as a **percentage** since v17 |
+| Reserved RAM for Pinning | `perc_reserved_mem_max` | `0` (Auto) | 0 = 40% on Windows, 60% on Linux (upstream v17.10 lowered Linux from 80%). Upstream treats this as a **percentage** since v17 |
 
 **Why video gets `default` and image gets `dynamic`** — this is upstream's advice, quoted:
 

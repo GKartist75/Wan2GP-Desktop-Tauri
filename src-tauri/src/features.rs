@@ -2072,6 +2072,8 @@ pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool 
         "kernel_precision" => ["fast", "strict"].contains(&s),
         // shared/cuda_memory.py VRAM_ALLOCATOR_CHOICES
         "vram_allocator" => ["default", "vmm", "vmm_spill"].contains(&s),
+        // shared/cuda_memory.py RAM_ALLOCATOR_CHOICES (v17.17)
+        "ram_allocator" => ["default", "mmgp"].contains(&s),
         // shared/attention_kit.py HEAD_SPLIT_CHOICES: int 0..3
         "attention_head_split" => matches!(val.as_u64(), Some(0..=3)),
         // bool knobs added with the MMGP v4 runtime
@@ -2110,6 +2112,8 @@ pub(crate) const MEMORY_OVERRIDE_KEYS: &[&str] = &[
     "queue_color_scheme",
     // v17 (MMGP v4) RAM/VRAM controls.
     "vram_allocator",
+    // v17.17 RAM allocator, beside the VRAM one it complements.
+    "ram_allocator",
     "attention_head_split",
     "read_ahead",
     "smart_memory_pinning",
@@ -2973,6 +2977,7 @@ mod autotune_matrix_tests {
     fn apply_allowlist_covers_every_v17_key() {
         for key in [
             "vram_allocator",
+            "ram_allocator",
             "attention_head_split",
             "read_ahead",
             "smart_memory_pinning",
@@ -2992,7 +2997,7 @@ mod autotune_matrix_tests {
     fn memory_profile_read_returns_written_keys_and_invents_none() {
         let td = TestDataDir::new();
         td.seed_wgp_config(
-            r#"{"video_profile":4,"vram_allocator":"vmm_spill","attention_head_split":2,"read_ahead":true,"smart_memory_pinning":true,"video_preload_mode":"default","image_preload_mode":"dynamic","audio_preload_mode":"default","perc_reserved_mem_max":0,"enable_int8_kernels":0,"unrelated":"x"}"#,
+            r#"{"video_profile":4,"vram_allocator":"vmm_spill","ram_allocator":"mmgp","attention_head_split":2,"read_ahead":true,"smart_memory_pinning":true,"video_preload_mode":"default","image_preload_mode":"dynamic","audio_preload_mode":"default","perc_reserved_mem_max":0,"enable_int8_kernels":0,"unrelated":"x"}"#,
         );
         let settings = memory_profile_read()
             .get("settings")
@@ -3002,6 +3007,7 @@ mod autotune_matrix_tests {
         for (k, v) in [
             ("video_profile", serde_json::json!(4)),
             ("vram_allocator", serde_json::json!("vmm_spill")),
+            ("ram_allocator", serde_json::json!("mmgp")),
             ("attention_head_split", serde_json::json!(2)),
             ("read_ahead", serde_json::json!(true)),
             ("smart_memory_pinning", serde_json::json!(true)),
