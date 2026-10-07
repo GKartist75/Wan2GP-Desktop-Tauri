@@ -34,7 +34,7 @@ Trust rule: **upstream owns** the profile→package mapping (`setup.py`,
 `setup_config.json`) and all model/runtime code. **The launcher owns**
 detection, provisioning, honesty (exit codes, smoke tests), and lifecycle
 (start/stop/update). The launcher mirrors upstream data, never overrides it —
-except where upstream lags its own docs (GGUF 1.0.21), declares data nothing
+except where upstream lags its own docs (GGUF floor), declares data nothing
 consumes (HSA override), or ships a template that breaks its own installs
 (conda `conda run` re-quoting corrupts wheel URLs → direct-pip patch); all
 are documented at the call site, drift-refusing, and auto-follow upstream flips.
@@ -107,12 +107,12 @@ or env surgery.
 flowchart LR
     CFG["setup_config.json\n(local, else origin/main)"] --> PROF["gpu_profiles[RTX_20..50]\nkernels: nunchaku_cu13 · gguf · light2xv"]
     PROF --> URLS["components.*.cmd.win wheel URLs"]
-    URLS --> SWAP["Overrides (documented)\nSage post4→post6 (safe toggle)\nGGUF 1.0.14→1.0.21 (docs lead)"]
+    URLS --> SWAP["Overrides (documented)\nSage post4→post6 (safe toggle)\nGGUF floor (docs lead)"]
     SWAP --> PIP["pip install --upgrade\nper kernel, failures named"]
 PIP --> OVERVIEW["Dashboard overview\nwant vs installed ✓/⚠/✗"]
 ```
 
-*↻ Update GPU Wheels* installs the wanted set above (upstream URLs plus launcher fixes: safe Sage build, GGUF 1.0.21 floor, no Triton downgrade). *Restore GPU Wheels* reinstalls deepbeepmeep's pure `setup_config.json` set with the overrides off — the way back when an override misbehaves.
+*↻ Update GPU Wheels* installs the wanted set above (upstream URLs plus launcher fixes: safe Sage build, the GGUF floor, no Triton downgrade). *Restore GPU Wheels* reinstalls deepbeepmeep's pure `setup_config.json` set with the overrides off — the way back when an override misbehaves.
 
 ## Update flow (launcher itself)
 
