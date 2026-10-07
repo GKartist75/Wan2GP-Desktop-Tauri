@@ -9,6 +9,7 @@
     ⬇ Download for Windows — Latest Release
   </a><br>
   <code>wan2gp-tauri-spike_*_x64-setup.exe</code> · ≈ 3 MB · Windows 10 / 11<br>
+  <small>Hardware needs scale with the model you pick — start at 6 GB VRAM, up to 24 GB+ for max quality.</small><br>
   <small>⚠️ Unsigned installer — "unknown publisher" warning is normal for open-source without a code-signing cert.</small>
 </p>
 
@@ -16,22 +17,24 @@
 
 ## Contents
 
-- [User Guide — all screens, tabs & buttons](docs/USER-GUIDE.md)
-- [WanGP Guidance — what to make, which model & settings](docs/WAN2GP-GUIDE.md)
+**Is this for me?** → [What you get](#what-you-get) · **Already installed?** → [User Guide](docs/USER-GUIDE.md) · **Picking a model?** → [WanGP Guidance](docs/WAN2GP-GUIDE.md)
+
 - [Download & Install](#download--install)
 - [🔥 What's New](#-whats-new)
 - [Screenshots](#screenshots)
-- [Why Tauri?](#why-tauri)
 - [What you get](#what-you-get)
-- [🛟 Troubleshooting](#-troubleshooting--from-upstreams-guide-as-buttons)
+- [Why Tauri?](#why-tauri)
+- [🛟 Troubleshooting](#-troubleshooting--upstreams-guide-as-buttons)
 - [⚡ Auto-Tune](#-auto-tune--one-click-right-profile)
+- [🔧 GPU kernels](#-gpu-kernels--the-right-ones-automatically)
 - [📊 Monitoring & control](#-monitoring--control)
-- [🔧 GPU kernels](#-gpu-kernels--what-gets-installed-per-gpu)
 - [Deepy — your offline agent](#deepy--your-offline-agent)
-- [🧩 Plugin Manager & ✨ DLSS5](#-plugin-manager)
-- [🧭 Guide & 📚 Library](#-guide--library)
+- [📱 Phone & remote access](#-phone--remote-access)
+- [🧩 Plugin Manager](#-plugin-manager)
+- [✨ DLSS5 installer](#-dlss5-installer--optional-nvidia-upsamplers)
+- [🧭 Guide & 📚 Library](#-guide---library)
+- [Documentation](#documentation)
 - [🛠 Build from source](#-build-from-source)
-- [🧪 Tests](#-tests)
 - [⭐ Star History](#-star-history)
 - [Credits & License](#credits--license)
 
@@ -50,7 +53,11 @@ No Python, no CUDA toolkit, no `pip`, no Node needed beforehand — the installe
 
 ![Launch buttons — Desktop hero, Browser/No-GPU, Terminal/No-GPU, update/verify/rollback actions](screenshots/launch-buttons.png)
 
-- **Desktop** — Wan2GP embedded in the launcher, with reload, zoom 25–200%, hide/show switching that keeps your session, and console-first boot (watch the dashboard log, view opens when ready). The embedded page follows the launcher theme (dark/light via Gradio's theme param; Gradio's own toggle still wins afterwards). Browser-parity media flow: drag & drop files into Gradio dropzones works, and new gallery arrivals pop a Save / Save As… prompt (with real file-type filters — issue #29).
+- **Desktop** — Wan2GP embedded in the launcher: reload, zoom 25–200%, hide/show that keeps your session, and console-first boot (the view opens when the dashboard log says it's ready). Drag & drop into Gradio dropzones works, and new gallery arrivals pop a Save / Save As… prompt with real file-type filters.
+- **Browser** — visible console, auto-opens when ready.
+- **External Terminal** — a real Windows Terminal / cmd window via generated script; in-app LED + Stop.
+- **No-GPU Chrome** — launches Chrome with GPU disabled to free VRAM for generation.
+- **Browser picker** — detects Chrome, Edge, Firefox, Brave, Opera, Vivaldi.
 - **Browser** — visible console + auto-opens your browser when ready.
 - **External Terminal** — real Windows Terminal / cmd via generated script; in-app LED + Stop.
 - **No-GPU Chrome** — launch Chrome with GPU disabled to free VRAM for generation.
@@ -85,43 +92,18 @@ C:\Wan2GP-Models\               ← models library
 
 ## 🔥 What's New
 
-> Full history: [CHANGELOG.md](CHANGELOG.md)
+> Full history with every fix: [CHANGELOG.md](CHANGELOG.md). All releases: [GitHub](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases).
 
-- [**v0.10.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.3) *(latest)* — **Three fixes, all found by using the app.** The Auto-Tune panel printed its `rec:`/`saved:` chips straight over the neighbouring field whenever a recommendation was long (they are nowrap chips in a grid that defaulted to `min-width: auto`; they now wrap, ellipsise, and keep the full value in a tooltip). Restore reported "Requirements restored." whether pip had installed three wheels or nothing at all — it now names the packages, or says the pins already matched. And **Sync GPU Wheels re-downloaded 282 MB of already-installed wheels on every run**: the skip guard from 0.10.1 parsed the version out of the whole wheel URL by splitting on `-`, so the hyphens in `github.com/nunchaku-ai/…` swallowed it, the guard saw "no version" and installed everything anyway. It now reads the wheel filename; a second bug in the same guard meant the Sage safe-build toggle (post6 ↔ post4) compared `2.2.0` with `2.2.0` and skipped, so that setting silently did nothing. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.10.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.2) — **Light theme survives a relaunch, and Update stops pretending to work when it did nothing.** Picking light was undone on the next launch: `index.html` ships `data-theme="dark"` hardcoded and only the dark branch of each of the four theme paths ever wrote that attribute. One `resolveTheme()` now decides, a manual pick outranks follow-system, the follow-system switch applies in both directions, and the floating terminal follows the main window instead of freezing on its last value. Pressing **Update Wan2GP** on a checkout that already is upstream printed a full work-sounding log ("66 upstream file(s) differ", `HEAD is now at <same sha>`); it now says *Already at upstream — nothing to update* and stops, and the launcher's own `.launcher-update-backup/` folder no longer counts as one of your personal files. Upstream parity to **v17.10**: Linux Reserved-RAM auto is 60% (was 80%), RAM spilling now falls back to shared GPU memory instead of stopping, and the two new LTX-2.5 VFX presets reach the Guide tab. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.10.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.1) — **Upstream v17 (MMGP v4) parity.** WanGP v17 makes Profile 4 up to 50% cheaper in VRAM and does 1080p on an 11 GB card, and asks the user to hand-enable five new settings; the launcher now calibrates them per hardware instead. Nine new controls (Attention Mode, VRAM Allocator, Attention Head Split, Read Ahead, Smart Memory Pinning, VRAM Preload for video/image/audio, Reserved RAM) join Auto-Tune with the same rec/saved contract as everything else — Detect proposes, Apply writes, and a value you change inside WanGP is never clobbered. A card under 12 GB now rides **P4 + head split** instead of falling back to failsafe, audio defaults to P3+, attention mode follows the card (Sage2/2+ on RTX 30/40/50, where most of the v17 gain lives), and AMD/Intel get none of the CUDA-only levers rather than settings that would silently do nothing. Also: the update log stops misreporting its own size (it claimed 1828 upstream changes for a 4-commit update, an artifact of our shallow clone), Sync GPU Wheels stops re-downloading wheels you already have (281.9 MB per no-op run), mmgp is reported from where it actually runs and with a build fingerprint so two allocator builds stop both reading 4.0.0, and Troubleshooting gains upstream's per-GPU known-good recipe, one-click OOM remedies, Windows VRAM diagnostics and verbose logging.
-
-- [**v0.10.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.0) — Internal overhaul, no behaviour change: the renderer is split into 35 per-panel files (`app.js` 10,545 → 1,469 lines), the project gains its first test suite (`cargo test` 234, `npm test` 27) that provably cannot touch your `wgp_config.json`, plus a `npm run harness` DOM harness for driving the UI without a build. Also removes ~2,200 lines of dead Electron-era code and fixes the Auto-tune RAM chip printing `31.763145446777344 GB`. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.9.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.2) — AMD correctness + fail-closed memory: RX 9060 / 9060 XT install the right `gfx1200` wheels, no stale compiler/SDK env at launch, AMD attention defaults to `sdpa`, and RAM/VRAM probing fails toward smaller profiles instead of larger ones. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.9.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.1) — Opt-in console log viewer on its own port (Manage → Phone & remote access → C · Console logs): watch errors + completions in a second tab/window, phone included. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.9.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.0) — AMD ROCm 10 refresh (unified `AMD` profile, Python 3.12, pinned torch 2.13 stable). Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.8.9**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.9) — Pin-aware environment updates (issue #54): torch / kernel wheels / requirements-capped packages show `pinned` instead of env-breaking upgrade arrows, with a Yes/Cancel override dialog per source. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.8.8**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.8) — Quieter updates (no more misleading `fatal: no merge to abort` line). Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.8.7**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.7) — Stash-free updates (upstream always wins, hand edits overwritten), Repair recovers conflicted checkouts, DLSS panel detects the merged upstream workstation fix. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.8.6**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.6) — Workstation fix hardened from real PRO 5000 feedback (CRLF checkouts patch now, refusals log the installed check for reports, upstream-fixed runtimes detected); probe summary goes compact. ⚠️ Workstation path still untested by us — confirm on PRO/A-series silicon. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.8.5**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.5) — DLSS5 card: Check compatibility verdicts (ready / not-installed / blocked) as labeled rows, opt-in workstation GPU fix for RTX PRO / Ada / RTX Ax000 (backed up, reversible). ⚠️ Workstation path untested on real hardware — confirm on PRO/A-series silicon. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.8.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.4) — Upstream v13.14 wave: GGUF 1.0.25 floor (+HIP wheel), local Deepy Prime 9B/27B support with combined model+quantization picker and Local/Remote engine grouping, Claude bridge 0.1.66, perpetual "update available" fix (containment checks + fast-forward-first pulls), Prompt Enhancer Usage labels. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.8.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.3) — GGUF 1.0.23 + cu128 split, Sync `--no-deps` fix (issue #44), self-updating floor + setup_config validation + post-update compat check, collapsed card update badge, Desktop follows launcher theme (issue #43). Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.8.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.2) — 📱 Phone & remote access panel (main-server `--listen` toggle with restart-in-place, Gradio + `/deepy/` phone URLs with QR, merged with Deepy Web), collapsible left panels with live header actions, Manage tabs reorganized, topbar alignment, console Clear button, control taxonomy styling, Deepy port reset-to-auto, env-switcher fix. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.8.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.1) — AMD experimental HIP GGUF opt-in button, Deepy Web start-command transparency + Extra args + fast-fail boot wait, `--listen` spelled out on the mode radios. Details in [CHANGELOG](CHANGELOG.md).
-
-- [**v0.8.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.8.0) — native-first queue notifications (Apprise destinations in `wgp_config.json`, credential-store support, test button, `apprise`+`keyring` install, legacy sender fallback), launch hardening against stray `%TEMP%` scripts shadowing stdlib (issue #36). Details in [CHANGELOG](CHANGELOG.md).
-
-- Older releases: full history in [CHANGELOG.md](CHANGELOG.md) (v0.7.5 to v0.1.x).
+| Version | Headline |
+| --- | --- |
+| [**v0.10.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.3) | Long Auto-Tune values stop overlapping neighbouring fields; Restore names what it installed; Sync no longer re-downloads 282 MB of wheels you already have |
+| [**v0.10.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.2) | Light theme survives a relaunch; Update says *"Already at upstream"* instead of doing a no-op |
+| [**v0.10.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.1) | **Upstream v17 (MMGP v4) parity** — Profile 4 is up to 50% cheaper in VRAM, and nine new upstream settings are calibrated per hardware instead of left for you to hand-enable |
+| [**v0.10.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.0) | Internal: renderer split into 35 per-panel files, first test suite, ~2,200 lines of dead Electron code removed |
+| [**v0.9.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.2) | AMD correctness — RX 9060 / 9060 XT get the right `gfx1200` wheels; memory probing fails toward smaller profiles |
+| [**v0.9.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.1) | Opt-in console log viewer on its own port (phone included) |
+| [**v0.9.0**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.9.0) | AMD ROCm 10 refresh — unified `AMD` profile, Python 3.12, pinned torch 2.13 |
+| [**v0.8.x**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases) | Pin-aware updates, stash-free updates, phone & remote access, queue notifications, plugin manager, DLSS5 |
 
 ---
 
@@ -150,7 +132,7 @@ C:\Wan2GP-Models\               ← models library
 
 Same launcher, same Wan2GP, same features — lightweight native shell. It uses the **WebView2 engine already built into Windows 10/11** and a compiled **Rust** backend. No bundled browser, no Node runtime.
 
-- Installer download: **≈ 4 MB**
+- Installer download: **≈ 3 MB**
 - Installed app: **≈ 12 MB**
 - Idle RAM (launcher shell): **~30–80 MB (shared system WebView2)**
 - Startup: **near-instant native boot**
@@ -198,23 +180,33 @@ Same launcher, same Wan2GP, same features — lightweight native shell. It uses 
 
 ---
 
-## 🛟 Troubleshooting — from upstream's guide, as buttons
+## 🛟 Troubleshooting — upstream's guide, as buttons
 
-**Manage → Troubleshooting** is built from WanGP's own `docs/TROUBLESHOOTING.md`, but turned into controls instead of copy-paste command lines. Read-only checks first; anything that writes backs up or asks.
+**Manage → Troubleshooting** turns WanGP's own `docs/TROUBLESHOOTING.md` into controls instead of copy-paste command lines. Read-only checks first; anything that writes backs up or asks.
 
-- **Diagnostics** — CUDA/GPU smoke test, real GEMM + INT8 compute check, Triton import test, port status (who owns the busy port) with a one-click fix, Windows long-paths status and one-click enable.
-- **Failsafe (P5)** — drops every profile to the minimum-compatibility one, backs up `wgp_config.json` first, and sets an SDPA fallback so the next boot works.
-- **Known-good settings for this GPU** *(new in v0.10.1)* — upstream's per-class recipe for your card: `sdpa`/P4 on GTX 10xx, `sage`/P4 on RTX 20xx, `compile`/`sage2`/P3 on RTX 30–40xx, `sage2`/P4 on RTX 50xx. Shown before anything is written. Only keys that really exist in `wgp_config.json` are used — Tea Cache and fp16 have no config key upstream, so they are reported as *"set this in WanGP"* rather than written as settings that would silently do nothing. AMD/Intel get no recipe; upstream publishes none.
-- **Out-of-memory remedies** *(new)* — one click for Attention Head Split → Medium (upstream's figure: ~2 GB less VRAM for ≤3% slower steps on H3 1080p/362 frames; output is the same quality but details — and sometimes the motion — can differ) or Lower Reserved RAM with Smart Memory Pinning on. Both go through the same validated, backed-up write path as Auto-Tune.
-- **Windows VRAM diagnostics** *(new)* — **Who is using VRAM** lists per-process GPU memory (`gpumem.cmd`; WDDM hides this from `nvidia-smi`), and **Trim idle VRAM** asks Windows to release idle allocations (`gputrim.cmd`). Trim is behind a confirmation: it briefly applies memory pressure and the screen can flash.
-- **Verbose logging** *(new)* — launch WanGP with `--verbose 2` so the console captures upstream's own diagnostics instead of the launcher guessing from summary lines.
-- **Debug bundle** — one click copies a markdown report for Discord or GitHub: GPU, Python, Torch + CUDA, launch args, profiles, an error-only log tail, AMD HSA evidence, and since v0.10.1 the v17 state (mmgp version, allocator, head split, pinning, read-ahead, reserved-RAM %, preload modes).
+| Button | What it does |
+| --- | --- |
+| **Diagnostics** | CUDA smoke test, real GEMM + INT8 compute check, Triton import, port owner + one-click fix, Windows long-paths status |
+| **Failsafe (P5)** | Drops every profile to minimum-compatibility, backs up `wgp_config.json`, sets an SDPA fallback so the next boot works |
+| **Known-good settings for this GPU** | Upstream's per-class recipe, shown before anything is written |
+| **Out-of-memory remedies** | One click for Head Split → Medium or Lower Reserved RAM with pinning on |
+| **Windows VRAM** | *Who is using VRAM* (per-process) and *Trim idle VRAM* |
+| **Verbose logging** | Launches WanGP with `--verbose 2` so the console captures upstream's own diagnostics |
+| **Debug bundle** | One click copies a report for Discord or GitHub |
+
+**The known-good recipe** per card: `sdpa`/P4 on GTX 10xx · `sage`/P4 on RTX 20xx · `compile`/`sage2`/P3 on RTX 30–40xx · `sage2`/P4 on RTX 50xx. Only keys that really exist in `wgp_config.json` are written — Tea Cache and fp16 have no upstream key, so they are reported as *"set this in WanGP"* rather than saved as settings that would silently do nothing. AMD and Intel get no recipe; upstream publishes none.
+
+**Head Split is a real trade.** Upstream's figure is ~2 GB less VRAM for ≤3% slower steps on H3 1080p/362 frames — same quality, but details and sometimes the motion can differ. Both remedies go through the same validated, backed-up write path as Auto-Tune.
+
+> ⚠️ **Trim idle VRAM** briefly applies memory pressure and the screen can flash — it asks first. *Who is using VRAM* reads `gpumem.cmd`; WDDM hides per-process GPU memory from `nvidia-smi`.
+
+> **Details and full button list:** [User Guide → Manage → System](docs/USER-GUIDE.md#manage--system)
 
 ---
 
 ## ⚡ Auto-Tune — one click, right profile
 
-**Manage → Auto-Tune** (or ⚡ on the dashboard) scans GPU/VRAM/RAM/kernels and recommends the optimal `wgp_config.json` settings. All three profile dropdowns (video/image/audio) stay editable before you Apply.
+**Manage → Auto-Tune** (or ⚡ on the dashboard) reads your GPU, VRAM, RAM and kernels, then recommends the right `wgp_config.json` settings. Detect only proposes — **Apply Overrides** is the only thing that writes, and it refuses while WanGP is running.
 
 **VRAM × RAM profile matrix**
 
@@ -224,45 +216,20 @@ Same launcher, same Wan2GP, same features — lightweight native shell. It uses 
 | **12–23 GB** | P2 | **P4 balanced** | P5 |
 | **<12 GB** | **P4** | **P4** | **P4** |
 
-> The `<12 GB` row changed in v0.10.1. Upstream v17 (MMGP v4) makes Profile 4 up to 50% cheaper in peak VRAM — enough that a card under 12 GB no longer has to drop to P4+ or the failsafe net. Auto-Tune gives those machines **P4 plus Attention Head Split** instead, which buys ~20% more VRAM for a few percent of speed. **Prefer failsafe** still forces P5 everywhere.
+Profiles run 1 (max performance) to 5 (failsafe). Upstream v17 made Profile 4 up to 50% cheaper in peak VRAM, so a card under 12 GB no longer has to drop to the failsafe net — it gets **P4 plus Attention Head Split** instead, which buys ~20% more VRAM for a few percent of speed. **Prefer failsafe** still forces P5 everywhere.
 
-> **Two honest caveats about the tight-VRAM recommendation.** First, upstream now says plainly: *"make sure you use Sage2/2+ Attention as quite a few optimizations depends on it"* — most of the v17 gain assumes Sage 2, and Auto-Tune does not switch your attention mode (that stays yours, via Performance Settings or the known-good recipe). Second, Attention Head Split does not reproduce the input exactly: *"the result is of the same quality but not identical to Off: details, and sometimes the motion, can differ."* We recommend it by default because VRAM headroom is the failure mode that stops generation outright, but it is a visible trade, not a free win — set it to Off in one click if you want bit-identical output.
+**Two honest caveats.** Attention Head Split does not reproduce the input exactly: same quality, but details — and sometimes the motion — can differ. And most of the v17 gain assumes Sage2 attention, which Auto-Tune does *not* switch for you — that stays yours via Performance Settings or the known-good recipe under Troubleshooting. Head split is on by default because VRAM headroom is the failure mode that stops generation outright; turn it Off in one click if you want bit-identical output.
 
-**Audio gets P3+ almost everywhere, even when video does not.** Upstream's own default for audio is Profile 3+ — audio models fit whole in VRAM, where the language model many of them include runs much faster and can use the CUDA Graph or vLLM engines. Auto-Tune does **not** gate that on the VRAM tiers above, because those are calibrated against 14B video models and audio models are an order of magnitude smaller: a card that earns P4 for video comfortably holds one whole. Audio therefore lands on P3+ from any video/image profile of P2, P4 or P4+. Two exceptions, both deliberate — **P5 follows down** (when video itself is at the failsafe net there is nothing left to spare), and **P1/P3 are left alone** (they already load whole and keep Reserved RAM).
+Audio lands on **P3+** almost everywhere, even where video gets P4 — audio models fit whole in VRAM, where upstream's own default applies. Two deliberate exceptions: P5 follows down, and P1/P3 are left alone.
 
-**Settings written to `wgp_config.json`**
+Settings written: `video/image/audio_profile`, `transformer_quantization`, `int8_kernels`, `kernel_precision`, `vae_config`, `vram_safety_coefficient`, plus the v17 levers (`attention_mode`, `vram_allocator`, `attention_head_split`, `read_ahead`, `smart_memory_pinning`, `*_preload_mode`, `perc_reserved_mem_max`). **These are CUDA-only** — on AMD and Intel Auto-Tune leaves them unset rather than persisting a setting that silently does nothing. Conditions are stated in the panel itself: the allocator needs a restart, pinning reloads the model, head split only engages at ≥8192 tokens.
 
-`video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `int8_kernels` (Auto / Comfy Kitchen / Triton / Disabled — upstream v13.13 replacement for the old numeric toggle), `kernel_precision` (fast approximate / strict), `vae_config` (always Auto: 16GB+ / 8GB+ / 6GB+ presets), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** checkbox forces P5 for hardware where the recommendation still crashes.
+A fresh install seeds the recommended values once, with setdefault semantics, so day one is already calibrated. An update never re-seeds over settings you tuned.
 
-**Upstream v17 RAM/VRAM settings (new in v0.10.1)** — WanGP v17 ships these but leaves them off by default, asking every user to switch them on by hand. Auto-Tune calibrates them instead:
-
-| Setting | Key | Auto-Tune writes | Notes |
-| --- | --- | --- | --- |
-| Attention Mode | `attention_mode` | `sage2` (RTX 30/40/50), `sage` (RTX 20), `sdpa` (GTX 10) | Upstream v17.01 is explicit that *"quite a few optimizations depends on"* Sage2/2+. Needs the matching wheel — Sync GPU Wheels installs SageAttention 2.2.0 for RTX 30/40/50 and 1.0.6 for RTX 20 |
-| VRAM Allocator | `vram_allocator` | `vmm_spill` | **Needs a restart.** Recycles VRAM that is no longer used; with spilling, a generation slightly too large for the card can still finish, slowly |
-| Attention Head Split | `attention_head_split` | `2` (Medium) under 12 GB, else Off | Upstream measures ~2 GB less VRAM for ≤3% slower steps on H3 1920×1088 / 362 frames (~4 GB with H3 + Sol attention, ~2.5 GB with VDN). **Quality is the same but the result is not identical to Off — details, and sometimes the motion, can differ.** Only engages on long sequences (8192+ tokens) |
-| Read Ahead | `read_ahead` | on (Windows) | Reads model files ahead of use, so they are already in RAM on first load |
-| Smart Memory Pinning | `smart_memory_pinning` | on | 1–2 GB of Reserved RAM to reach the GPU nearly as fast. Changing it reloads the model |
-| VRAM Preload | `video/image/audio_preload_mode` | video `default`, image `dynamic`, audio `default` | Per output type. See below — this is the one where video and image genuinely differ |
-| Reserved RAM for Pinning | `perc_reserved_mem_max` | `0` (Auto) | 0 = 40% on Windows, 80% on Linux. Upstream treats this as a **percentage** since v17 |
-
-**Why video gets `default` and image gets `dynamic`** — this is upstream's advice, quoted:
-
-> "For image models, use Profile 4 or 5 with a *Dynamic* or Manual VRAM Preload for faster generations. Their steps are short, so the transfers set the speed. … **Video steps are usually long enough to hide the transfers.**"
-> — WanGP → Configuration → RAM/VRAM Management
-
-> "*Dynamic* helps most where transfers set the speed: **images and low resolutions, with short steps**. Video steps are usually long enough to hide the transfers, so *Default* is about as fast for videos."
-> — docs/CLI.md
-
-Preload exists to stop re-copying model blocks every denoising step, so it only pays when a step is short enough for those copies to dominate. A 1024×1024 image at a handful of steps is dominated by them. A five-second video at 337 frames has thousands, and the cost amortises away — filling VRAM buys no speed while costing you headroom. Two caveats if you override video to `dynamic`: it **only engages with the MMGP Optimized allocator** (switching the allocator to `default` makes it silently inert), and **VRAM stays filled during denoising**, so other GPU programs get less while a generation runs.
-
-**These are CUDA-only.** WanGP's allocator returns early on ROCm and on CPU-only torch, so on AMD and Intel Auto-Tune leaves every one of them unset rather than persisting a setting that silently does nothing. Head split stays off on AMD too — the VRAM figures upstream publishes are CUDA-derived.
-
-Conditions are stated in the panel itself, not left to be discovered: the allocator needs a restart, pinning reloads the model, head split only engages at ≥8192 tokens, and `dynamic` preload needs the MMGP allocator and does not apply under Profile 4+.
-
-**Ownership is explicit.** Detect only proposes. **Apply Overrides** is the only thing that writes, and it refuses while WanGP is running — WanGP keeps its own copy of `wgp_config.json` and rewrites the file on any change inside its UI, so writing then would be a lost update in whichever direction you did not expect. A fresh install seeds the recommended values once, with setdefault semantics, so day one is already calibrated; an update never re-seeds over settings you tuned.
+> **What each setting does, and when to override it:** [User Guide → Manage → Auto-Tune](docs/USER-GUIDE.md#manage--auto-tune)
 
 ---
+
 
 ## 📊 Monitoring & control
 
@@ -276,54 +243,49 @@ Conditions are stated in the panel itself, not left to be discovered: the alloca
 
 ---
 
-## 🔧 GPU kernels — what gets installed per GPU
+## 🔧 GPU kernels — the right ones, automatically
 
-WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP's own `setup_config.json` and shows exactly what it will install — and re-syncs on every update.
+WanGP is faster with vendor kernels than stock PyTorch. You never pick them: the launcher reads WanGP's own `setup_config.json`, shows you exactly what it will install before it does, and re-syncs on install and after every update.
 
-**Wheel table & per-GPU sets**
+- **Per-GPU sets** — RTX 20 → Sage 1.0.6 + Nunchaku + GGUF + bitsandbytes · RTX 30/40 → adds Sparge + Sage 2.2.0 · RTX 50 → adds LightX2V FP4 · AMD → ROCm 10 stack, Sage 1.0.6, SDPA default.
+- **Versions follow upstream** — a future bump in `setup_config.json` installs with no launcher update. The in-app GPU Kernel Wheels card is always authoritative; this README intentionally does not restate version numbers.
+- **Launcher safety overrides** — a GGUF floor and the Sage post6 safe build, both restorable to pure upstream with **Restore GPU Wheels**.
+- **Verified, not assumed** — after every Wan2GP update a compat check runs and says so in the Console. Unknown future components skip loudly instead of silently.
 
-| Wheel | Version | What it does |
-| ------- | --------------- | --------------- |
-| **Python** (uv) | `3.11.14` (RTX 20–50) / `3.10.9` (GTX 10) | venv interpreter |
-| **PyTorch + CUDA** | `2.10.0` + CUDA 13.0 | tensor + GPU runtime |
-| **Triton** | per-GPU pin from `setup_config.json`: `triton-windows>=3.6,<3.7` (RTX 30–50, torch 2.10) / `>=3.2,<3.3` (RTX 20XX) | JIT for custom CUDA/attention kernels on Windows |
-| **SageAttention** | `1.0.6` (RTX 20) / `2.2.0` post6 safe build by default (RTX 30–50; upstream pins post4, restorable via Restore GPU Wheels) | fused attention — big speed-up |
-| **SpargeAttn** | `0.1.0` | sparsity-aware speed-up alongside Sage |
-| **FlashAttention** | `2.8.3` | memory-efficient exact attention for long/high-res |
-| **Nunchaku** | `1.2.1` | SVD-quantized (NF4/SVDQ) runtime — 4/8-bit models |
-| **GGUF llama.cpp CUDA** | `1.0.25` (docs-led; `setup_config.json` splits `gguf` cu130/py311 + `gguf_cu128` cu128/py310, followed automatically — py310 envs get the cu128 build) | CUDA GGUF kernels (INT8-verified speculative decoding for Q4_K / Bonsai PTQ1_0, Stream-K, quantized KV-cache, SM120 async path, Bonsai PTQ1 support) |
-| **LightX2V** | `0.0.2` | FP4 kernels — **RTX 50xx / sm120+ only** |
-| **bitsandbytes** | `0.49.2` | 8-bit/NF4 dequant for NF4 checkpoints |
-
-**Per-GPU set:** RTX 20 → Sage 1.0.6 + Nunchaku + GGUF + bnb (Flash is Ampere+, so RTX 30 and newer only). RTX 30/40 → add Sparge + Sage 2.2.0. RTX 50 → add LightX2V. All get bitsandbytes. Versions track `setup_config.json` — next update installs new wheels automatically. Fresh installs finish with a post-install override pass (GGUF floor, sage safe build) so they never land stale; Sync warns if your checkout is behind `origin/main` (containment-aware — a merged tip doesn't warn). Updates prefer fast-forward pulls and only merge when diverged. The GGUF floor follows `setup_config.json` forward (future bumps install with no launcher update); unknown future components skip loudly in the Console instead of silently; every Wan2GP update runs a compat check (Console + toast when upstream changed something unfamiliar). A collapsed Kernel Wheels card shows a green ● update badge while wheels are stale. `comfy-kitchen==0.2.35` (upstream v13.13, +10% H3/LTX2.x) arrives via `requirements.txt`.
-
-**PyTorch matrix:** RTX 20/30/40/50 → Py 3.11.14 + PyTorch 2.10 + CUDA 13.0/13.1 · GTX 10xx → Py 3.10.9 + PyTorch 2.7.1 + CUDA 12.8. Avoids 2.8.0 (RAM leak) + 2.9.0 (VAE VRAM bug). GTX 10/16 stay on **CUDA 12.8** (no R580 needed); every other NVIDIA card needs **R580+** and is checked before install.
-
-**AMD (ROCm/TheRock):** RDNA 2 (`gfx1030–1036`) · RDNA 3 (`gfx1100–1103`: RX 7600–7900) · RDNA 3.5 (`gfx1150` Strix Point / `gfx1151` Strix Halo, plus `gfx1152/1153`) · RDNA 4 (`gfx1200/1201`: RX 9060/9070 + Radeon AI PRO R9700). Python 3.12 venv → pinned stable ROCm 10 stack (torch 2.13.0 + torchvision 0.28.0 + torchaudio 2.11.0.2, all `+rocm10.0.0`, per-box `device-gfxXXX` targets from `clinfo`, `stable.repo.amd.com/whl-next` index; nightly whl-next float on retry) → `requirements.txt` (numpy 2.x, no pin) → `triton-windows>=3.7,<3.8` + `sageattention==1.0.6` (upstream AMD Sage 1 stack, SDPA default). Old `rocm65` / per-family-nightly envs cannot be upgraded in place — create a new env with Install. Experimental alternative on gfx1201 (RX 9070/R9700): upstream's HIP torch 2.10.0+rocm7.14.0 + GGUF `1.0.25+torch210rocm714` wheel via the dashboard **HIP GGUF (exp)** button (Sync-kernels-only opt-in, separate env only — does not load in the 2.13 env, validation pending) — the GGUF floor never mixes HIP and CUDA wheels. Upstream `setup.py` detects hardware itself via `clinfo` + `Get-CimInstance` now, but the launcher still drives it through a hook module to apply its own verdict (profile key validated against the cloned `setup_config.json`, launcher VRAM, conda-direct-pip) and call `do_install_auto()` directly — upstream `setup.py` is never modified, and any structural surprise fails fast (exit 2) instead of running a doomed install. Stale CUDA-era configs are cleared first. Launch sets the ROCm session env (`TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL`, `MIOPEN_FIND_MODE=FAST`, `ROCM_HOME`/PATH prepend derived from the installed env — all set-if-absent; stale `HSA_OVERRIDE_GFX_VERSION` leftovers are removed since upstream dropped per-arch overrides) automatically. Needs a recent Adrenalin/Pro driver (≥ 24.5). No CUDA wheels are ever installed on AMD profiles.
-
-> ⚠️ **AMD note from the maintainer:** I don't have AMD hardware, so the AMD path is built from upstream docs + community recipes and covered by a simulated-hardware test — not a real Radeon run. If anything misbehaves on your card, please [open an issue](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/issues) with: the install-log `[hw]` line, `torch.cuda.is_available()` + device name from your env, and `Get-CimInstance Win32_VideoController | Select Name,DriverVersion` output.
-> 🛡️ **Antivirus:** ROCm nightly DLLs get flagged heuristically — if your AV quarantines files inside the install folder, add an exclusion for it, restore, then run **Verify GPU compute** (System → Troubleshooting) before generating.
-**Intel:** iGPU (UHD/Iris) and Arc → CPU torch (slow but working, unchanged). No XPU backend exists upstream, so Arc acceleration is not possible with this launcher yet — the UI says so instead of promising XPU.
-
-> Upstream: [INSTALLATION.md](https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/INSTALLATION.md)
+> **Full wheel table, per-GPU sets, driver requirements and the AMD/Intel notes:** [User Guide → GPU kernel wheels](docs/USER-GUIDE.md#gpu-kernel-wheels--what-gets-installed-per-gpu)
 
 ---
 
+
 ## Deepy — your offline agent
 
-Configure without editing JSON: **Settings → Deepy** or the Dashboard card.
+Configure without editing JSON: **Settings → Deepy** or the Dashboard card. Switching re-renders the picker live; **Apply** writes a consistent `wgp_config.json` (with backup).
 
-- **Disabled** — Deepy off; prompt enhancement keeps working with any local model (Florence or Qwen).
-- **Deepy Zero** — local, no account/key. Qwen VL models.
-- **Deepy Prime** — remote LLM via **OpenCode** (free, local models), **Claude Code** (`claude-agent-sdk==0.1.66` pinned bridge) or **Codex** (paid), or local **Qwen3.8 VL 9B/27B** (needs the 9B or 27B model + GGUF 1.0.25; auto-sets 32k context + Summarize). Prime + local shows a single **model + quantization** list nested under the local engine (Remote engines group with the LLM Engines setup card instead). 27B: GGUF Q4 / IQ3_S / Q2 / **Bonsai PTQ1** (~10 GB VRAM); 9B Heretic: GGUF Q4 (~6.5 GB) / Q8 (~11 GB) — plus INT8 KV cache for Bonsai. Prime exposes WanGP's MCP tools.
+| Mode | What it is |
+| --- | --- |
+| **Disabled** | Deepy off. Prompt enhancement still works with any local model (Florence or Qwen). |
+| **Deepy Zero** | Local, no account or key. Qwen VL models. |
+| **Deepy Prime** | Remote LLM via **OpenCode** (free), **Claude Code** or **Codex** (paid) — or a local **Qwen3.8 VL 9B/27B**. Prime exposes WanGP's MCP tools. |
 
-Switching live-re-renders the selector; **Apply** writes a consistent `wgp_config.json` (with backup). Also editable inside WanGP: *Configuration → Prompt Enhancer / Deepy*.
+**New here?** Start with **OpenCode** — the only zero-cost option.
 
-**Prompt enhancement** (own card, above Deepy): Enhancement UI picker — *Enhance Prompt button* (default) or *Automatic dropdown* — with its own **Apply**; works with or without Deepy and writes through the same coherent config path.
+Two more cards on the same screen: **Prompt enhancement** (Enhance Prompt button or Automatic dropdown, works with or without Deepy) and **Sessions** (multisession mode, per-session workspace, gallery media handling).
 
-**Sessions** (same card, below the engine picker): multisessions mode — *Disabled* (one temporary chat), *selectable Workspace* (sessions share one workspace/outputs folder, the launcher default), *dedicated Workspace* (each session owns its gallery) — plus reset behavior and gallery media (keep links vs copy files into the session). Saved via the same **Apply**; per-session workspace choice stays inside WanGP.
+> **Model sizes, quantization choices and per-engine setup:** [User Guide → Dashboard](docs/USER-GUIDE.md#dashboard)
+
+---
+
 
 ## 📱 Phone & remote access
+
+One panel, three paths — **A** is everyday use, **B** and **C** are optional.
+
+- **A · Gradio server** — flip the LAN (`--listen`) toggle and Gradio `/` plus the phone-friendly `/deepy/` are reachable from any device on your Wi-Fi: same conversation, galleries, progress and queue. This-PC and Phone URLs with Open / Copy / QR.
+- **B · Deepy Web standalone** — a second process on its own port with its own conversation. Finish → stop → resume via saved sessions (it never live-syncs with A). Auth, LAN HTTPS, Tailscale, reverse-proxy origin and extra args all live here.
+- **C · Console logs** — a read-only tail of the same console as a web page on its own port, so you can watch errors from a phone without stopping the run. Trusted home Wi-Fi / Tailscale only — never port-forward it (no auth).
+
+Flipping LAN while running offers a restart in place. Topbar keeps a Deepy Web LED next to the Wan2GP LED. All actions log `[Deepy]` lines to the Console.
+
 
 One panel, two paths — pick one. **A · Gradio server** exposes Gradio `/` and the phone-friendly `/deepy/` together over a **LAN (`--listen`) toggle** (persisted, appended verbatim on launch; flipping it while running offers a restart in place): same conversation, galleries, progress and queue on every device, with This-PC and Phone URLs (Open/Copy/QR). **B · Deepy Web standalone** is a second process on its own port with its own conversation — Assistant selector (Zero/Prime per start), Same-PC / Phone-LAN addresses plus an **External** Tailscale row (Copy + QR), Auth (Off / fixed passphrase with generator), port (empty = auto, server port + 1), LAN HTTPS, reverse-proxy origin, Extra args, Start/Stop. Standalone never live-syncs — finish → stop → resume via saved sessions. Address URLs are click-to-open in the real browser (login must happen in a tab — embedded views 403). Topbar shows a persistent Deepy Web LED (green = running, red = stopped) next to the Wan2GP LED. All actions log `[Deepy]` lines to the Console. Left info cards collapse (chevron, remembered) while keeping key actions live in the header.
 
@@ -341,7 +303,6 @@ One panel, two paths — pick one. **A · Gradio server** exposes Gradio `/` and
   </tr>
 </table>
 
-> New to this? Start with **OpenCode** — the only zero-cost option.
 
 ---
 
@@ -365,13 +326,15 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 - **Force** backs up + replaces conflicting files. **Stop Wan2GP first.**
 - Needs Windows 11 + RTX 30+ (Neural Rendering, 30 experimental) / RTX 40+ (Frame Generation) + HAGS.
 - **Check compatibility** reports per-mode verdicts (ready / not-installed / blocked) with GPU tier, files, HAGS, and the frame-gen probe.
-- **Workstation GPU fix** (opt-in): patches Wan2GP's GeForce-only GPU check so RTX PRO / Ada / RTX Ax000 / L40 / Hopper cards pass DLSS gating — backed up (`*.launcher-bak`), reversible, refuses on upstream drift. ⚠️ **Untested on real workstation hardware** (tiers logic-simulated only: PRO 5000→50, 5000 Ada→40, A6000→30) — confirm on a PRO/A-series card before relying on it.
+- **Workstation GPU fix** (opt-in) — patches WanGP's GeForce-only GPU check so RTX PRO / Ada / RTX Ax000 / L40 / Hopper cards pass DLSS gating. Backed up (`*.launcher-bak`), reversible, refuses on upstream drift.
+
+> ⚠️ **Untested on real workstation hardware** — the tiers logic are simulated only (PRO 5000→50, 5000 Ada→40, A6000→30). Confirm on a PRO/A-series card before relying on it.
 
 ---
 
 ## 🧭 Guide & 📚 Library
 
-**Guide** (topbar tab, next to Manage) answers *what to make and with what*: goal picker with curated model picks + starter settings (copy the full model name into WanGP's toolbar search), 6 prompt templates with the line mode each needs, offline `[/...]` window-command checker, VACE pre-flight checklist, post-processing at a glance. Read-only — nothing changes until you pick inside WanGP. Full walkthroughs: [docs/WAN2GP-GUIDE.md](docs/WAN2GP-GUIDE.md) (10 infographics, all 232 models / 116 settings).
+**Guide** (topbar tab, next to Manage) answers *what to make and with what*: goal picker with curated model picks + starter settings (copy the full model name into WanGP's toolbar search), 6 prompt templates with the line mode each needs, offline `[/...]` window-command checker, VACE pre-flight checklist, post-processing at a glance. Read-only — nothing changes until you pick inside WanGP. Full walkthroughs: [docs/WAN2GP-GUIDE.md](docs/WAN2GP-GUIDE.md) — all 232 models and 116 settings.
 
 **Manage → Library** inventories what's on disk: downloaded checkpoints (sizes + kind tags), LoRA families (files/size/known URLs), finetunes (import validated JSON, export to share, delete), workspaces (real sizes, missing-file flags, archive lock, definitions backup).
 
@@ -382,6 +345,17 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 Full workspace viewer: multi-select, reorder, eject, copy/move across workspaces, ZIP download, import, delete (confirmed), media-details pane with prompt/model/settings. New arrivals pop Save / Save As… with proper `*.zip`/`*.json` filters.
 
 **Manage → Launch** adds presets (Balanced / Low VRAM / Max perf / Emergency) + flag builder, an MCP command/URL helper, and a headless queue runner (`--process` with console streaming). **Manage → System** adds torch/CUDA probes to the issue bundle, config snapshots on every Apply (undoable restore), upstream changelog viewer, and Deepy engine checks.
+
+---
+
+## Documentation
+
+| Doc | For |
+| --- | --- |
+| [**User Guide**](docs/USER-GUIDE.md) | Every screen, tab and button — where things are and what they do |
+| [**WanGP Guidance**](docs/WAN2GP-GUIDE.md) | Which model and settings to pick for your goal |
+| [**System Overview**](docs/OVERVIEW.md) | How the launcher, upstream WanGP and your machine fit together — for contributors |
+| [**CHANGELOG**](CHANGELOG.md) | Every fix, per release |
 
 ---
 
@@ -400,8 +374,8 @@ Backend lives in `src-tauri/src/lib.rs` (`#[tauri::command]` handlers); frontend
 ### Tests
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --lib   # 234 backend tests
-npm test                                               # 27 frontend tests
+cargo test --manifest-path src-tauri/Cargo.toml --lib   # 256 backend tests
+npm test                                               # 37 frontend tests
 ```
 
 Both suites are hermetic — the backend one redirects `get_repo_dir()` at a

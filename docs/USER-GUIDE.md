@@ -22,6 +22,7 @@ flowchart TD
 - [Manage → General](#manage--general)
 - [Manage → Launch](#manage--launch)
 - [Manage → System](#manage--system)
+- [GPU kernel wheels](#gpu-kernel-wheels--what-gets-installed-per-gpu)
 - [Manage → Auto-Tune](#manage--auto-tune)
 - [Manage → Plugins](#manage--plugins)
 - [Manage → Library](#manage--library)
@@ -320,10 +321,72 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   cards already run the fastest available attention with nothing to configure.
 - **uv Wheel Cache** — cache location / cleanup.
 
+
+### GPU kernel wheels — what gets installed per GPU
+
+WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP's own `setup_config.json`, shows you exactly what it will install, and re-syncs on install and after every update. **You never pick these by hand.**
+
+| Wheel | NVIDIA (RTX 20–50) | AMD (RDNA 2–4) | What it does |
+| --- | --- | --- | --- |
+| **Python** | `3.11.14` | `3.12.10` | venv interpreter |
+| **PyTorch** | `2.10.0` + CUDA 13.x | `2.13.0` + ROCm 10 | tensor + GPU runtime |
+| **Triton** | per-GPU pin from `setup_config.json` | `>=3.7,<3.8` | JIT for custom CUDA/attention kernels |
+| **SageAttention** | `1.0.6` (RTX 20) / `2.2.0` post6 (RTX 30–50) | `1.0.6`, SDPA default | fused attention — the big speed-up |
+| **SpargeAttn** | RTX 30+ | — | sparsity-aware speed-up alongside Sage |
+| **FlashAttention** | RTX 30+ (Ampere+) | — | memory-efficient exact attention |
+| **Nunchaku** | `1.2.1` | — | SVD-quantized (NF4/SVDQ) runtime |
+| **GGUF llama.cpp** | CUDA build (`cu130` or `cu128` per env) | HIP build, experimental | 4-bit GGUF kernels |
+| **LightX2V** | RTX 50xx only | — | FP4 kernels (sm120+) |
+| **bitsandbytes** | `0.49.2` | — | 8-bit / NF4 dequant |
+
+**Version pins follow `setup_config.json`.** The in-app GPU Kernel Wheels card is always authoritative — a future upstream bump installs with no launcher update.
+
+**Driver:** every NVIDIA card needs **R580+** except GTX 10xx/16xx, which stay on CUDA 12.8. Checked before install. AMD needs Adrenalin/Pro ≥ 24.5.
+
+**Intel:** iGPU (UHD/Iris) and Arc get CPU torch — slow but working. No XPU backend exists upstream, so Arc acceleration isn't possible yet; the UI says so rather than promising XPU.
+
+**Update vs Restore:** *↻ Update GPU Wheels* installs the wanted set (upstream URLs plus launcher safety overrides). *Restore GPU Wheels* reinstalls deepbeepmeep's pure upstream set with overrides off — the way back when an override misbehaves.
+
+> ⚠️ **AMD note from the maintainer:** the AMD path is built from upstream docs + community recipes and covered by a simulated-hardware test — not a real Radeon run. If something misbehaves on your card, open an issue with the install-log `[hw]` line, `torch.cuda.is_available()` + device name, and `Get-CimInstance Win32_VideoController | Select Name,DriverVersion` output.
+> 🛡️ **Antivirus:** ROCm nightly DLLs get flagged heuristically. If your AV quarantines files in the install folder, add an exclusion, restore, then run **Verify GPU compute** before generating.
+
+
 ## Manage → Auto-Tune
 
-⚡ **Performance Auto-Tune** — one click: detects your GPU and applies the right
-profile (precision, attention backend, memory knobs). Re-run after GPU/driver changes.
+⚡ **Performance Auto-Tune** — one click: detects your GPU and applies the right profile (precision, attention backend, memory knobs). Re-run after GPU/driver changes. The README has the [profile matrix](https://github.com/GKartist75/Wan2GP-Desktop-Tauri#-auto-tune--one-click-right-profile) and the caveats; this is the per-setting detail.
+
+**Ownership is explicit.** Detect only proposes. **Apply Overrides** is the only thing that writes, and it refuses while WanGP is running — WanGP keeps its own copy of `wgp_config.json` and rewrites it on any change inside its UI, so writing then would be a lost update. A fresh install seeds the recommended values once, with setdefault semantics; an update never re-seeds over settings you tuned.
+
+### Upstream v17 settings Auto-Tune calibrates
+
+Upstream v17 ships these off by default, asking every user to switch them on by hand. Auto-Tune calibrates them instead.
+
+| Setting | Key | Auto-Tune writes | Notes |
+| --- | --- | --- | --- |
+| Attention Mode | `attention_mode` | `sage2` (RTX 30/40/50), `sage` (RTX 20), `sdpa` (GTX 10) | Upstream is explicit that quite a few optimizations depend on Sage2/2+. Needs the matching wheel — Sync installs SageAttention 2.2.0 for RTX 30/40/50, 1.0.6 for RTX 20 |
+| VRAM Allocator | `vram_allocator` | `vmm_spill` | **Needs a restart.** Recycles unused VRAM; with spilling, a generation slightly too large for the card can still finish, slowly |
+| RAM Allocator | `ram_allocator` | nothing (manual) | **Needs a restart.** Hands the RAM of freed CPU tensors back to the system when the queue is done or RAM runs short, where PyTorch keeps it for the session (on Windows it can commit up to twice what a tensor needs). Windows/Linux with PyTorch 2.6–2.15; elsewhere WanGP falls back and says so at startup |
+| Attention Head Split | `attention_head_split` | `2` (Medium) under 12 GB, else Off | Upstream measures ~2 GB less VRAM for ≤3% slower steps on H3 1920×1088 / 362 frames. **Same quality, not identical output** — details, and sometimes motion, can differ. Only engages on long sequences (8192+ tokens) |
+| Read Ahead | `read_ahead` | on (Windows) | Reads model files ahead of use, so they are already in RAM on first load |
+| Smart Memory Pinning | `smart_memory_pinning` | on | 1–2 GB of Reserved RAM to reach the GPU nearly as fast. Changing it reloads the model |
+| VRAM Preload | `video/image/audio_preload_mode` | video `default`, image `dynamic`, audio `default` | See below — this is the one where video and image genuinely differ |
+| Reserved RAM for Pinning | `perc_reserved_mem_max` | `0` (Auto) | 0 = 40% on Windows, 60% on Linux (upstream v17.10 lowered Linux from 80%). Upstream treats this as a **percentage** since v17 |
+
+**Why video gets `default` and image gets `dynamic`** — this is upstream's advice, quoted:
+
+> "For image models, use Profile 4 or 5 with a *Dynamic* or Manual VRAM Preload for faster generations. Their steps are short, so the transfers set the speed. … **Video steps are usually long enough to hide the transfers.**"
+> — WanGP → Configuration → RAM/VRAM Management
+
+Preload stops re-copying model blocks every denoising step, so it only pays when a step is short enough for those copies to dominate. A 1024×1024 image at a handful of steps is dominated by them. A five-second video at 337 frames has thousands, and the cost amortises away — filling VRAM buys no speed while costing you headroom.
+
+Two caveats if you override video to `dynamic`: it **only engages with the MMGP Optimized allocator** (switching the allocator to `default` makes it silently inert), and **VRAM stays filled during denoising**, so other GPU programs get less while a generation runs.
+
+**These are CUDA-only.** WanGP's allocator returns early on ROCm and on CPU-only torch, so on AMD and Intel Auto-Tune leaves every one of them unset rather than persisting a setting that silently does nothing. Head split stays off on AMD too — the VRAM figures upstream publishes are CUDA-derived.
+
+### Settings written by older Auto-Tune tiers
+
+`video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `int8_kernels` (Auto / Comfy Kitchen / Triton / Disabled — upstream v13.13 replacement for the old numeric toggle), `kernel_precision` (fast approximate / strict), `vae_config` (always Auto: 16GB+ / 8GB+ / 6GB+ presets), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** forces P5 for hardware where the recommendation still crashes.
+
 
 ## Manage → Plugins
 

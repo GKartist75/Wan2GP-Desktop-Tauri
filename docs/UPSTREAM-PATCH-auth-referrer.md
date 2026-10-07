@@ -1,3 +1,7 @@
+> **Historical record — nothing to do here.** This patch was reverted; the fix
+> landed upstream instead (see the Verify section below). Kept for context on
+> the Chrome `Origin: null` failure mode, not as instructions.
+
 # Retired login patch: login page `Referrer-Policy` fix (now upstream)
 
 ## Why
