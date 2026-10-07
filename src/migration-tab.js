@@ -250,9 +250,19 @@ async function loadWangpChangelog(showLoading) {
     const local = await window.w2gp.getWangpLocalVersion();
     if (local && localEl)
       localEl.textContent = local.hash ? local.hash.substring(0, 7) : "";
-
+      // The label is the LOCAL checkout's own `WanGP_version` — the exact
+    // string the Wan2GP window prints, so a four-major-stale install is
+      // legible at a glance instead of hiding behind a commit hash. (It used
+    // to be scraped from the remote README, which returns nothing for every
+      // current upstream README — the label was permanently blank.)
+    if (local && verEl) verEl.textContent = local.version || "";
+    const upEl = $("upstreamVersion");
     window.w2gp.getWangpVersion().then((v) => {
-      if (v && verEl) verEl.textContent = v;
+      if (!upEl) return;
+      upEl.textContent =
+        v && local && local.version && v !== local.version
+          ? "→ latest " + v
+          : "";
     });
 
     const upstream =
@@ -265,21 +275,22 @@ async function loadWangpChangelog(showLoading) {
             }
             return u;
           });
-    if (!upstream || !upstream.commits) {
+    const noteEl = $("upstreamNote");
+      if (!upstream || !upstream.commits) {
       // A transient upstream failure on the silent periodic poll must not
       // clobber a previously rendered changelog — show the error only on an
       // explicit user check.
-      if (showLoading)
-        listEl.innerHTML =
-          '<div class="changelog-error">Could not fetch updates</div>';
-      // Clear any stale green dot from a previous check — don't leave it dangling
-      const updateBtn = $("updateBtn");
-      if (updateBtn) {
-        updateBtn.classList.remove("has-update");
-        updateBtn.querySelector(".update-dot")?.remove();
-      }
+        if (showLoading)
+          listEl.innerHTML =
+            '<div class="changelog-error">Could not fetch updates</div>';
+      // Never CLEAR the update dot here. Losing GitHub (offline, proxy, rate
+      // limit) is not evidence that the checkout is current, and clearing it
+        // is exactly what let a stale install read as "no updates". Say the
+        // check did not run; leave the last known state alone.
+      if (noteEl) noteEl.textContent = "(update check failed — offline?)";
       return;
     }
+    if (noteEl) noteEl.textContent = "";
 
     const updateBtn = $("updateBtn");
     // Hash equality alone never clears: any local merge commit (every

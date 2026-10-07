@@ -2592,7 +2592,13 @@ table.args-table.lib-table.compact td:nth-child(3) {
  align-items: center;
  gap: 3px;
 }
-.changelog-footer {
+.local-commit .upstream-version {
+    color: var(--accent, #6366f1);
+  }
+  .local-commit .update-note {
+    font-style: italic;
+  }
+  .changelog-footer {
  padding: 4px 8px;
  border-top: 1px solid var(--border);
  text-align: right;

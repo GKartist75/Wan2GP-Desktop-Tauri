@@ -30,8 +30,18 @@ pub fn get_wangp_local_version() -> serde_json::Value {
     if hash.is_empty() {
         serde_json::Value::Null
     } else {
-        serde_json::json!({"hash": hash, "date": date})
+        serde_json::json!({"hash": hash, "date": date, "version": local_wangp_version(&repo)})
     }
+}
+
+/// The checkout's own version, read from `wgp.py`'s `WanGP_version` — the same
+/// string upstream renders in its own window, so the dashboard and the running
+/// Wan2GP can never disagree. None when `wgp.py` is missing or unparseable;
+/// the caller then falls back to showing the commit alone.
+fn local_wangp_version(repo: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(repo.join("wgp.py"))
+        .ok()
+        .and_then(|body| parse_wangp_source_version(&body))
 }
 #[tauri::command]
 pub fn get_desktop_git_info() -> serde_json::Value {
@@ -179,48 +189,46 @@ pub fn wangp_contains_commit(hash: String) -> serde_json::Value {
 }
 #[tauri::command]
 pub async fn get_wangp_version() -> serde_json::Value {
-    // Mirrors Electron: parse the WanGP version from the upstream README.
-    let url = "https://raw.githubusercontent.com/deepbeepmeep/Wan2GP/main/README.md";
+    // Upstream's own `WanGP_version`, the same field the local read uses. This
+    // replaced a README scrape whose parser returned None for every current
+    // upstream README (its first "WanGP" mentions carry no version token), so
+    // the dashboard version label stayed permanently blank — a checkout four
+    // majors behind upstream looked identical to a current one.
+    let url = "https://raw.githubusercontent.com/deepbeepmeep/Wan2GP/main/wgp.py";
     match gh_client().get(url).send().await {
         Err(_) => serde_json::Value::Null,
         Ok(r) => match r.text().await {
             Err(_) => serde_json::Value::Null,
-            Ok(body) => parse_wangp_version(&body)
-                    .map(serde_json::Value::String)
-                    .unwrap_or(serde_json::Value::Null)
-        },
+            Ok(body) => parse_wangp_source_version(&body)
+                      .map(serde_json::Value::String)
+                      .unwrap_or(serde_json::Value::Null)
+      },
     }
 }
-/// Scrape the WanGP version out of the upstream README, mirroring the Electron
-/// launcher: find the first "wangp" whose following token starts with 1–2 dots
-/// of digits. Pure — split out so the scan is unit-testable without a network.
-fn parse_wangp_version(body: &str) -> Option<String> {
-    let lower = body.to_lowercase();
-    let mut out: Option<String> = None;
-    let mut i = 0;
-    while let Some(pos) = lower[i..].find("wangp") {
-        let j = i + pos + 5;
-        let rest = body[j..].trim_start_matches([' ', '\t', '-']);
-        let rest = rest.strip_prefix('v').unwrap_or(rest);
-        let mut ver = String::new();
-        for ch in rest.chars() {
-            if ch.is_ascii_digit() || ch == '.' {
-                ver.push(ch);
-            } else {
-                break;
-            }
-        }
-        let dots = ver.chars().filter(|&c| c == '.').count();
-        if (1..=2).contains(&dots) && !ver.is_empty() {
-            out = Some(ver.trim_matches('.').to_string());
-            break;
-        }
-        i = j;
-        if i >= lower.len() {
-            break;
+/// Upstream's single source of truth for a checkout's version: the
+/// `WanGP_version = "17.10"` assignment at the top of `wgp.py`. Anchored on the
+/// assignment (not a bare mention) so `target_mmgp_version = "3.8.0"` and the
+/// f-string interpolations further down the file can never be mistaken for it.
+/// Pure — unit-tested without a network or a checkout.
+fn parse_wangp_source_version(body: &str) -> Option<String> {
+    for line in body.lines() {
+        let Some(rest) = line.trim().strip_prefix("WanGP_version") else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix('=') else {
+            continue;
+        };
+        let v = rest
+            .trim()
+            .trim_end_matches([';', ','])
+            .trim()
+            .trim_matches(|c: char| c == '"' || c == '\'')
+            .trim();
+        if !v.is_empty() && v.chars().all(|c| c.is_ascii_digit() || c == '.') {
+            return Some(v.to_string());
         }
     }
-    out
+    None
 }
 // ── Legacy Electron launcher removal ──
 // Finds the old Electron-based launcher (any DisplayName containing "wan2gp"
@@ -381,50 +389,47 @@ mod tests {
     }
 
     #[test]
-    fn version_scrape_reads_the_token_immediately_after_wangp() {
+    fn source_version_reads_the_wangp_version_assignment() {
         assert_eq!(
-            parse_wangp_version("WanGP v1.3.5 released."),
-            Some("1.3.5".to_string())
+            parse_wangp_source_version("import os\nWanGP_version = \"17.10\"\n"),
+            Some("17.10".to_string())
         );
         assert_eq!(
-            parse_wangp_version("upstream WanGP 2.10 is current"),
-            Some("2.10".to_string())
+            parse_wangp_source_version("WanGP_version = \"13.0\""),
+            Some("13.0".to_string())
         );
     }
 
     #[test]
-    fn version_scrape_tolerates_separators_and_case() {
-        assert_eq!(parse_wangp_version("WANGP - 2.0"), Some("2.0".to_string()));
-    }
-
-    #[test]
-    fn version_scrape_skips_prose_mentions_of_wangp() {
-        // "WanGP is great" has no version token; the scan must move on to the
-        // next occurrence rather than returning junk or giving up.
+    fn source_version_tolerates_spacing_and_single_quotes() {
         assert_eq!(
-            parse_wangp_version("WanGP is great. See WanGP v1.2.3 for details."),
+            parse_wangp_source_version("    WanGP_version='2.0'"),
+            Some("2.0".to_string())
+        );
+        assert_eq!(
+            parse_wangp_source_version("WanGP_version =\"1.2.3\","),
             Some("1.2.3".to_string())
         );
     }
 
     #[test]
-    fn version_scrape_needs_a_dotted_version_right_after_the_name() {
-        // A single component carries no dot, so the scanner does not accept it.
-        assert_eq!(parse_wangp_version("wanGP v3"), None);
-        // "version" is consumed as the token, so its digits never count.
-        assert_eq!(
-            parse_wangp_version("# Wan2GP\n\nWanGP version v1.3.5 released."),
-            None
-        );
-        // Three dots is not a version this scanner accepts.
-        assert_eq!(parse_wangp_version("WanGP 1.2.3.4"), None);
+    fn source_version_ignores_the_mmgp_pin_and_interpolations() {
+        // Both lines sit near the assignment in a real wgp.py. Neither is the
+        // checkout version: `target_mmgp_version` is a different name, and the
+        // f-strings only interpolate the variable.
+        let body = "target_mmgp_version = \"3.8.0\"\n\
+                    WanGP_version = \"17.10\"\n\
+                    return f\"WanGP v{WanGP_version} by DeepBeepMeep\"\n";
+        assert_eq!(parse_wangp_source_version(body), Some("17.10".to_string()));
     }
 
     #[test]
-    fn version_scrape_returns_none_when_no_version_is_present() {
-        assert_eq!(parse_wangp_version(""), None);
-        assert_eq!(parse_wangp_version("WanGP is great"), None);
-        // A trailing "wangp" with nothing after it must not panic.
-        assert_eq!(parse_wangp_version("WanGP"), None);
+    fn source_version_is_none_without_a_well_formed_assignment() {
+        assert_eq!(parse_wangp_source_version(""), None);
+        assert_eq!(parse_wangp_source_version("WanGP is great"), None);
+        // A bare mention (no `=`) is not an assignment.
+        assert_eq!(parse_wangp_source_version("WanGP_version"), None);
+        // A non-numeric value is not a version.
+        assert_eq!(parse_wangp_source_version("WanGP_version = \"dev\""), None);
     }
 }
