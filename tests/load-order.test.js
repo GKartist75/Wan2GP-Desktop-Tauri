@@ -50,6 +50,7 @@ test('every id the Auto-Tune panel reads exists exactly once', () => {
   for (const id of [
     'memAttentionMode',
     'memVramAllocator',
+    'memRamAllocator',
     'memHeadSplit',
     'memReadAhead',
     'memSmartPinning',
