@@ -4,6 +4,47 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+### Upstream v17.17 parity (`6479db3`, 2026-10-07)
+
+Six upstream commits after v17.10 — `f02a382` ("H3 VAE optims") and four
+iterations of "added RAM allocator" plus a "fix" — 57 files, read upstream as
+**WanGP v17.17**.
+
+**No install-stack movement.** `requirements.txt`, `setup.py`,
+`setup_config.json`, `docs/INSTALLATION.md` and `docs/AMD-INSTALLATION.md` are
+untouched in this range, so no torch, Triton, Sage, Flash, Nunchaku, LightX2V
+or GGUF pin moves. The new RAM allocator accepts PyTorch 2.6 to 2.15, which
+holds the managed `torch==2.10.0`, and its only new import, `psutil`, is
+already an upstream requirement.
+
+- **New `ram_allocator` setting, mirrored in Performance Settings**
+  (`shared/cuda_memory.py` `RAM_ALLOCATOR_KEY`, `plugins/configuration/
+  plugin.py`, `--ram-allocator` on the CLI). `mmgp` (upstream's default) hands
+  the RAM of freed CPU tensors back to the system when the queue is done, a
+  model is released or RAM runs short, keeping up to 2 GB for reuse between
+  generations of the same model; `default` is PyTorch's own allocator, which
+  keeps that RAM for the rest of the session. Added the control beside the VRAM
+  one, its labels and `saved:` chip, and both backend gates — without them the
+  key validated and was then silently dropped by the Apply allowlist, the one
+  failure mode that panel has. No recommendation: upstream already defaults to
+  `mmgp`, so there is nothing hardware-aware to calibrate and nothing to seed
+  into a fresh `wgp_config.json`.
+- **The allocator fingerprint now covers both prebuilt libraries.** v17.17
+  ships `ram_alloc_win_amd64.dll` / `ram_alloc_linux_x86_64.so` beside the VRAM
+  one and rebuilds the VRAM library (`vmm_alloc.cpp` +29/-3) under the same
+  `mmgp` `4.0.0`, so `mmgp 4.0.0 (alloc ...)` could no longer tell a v17.10
+  tree from a v17.17 one. `allocator_build_id` hashes what exists, which keeps
+  the id a pre-v17.17 checkout always showed.
+- **README: the Linux auto of Reserved RAM was still documented as 80%.** The
+  tooltip and the panel were corrected in v0.10.3; the settings table was not.
+  It now says 60% (upstream v17.10 / `ec9566a`).
+- Left alone on purpose: SageAttention 2's staged path widened to sm86 and
+  masked attentions, so the RTX 30/40/50 Sage 2.2.0 recommendation stands;
+  Attention Head Split now counts all batch items' query tokens against its
+  8192 threshold, so the tooltip's "8192+ tokens" still holds; and the
+  `uint8_guides` RAM savings (H3 VAE, control videos, the `locals()` cycle fix)
+  change no key and no pin.
+
 ## [0.10.3] — 2026-10-06
 
 Three report-driven fixes: the Auto-Tune panel's overlapping chips, a Restore
