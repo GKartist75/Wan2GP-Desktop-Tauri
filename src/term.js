@@ -123,12 +123,37 @@ try {
   });
 } catch {}
 
-// Load existing log history on startup — pipe through appendToBuf for consistency
-window.w2gp.getLogHistory().then((entries) => {
-  for (const entry of entries) {
-    appendToBuf(strip(entry.data));
-  }
+// Seed from the MAIN window's rendered buffer, not the backend ring buffer:
+// the ring buffer is raw text (`\r` already split into lines, tqdm fragments
+// dropped), so replaying it gave this window a shorter, differently-collapsed
+// log than the docked console — and it drifted further with every dock switch.
+// Asking the owner makes both consoles the same log by construction.
+//
+// getLogHistory stays as a fallback: if no seed arrives (main window torn down,
+// or a build where the seed command is missing), still show something.
+let _seeded = false;
+window.w2gp.onTermConsoleSeed((lines) => {
+  _seeded = true;
+  buf = (Array.isArray(lines) ? lines : []).map((l) => String(l));
+  _lastLine = "";
+  _carriageReturn = false;
+  render();
 });
+try {
+  window.w2gp.requestConsoleSeed().catch(() => {});
+} catch {}
+setTimeout(() => {
+  if (_seeded) return;
+  window.w2gp
+    .getLogHistory()
+    .then((entries) => {
+      if (_seeded) return;
+      for (const entry of entries) {
+        appendToBuf(strip(entry.data));
+      }
+    })
+    .catch(() => {});
+}, 1200);
 
 window.w2gp.onLaunchLog((t) => {
   appendToBuf(strip(t));

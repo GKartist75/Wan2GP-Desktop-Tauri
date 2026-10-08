@@ -1438,13 +1438,36 @@ pub async fn create_term_view(app: tauri::AppHandle) -> Result<serde_json::Value
         let _ = w.set_focus();
         return Ok(serde_json::json!({"ok": true, "open": true, "existing": true}));
     }
+    // Open big. The reason floating exists is that the user reads the console
+    // more than the GUI, and a 760x520 peephole on a 1080p+ screen is the
+    // unreadable case that made them ask for resizing in the first place. Take
+    // ~72% of the primary monitor (logical px), floored so a small laptop still
+    // gets a usable console and capped so it never opens off-screen.
+    let (mut w, mut h) = (0.0f64, 0.0f64);
+    if let Ok(Some(mon)) = app.primary_monitor() {
+        let s = mon.size();
+        let sf = mon.scale_factor().max(1.0);
+        w = (f64::from(s.width) / sf * 0.72).clamp(760.0, 1800.0);
+        h = (f64::from(s.height) / sf * 0.72).clamp(520.0, 1300.0);
+    }
+    if w <= 0.0 {
+        w = 760.0;
+    }
+    if h <= 0.0 {
+        h = 520.0;
+    }
     let w = tauri::WebviewWindowBuilder::new(
         &app,
         TERM_LABEL,
         tauri::WebviewUrl::App("term.html".into()),
     )
     .title("Wan2GP Console")
-    .inner_size(760.0, 520.0)
+    .inner_size(w, h)
+    // Already resizable/maximizable by default, but say it: this window IS the
+    // user's "make it max" control in native mode.
+    .resizable(true)
+    .maximizable(true)
+    .min_inner_size(420.0, 240.0)
     .always_on_top(true)
     .focused(true)
     .build()
@@ -1452,6 +1475,29 @@ pub async fn create_term_view(app: tauri::AppHandle) -> Result<serde_json::Value
     let _ = w.show();
     Ok(serde_json::json!({"ok": true, "open": true}))
 }
+/// The console window asks the MAIN window for the log it is showing.
+///
+/// The backend ring buffer is raw text: `\r` has already been split into lines
+/// and tqdm fragments were dropped (see `base::push_log`). Replaying it gives a
+/// shorter, differently-collapsed log than the docked console shows — which
+/// read as "floating lost my logs", and got worse every time you docked and
+/// came back. The main window owns the rendered buffer, so ask the owner and
+/// the two consoles are the same log by construction.
+#[tauri::command]
+pub fn request_console_seed(app: tauri::AppHandle) -> serde_json::Value {
+    use tauri::Emitter;
+    let _ = app.emit_to("main", "term-request-seed", ());
+    serde_json::json!({"ok": true})
+}
+
+/// The main window's answer, routed only to the console window.
+#[tauri::command]
+pub fn term_console_seed(app: tauri::AppHandle, lines: Vec<String>) -> serde_json::Value {
+    use tauri::Emitter;
+    let _ = app.emit_to(TERM_LABEL, "term-console-seed", lines);
+    serde_json::json!({"ok": true})
+}
+
 #[tauri::command]
 pub fn destroy_term_view(app: tauri::AppHandle) -> serde_json::Value {
     use tauri::Manager;

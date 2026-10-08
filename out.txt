@@ -1,0 +1,40 @@
+TAP version 13
+# Subtest: the term window asks for the seed instead of only replaying the ring buffer
+ok 1 - the term window asks for the seed instead of only replaying the ring buffer
+  ---
+  duration_ms: 0.541
+  type: 'test'
+  ...
+# Subtest: the seed handler replaces the buffer, not appends to it
+ok 2 - the seed handler replaces the buffer, not appends to it
+  ---
+  duration_ms: 0.1716
+  type: 'test'
+  ...
+# Subtest: the main window answers with its rendered buffer
+ok 3 - the main window answers with its rendered buffer
+  ---
+  duration_ms: 0.1273
+  type: 'test'
+  ...
+# Subtest: the request is routed through the main window, not pushed at creation
+ok 4 - the request is routed through the main window, not pushed at creation
+  ---
+  duration_ms: 0.2766
+  type: 'test'
+  ...
+# Subtest: both commands are registered
+ok 5 - both commands are registered
+  ---
+  duration_ms: 0.163
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 98.971
