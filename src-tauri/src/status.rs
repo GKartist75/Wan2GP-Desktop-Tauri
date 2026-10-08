@@ -274,7 +274,10 @@ pub(crate) fn apply_vendored_mmgp(
             // v17.01 rebuilt the allocator (mmgp/allocator/vmm_alloc.cpp +59/-11
             // and a new DLL) WITHOUT bumping pyproject.toml, so "4.0.0" alone
             // cannot tell you which allocator you are running. The DLL is ~94 KB,
-            // so a content hash costs less than any probe — append it so two
+            // so a content hash of the binaries costs less than any probe — append it so two
+            // v17.17 (6479db3) adds a SECOND prebuilt library for the RAM
+            // allocator and rebuilds the VRAM one under the same version, so
+            // allocator_build_id folds both in.
             // builds of the same version stay distinguishable in bug reports.
             let shown = match allocator_build_id(&repo.join("mmgp").join("allocator")) {
                 Some(id) => format!("{v} (alloc {id})"),
@@ -288,29 +291,37 @@ pub(crate) fn apply_vendored_mmgp(
     }
 }
 
-/// Short build id of the vendored prebuilt allocator: FNV-1a over the
-/// platform's binary, first 6 hex. Size is folded in so a truncated or absent
+/// Short build id of the vendored prebuilt allocators: FNV-1a over the
+/// platform's binaries (the VRAM one, and the RAM allocator v17.17 added
+/// beside it), first 6 hex. Size is folded in so a truncated or absent
 /// file is obvious rather than looking like a valid build. None when the
 /// checkout predates the vendored allocator (or is not Windows/Linux).
 /// Pure + unit-tested.
 pub(crate) fn allocator_build_id(dir: &std::path::Path) -> Option<String> {
-    let name = if cfg!(windows) {
-        "vmm_alloc_win_amd64.dll"
+    let (vram, ram) = if cfg!(windows) {
+        ("vmm_alloc_win_amd64.dll", "ram_alloc_win_amd64.dll")
     } else if cfg!(target_os = "macos") {
         return None;
     } else {
-        "vmm_alloc_linux_x86_64.so"
+        ("vmm_alloc_linux_x86_64.so", "ram_alloc_linux_x86_64.so")
     };
-    let bytes = std::fs::read(dir.join(name)).ok()?;
-    if bytes.is_empty() {
+    let vram_bytes = std::fs::read(dir.join(vram)).ok()?;
+    if vram_bytes.is_empty() {
         return None;
     }
+    // The RAM library is absent on a pre-v17.17 checkout: hashing what exists
+    // then reproduces the single-binary id those trees always showed.
+    let ram_bytes = std::fs::read(dir.join(ram)).unwrap_or_default();
     let mut h: u64 = 0xcbf29ce484222325;
-    for b in &bytes {
-        h ^= u64::from(*b);
-        h = h.wrapping_mul(0x100000001b3);
+    let mut size = 0usize;
+    for bytes in [&vram_bytes, &ram_bytes] {
+        size += bytes.len();
+        for b in bytes {
+            h ^= u64::from(*b);
+            h = h.wrapping_mul(0x100000001b3);
+        }
     }
-    Some(format!("{:x}/{}k", h & 0xffffff, bytes.len() / 1024))
+    Some(format!("{:x}/{}k", h & 0xffffff, size / 1024))
 }
 
 #[cfg(test)]
@@ -346,6 +357,12 @@ mod allocator_build_tests {
         let b = allocator_build_id(&dir).unwrap();
         assert_ne!(a, b, "two builds sharing a version must not collide");
         assert!(a.ends_with("k"), "size folded into the id: {a}");
+        // v17.17: a second prebuilt library sits beside the VRAM one, so the
+        // same VRAM build must not fingerprint the same with and without it.
+        std::fs::write(dir.join(name.replace("vmm_alloc", "ram_alloc")), b"ram-build").unwrap();
+        let with_ram = allocator_build_id(&dir).unwrap();
+        assert_ne!(b, with_ram, "the RAM allocator binary must be part of the id");
+        assert!(with_ram.ends_with("k"), "both sizes folded into the id: {with_ram}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

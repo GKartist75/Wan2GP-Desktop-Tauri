@@ -78,7 +78,12 @@ if ([System.IO.File]::ReadAllBytes($latestPath)[0] -eq 0xEF) { throw "latest.jso
 $branch = (git branch --show-current).Trim()
 if ($branch) { git push -u origin $branch }
 if (-not (git tag -l $tag)) { git tag $tag HEAD }
-if ((git ls-remote --tags origin "refs/tags/$tag").Trim() -eq "") { git push origin "refs/tags/$tag" }
+# `git ls-remote` prints NOTHING for an unknown ref, and PowerShell hands that
+# to .Trim() as $null - "You cannot call a method on a null-valued expression",
+# which killed the v0.10.4 run at the very last step. Out-String always yields a
+# (possibly empty) string.
+$remoteTag = (git ls-remote --tags origin "refs/tags/$tag" | Out-String).Trim()
+if ($remoteTag -eq "") { git push origin "refs/tags/$tag" }
 
 # 5) Publish (latest.json must be on a published release — /latest/download/ 404s on drafts)
 $msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | Where-Object { $_.Name -like "*$Version*" } | Select-Object -First 1

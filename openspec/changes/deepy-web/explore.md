@@ -2,7 +2,7 @@
 
 ## Goal
 
-Implement Deepy Web one-button full remote (Core + Auth + LAN HTTPS + Tailscale) per `docs/DEEPY-WEB-DESIGN.md` on branch `feature/deepy-web`.
+Implement Deepy Web one-button full remote (Core + Auth + LAN HTTPS + Tailscale) per `openspec/changes/deepy-web/design.md` on branch `feature/deepy-web`.
 
 ## 1. How wgp.py is launched today
 

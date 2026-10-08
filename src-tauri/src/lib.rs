@@ -286,6 +286,8 @@ pub fn run() {
             system::detach_browser_view,
             system::reattach_browser_view,
             system::create_term_view,
+    system::request_console_seed,
+    system::term_console_seed,
             system::destroy_term_view,
             system::bv_navigate,
             system::bv_set_zoom,

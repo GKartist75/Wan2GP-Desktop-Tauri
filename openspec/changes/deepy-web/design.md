@@ -3,7 +3,7 @@
 ## Overview
 
 Add one-button phone-friendly Deepy Web to the launcher dashboard per
-`docs/DEEPY-WEB-DESIGN.md`, `proposal.md`, and `specs/deepy-web/spec.md`.
+`design.md` (this file), `proposal.md`, and `specs/deepy-web/spec.md`.
 Upstream `wgp.py` owns `--deepy-server` / `--listen` / `--auth`; the launcher
 only composes them. New surface is launcher-owned: one dashboard card, one new
 backend module, launcher desktop-config keys. No fork of `launch.rs` arg logic,

@@ -4,6 +4,206 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+### Every console message gets its own line again
+
+This is the long-standing "newlines don't always work" complaint, and it was
+never a CSS problem — `.term-body` has always set `white-space: pre-wrap` and
+the browser honours it (verified: three `\n` in the text produce three line
+boxes). The text simply had no newlines in it.
+
+`appendLog` implements *stream* semantics: a chunk with no `\n` continues the
+current line, because a child process's stdout arrives in arbitrary chunks. The
+launcher's own messages are complete lines, and 68 of them were passed with no
+terminator — only 2 ended in `\n`. So every launcher message concatenated into
+one endless `lastLine` and the console showed a single run-on row:
+
+```
+[*] Wan2GP install found — loading dashboard…[*] Launcher v0.9.2 ready — …
+```
+
+- **`appendLog` now terminates launcher-side lines.** Keyed off the `forward`
+  flag that was already there: the only `forward === false` callers are the two
+  stream listeners in `init-tab.js` (`setup-output`, `launch-log`), and they
+  keep the continuation behaviour so long child lines are never torn in half.
+  `\r` progress overwrites still work — covered by tests.
+- **The separate console window had the same fault.** `console-mirror` carries
+  the same un-terminated launcher messages, so `term.js` now adds the newline
+  on arrival. This is why floating read as *less* readable than docked.
+
+### The console is resizable in every dock
+
+The console panel had exactly one resize handle and it was wired to the bottom
+and top docks only. Dock it left or right and the drag did nothing — the handle
+was there, but `mousedown` bailed out before touching the panel, so there was no
+way to trade GUI width for log width. Now every dock has a draggable edge on the
+side that faces Wan2GP: drag up/down on bottom and top, sideways on left and
+right, and any edge when the console floats.
+
+- **Four edges instead of one.** `index.html` ships a handle per edge
+  (`data-edge` / `data-axis`); `style.css` shows only the live ones for the
+  current dock. They sit inside the panel bounds — `.floating-term` clips
+  overflow, so the old negative-offset trick would have been clipped away.
+  Floating is draggable on all four of its edges, so the floating panel is as
+  resizable as any dock.
+- **A drag moves the GUI too.** The old handler called only
+  `syncTermEmbedPadding`, which is a no-op under a native child webview (it
+  composites above the DOM and ignores CSS padding). Both syncs now run per
+  frame, so the embedded view really does shrink as the console grows.
+- **The cap is now the whole area below the topbar** (was 60%, then 90%).
+  Dragging a docked console all the way up covers the GUI completely — the
+  ask was to spend more time in the console than in Wan2GP. Only the topbar
+  (44px) is never covered, so the dashboard icons stay reachable, and the
+  console's own ✕ sits in its header, so a full-size console is never a trap.
+  Minimum is 80px tall / 240px wide.
+- **The separate console window (native + floating) opens big.** It was a fixed
+  760x520 peephole — the unreadable case that made floating unpopular in the
+  first place. It now opens at ~72% of the primary monitor in logical pixels
+  (floor 760x520, cap 1800x1300 so it never opens off-screen), and is
+  explicitly resizable and maximizable so the OS border and the maximize box
+  are the "make it max" control there.
+- **A dragged size sticks.** `setFtDock` ran `ft.style.cssText = ""` on every
+  dock change, which threw the size away — that is why a resize appeared not to
+  save. It now re-applies the size stored for the dock being switched to, and
+  each dock keeps its own (`termSizes` in `desktop-config.json`), so bottom, top,
+  left and right each remember how far you dragged them, across relaunches.
+- **Floating is anchored before its first drag.** `.dock-floating` positions the
+  panel from the right, so a drag on its west or north edge had no fixed edge to
+  grow from and the panel slid away from the cursor. The first such drag
+  converts the anchor to explicit `left`/`top` in place, keeping the position.
+  - **The dashboard Console card resizes too.** Its top edge is now a drag handle:
+  drag up for more log, down for less. The card is `flex:1` in a scrolling
+  column, so a drag pins both the flex basis and the height — `flex-basis:0`
+  beats an inline height in a column flex container, and without pinning the
+  basis the drag would have had no visible effect. Bounded to the column (so the
+  cards above stay reachable) with a 120px floor, re-clamped when the window
+  resizes, and saved as `dashTermHeight`.
+- **A `⤢ Full` button gives the Console the whole dashboard** (double-clicking
+  the drag edge does the same). This is the browser-mode case: the launcher
+  runs as a plain web page with no other chrome, so the Console *is* the view —
+  and a drag can only ever move it inside its own column, next to cards nobody
+  opens. Full mode hides the other columns and the other cards and lets the
+  Console fill `.dash-body`. It parks the dragged height rather than losing it,
+  dragging the edge drops back out of it, and it is deliberately **not**
+  persisted: reopening into a dashboard with no visible GUI would read as a
+  broken launch.
+
+### The floating console no longer shows a shorter log than the docked one
+
+Opening the console in its own window seeded itself from the backend's
+`LOG_HISTORY`. That ring buffer is raw text — `base::push_log` splits `\r` into
+separate lines and drops tqdm fragments — so the replay was **not** the log the
+docked console shows: shorter, differently collapsed, and drifting further apart
+with every dock switch. It now asks the main window, which owns the rendered
+buffer, so the two consoles are the same log by construction.
+
+- `term_console_seed` / `request_console_seed` (`src-tauri/src/system.rs`) route
+  term → main → term. The request is deliberately **pull**, not push: a push at
+  `create_term_view` time races the webview's listener registration and the
+  console would start empty with no error anywhere.
+- `term.js` replaces its buffer with the seed (replace, not append — the window
+  is recreated on every dock switch, so appending would duplicate the log), and
+  keeps `getLogHistory` only as a fallback behind a flag, for a build where the
+  seed never arrives.
+- `LOG_HISTORY`'s cap rose from 2000 to 5000 to match `MAX_LOG`, so the logs
+  web page and the fallback agree with the console. tqdm fragments stay
+  excluded there: they are `\r` rewrites, and replaying them as static lines
+  would be noise, not history.
+
+In the iframe renderer "floating" is the same DOM panel as any dock, so it was
+already complete — the loss was specific to the separate native window.
+
+Resizing never touches the log path: the docked panel renders from `logBuffer`
+on every frame, and a drag only changes the panel's box — verified by pushing
+`\r`, `\r\n` and tqdm lines through `appendLog`, dragging all four edges, and
+confirming the rendered text is byte-identical before and after.
+
+### Upstream v17.17 parity (`6479db3`, 2026-10-07)
+
+Six upstream commits after v17.10 — `f02a382` ("H3 VAE optims") and four
+iterations of "added RAM allocator" plus a "fix" — 57 files, read upstream as
+**WanGP v17.17**.
+
+**No install-stack movement.** `requirements.txt`, `setup.py`,
+`setup_config.json`, `docs/INSTALLATION.md` and `docs/AMD-INSTALLATION.md` are
+untouched in this range, so no torch, Triton, Sage, Flash, Nunchaku, LightX2V
+or GGUF pin moves. The new RAM allocator accepts PyTorch 2.6 to 2.15, which
+holds the managed `torch==2.10.0`, and its only new import, `psutil`, is
+already an upstream requirement.
+
+- **New `ram_allocator` setting, mirrored in Performance Settings**
+  (`shared/cuda_memory.py` `RAM_ALLOCATOR_KEY`, `plugins/configuration/
+  plugin.py`, `--ram-allocator` on the CLI). `mmgp` (upstream's default) hands
+  the RAM of freed CPU tensors back to the system when the queue is done, a
+  model is released or RAM runs short, keeping up to 2 GB for reuse between
+  generations of the same model; `default` is PyTorch's own allocator, which
+  keeps that RAM for the rest of the session. Added the control beside the VRAM
+  one, its labels and `saved:` chip, and both backend gates — without them the
+  key validated and was then silently dropped by the Apply allowlist, the one
+  failure mode that panel has. No recommendation: upstream already defaults to
+  `mmgp`, so there is nothing hardware-aware to calibrate and nothing to seed
+  into a fresh `wgp_config.json`.
+- **The allocator fingerprint now covers both prebuilt libraries.** v17.17
+  ships `ram_alloc_win_amd64.dll` / `ram_alloc_linux_x86_64.so` beside the VRAM
+  one and rebuilds the VRAM library (`vmm_alloc.cpp` +29/-3) under the same
+  `mmgp` `4.0.0`, so `mmgp 4.0.0 (alloc ...)` could no longer tell a v17.10
+  tree from a v17.17 one. `allocator_build_id` hashes what exists, which keeps
+  the id a pre-v17.17 checkout always showed.
+- **Dynamic image preload is not written outside Profiles 2, 4 and 5.**
+  `wgp.py:4216` gates *Dynamic* to `mmgp_profile in (2, 4, 5)` (`init_pipe`
+  does `int(profile)`, so 4.5 counts as 4). Auto-Tune recommended
+  `image_preload_mode: dynamic` on every profile, so on P1 it wrote a
+  setting upstream silently ignores. It now writes `default` there; the
+  panel note, the dropdown tooltip and the guide say the same thing.
+- **README: the Linux auto of Reserved RAM was still documented as 80%.** The
+  tooltip and the panel were corrected in v0.10.3; the settings table was not.
+  It now says 60% (upstream v17.10 / `ec9566a`).
+- Left alone on purpose: SageAttention 2's staged path widened to sm86 and
+  masked attentions, so the RTX 30/40/50 Sage 2.2.0 recommendation stands;
+  Attention Head Split now counts all batch items' query tokens against its
+  8192 threshold, so the tooltip's "8192+ tokens" still holds; and the
+  `uint8_guides` RAM savings (H3 VAE, control videos, the `locals()` cycle fix)
+  change no key and no pin.
+  
+  ### Documentation pass — README split by audience
+  
+  No code change. The README was carrying three audiences at once (decide +
+  install, operate, contribute) and compromised on all three, which is why it had
+  grown to 6,305 words. It is now the decide-and-install tier at 4,039 words,
+  with mechanics moved to the docs that already had clean TOCs.
+  
+  - **What's New is now a release table** (1,092 → 198 words). Eight
+    hand-maintained prose bullets became six rows; the full entries stay in the
+    CHANGELOG, which is where a reader looks for them anyway.
+  - **Auto-Tune** (1,261 → 394) keeps the profile matrix, the two honest caveats
+    and the ownership rule; the per-setting v17 mechanics moved to
+    `docs/USER-GUIDE.md`, whose `Manage → Auto-Tune` section was a three-line stub.
+  - **GPU kernels** (848 → 188) keeps only the decision the launcher makes. The
+    wheel table, per-GPU sets, driver requirements and AMD/Intel notes moved to a
+    new `docs/USER-GUIDE.md` section with NVIDIA and AMD side by side. The README
+    now deliberately restates no version numbers — the in-app card is
+    authoritative — so the pins cannot go stale in prose again.
+  - **Phone & remote access** was one 288-word paragraph. Split into the three
+    real paths (A Gradio server / B Deepy Web standalone / C console logs) it is
+    longer and readable, which is the right trade.
+  - **Troubleshooting** turned from seven prose bullets into a button table — the
+    reader arriving there is already stuck and is scanning for the fix.
+  - **Facts that were wrong**: the test counts said 234 backend / 27 frontend and
+    are now 256 / 37 (verified by running both suites); "10 infographics" claimed
+    for a guide that has no images; the download size contradicted itself at 3 MB
+    and 4 MB; `docs/OVERVIEW.md` still said GGUF 1.0.21 in three places. Where a
+    version was genuinely ambiguous (`install.rs` carries both 1.0.14 and 1.0.25)
+    the docs now name the floor instead of a number.
+  - **New Documentation section** links all four docs from one place, including
+    `docs/OVERVIEW.md`, which until now was reachable from nothing.
+  - **Deleted** `todo.md`, `TODO-GUIDE-FEATURES.md` and `docs/DEEPY-WEB-DESIGN.md`
+    — finished work with every checkbox ticked and no inbound links; the four
+    openspec references to the last one now point at `openspec/changes/deepy-web/`
+    instead. `docs/UPSTREAM-PATCH-auth-referrer.md` keeps its content but opens
+    with a banner saying it documents a reverted patch.
+  
+  Verified across all five docs: zero broken anchors, zero missing file links,
+  zero unlinked sections.
+
 ## [0.10.3] — 2026-10-06
 
 Three report-driven fixes: the Auto-Tune panel's overlapping chips, a Restore

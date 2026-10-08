@@ -6,7 +6,7 @@
 - Branch: `feature/deepy-web`
 - Choice: Full remote (Core + Auth v1.1 + LAN HTTPS v1.2 + Tailscale v1.3)
 - Pre-proposal handoff: confirmed — no further product discovery in this phase
-- Sources: `docs/DEEPY-WEB-DESIGN.md` + `openspec/changes/deepy-web/explore.md`
+- Sources: `openspec/changes/deepy-web/design.md` + `openspec/changes/deepy-web/explore.md`
 - Execution: auto · Store: openspec · Delivery: ask-on-risk · Budget: 400 changed lines
 
 ## Problem statement
@@ -33,7 +33,7 @@ One click: preflight → auto install/initiate → start phone-friendly Deepy We
 
 ## Intent
 
-Implement the full remote per `docs/DEEPY-WEB-DESIGN.md` on branch `feature/deepy-web`, reusing existing launch/config/session machinery and adding only the launcher-owned surface (dashboard card + `deepy_web_*` commands + desktop-config keys).
+Implement the full remote per `openspec/changes/deepy-web/design.md` on branch `feature/deepy-web`, reusing existing launch/config/session machinery and adding only the launcher-owned surface (dashboard card + `deepy_web_*` commands + desktop-config keys).
 
 ## Scope slices
 

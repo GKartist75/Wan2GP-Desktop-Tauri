@@ -206,6 +206,19 @@
             return () => {};
         },
         clearLogHistory: () => call("clear_log_history"),
+        // Console-window seeding. The main window owns the rendered log; the
+        // term window asks for it instead of replaying the backend's raw ring
+        // buffer, so floating and docked show the same lines.
+        requestConsoleSeed: () => call("request_console_seed"),
+        termConsoleSeed: (lines) => call("term_console_seed", { lines: lines || [] }),
+        onTermRequestSeed: (cb) => {
+            listen("term-request-seed", cb);
+            return () => {};
+        },
+        onTermConsoleSeed: (cb) => {
+            listen("term-console-seed", cb);
+            return () => {};
+        },
         onConsoleCleared: (cb) => {
             listen("console-cleared", cb);
             return () => {};
