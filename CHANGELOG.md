@@ -4,6 +4,47 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+### The console is resizable in every dock
+
+The console panel had exactly one resize handle and it was wired to the bottom
+and top docks only. Dock it left or right and the drag did nothing — the handle
+was there, but `mousedown` bailed out before touching the panel, so there was no
+way to trade GUI width for log width. Now every dock has a draggable edge on the
+side that faces Wan2GP: drag up/down on bottom and top, sideways on left and
+right, and any edge when the console floats.
+
+- **Four edges instead of one.** `index.html` ships a handle per edge
+  (`data-edge` / `data-axis`); `style.css` shows only the live ones for the
+  current dock. They sit inside the panel bounds — `.floating-term` clips
+  overflow, so the old negative-offset trick would have been clipped away.
+- **A drag moves the GUI too.** The old handler called only
+  `syncTermEmbedPadding`, which is a no-op under a native child webview (it
+  composites above the DOM and ignores CSS padding). Both syncs now run per
+  frame, so the embedded view really does shrink as the console grows.
+- **The cap rose from 60% to 90%** of the window, leaving the topbar and a
+  strip of Wan2GP. Minimum is 80px tall / 240px wide.
+- **A dragged size sticks.** `setFtDock` ran `ft.style.cssText = ""` on every
+  dock change, which threw the size away — that is why a resize appeared not to
+  save. It now re-applies the size stored for the dock being switched to, and
+  each dock keeps its own (`termSizes` in `desktop-config.json`), so bottom, top,
+  left and right each remember how far you dragged them, across relaunches.
+- **Floating is anchored before its first drag.** `.dock-floating` positions the
+  panel from the right, so a drag on its west or north edge had no fixed edge to
+  grow from and the panel slid away from the cursor. The first such drag
+  converts the anchor to explicit `left`/`top` in place, keeping the position.
+
+### The floating console no longer replays a shallower history than the docked one
+
+Opening the console in its own window replays the backend's `LOG_HISTORY`, and
+that history was capped at 2000 lines while the docked console keeps 5000
+(`MAX_LOG` in `src/app.js`). Opened mid-session, the same console therefore
+looked like it had lost most of its logs. The cap now matches at 5000.
+
+Resizing never touches the log path: the docked panel renders from `logBuffer`
+on every frame, and a drag only changes the panel's box — verified by pushing
+`\r`, `\r\n` and tqdm lines through `appendLog`, dragging all four edges, and
+confirming the rendered text is byte-identical before and after.
+
 ### Upstream v17.17 parity (`6479db3`, 2026-10-07)
 
 Six upstream commits after v17.10 — `f02a382` ("H3 VAE optims") and four

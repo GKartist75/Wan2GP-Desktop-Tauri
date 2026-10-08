@@ -1,0 +1,229 @@
+/**
+ * console-resize.test.js — the console panel must be draggable in every dock.
+ *
+ * The shipped console had ONE handle, wired to bottom/top only: left/right
+ * docks silently ignored the drag, so a user who docks the console sideways
+ * could not trade GUI width for log width at all. These tests pin the per-edge
+ * geometry, the drag maths for each dock, the clamp, and the persistence that
+ * keeps a dragged size across a dock switch and a relaunch.
+ *
+ * Same approach as theme-persist.test.js: the renderer has no module loader,
+ * so the real function bodies are lifted out of src/app.js and run in a vm
+ * against a fake element. Running the code catches behaviour changes; string
+ * matching would not.
+ */
+const test = require('node:test')
+const assert = require('node:assert')
+const fs = require('node:fs')
+const path = require('node:path')
+const vm = require('node:vm')
+
+const SRC = path.join(__dirname, '..', 'src')
+const appJs = fs.readFileSync(path.join(SRC, 'app.js'), 'utf8')
+const termTab = fs.readFileSync(path.join(SRC, 'term-tab.js'), 'utf8')
+const indexHtml = fs.readFileSync(path.join(SRC, 'index.html'), 'utf8')
+const css = fs.readFileSync(path.join(SRC, 'style.css'), 'utf8')
+
+/** pull one top-level `function name(...) {...}` body out of a renderer file */
+function extract(file, name) {
+  const m = file.match(
+    new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\([^)]*\\)\\s*\\{[\\s\\S]*?\\n\\}`),
+  )
+  assert.ok(m, `${name} not found in ${file}`)
+  return m[0]
+}
+
+/**
+ * Run the real resize code against a stand-in console element.
+ *
+ * The fake panel reports whatever width/height its inline style says, which is
+ * what the browser does for a dock sized by CSS alone — so a handle that never
+ * writes the style leaves the measured size at the CSS default, exactly like the
+ * live "the drag did nothing" bug.
+ */
+function harness({ dock = 'bottom', cfg = {}, win = { innerWidth: 1200, innerHeight: 900 } } = {}) {
+  const saved = []
+  const state = { w: 0, h: 0 }
+  const numeric = (v, fallback) => (v ? parseInt(v, 10) : fallback)
+  const ft = {
+    className: 'floating-term dock-' + dock,
+    dataset: {},
+    style: {},
+    get offsetWidth() {
+      const side = this.className.includes('dock-left') || this.className.includes('dock-right')
+      state.w = side ? numeric(this.style.width, 340) : win.innerWidth
+      return state.w
+    },
+    get offsetHeight() {
+      const side = this.className.includes('dock-left') || this.className.includes('dock-right')
+      state.h = side ? win.innerHeight : numeric(this.style.height, 200)
+      return state.h
+    },
+    getBoundingClientRect() {
+      // Measure first so a caller that captured a rect before any drag still
+      // sees the CSS default rather than a stale zero.
+      return { left: 0, top: 0, right: this.offsetWidth, bottom: this.offsetHeight, width: this.offsetWidth, height: this.offsetHeight }
+    },
+  }
+  const handle = { dataset: { edge: 'n', axis: 'v' }, setPointerCapture() {} }
+  const pressed = []
+  const doc = {
+    readyState: 'complete',
+    body: {
+      classList: {
+        add: (c) => pressed.push('add:' + c),
+        remove: (c) => pressed.push('rm:' + c),
+      },
+    },
+    querySelectorAll: () => [],
+  }
+  const ctx = {
+    console,
+    window: {
+      innerWidth: win.innerWidth,
+      innerHeight: win.innerHeight,
+      w2gp: {
+        configLoad: async () => cfg,
+        configSave: async (c) => saved.push(JSON.parse(JSON.stringify(c))),
+      },
+      addEventListener() {},
+    },
+    document: doc,
+    requestAnimationFrame: (fn) => fn(),
+    $: (id) => (id === 'floatingTerminal' ? ft : null),
+    currentDock: () => dock,
+    syncTermEmbedPadding() {},
+    syncNativeBoundsAdjusted() {},
+    handle,
+  }
+  ctx.window.document = doc
+  vm.createContext(ctx)
+  vm.runInContext(
+    [
+      'const FT_MIN = { v: 80, h: 240 };',
+      'const FT_MAX_FRAC = 0.9;',
+      'const FT_DEFAULT = { bottom: 200, top: 200, left: 340, right: 340 };',
+      'let _ftSizes = null; let _resize = null; let _ftSyncRaf = 0;',
+      extract(appJs, 'ftClamp'),
+      extract(appJs, 'ftApplySize'),
+      extract(appJs, 'anchorFloatingTerm'),
+      extract(appJs, 'ftRememberSize'),
+      extract(appJs, 'ftScheduleSync'),
+      extract(appJs, 'ftStartResize'),
+      extract(appJs, '_resizeMove'),
+      extract(appJs, '_resizeEnd'),
+      'this.api = { ftStartResize, _resizeMove, _resizeEnd, ftApplySize, anchorFloatingTerm };',
+      // Mirrors the boot block in app.js: read termSizes, then size the dock.
+      'this.boot = (c) => { if (c && c.termSizes && typeof c.termSizes === "object") _ftSizes = c.termSizes; ftApplySize(currentDock()); };',
+    ].join('\n'),
+    ctx,
+    { timeout: 5000 },
+  )
+  return Object.assign(ctx, { ft, handle, saved, pressed })
+}
+
+/** press the given edge, drag by (dx, dy), release */
+function drag(h, { edge, axis, dx, dy }) {
+  h.handle.dataset.edge = edge
+  h.handle.dataset.axis = axis
+  h.ft.getBoundingClientRect()
+  h.api.ftStartResize({
+    button: 0,
+    pointerId: 1,
+    clientX: 500,
+    clientY: 500,
+    currentTarget: h.handle,
+    preventDefault() {},
+  })
+  h.api._resizeMove({ clientX: 500 + dx, clientY: 500 + dy })
+  h.api._resizeEnd()
+}
+
+const SIDE = (dock) => dock === 'left' || dock === 'right'
+const sizeOf = (h, dock) => (SIDE(dock) ? h.ft.offsetWidth : h.ft.offsetHeight)
+
+test('every dock exposes a draggable edge on the side facing Wan2GP', () => {
+  const edges = [...indexHtml.matchAll(/data-edge="([nsew])"\s+data-axis="([hv])"/g)].map((m) => m[1])
+  assert.deepEqual(edges, ['n', 's', 'w', 'e'], 'index.html must ship all four edges')
+
+  for (const [dock, live] of Object.entries({ bottom: 'n', top: 's', left: 'e', right: 'w' })) {
+    assert.match(
+      css,
+      new RegExp(`\\.floating-term\\.dock-${dock} \\.resize-${live}\\b`),
+      `dock-${dock} must offer its ${live} edge`,
+    )
+  }
+  assert.match(css, /\.floating-term\.dock-floating \.resize-n/, 'floating keeps all four edges')
+})
+
+test('dragging the edge grows the console on every dock', () => {
+  // The bug: only bottom/top were wired, so a sideways-docked console ignored
+  // the drag completely — no way to trade GUI width for log width.
+  const moves = {
+    bottom: { edge: 'n', axis: 'v', dx: 0, dy: -120 },
+    top: { edge: 's', axis: 'v', dx: 0, dy: 120 },
+    left: { edge: 'e', axis: 'h', dx: 200, dy: 0 },
+    right: { edge: 'w', axis: 'h', dx: -200, dy: 0 },
+  }
+  for (const [dock, move] of Object.entries(moves)) {
+    const h = harness({ dock })
+    const before = sizeOf(h, dock)
+    drag(h, move)
+    const after = sizeOf(h, dock)
+    assert.ok(
+      after > before,
+      `dock-${dock} did not grow: ${before} -> ${after} (style "${h.ft.style.width || h.ft.style.height}")`,
+    )
+  }
+})
+
+test('a drag is bounded so the console always leaves the GUI something', () => {
+  const h = harness({ dock: 'bottom', win: { innerWidth: 1200, innerHeight: 900 } })
+  drag(h, { edge: 'n', axis: 'v', dx: 0, dy: -5000 })
+  assert.equal(h.ft.offsetHeight, Math.round((900 - 80) * 0.9), 'must not swallow the whole window')
+
+  drag(h, { edge: 'n', axis: 'v', dx: 0, dy: 5000 })
+  assert.equal(h.ft.offsetHeight, 80, 'must not collapse below the header + search rows')
+})
+
+test('a dragged size is remembered per dock and survives a relaunch', async () => {
+  const h = harness({ dock: 'bottom' })
+  drag(h, { edge: 'n', axis: 'v', dx: 0, dy: -260 })
+  const dragged = h.ft.offsetHeight
+  await new Promise((r) => setImmediate(r))
+  assert.equal(h.saved.length, 1, 'the size must reach desktop-config.json')
+  assert.deepEqual(h.saved[0].termSizes.bottom, { h: dragged })
+
+  const boot = harness({ dock: 'bottom', cfg: { termSizes: { bottom: { h: dragged } } } })
+  boot.boot({ termSizes: { bottom: { h: dragged } } })
+  assert.equal(boot.ft.style.height, dragged + 'px', 'the relaunched panel must come back the size the user dragged')
+  boot.api.ftApplySize('left')
+  assert.equal(boot.ft.style.width, '340px', 'a dock with no saved size falls back to its default')
+})
+
+test('switching docks re-applies the saved size instead of snapping back', () => {
+  // setFtDock used to run `ft.style.cssText = ""`, which threw the dragged size
+  // away on every dock change — the reason a resize appeared not to stick.
+  assert.match(
+    extract(termTab, 'setFtDock'),
+    /ftApplySize\(dock\)/,
+    'setFtDock must restore the size for the dock it switches to',
+  )
+})
+
+test('the console marks the window while dragging and clears it on release', () => {
+  const h = harness({ dock: 'bottom' })
+  drag(h, { edge: 'n', axis: 'v', dx: 0, dy: 0 })
+  assert.deepEqual(h.pressed, ['add:ft-resizing', 'rm:ft-resizing'])
+})
+
+test('a floating console is anchored before the first west/north drag', () => {
+  // .dock-floating positions the panel from the right, so a west-edge drag had
+  // no fixed edge to grow from: the panel would slide away from the cursor.
+  const h = harness({ dock: 'floating' })
+  h.ft.style.left = '398px'
+  h.api.anchorFloatingTerm(h.ft)
+  assert.equal(h.ft.dataset.ftAnchored, '1')
+  assert.equal(h.ft.style.right, 'auto', 'the right anchor must go, or left and right fight')
+  assert.equal(h.ft.style.left, '0px', 'anchor conversion keeps the on-screen position')
+})

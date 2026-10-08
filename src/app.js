@@ -1069,37 +1069,156 @@ $("logExportBtn")?.addEventListener("click", () => {
   a.click();
   URL.revokeObjectURL(a.href);
 });
-// Resize handle
+// ── Resize handles: drag the console's edge to trade GUI space for log space ──
+// One handle per edge, shown only where it makes sense for the current dock
+// (style.css): bottom/top docks get the vertical edge that faces Wan2GP,
+// left/right the horizontal one, floating all four. The handle sits INSIDE
+// the panel because .floating-term clips overflow — outside offsets vanish.
+// Sizes persist per dock (config termSizes) so a resize survives docking away
+// and back; ftApplySize re-applies it, so setFtDock must not wipe inline size.
+const FT_MIN = { v: 80, h: 240 };
+const FT_MAX_FRAC = 0.9;
+const FT_DEFAULT = { bottom: 200, top: 200, left: 340, right: 340 };
+let _ftSizes = null; // {bottom:{h}, top:{h}, left:{w}, right:{w}}
 let _resize = null;
-$("ftResize").addEventListener("mousedown", (e) => {
-  e.preventDefault();
+let _ftSyncRaf = 0;
+
+function ftClamp(px, axis) {
+  const span =
+    (axis === "v" ? window.innerHeight : window.innerWidth) - 80;
+  return Math.round(Math.max(FT_MIN[axis], Math.min(px, span * FT_MAX_FRAC)));
+}
+function ftApplySize(dock) {
   const ft = $("floatingTerminal");
-  if (
-    !ft.classList.contains("dock-bottom") &&
-    !ft.classList.contains("dock-top")
-  )
-    return;
+  if (!ft || dock === "floating") return;
+  const d = FT_DEFAULT[dock];
+  const s = (_ftSizes && _ftSizes[dock]) || (dock === "left" || dock === "right" ? { w: d } : { h: d });
+  ft.style.width = s.w ? s.w + "px" : "";
+  ft.style.height = s.h ? s.h + "px" : "";
+}
+// .dock-floating positions the panel from the RIGHT (right:60px), so a drag on
+// its west/north edge has nothing to anchor against — the panel grows away from
+// the cursor and runs off-screen. Convert the CSS anchor to explicit left/top
+// once, keeping the on-screen position identical.
+function anchorFloatingTerm(ft) {
+  if (!ft || ft.dataset.ftAnchored === "1") return;
+  const r = ft.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  ft.style.left = Math.round(r.left) + "px";
+  ft.style.top = Math.round(r.top) + "px";
+  ft.style.right = "auto";
+  ft.dataset.ftAnchored = "1";
+}
+function ftRememberSize(dock) {
+  const ft = $("floatingTerminal");
+  if (!ft || dock === "floating") return;
+  _ftSizes = _ftSizes || {};
+  _ftSizes[dock] =
+    dock === "left" || dock === "right"
+      ? { w: ft.offsetWidth }
+      : { h: ft.offsetHeight };
+  // Fire-and-forget: a failed save just means the size resets next launch.
+  window.w2gp
+    .configLoad()
+    .then((cfg) => {
+      if (!cfg || typeof cfg !== "object") return;
+      cfg.termSizes = _ftSizes;
+      return window.w2gp.configSave(cfg);
+    })
+    .catch(() => {});
+}
+// Both the iframe padding and the native child bounds follow the console's
+// measured size, so a drag has to push both — one alone leaves the GUI
+// unchanged under a native child that composites above the DOM.
+function ftScheduleSync() {
+  if (_ftSyncRaf) return;
+  _ftSyncRaf = requestAnimationFrame(() => {
+    _ftSyncRaf = 0;
+    try {
+      syncTermEmbedPadding();
+    } catch {}
+    try {
+      syncNativeBoundsAdjusted();
+    } catch {}
+  });
+}
+function ftStartResize(e) {
+  if (e.button != null && e.button !== 0) return;
+  const handle = e.currentTarget;
+  const ft = $("floatingTerminal");
+  e.preventDefault();
+  const dock = currentDock();
+  // Anchor before measuring: the first drag on a floating panel converts its
+  // right-anchored CSS box to left/top, so the captured rect stays truthful.
+  if (dock === "floating") anchorFloatingTerm(ft);
   _resize = {
+    dock: dock,
+    edge: handle.dataset.edge,
+    axis: handle.dataset.axis,
+    rect: ft.getBoundingClientRect(),
+    startX: e.clientX,
     startY: e.clientY,
-    startH: ft.offsetHeight,
-    dock: ft.classList.contains("dock-top") ? "top" : "bottom",
   };
-  document.addEventListener("mousemove", _resizeMove);
-  document.addEventListener("mouseup", _resizeEnd);
-});
+  try {
+    handle.setPointerCapture(e.pointerId);
+  } catch {}
+  document.body.classList.add("ft-resizing");
+}
 function _resizeMove(e) {
   if (!_resize) return;
-  const dh = e.clientY - _resize.startY;
-  let h = _resize.dock === "top" ? _resize.startH + dh : _resize.startH - dh;
-  h = Math.max(80, Math.min(h, window.innerHeight * 0.6));
-  $("floatingTerminal").style.height = h + "px";
-  syncTermEmbedPadding();
+  const r = _resize;
+  const ft = $("floatingTerminal");
+  const dx = e.clientX - r.startX;
+  const dy = e.clientY - r.startY;
+  if (r.axis === "v") {
+    const h = ftClamp(r.rect.height + (r.edge === "s" ? dy : -dy), "v");
+    ft.style.height = h + "px";
+    // Floating is anchored top-left, so growing from the north edge has to
+    // walk the panel up by the same amount or it grows off the bottom.
+    if (r.dock === "floating" && r.edge === "n")
+      ft.style.top = Math.max(0, Math.round(r.rect.top + (r.rect.height - h))) + "px";
+  } else {
+    const w = ftClamp(r.rect.width + (r.edge === "e" ? dx : -dx), "h");
+    ft.style.width = w + "px";
+    if (r.dock === "floating" && r.edge === "w")
+      ft.style.left = Math.max(0, Math.round(r.rect.left + (r.rect.width - w))) + "px";
+  }
+  ftScheduleSync();
 }
 function _resizeEnd() {
+  if (!_resize) return;
+  const dock = _resize.dock;
   _resize = null;
-  document.removeEventListener("mousemove", _resizeMove);
-  document.removeEventListener("mouseup", _resizeEnd);
+  document.body.classList.remove("ft-resizing");
+  ftRememberSize(dock);
+  try {
+    syncTermEmbedPadding();
+  } catch {}
+  try {
+    syncNativeBoundsAdjusted();
+  } catch {}
 }
+document.querySelectorAll(".floating-term-resize").forEach((h) => {
+  h.addEventListener("pointerdown", ftStartResize);
+});
+window.addEventListener("pointermove", _resizeMove);
+window.addEventListener("pointerup", _resizeEnd);
+window.addEventListener("pointercancel", _resizeEnd);
+// Restore saved sizes at boot (and the default for a dock never resized).
+// currentDock() lives in term-tab.js, a LATER deferred script: a resolved
+// promise can land before it is evaluated, so wait for the load event.
+const _ftSizesAtBoot = () =>
+  window.w2gp
+    .configLoad()
+    .then((cfg) => {
+      if (cfg && cfg.termSizes && typeof cfg.termSizes === "object")
+        _ftSizes = cfg.termSizes;
+      ftApplySize(currentDock());
+    })
+    .catch(() => {});
+if (document.readyState === "loading")
+  window.addEventListener("DOMContentLoaded", _ftSizesAtBoot, { once: true });
+else _ftSizesAtBoot();
 
 
 

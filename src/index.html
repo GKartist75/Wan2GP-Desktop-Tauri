@@ -1953,7 +1953,12 @@
       <input type="text" id="logSearch" class="ft-search" placeholder="Search logs...">
       <button class="term-btn-small" id="logExportBtn" title="Export logs">Export</button>
     </div>
-    <div class="floating-term-resize" id="ftResize"></div>
+    <!-- Resize edges. Only the edge facing Wan2GP is shown for a docked
+               console; floating shows all four. app.js drives them. -->
+          <div class="floating-term-resize resize-n" data-edge="n" data-axis="v" title="Drag to resize the console"></div>
+          <div class="floating-term-resize resize-s" data-edge="s" data-axis="v" title="Drag to resize the console"></div>
+          <div class="floating-term-resize resize-w" data-edge="w" data-axis="h" title="Drag to resize the console"></div>
+          <div class="floating-term-resize resize-e" data-edge="e" data-axis="h" title="Drag to resize the console"></div>
   </div>
 
   <!-- Migration folder chooser (data dir + model folders) -->
