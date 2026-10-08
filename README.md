@@ -92,7 +92,7 @@ C:\Wan2GP-Models\               ← models library
 
 | Version | Headline |
 | --- | --- |
-| [**v0.10.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.4) | **The console is resizable in every dock** — drag its edge to trade GUI space for log space, up to the whole window, with a Full mode for Browser; and every console message gets its own line again |
+| [**v0.10.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.4) | **Upstream v17.17 parity** — a new **RAM allocator** control beside VRAM that hands freed CPU-tensor RAM back to the system instead of hoarding it all session; **the console is resizable in every dock** — drag its edge to trade GUI space for log space, up to the whole window, with a Full mode for Browser; and every console message gets its own line again |
 | [**v0.10.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.3) | Long Auto-Tune values stop overlapping neighbouring fields; Restore names what it installed; Sync no longer re-downloads 282 MB of wheels you already have |
 | [**v0.10.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.2) | Light theme survives a relaunch; Update says *"Already at upstream"* instead of doing a no-op |
 | [**v0.10.1**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.1) | **Upstream v17 (MMGP v4) parity** — Profile 4 is up to 50% cheaper in VRAM, and nine new upstream settings are calibrated per hardware instead of left for you to hand-enable |
