@@ -1700,6 +1700,10 @@
             </div>
             <!-- Terminal card — restored (floating overlay stays hidden) -->
         <div class="card dash-term-card" id="dashTermCard" style="flex:1;display:flex;flex-direction:column;min-height:0">
+          <!-- Drag this edge up to give the console more of the dashboard.
+               The card is flex:1 in a scrolling column, so a drag pins it to
+               an explicit height — see applyDashTermHeight in app.js. -->
+          <div class="dash-term-resize" id="dashTermResize" title="Drag to resize the Console"></div>
           <div class="card-header">
             <span class="card-title">Console</span>
             <div class="dash-term-actions">
@@ -1953,7 +1957,12 @@
       <input type="text" id="logSearch" class="ft-search" placeholder="Search logs...">
       <button class="term-btn-small" id="logExportBtn" title="Export logs">Export</button>
     </div>
-    <div class="floating-term-resize" id="ftResize"></div>
+    <!-- Resize edges. Only the edge facing Wan2GP is shown for a docked
+               console; floating shows all four. app.js drives them. -->
+          <div class="floating-term-resize resize-n" data-edge="n" data-axis="v" title="Drag to resize the console"></div>
+          <div class="floating-term-resize resize-s" data-edge="s" data-axis="v" title="Drag to resize the console"></div>
+          <div class="floating-term-resize resize-w" data-edge="w" data-axis="h" title="Drag to resize the console"></div>
+          <div class="floating-term-resize resize-e" data-edge="e" data-axis="h" title="Drag to resize the console"></div>
   </div>
 
   <!-- Migration folder chooser (data dir + model folders) -->
