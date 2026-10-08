@@ -4,6 +4,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.10.4] — 2026-10-08
+
 ### Every console message gets its own line again
 
 This is the long-standing "newlines don't always work" complaint, and it was
