@@ -28,7 +28,15 @@ $conf.version = $Version
 $conf | ConvertTo-Json -Depth 10 | Set-Content $confPath
 (Get-Content "src-tauri\Cargo.toml" -Raw) -replace '(?m)^version = ".*"', "version = `"$Version`"" |
   Set-Content "src-tauri\Cargo.toml" -NoNewline
-git add $confPath "src-tauri\Cargo.toml"
+# Cargo.lock carries the crate version too, and `cargo build` rewrites it during
+# step 2 — left uncommitted it shows as a dirty file forever and master drifts
+# from the tag. Bump it here so the release commit is self-consistent.
+$lockPath = "src-tauri\Cargo.lock"
+if (Test-Path $lockPath) {
+  (Get-Content $lockPath -Raw) -replace '(?m)^version = ".*"', "version = `"$Version`"" |
+    Set-Content $lockPath -NoNewline
+}
+git add $confPath "src-tauri\Cargo.toml" $lockPath
 if (git status --porcelain) { git commit -m "release: v$Version" | Out-Null }
 
 # 2) Build (signs updater artifacts automatically via the env key)
