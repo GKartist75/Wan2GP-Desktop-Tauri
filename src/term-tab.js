@@ -218,7 +218,16 @@ function setFtDock(dock) {
     "floating-term dock-" +
     dock +
     (ft.classList.contains("hidden") ? " hidden" : "");
-  if (dock !== "floating") ft.style.cssText = "";
+  // Docking must not throw away the size the user dragged — re-apply the one
+    // saved for the dock we are switching INTO (app.js ftApplySize). Wiping
+    // inline cssText here silently snapped every docked console back to 200px.
+    if (dock !== "floating") {
+      ft.style.cssText = "";
+      ft.dataset.ftAnchored = "";
+      if (typeof ftApplySize === "function") ftApplySize(dock);
+    } else {
+      anchorFloatingTerm(ft);
+    }
   document
     .querySelectorAll(".dock-btn")
     .forEach((b) => b.classList.toggle("active", b.dataset.dock === dock));

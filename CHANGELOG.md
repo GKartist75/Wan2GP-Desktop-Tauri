@@ -4,6 +4,119 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+### Every console message gets its own line again
+
+This is the long-standing "newlines don't always work" complaint, and it was
+never a CSS problem — `.term-body` has always set `white-space: pre-wrap` and
+the browser honours it (verified: three `\n` in the text produce three line
+boxes). The text simply had no newlines in it.
+
+`appendLog` implements *stream* semantics: a chunk with no `\n` continues the
+current line, because a child process's stdout arrives in arbitrary chunks. The
+launcher's own messages are complete lines, and 68 of them were passed with no
+terminator — only 2 ended in `\n`. So every launcher message concatenated into
+one endless `lastLine` and the console showed a single run-on row:
+
+```
+[*] Wan2GP install found — loading dashboard…[*] Launcher v0.9.2 ready — …
+```
+
+- **`appendLog` now terminates launcher-side lines.** Keyed off the `forward`
+  flag that was already there: the only `forward === false` callers are the two
+  stream listeners in `init-tab.js` (`setup-output`, `launch-log`), and they
+  keep the continuation behaviour so long child lines are never torn in half.
+  `\r` progress overwrites still work — covered by tests.
+- **The separate console window had the same fault.** `console-mirror` carries
+  the same un-terminated launcher messages, so `term.js` now adds the newline
+  on arrival. This is why floating read as *less* readable than docked.
+
+### The console is resizable in every dock
+
+The console panel had exactly one resize handle and it was wired to the bottom
+and top docks only. Dock it left or right and the drag did nothing — the handle
+was there, but `mousedown` bailed out before touching the panel, so there was no
+way to trade GUI width for log width. Now every dock has a draggable edge on the
+side that faces Wan2GP: drag up/down on bottom and top, sideways on left and
+right, and any edge when the console floats.
+
+- **Four edges instead of one.** `index.html` ships a handle per edge
+  (`data-edge` / `data-axis`); `style.css` shows only the live ones for the
+  current dock. They sit inside the panel bounds — `.floating-term` clips
+  overflow, so the old negative-offset trick would have been clipped away.
+  Floating is draggable on all four of its edges, so the floating panel is as
+  resizable as any dock.
+- **A drag moves the GUI too.** The old handler called only
+  `syncTermEmbedPadding`, which is a no-op under a native child webview (it
+  composites above the DOM and ignores CSS padding). Both syncs now run per
+  frame, so the embedded view really does shrink as the console grows.
+- **The cap is now the whole area below the topbar** (was 60%, then 90%).
+  Dragging a docked console all the way up covers the GUI completely — the
+  ask was to spend more time in the console than in Wan2GP. Only the topbar
+  (44px) is never covered, so the dashboard icons stay reachable, and the
+  console's own ✕ sits in its header, so a full-size console is never a trap.
+  Minimum is 80px tall / 240px wide.
+- **The separate console window (native + floating) opens big.** It was a fixed
+  760x520 peephole — the unreadable case that made floating unpopular in the
+  first place. It now opens at ~72% of the primary monitor in logical pixels
+  (floor 760x520, cap 1800x1300 so it never opens off-screen), and is
+  explicitly resizable and maximizable so the OS border and the maximize box
+  are the "make it max" control there.
+- **A dragged size sticks.** `setFtDock` ran `ft.style.cssText = ""` on every
+  dock change, which threw the size away — that is why a resize appeared not to
+  save. It now re-applies the size stored for the dock being switched to, and
+  each dock keeps its own (`termSizes` in `desktop-config.json`), so bottom, top,
+  left and right each remember how far you dragged them, across relaunches.
+- **Floating is anchored before its first drag.** `.dock-floating` positions the
+  panel from the right, so a drag on its west or north edge had no fixed edge to
+  grow from and the panel slid away from the cursor. The first such drag
+  converts the anchor to explicit `left`/`top` in place, keeping the position.
+  - **The dashboard Console card resizes too.** Its top edge is now a drag handle:
+  drag up for more log, down for less. The card is `flex:1` in a scrolling
+  column, so a drag pins both the flex basis and the height — `flex-basis:0`
+  beats an inline height in a column flex container, and without pinning the
+  basis the drag would have had no visible effect. Bounded to the column (so the
+  cards above stay reachable) with a 120px floor, re-clamped when the window
+  resizes, and saved as `dashTermHeight`.
+- **A `⤢ Full` button gives the Console the whole dashboard** (double-clicking
+  the drag edge does the same). This is the browser-mode case: the launcher
+  runs as a plain web page with no other chrome, so the Console *is* the view —
+  and a drag can only ever move it inside its own column, next to cards nobody
+  opens. Full mode hides the other columns and the other cards and lets the
+  Console fill `.dash-body`. It parks the dragged height rather than losing it,
+  dragging the edge drops back out of it, and it is deliberately **not**
+  persisted: reopening into a dashboard with no visible GUI would read as a
+  broken launch.
+
+### The floating console no longer shows a shorter log than the docked one
+
+Opening the console in its own window seeded itself from the backend's
+`LOG_HISTORY`. That ring buffer is raw text — `base::push_log` splits `\r` into
+separate lines and drops tqdm fragments — so the replay was **not** the log the
+docked console shows: shorter, differently collapsed, and drifting further apart
+with every dock switch. It now asks the main window, which owns the rendered
+buffer, so the two consoles are the same log by construction.
+
+- `term_console_seed` / `request_console_seed` (`src-tauri/src/system.rs`) route
+  term → main → term. The request is deliberately **pull**, not push: a push at
+  `create_term_view` time races the webview's listener registration and the
+  console would start empty with no error anywhere.
+- `term.js` replaces its buffer with the seed (replace, not append — the window
+  is recreated on every dock switch, so appending would duplicate the log), and
+  keeps `getLogHistory` only as a fallback behind a flag, for a build where the
+  seed never arrives.
+- `LOG_HISTORY`'s cap rose from 2000 to 5000 to match `MAX_LOG`, so the logs
+  web page and the fallback agree with the console. tqdm fragments stay
+  excluded there: they are `\r` rewrites, and replaying them as static lines
+  would be noise, not history.
+
+In the iframe renderer "floating" is the same DOM panel as any dock, so it was
+already complete — the loss was specific to the separate native window.
+
+Resizing never touches the log path: the docked panel renders from `logBuffer`
+on every frame, and a drag only changes the panel's box — verified by pushing
+`\r`, `\r\n` and tqdm lines through `appendLog`, dragging all four edges, and
+confirming the rendered text is byte-identical before and after.
+
 ### Upstream v17.17 parity (`6479db3`, 2026-10-07)
 
 Six upstream commits after v17.10 — `f02a382` ("H3 VAE optims") and four

@@ -1874,6 +1874,37 @@ button.deepyweb-open:disabled {
  gap: 4px;
  align-items: center;
 }
+/* Drag edge on the dashboard Console card — its top edge, where it meets the
+   cards above. Inside the card because .dash-term-card clips overflow. */
+.dash-term-resize {
+ height: 6px;
+ flex-shrink: 0;
+ cursor: ns-resize;
+ background: transparent;
+ touch-action: none;
+ transition: background 0.12s;
+}
+
+/* Full-console mode. In browser mode the launcher runs as a plain web page and
+   the Console IS the view, so a drag alone can never be enough — the card would
+   stay trapped in its column beside cards the user never looks at. This hands
+   the console the whole dashboard instead. Toggle, never persisted: a launch
+   that opens with no GUI visible is a confusing first impression. */
+.dash-body.dash-console-max .col-left {
+ display: none;
+}
+.dash-body.dash-console-max .col-right > *:not(.dash-term-card) {
+ display: none;
+}
+.dash-body.dash-console-max .dash-term-card {
+ flex: 1 1 auto;
+ height: auto;
+}
+.dash-term-resize:hover,
+body.ft-resizing .dash-term-resize {
+ background: var(--accent);
+ opacity: 0.5;
+}
 .dash-term-body {
  flex: 1;
  min-height: 120px;
@@ -3479,15 +3510,84 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
  border-color: var(--accent);
 }
 
-/* ── Floating Terminal resize handle ── */
+/* ── Floating Terminal resize edges ──
+   One handle per edge. `.floating-term` clips overflow, so handles sit INSIDE
+   the panel bounds (a negative offset would be clipped away). Which edges are
+   live follows the dock: a docked console is anchored to one side, so only the
+   edge facing Wan2GP can move; floating is free, so all four do. */
 .floating-term-resize {
- height: 4px;
- cursor: ns-resize;
- flex-shrink: 0;
+ position: absolute;
+ z-index: 2;
  background: transparent;
+ touch-action: none;
+ transition: background 0.12s;
 }
-.floating-term-resize:hover {
+.floating-term-resize:hover,
+body.ft-resizing .floating-term-resize {
  background: var(--accent);
+ opacity: 0.5;
+}
+.floating-term-resize.resize-n {
+ top: 0;
+ left: 0;
+ right: 0;
+ height: 6px;
+ cursor: ns-resize;
+}
+.floating-term-resize.resize-s {
+ bottom: 0;
+ left: 0;
+ right: 0;
+ height: 6px;
+ cursor: ns-resize;
+}
+.floating-term-resize.resize-w {
+ left: 0;
+ top: 0;
+ bottom: 0;
+ width: 6px;
+ cursor: ew-resize;
+}
+.floating-term-resize.resize-e {
+ right: 0;
+ top: 0;
+ bottom: 0;
+ width: 6px;
+ cursor: ew-resize;
+}
+/* Docked: only the inner edge. Bottom dock grows upward (north), top dock
+   downward (south), left dock rightward (east), right dock leftward (west). */
+.floating-term.dock-bottom .resize-n,
+.floating-term.dock-top .resize-s,
+.floating-term.dock-left .resize-e,
+.floating-term.dock-right .resize-w {
+ display: block;
+}
+.floating-term.dock-bottom .resize-s,
+.floating-term.dock-bottom .resize-w,
+.floating-term.dock-bottom .resize-e,
+.floating-term.dock-top .resize-n,
+.floating-term.dock-top .resize-w,
+.floating-term.dock-top .resize-e,
+.floating-term.dock-left .resize-n,
+.floating-term.dock-left .resize-s,
+.floating-term.dock-left .resize-w,
+.floating-term.dock-right .resize-n,
+.floating-term.dock-right .resize-s,
+.floating-term.dock-right .resize-e {
+ display: none;
+}
+/* Floating keeps all four; .dock-floating positions it from the right, so
+   app.js anchors it top-left on the first drag that needs a west/north edge. */
+.floating-term.dock-floating .resize-n,
+.floating-term.dock-floating .resize-s,
+.floating-term.dock-floating .resize-w,
+.floating-term.dock-floating .resize-e {
+ display: block;
+}
+/* Text selection while dragging would fight the pointermove handler. */
+body.ft-resizing {
+ user-select: none;
 }
 
 /* ── Installer: resolved stack (pre-flight) ── */

@@ -58,10 +58,6 @@ No Python, no CUDA toolkit, no `pip`, no Node needed beforehand — the installe
 - **External Terminal** — a real Windows Terminal / cmd window via generated script; in-app LED + Stop.
 - **No-GPU Chrome** — launches Chrome with GPU disabled to free VRAM for generation.
 - **Browser picker** — detects Chrome, Edge, Firefox, Brave, Opera, Vivaldi.
-- **Browser** — visible console + auto-opens your browser when ready.
-- **External Terminal** — real Windows Terminal / cmd via generated script; in-app LED + Stop.
-- **No-GPU Chrome** — launch Chrome with GPU disabled to free VRAM for generation.
-- **Browser picker** — detects Chrome, Edge, Firefox, Brave, Opera, Vivaldi.
 
 ### Where is everything? (defaults)
 
@@ -165,6 +161,7 @@ Same launcher, same Wan2GP, same features — lightweight native shell. It uses 
 - 🎯 **Always the right kernels** — per-GPU wheels from WanGP's `setup_config.json`, re-synced on install and every update, plus launcher safety overrides (GGUF floor, sage safe build) with one-click pure-upstream Restore.
 - 📂 **Clean data layout** — `C:\Wan2GP` (app) + `C:\Wan2GP-Models` (models), both editable to any drive/folder; migrate later via Dashboard → Paths.
 - 🖥️ **Flexible launch** — Desktop embed, Browser, or External Terminal; pop-out, zoom, browser picker.
+- 🗂️ **A console you can size** — drag the edge that faces Wan2GP to trade GUI space for log space, in every dock (bottom / top / left / right / floating) and on the Dashboard card, up to the whole area below the topbar. Each dock remembers its own size across restarts; **⤢ Full** gives the console the entire dashboard, which is what you want in Browser mode where the console *is* the view.
 - 🎨 **5 themes + text sizing** — Mono (default), Blue Sky, Orca, Cyber, Matrix; every theme editable (accent/background/text, live preview, Save/Set-as-default/Reset), topbar palette quick-switch, Text + Terminal size sliders in Manage → Appearance.
 
 <table>
