@@ -1700,9 +1700,14 @@
             </div>
             <!-- Terminal card — restored (floating overlay stays hidden) -->
         <div class="card dash-term-card" id="dashTermCard" style="flex:1;display:flex;flex-direction:column;min-height:0">
+          <!-- Drag this edge up to give the console more of the dashboard.
+               The card is flex:1 in a scrolling column, so a drag pins it to
+               an explicit height — see applyDashTermHeight in app.js. -->
+          <div class="dash-term-resize" id="dashTermResize" title="Drag to resize the Console — double-click for full size"></div>
           <div class="card-header">
             <span class="card-title">Console</span>
             <div class="dash-term-actions">
+              <button class="term-btn-small" id="dashTermMaxBtn" title="Give the Console the whole dashboard — useful in browser mode, where the console is the main view" aria-pressed="false">⤢ Full</button>
               <button class="term-btn-small active" id="dashTermFollowBtn" title="Auto-scroll the Console to new output">
                 <svg viewBox="0 0 24 24" style="width:10px;height:10px"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
                 <span class="follow-text">Follow</span>
@@ -1953,7 +1958,12 @@
       <input type="text" id="logSearch" class="ft-search" placeholder="Search logs...">
       <button class="term-btn-small" id="logExportBtn" title="Export logs">Export</button>
     </div>
-    <div class="floating-term-resize" id="ftResize"></div>
+    <!-- Resize edges. Only the edge facing Wan2GP is shown for a docked
+               console; floating shows all four. app.js drives them. -->
+          <div class="floating-term-resize resize-n" data-edge="n" data-axis="v" title="Drag to resize the console"></div>
+          <div class="floating-term-resize resize-s" data-edge="s" data-axis="v" title="Drag to resize the console"></div>
+          <div class="floating-term-resize resize-w" data-edge="w" data-axis="h" title="Drag to resize the console"></div>
+          <div class="floating-term-resize resize-e" data-edge="e" data-axis="h" title="Drag to resize the console"></div>
   </div>
 
   <!-- Migration folder chooser (data dir + model folders) -->

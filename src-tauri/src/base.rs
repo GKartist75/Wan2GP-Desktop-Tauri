@@ -110,7 +110,13 @@ pub(crate) fn push_log(text: &str, source: &str) {
             }
             g.push(line.to_string());
         }
-        let excess = g.len().saturating_sub(2000);
+        // Keep as deep as the renderer's own buffer (MAX_LOG = 5000 in
+                // src/app.js). At 2000 the console opened in its own window replayed a
+                // far shallower history than the docked one, which keeps 5000 — the
+                // same lines, less of them, read as "the floating console dropped
+                // logs". tqdm fragments stay excluded (below): they are \r rewrites,
+                // and replaying them as static lines would be noise, not history.
+                let excess = g.len().saturating_sub(5000);
         if excess > 0 {
             g.drain(..excess);
         }
