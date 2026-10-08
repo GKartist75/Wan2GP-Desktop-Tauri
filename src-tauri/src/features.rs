@@ -723,8 +723,17 @@ let audio = if [2.0, 4.0, 4.5].contains(&profile) {
         // with a Dynamic or Manual VRAM Preload ... Video steps are usually
         // long enough to hide the transfers." Audio rides P3+, which loads
         // each model whole and hides the control entirely.
+        // wgp.py:4216 hands Dynamic to mmgp only when the profile is 2, 4 or 5
+        // (init_pipe truncates 4.5 -> 4): P1/P3/P3.5 load whole models and
+        // have nothing to preload, so recommending Dynamic there would be a
+        // setting that silently does nothing — the same rule the CUDA gate
+        // above applies to AMD/Intel.
+        let dynamic_images = [2.0, 4.0, 4.5, 5.0].contains(&profile);
         extra.insert("video_preload_mode".into(), serde_json::json!("default"));
-        extra.insert("image_preload_mode".into(), serde_json::json!("dynamic"));
+        extra.insert(
+            "image_preload_mode".into(),
+            serde_json::json!(if dynamic_images { "dynamic" } else { "default" }),
+        );
         extra.insert("audio_preload_mode".into(), serde_json::json!("default"));
         // 0 = Auto (upstream: 40% on Windows, 60% on Linux — v17.10 / ec9566a
                   // lowered Linux from 80%, so a Linux Auto now pins less than v17.00 did).
@@ -2072,6 +2081,8 @@ pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool 
         "kernel_precision" => ["fast", "strict"].contains(&s),
         // shared/cuda_memory.py VRAM_ALLOCATOR_CHOICES
         "vram_allocator" => ["default", "vmm", "vmm_spill"].contains(&s),
+        // shared/cuda_memory.py RAM_ALLOCATOR_CHOICES (v17.17)
+        "ram_allocator" => ["default", "mmgp"].contains(&s),
         // shared/attention_kit.py HEAD_SPLIT_CHOICES: int 0..3
         "attention_head_split" => matches!(val.as_u64(), Some(0..=3)),
         // bool knobs added with the MMGP v4 runtime
@@ -2110,6 +2121,8 @@ pub(crate) const MEMORY_OVERRIDE_KEYS: &[&str] = &[
     "queue_color_scheme",
     // v17 (MMGP v4) RAM/VRAM controls.
     "vram_allocator",
+    // v17.17 RAM allocator, beside the VRAM one it complements.
+    "ram_allocator",
     "attention_head_split",
     "read_ahead",
     "smart_memory_pinning",
@@ -2878,6 +2891,10 @@ mod autotune_matrix_tests {
             None,
         );
         assert_eq!(roomy["attention_head_split"], 0);
+        assert_eq!(
+            roomy["image_preload_mode"], "default",
+            "P1 loads whole models: Dynamic preload is gated to profiles 2/4/5 upstream (wgp.py:4216), so recommending it here would be a dead setting"
+        );
 
         let amd = auto_tune_recommend(
             Some(serde_json::json!({
@@ -2973,6 +2990,7 @@ mod autotune_matrix_tests {
     fn apply_allowlist_covers_every_v17_key() {
         for key in [
             "vram_allocator",
+            "ram_allocator",
             "attention_head_split",
             "read_ahead",
             "smart_memory_pinning",
@@ -2992,7 +3010,7 @@ mod autotune_matrix_tests {
     fn memory_profile_read_returns_written_keys_and_invents_none() {
         let td = TestDataDir::new();
         td.seed_wgp_config(
-            r#"{"video_profile":4,"vram_allocator":"vmm_spill","attention_head_split":2,"read_ahead":true,"smart_memory_pinning":true,"video_preload_mode":"default","image_preload_mode":"dynamic","audio_preload_mode":"default","perc_reserved_mem_max":0,"enable_int8_kernels":0,"unrelated":"x"}"#,
+            r#"{"video_profile":4,"vram_allocator":"vmm_spill","ram_allocator":"mmgp","attention_head_split":2,"read_ahead":true,"smart_memory_pinning":true,"video_preload_mode":"default","image_preload_mode":"dynamic","audio_preload_mode":"default","perc_reserved_mem_max":0,"enable_int8_kernels":0,"unrelated":"x"}"#,
         );
         let settings = memory_profile_read()
             .get("settings")
@@ -3002,6 +3020,7 @@ mod autotune_matrix_tests {
         for (k, v) in [
             ("video_profile", serde_json::json!(4)),
             ("vram_allocator", serde_json::json!("vmm_spill")),
+            ("ram_allocator", serde_json::json!("mmgp")),
             ("attention_head_split", serde_json::json!(2)),
             ("read_ahead", serde_json::json!(true)),
             ("smart_memory_pinning", serde_json::json!(true)),
