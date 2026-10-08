@@ -1,0 +1,6 @@
+    Checking wan2gp-desktop-launcher-tauri v0.10.3 (D:\DEVELOPMENT\WAN2GP TOOLS\wan2gp-desktop-launcher-tauri\src-tauri)
+src\base.rs:284:15: warning: function `reset_dir_caches` is never used
+src\install.rs:5397:15: warning: function `parse_requirement_pins` is never used
+src\install.rs:5611:15: warning: function `format_pin_line` is never used
+warning: `wan2gp-desktop-launcher-tauri` (lib) generated 3 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.12s
