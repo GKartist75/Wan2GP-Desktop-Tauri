@@ -21,6 +21,9 @@ function memProfileCollect() {
   // AMD/Intel; a manual pick here is still honoured. One control per setting,
   // mirroring WanGP's Configuration > RAM/VRAM Management panel.
   const va = $("memVramAllocator") ? $("memVramAllocator").value : "";
+  // v17.17 RAM allocator: upstream's own default is already the MMGP one, so
+  // Auto-Tune has nothing to recommend — the control exists to switch back.
+  const rma = $("memRamAllocator") ? $("memRamAllocator").value : "";
   const hs = $("memHeadSplit") ? $("memHeadSplit").value : "";
   const ra = $("memReadAhead") ? $("memReadAhead").value : "";
   const sp = $("memSmartPinning") ? $("memSmartPinning").value : "";
@@ -32,6 +35,7 @@ function memProfileCollect() {
   if (kp) s.kernel_precision = kp;
   if (am) s.attention_mode = am;
   if (va) s.vram_allocator = va;
+  if (rma) s.ram_allocator = rma;
   if (hs !== "") s.attention_head_split = Number(hs);
   if (ra) s.read_ahead = ra === "true";
   if (sp) s.smart_memory_pinning = sp === "true";
@@ -119,6 +123,13 @@ const MEM_FIELDS = {
     rec: "recVramAllocator",
     saved: "savedVramAllocator",
   },
+  // Same rec/saved contract as the rest; `rec:` stays "—" because no
+  // recommendation carries this key (upstream already defaults to mmgp).
+  ram_allocator: {
+    sel: "memRamAllocator",
+    rec: "recRamAllocator",
+    saved: "savedRamAllocator",
+  },
   attention_head_split: {
     sel: "memHeadSplit",
     rec: "recHeadSplit",
@@ -177,6 +188,10 @@ const VRAM_ALLOCATOR_LABELS = {
   vmm: "MMGP Optimized, out-of-memory when VRAM is full",
   default: "PyTorch allocator",
 };
+const RAM_ALLOCATOR_LABELS = {
+  mmgp: "MMGP Optimized (default — freed CPU tensor RAM goes back to the system)",
+  default: "PyTorch allocator (keeps freed CPU tensor RAM for reuse)",
+};
 const HEAD_SPLIT_LABELS = {
   0: "Off (default)",
   1: "Low — saves some VRAM",
@@ -205,6 +220,8 @@ function fmtVal(key, v) {
     return QUEUE_COLOR_LABELS[v] || String(v);
   if (key === "vram_allocator")
     return VRAM_ALLOCATOR_LABELS[v] || String(v);
+  if (key === "ram_allocator")
+    return RAM_ALLOCATOR_LABELS[v] || String(v);
   if (key === "attention_mode") return ATTENTION_MODE_LABELS[v] || String(v);
   if (key === "attention_head_split")
     return HEAD_SPLIT_LABELS[Number(v)] || String(v);

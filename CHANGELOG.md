@@ -35,6 +35,12 @@ already an upstream requirement.
   `mmgp` `4.0.0`, so `mmgp 4.0.0 (alloc ...)` could no longer tell a v17.10
   tree from a v17.17 one. `allocator_build_id` hashes what exists, which keeps
   the id a pre-v17.17 checkout always showed.
+- **Dynamic image preload is not written outside Profiles 2, 4 and 5.**
+  `wgp.py:4216` gates *Dynamic* to `mmgp_profile in (2, 4, 5)` (`init_pipe`
+  does `int(profile)`, so 4.5 counts as 4). Auto-Tune recommended
+  `image_preload_mode: dynamic` on every profile, so on P1 it wrote a
+  setting upstream silently ignores. It now writes `default` there; the
+  panel note, the dropdown tooltip and the guide say the same thing.
 - **README: the Linux auto of Reserved RAM was still documented as 80%.** The
   tooltip and the panel were corrected in v0.10.3; the settings table was not.
   It now says 60% (upstream v17.10 / `ec9566a`).

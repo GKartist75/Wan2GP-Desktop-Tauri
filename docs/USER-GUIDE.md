@@ -369,7 +369,7 @@ Upstream v17 ships these off by default, asking every user to switch them on by 
 | Attention Head Split | `attention_head_split` | `2` (Medium) under 12 GB, else Off | Upstream measures ~2 GB less VRAM for ≤3% slower steps on H3 1920×1088 / 362 frames. **Same quality, not identical output** — details, and sometimes motion, can differ. Only engages on long sequences (8192+ tokens) |
 | Read Ahead | `read_ahead` | on (Windows) | Reads model files ahead of use, so they are already in RAM on first load |
 | Smart Memory Pinning | `smart_memory_pinning` | on | 1–2 GB of Reserved RAM to reach the GPU nearly as fast. Changing it reloads the model |
-| VRAM Preload | `video/image/audio_preload_mode` | video `default`, image `dynamic`, audio `default` | See below — this is the one where video and image genuinely differ |
+| VRAM Preload | `video/image/audio_preload_mode` | video `default`, image `dynamic` (Profiles 2, 4 and 5 only), audio `default` | See below — this is the one where video and image genuinely differ. Auto-Tune writes image `default` on Profiles 1, 3 and 3+, where upstream never engages a preload |
 | Reserved RAM for Pinning | `perc_reserved_mem_max` | `0` (Auto) | 0 = 40% on Windows, 60% on Linux (upstream v17.10 lowered Linux from 80%). Upstream treats this as a **percentage** since v17 |
 
 **Why video gets `default` and image gets `dynamic`** — this is upstream's advice, quoted:
