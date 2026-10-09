@@ -4,6 +4,39 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.10.5] — 2026-10-09
+
+### The update notice stopped moving your buttons
+
+Checking for a Desktop-Launcher update put a green strip into the dashboard,
+between the topbar and the cards. Appearing pushed everything below it down by
+its own height — so a click that started on one button landed on the button
+that had just slid underneath. That is the "I pressed the wrong button"
+report, and making the strip smaller never fixes it: anything sitting in that
+slot can move the buttons. So the strip is gone. Nothing occupies that space
+any more.
+
+**The state lives on the control you would press anyway.** "Check Desktop
+Updates" becomes `Update available — v0.10.5`, then
+`Downloading v0.10.5 — 42%`, then `v0.10.5 ready — click to install`, keeping
+the pulsing dot and green ring it already had. Pressing it does the pending
+thing — download, then install — and asks GitHub only when nothing is pending.
+Manage → Updates follows the same rule and its status line names the action.
+
+**The announcement is one toast, once.**
+`UPDATE · v0.10.5 available — click to download`, in the platform's usual
+bottom-centre spot, clickable straight into the action, and it does not repeat
+on the 5-hourly background poll. A check that finds nothing announces nothing:
+no strip, no dot, no flash — the console keeps its
+`Launcher v0.10.5 is up to date.` line, and failures keep using the plain toast.
+
+- Removed the strip, its markup, the lane it reserved under the topbar, and the
+  CSS only it used (`.update-float`, `.update-actions`, `.update-progress`,
+  `.progress-*`). `.dash-body` is back to a plain `14px` padding.
+- The SageAttention and AppData model warnings still use `.update-banner` and
+  are untouched: they are actionable warnings rather than an update
+  announcement, and they never shifted the button you were reaching for.
+
 ## [0.10.4] — 2026-10-08
 
 ### Every console message gets its own line again

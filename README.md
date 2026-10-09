@@ -92,6 +92,7 @@ C:\Wan2GP-Models\               ← models library
 
 | Version | Headline |
 | --- | --- |
+| [**v0.10.5**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.5) | **The update notice no longer moves your buttons** — the green strip is gone from the dashboard; the state lives on the *Check Desktop Updates* button itself (*Update available — v0.10.5*, pulsing dot, and pressing it downloads then installs), announced once by a clickable toast |
 | [**v0.10.4**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.4) | **Upstream v17.17 parity** — a new **RAM allocator** control beside VRAM that hands freed CPU-tensor RAM back to the system instead of hoarding it all session; **the console is resizable in every dock** — drag its edge to trade GUI space for log space, up to the whole window, with a Full mode for Browser; and every console message gets its own line again |
 | [**v0.10.3**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.3) | Long Auto-Tune values stop overlapping neighbouring fields; Restore names what it installed; Sync no longer re-downloads 282 MB of wheels you already have |
 | [**v0.10.2**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.2) | Light theme survives a relaunch; Update says *"Already at upstream"* instead of doing a no-op |

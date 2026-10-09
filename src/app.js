@@ -1714,11 +1714,15 @@ $("manageUpdateWan2gpBtn")?.addEventListener("click", async function () {
 });
 $("manageUpdateDesktopBtn")?.addEventListener("click", (e) => {
   const s = $("manageUpdateDesktopStatus");
-  if (s) s.textContent = "Checking...";
+  // Same rule as the dashboard tile: finish a pending update when there is
+  // one, otherwise check. runUpdateAction lives in autoupdate-tab.js.
+  const pending = typeof runUpdateAction === "function";
+    if (s && pending && updateAction !== "") return runUpdateAction(e);
+    if (s) s.textContent = "Checking...";
   window.w2gp.checkUpdate(e.shiftKey ? { local: true } : undefined);
-  setTimeout(() => {
+    setTimeout(() => {
     if (s && !s.textContent.includes("✓"))
-      s.textContent = "Check sent — see banner on Dashboard";
+      s.textContent = "Check sent — see the dashboard tile for the result";
   }, 1500);
 });
 

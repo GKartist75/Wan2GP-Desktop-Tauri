@@ -55,7 +55,7 @@ body {
  --radius-md: 8px;
  --radius-lg: 12px;
  --topbar-h: 44px;
- font-size: calc(16px * var(--ui-scale));
+  font-size: calc(16px * var(--ui-scale));
 }
 
 /* Terminal text scale (own control — console stays readable at any UI size). */
@@ -971,8 +971,8 @@ html[data-theme="dark"][data-accent="rose"],
  display: flex;
  gap: 14px;
  padding: 14px;
- overflow: hidden;
- min-height: 0;
+  overflow: hidden;
+  min-height: 0;
 }
 .col-left,
 .col-right {
@@ -1757,6 +1757,12 @@ button.deepyweb-open:disabled {
 .update-banner.hidden {
  display: none;
 }
+/* Update-available state carried by the controls themselves (Dashboard tile +
+   Manage → Updates), so the update stays visible without any panel. */
+.btn.has-update {
+  border-color: var(--signal-green);
+  box-shadow: 0 0 0 1px var(--signal-green);
+}
 .models-warn-actions {
  display: flex;
  align-items: center;
@@ -1797,41 +1803,6 @@ button.deepyweb-open:disabled {
  font-weight: 700;
  text-transform: uppercase;
  letter-spacing: 0.08em;
-}
-.update-actions {
- display: flex;
- gap: 6px;
- align-items: center;
-}
-.update-progress {
- display: flex;
- align-items: center;
- gap: 8px;
- flex: 1;
-}
-.update-progress.hidden {
- display: none;
-}
-.progress-bar {
- flex: 1;
- height: 5px;
- background: var(--border);
- border-radius: 3px;
- overflow: hidden;
-}
-.progress-fill {
- height: 100%;
- width: 0%;
- background: var(--signal-green);
- border-radius: 3px;
- transition: width 0.3s;
-}
-.progress-text {
- font-size: 0.6875rem;
- color: var(--text-secondary);
- min-width: 35px;
- text-align: right;
- font-family: "Geist Mono", monospace;
 }
 .update-dismiss {
  background: none;
@@ -2653,15 +2624,33 @@ table.args-table.lib-table.compact td:nth-child(3) {
 }
 .update-dot {
  display: inline-block;
- width: 6px;
- height: 6px;
+ width: 7px;
+ height: 7px;
  border-radius: 50%;
  background: var(--signal-green);
  flex-shrink: 0;
  margin-left: 2px;
+  animation: update-dot-pulse 1.6s ease-in-out infinite;
 }
+@keyframes update-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.75);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-dot {
+      animation: none;
+    }
+  }
 .action-item.has-update {
- border-color: var(--signal-green);
+  border-color: var(--signal-green);
+  box-shadow: 0 0 0 1px var(--signal-green);
 }
 
 /* ── Install Paths ── */
