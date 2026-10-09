@@ -55,6 +55,10 @@ body {
  --radius-md: 8px;
  --radius-lg: 12px;
  --topbar-h: 44px;
+   /* Reserved lane under the topbar for the pinned update strip. The strip is
+      position:fixed and usually hidden, so the dashboard keeps this space free
+      permanently instead of reflowing when an update is announced. */
+   --update-strip-lane: 40px;
  font-size: calc(16px * var(--ui-scale));
 }
 
@@ -970,9 +974,11 @@ html[data-theme="dark"][data-accent="rose"],
  flex: 1;
  display: flex;
  gap: 14px;
- padding: 14px;
- overflow: hidden;
- min-height: 0;
+ /* Top padding carries the update strip's reserved lane, so the pinned strip
+     never covers the first row of cards. Lane = strip height (36px) + slack. */
+ padding: calc(10px + var(--update-strip-lane)) 14px 14px;
+  overflow: hidden;
+  min-height: 0;
 }
 .col-left,
 .col-right {
@@ -1756,6 +1762,41 @@ button.deepyweb-open:disabled {
 }
 .update-banner.hidden {
  display: none;
+}
+/* The update strip keeps its old home — a full-width band pinned directly under
+   the topbar — but position:fixed takes it out of flow, so showing or hiding it
+   no longer pushes the dashboard down by its own height. That shift is what made
+   a click land on the button that had just slid underneath. */
+.update-banner.update-float {
+  position: fixed;
+  top: var(--topbar-h);
+  left: 0;
+  right: 0;
+  z-index: 900;
+  margin: 0;
+  padding: 6px 12px;
+  gap: 8px;
+  border-left: none;
+  border-right: none;
+  border-radius: 0;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  animation: update-card-in 0.18s ease-out;
+}
+@keyframes update-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Update-available state carried by the controls themselves (Dashboard tile +
+   Manage → Updates), so the update stays visible after the card is dismissed. */
+.btn.has-update {
+  border-color: var(--signal-green);
+  box-shadow: 0 0 0 1px var(--signal-green);
 }
 .models-warn-actions {
  display: flex;
@@ -2653,15 +2694,34 @@ table.args-table.lib-table.compact td:nth-child(3) {
 }
 .update-dot {
  display: inline-block;
- width: 6px;
- height: 6px;
+ width: 7px;
+ height: 7px;
  border-radius: 50%;
  background: var(--signal-green);
  flex-shrink: 0;
  margin-left: 2px;
+  animation: update-dot-pulse 1.6s ease-in-out infinite;
+}
+@keyframes update-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.75);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-banner.update-float,
+  .update-dot {
+    animation: none;
+  }
 }
 .action-item.has-update {
- border-color: var(--signal-green);
+  border-color: var(--signal-green);
+  box-shadow: 0 0 0 1px var(--signal-green);
 }
 
 /* ── Install Paths ── */
