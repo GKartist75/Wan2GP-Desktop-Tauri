@@ -33,11 +33,11 @@ $conf | ConvertTo-Json -Depth 10 | Set-Content $confPath
 # from the tag. Bump it here so the release commit is self-consistent.
 $lockPath = "src-tauri\Cargo.lock"
 if (Test-Path $lockPath) {
-  # Anchor on the package NAME. A bare `^version = "..."` matched every
-    # dependency in the lock and stamped them all with the release version, which
-    # cargo then rejects ("package `base64` is specified twice") - it broke the
-  # 0.10.5 run and left a 573-line diff to undo.
-  $lockRepl = '$1' + $Version + '$2'
+  # Anchor on the package NAME: a bare `^version = "..."` matched every
+    # dependency and stamped them all with the release version, which cargo then
+    # rejects ("package `base64` is specified twice"). The group refs are braced
+    # because `$1` followed by a version starting "0." reads as group ten.
+  $lockRepl = '${1}' + $Version + '${2}'
   (Get-Content $lockPath -Raw) -replace '(?m)^(name = "wan2gp-desktop-launcher-tauri"\r?\nversion = ")[^"]*(")', $lockRepl |
     Set-Content $lockPath -NoNewline
 }
