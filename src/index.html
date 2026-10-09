@@ -1022,24 +1022,9 @@
     </div>
 
     <!-- Update banner -->
-    <div id="updateBanner" class="update-banner hidden">
-      <div class="update-info">
-        <span class="update-badge">UPDATE</span>
-        <span id="updateText">A new version is available</span>
-      </div>
-      <div class="update-actions" id="updateActions">
-        <button id="updateDownloadBtn" class="btn btn-primary small" title="Full download — always works, fixes corrupted installs">Full Download</button>
-        
-        <button id="updateInstallBtn" class="btn btn-primary small hidden" title="Install the downloaded update and restart the launcher">Install & Restart</button>
-      </div>
-      <div id="updateProgress" class="update-progress hidden">
-        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-        <span id="progressText" class="progress-text">0%</span>
-      </div>
-      <button id="updateDismissBtn" class="update-dismiss" aria-label="Dismiss update notification" title="Dismiss this update notification">
-        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
+    <!-- Update state lives on the "Check Desktop Updates" controls (dot + ring +
+       label) plus a one-shot toast. Nothing sits here on purpose: a panel in
+       this slot can only push the dashboard buttons under the user's cursor. -->
 
     <!-- SageAttention sync banner (shown on RTX 40/50 with the broken fp8 wheel) -->
     <div id="sageSyncBanner" class="update-banner sage-warn hidden">

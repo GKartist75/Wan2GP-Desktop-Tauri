@@ -44,13 +44,21 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-function showToast(msg, onClick) {
+function showToast(msg, onClick, variant, ms) {
   const t = document.createElement("div");
   t.textContent = msg;
   t.setAttribute("role", "status");
   t.setAttribute("aria-live", "polite");
+  // "update" is the one variant that carries an action worth clicking into, so
+  // it takes the green signal language instead of the neutral grey.
+  const skin =
+    variant === "update"
+      ? "background:#12351f;color:#e8f7ec;border:1px solid #4ade80;"
+      : "background:#333;color:#e8e6e1;";
   t.style.cssText =
-    "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#333;color:#e8e6e1;padding:8px 16px;border-radius:6px;font-size:13px;z-index:9999;font-family:Geist Mono,monospace;transition:opacity 0.3s;max-width:90vw;text-align:center";
+    "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);" +
+    skin +
+    "padding:8px 16px;border-radius:6px;font-size:13px;z-index:9999;font-family:Geist Mono,monospace;transition:opacity 0.3s;max-width:90vw;text-align:center";
   document.body.appendChild(t);
   let gone = false;
   const dismiss = () => {
@@ -71,21 +79,13 @@ function showToast(msg, onClick) {
     });
     setTimeout(dismiss, 12000);
   } else {
-    setTimeout(dismiss, 2500);
+    setTimeout(dismiss, ms || 2500);
   }
 }
 
 $("updateCheckBtn").addEventListener("click", (e) => {
-  window.w2gp.checkUpdate(e.shiftKey ? { local: true } : undefined);
-});
-$("updateDownloadBtn").addEventListener("click", () => {
-  window.w2gp.downloadUpdate();
-});
-$("updateInstallBtn").addEventListener("click", () => {
-  window.w2gp.installUpdate();
-});
-$("updateDismissBtn").addEventListener("click", () => {
-  $("updateBanner").classList.add("hidden");
-  // Keep the persistent button indicator — the user dismissed the banner, not
-  // the fact that an update is still available. It clears on Download/Install.
+  // The tile carries the state: it downloads or installs when an update is
+  // already known, and only asks GitHub when there is nothing pending.
+  if (typeof runUpdateAction === "function") runUpdateAction(e);
+  else window.w2gp.checkUpdate(e.shiftKey ? { local: true } : undefined);
 });

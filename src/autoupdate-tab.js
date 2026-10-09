@@ -5,25 +5,69 @@
 // so loading this file after app.js is safe.
 
 // ── Auto-Update ──
+//
+// An update is a state of a control, not a page event — so nothing is added to
+// the dashboard layout. A panel up there can only push the buttons under the
+// user's cursor, which is exactly how a click once landed on the wrong control.
+// The state lives on the "Check Desktop Updates" controls (pulsing dot, green
+// ring, and a label that names the version), and the announcement is a single
+// clickable toast.
 
-// Reflect Desktop-Launcher update availability on the dashboard "Check Desktop
-// Updates" action button itself (persistent dot + green border), so users who
-// turned off launch-time checking still see there is an update available — not
-// only in the transient top banner.
+// What pressing an update control should do right now: "" = run a check,
+// "download" = fetch the update, "install" = restart into it.
+let updateAction = "";
+let updateVersion = "";
+// One announcement per moment per session: the toast is an event, not a
+// fixture, so repeating it on every background poll would be nagging.
+let announcedAvailable = false;
+let announcedReady = false;
+
+/**
+ * What pressing an update control does: finish the pending update when one is
+ * already known, otherwise run a check (shift-click = local/offline check).
+ */
+function runUpdateAction(e) {
+  if (updateAction === "install") window.w2gp.installUpdate();
+  else if (updateAction === "download") window.w2gp.downloadUpdate();
+  else window.w2gp.checkUpdate(e && e.shiftKey ? { local: true } : undefined);
+}
+
+/** The button's own text node — its icon and update dot are left alone. */
+function updateLabelNode() {
+  const btn = $("updateCheckBtn");
+  if (!btn) return null;
+  for (let i = btn.childNodes.length - 1; i >= 0; i--) {
+    const n = btn.childNodes[i];
+    if (n.nodeType === 3 && n.textContent.trim()) return n;
+  }
+  return null;
+}
+
+/** Say the state on the control itself: "Update available — v0.10.5". */
+function setUpdateLabel(text) {
+  const node = updateLabelNode();
+  if (!node) return;
+  const btn = $("updateCheckBtn");
+  if (btn.dataset.labelBase === undefined)
+    btn.dataset.labelBase = node.textContent.trim();
+  node.textContent = " " + (text || btn.dataset.labelBase);
+}
+
+// Reflect Desktop-Launcher update availability on the update controls
+// themselves (persistent dot + green border), so users who turned off
+// launch-time checking still see there is an update available.
 function setDesktopUpdateIndicator(on) {
   for (const id of ["updateCheckBtn", "manageUpdateDesktopBtn"]) {
     const btn = $(id);
     if (!btn) continue;
-    if (on) {
-      btn.classList.add("has-update");
-      if (!btn.querySelector(".update-dot")) {
-        const dot = document.createElement("span");
-        dot.className = "update-dot";
-        btn.appendChild(dot);
-      }
-    } else {
-      btn.classList.remove("has-update");
-      btn.querySelector(".update-dot")?.remove();
+    btn.classList.toggle("has-update", !!on);
+    const dot = btn.querySelector(".update-dot");
+    if (on && !dot) {
+      const d = document.createElement("span");
+      d.className = "update-dot";
+      btn.appendChild(d);
+    } else if (!on && dot) {
+      dot.remove();
     }
   }
 }
@@ -38,108 +82,90 @@ window.w2gp.onUpdateStatus((status) => {
       mS.textContent =
         "v" +
         status.version +
-        " available — click Full Download or Quick Update on Dashboard banner";
+        (status.autoDownload === false
+            ? " available — press this button to download"
+            : " available — downloading automatically");
     else if (status.status === "downloading")
       mS.textContent = "Downloading " + (status.percent || 0) + "%";
-    else if (status.status === "downloaded")
-      mS.textContent =
+      else if (status.status === "downloaded")
+        mS.textContent =
         "v" +
         status.version +
-        " downloaded — Install & Restart on Dashboard banner";
+        " ready — press this button to install & restart";
     else if (status.status === "up-to-date") mS.textContent = "Up to date ✓";
     else if (status.status === "error")
       mS.textContent = "Error: " + (status.message || "");
   }
   switch (status.status) {
     case "checking":
-      setDesktopUpdateIndicator(false);
-      $("updateText").textContent = "Checking for updates...";
-      $("updateBanner").classList.remove("hidden");
-      $("updateDownloadBtn").classList.add("hidden");
-      $("updateInstallBtn").classList.add("hidden");
-      $("updateActions").classList.remove("hidden");
-      $("updateProgress").classList.add("hidden");
-      $("updateDismissBtn").classList.add("hidden");
+      // A background check (30s after launch, then every 5h) must not touch
+      // the dashboard at all — nothing to announce until something is found.
       break;
-    case "available":
+      case "available":
+      updateVersion = status.version;
+        updateAction = status.autoDownload === false ? "download" : "";
       setDesktopUpdateIndicator(true);
-      if (status.autoDownload === false) {
-        // Auto-updates disabled: don't auto-download — offer the manual
-        // Download button instead.
-        $("updateText").textContent = `v${status.version} available`;
-        $("updateDownloadBtn").classList.remove("hidden");
-        $("updateInstallBtn").classList.add("hidden");
-        $("updateActions").classList.remove("hidden");
-        $("updateProgress").classList.add("hidden");
-        $("updateBanner").classList.remove("hidden");
-        $("updateDismissBtn").classList.add("hidden");
-      } else {
-        $("updateText").textContent = `v${status.version} — downloading...`;
-        $("updateDownloadBtn").classList.add("hidden");
-        $("updateInstallBtn").classList.add("hidden");
-        $("updateActions").classList.add("hidden");
-        $("updateProgress").classList.remove("hidden");
-        $("progressFill").style.width = "0%";
-        $("progressText").textContent = "0%";
-        $("updateBanner").classList.remove("hidden");
-        $("updateDismissBtn").classList.add("hidden");
+      setUpdateLabel(`Update available — v${status.version}`);
+        if (!announcedAvailable) {
+        announcedAvailable = true;
+        if (status.autoDownload === false)
+            showToast(
+              `UPDATE · v${status.version} available — click to download`,
+              () => window.w2gp.downloadUpdate(),
+              "update",
+            );
+        else
+            showToast(
+              `UPDATE · v${status.version} — downloading…`,
+              null,
+              "update",
+              6000,
+            );
+        }
+        break;
+      case "downloading":
+        setUpdateLabel(
+        `Downloading v${updateVersion} — ${status.percent || 0}%`,
+        );
+      break;
+      case "downloaded":
+        updateVersion = status.version;
+      updateAction = "install";
+      setDesktopUpdateIndicator(true);
+      setUpdateLabel(`v${status.version} ready — click to install`);
+      if (!announcedReady) {
+          announcedReady = true;
+          showToast(
+            `UPDATE · v${status.version} ready — click to install and restart`,
+            () => window.w2gp.installUpdate(),
+          "update",
+          );
       }
       break;
     case "up-to-date":
+      updateAction = "";
       setDesktopUpdateIndicator(false);
-      $("updateText").textContent = "Up to date ✓";
+      setUpdateLabel("");
       // Console trace so the background boot check (30s + every 5h) leaves
-      // evidence instead of a 3s banner flash that is easy to miss.
+      // evidence; there is nothing to announce and no-update noise.
       try {
-        const vv = $("appVersionTag")?.textContent?.trim();
-        appendLog("[*] Launcher " + (vv ? vv + " " : "") + "is up to date.");
+          const vv = $("appVersionTag")?.textContent?.trim();
+          appendLog("[*] Launcher " + (vv ? vv + " " : "") + "is up to date.");
       } catch {}
-      $("updateDownloadBtn").classList.add("hidden");
-      $("updateActions").classList.remove("hidden");
-      $("updateProgress").classList.add("hidden");
-      $("updateBanner").classList.remove("hidden");
-      $("updateDismissBtn").classList.remove("hidden");
-      setTimeout(() => $("updateBanner").classList.add("hidden"), 3000);
-      break;
-    case "downloading":
-      $("updateText").textContent = "Downloading...";
-      $("updateDownloadBtn").classList.add("hidden");
-      $("updateInstallBtn").classList.add("hidden");
-      $("updateActions").classList.add("hidden");
-      $("updateProgress").classList.remove("hidden");
-      $("progressFill").style.width = status.percent + "%";
-      $("progressText").textContent = status.percent + "%";
-      $("updateBanner").classList.remove("hidden");
-      $("updateDismissBtn").classList.add("hidden");
-      break;
-    case "downloaded":
-      setDesktopUpdateIndicator(false);
-      $("updateText").textContent =
-        `v${status.version} downloaded — ready to install`;
-      $("updateDownloadBtn").classList.add("hidden");
-      $("updateInstallBtn").classList.remove("hidden");
-      $("updateActions").classList.remove("hidden");
-      $("updateProgress").classList.add("hidden");
-      $("updateBanner").classList.remove("hidden");
-      $("updateDismissBtn").classList.remove("hidden");
       break;
     case "error":
+      updateAction = "";
       setDesktopUpdateIndicator(false);
-      $("updateText").textContent =
-        (status.message || "").includes("401") ||
-        (status.message || "").includes("403") ||
-        (status.message || "").includes("authentication")
-          ? "GitHub rate limited — add token in Manage settings"
-          : `Update error: ${status.message}`;
-      $("updateDownloadBtn").classList.add("hidden");
-      $("updateInstallBtn").classList.add("hidden");
-      $("updateActions").classList.add("hidden");
-      $("updateProgress").classList.add("hidden");
-      $("updateBanner").classList.remove("hidden");
-      $("updateDismissBtn").classList.remove("hidden");
-      setTimeout(() => $("updateBanner").classList.add("hidden"), 8000);
+      setUpdateLabel("");
+        showToast(
+          (status.message || "").includes("401") ||
+            (status.message || "").includes("403") ||
+            (status.message || "").includes("authentication")
+            ? "GitHub rate limited — add a token in Manage settings"
+            : "Update check failed: " + (status.message || "unknown"),
+      );
       break;
-  }
+    }
 });
 
 // ════════════════════════════════════════════
