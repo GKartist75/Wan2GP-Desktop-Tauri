@@ -26,14 +26,19 @@ $confPath = "src-tauri\tauri.conf.json"
 $conf = Get-Content $confPath -Raw | ConvertFrom-Json
 $conf.version = $Version
 $conf | ConvertTo-Json -Depth 10 | Set-Content $confPath
-(Get-Content "src-tauri\Cargo.toml" -Raw) -replace '(?m)^version = ".*"', "version = `"$Version`"" |
+(Get-Content "src-tauri\Cargo.toml" -Raw) -replace '(?m)^version = "[^"]*"', "version = `"$Version`"" |
   Set-Content "src-tauri\Cargo.toml" -NoNewline
 # Cargo.lock carries the crate version too, and `cargo build` rewrites it during
 # step 2 — left uncommitted it shows as a dirty file forever and master drifts
 # from the tag. Bump it here so the release commit is self-consistent.
 $lockPath = "src-tauri\Cargo.lock"
 if (Test-Path $lockPath) {
-  (Get-Content $lockPath -Raw) -replace '(?m)^version = ".*"', "version = `"$Version`"" |
+  # Anchor on the package NAME. A bare `^version = "..."` matched every
+    # dependency in the lock and stamped them all with the release version, which
+    # cargo then rejects ("package `base64` is specified twice") - it broke the
+  # 0.10.5 run and left a 573-line diff to undo.
+  $lockRepl = '$1' + $Version + '$2'
+  (Get-Content $lockPath -Raw) -replace '(?m)^(name = "wan2gp-desktop-launcher-tauri"\r?\nversion = ")[^"]*(")', $lockRepl |
     Set-Content $lockPath -NoNewline
 }
 git add $confPath "src-tauri\Cargo.toml" $lockPath
