@@ -4,6 +4,18 @@
 // defined by app.js, and top-level statements here only register listeners,
 // so loading this file after app.js is safe.
 
+// Last non-transient state of the update card, so the floating card can be
+// re-opened from the pulsing dot on the "Check Desktop Updates" control after
+// the user dismissed it — the dot is the affordance, the card is the payload.
+let _updateCardState = null;
+
+/** Re-show the update card if an update is still pending action. */
+function reopenUpdateCard() {
+  if (_updateCardState === "available" || _updateCardState === "downloaded") {
+    $("updateBanner").classList.remove("hidden");
+  }
+}
+
 // ── Auto-Update ──
 
 // Reflect Desktop-Launcher update availability on the dashboard "Check Desktop
@@ -38,34 +50,31 @@ window.w2gp.onUpdateStatus((status) => {
       mS.textContent =
         "v" +
         status.version +
-        " available — click Full Download or Quick Update on Dashboard banner";
+        " available — click Full Download or Quick Update on the update card";
     else if (status.status === "downloading")
       mS.textContent = "Downloading " + (status.percent || 0) + "%";
     else if (status.status === "downloaded")
       mS.textContent =
         "v" +
         status.version +
-        " downloaded — Install & Restart on Dashboard banner";
+        " downloaded — Install & Restart from the update card";
     else if (status.status === "up-to-date") mS.textContent = "Up to date ✓";
     else if (status.status === "error")
       mS.textContent = "Error: " + (status.message || "");
   }
   switch (status.status) {
     case "checking":
+      // The strip only appears for a real update — a check that finds nothing
+      // must leave the dashboard untouched, so no banner here.
       setDesktopUpdateIndicator(false);
-      $("updateText").textContent = "Checking for updates...";
-      $("updateBanner").classList.remove("hidden");
-      $("updateDownloadBtn").classList.add("hidden");
-      $("updateInstallBtn").classList.add("hidden");
-      $("updateActions").classList.remove("hidden");
-      $("updateProgress").classList.add("hidden");
-      $("updateDismissBtn").classList.add("hidden");
+      $("updateBanner").classList.add("hidden");
       break;
     case "available":
       setDesktopUpdateIndicator(true);
       if (status.autoDownload === false) {
         // Auto-updates disabled: don't auto-download — offer the manual
         // Download button instead.
+        _updateCardState = "available";
         $("updateText").textContent = `v${status.version} available`;
         $("updateDownloadBtn").classList.remove("hidden");
         $("updateInstallBtn").classList.add("hidden");
@@ -74,6 +83,7 @@ window.w2gp.onUpdateStatus((status) => {
         $("updateBanner").classList.remove("hidden");
         $("updateDismissBtn").classList.add("hidden");
       } else {
+        _updateCardState = "downloading";
         $("updateText").textContent = `v${status.version} — downloading...`;
         $("updateDownloadBtn").classList.add("hidden");
         $("updateInstallBtn").classList.add("hidden");
@@ -87,19 +97,16 @@ window.w2gp.onUpdateStatus((status) => {
       break;
     case "up-to-date":
       setDesktopUpdateIndicator(false);
+      _updateCardState = null;
       $("updateText").textContent = "Up to date ✓";
       // Console trace so the background boot check (30s + every 5h) leaves
-      // evidence instead of a 3s banner flash that is easy to miss.
-      try {
+      // evidence; the strip itself stays hidden — there is nothing to
+      // announce and a "no update" flash is pure noise.
+        try {
         const vv = $("appVersionTag")?.textContent?.trim();
-        appendLog("[*] Launcher " + (vv ? vv + " " : "") + "is up to date.");
+          appendLog("[*] Launcher " + (vv ? vv + " " : "") + "is up to date.");
       } catch {}
-      $("updateDownloadBtn").classList.add("hidden");
-      $("updateActions").classList.remove("hidden");
-      $("updateProgress").classList.add("hidden");
-      $("updateBanner").classList.remove("hidden");
-      $("updateDismissBtn").classList.remove("hidden");
-      setTimeout(() => $("updateBanner").classList.add("hidden"), 3000);
+      $("updateBanner").classList.add("hidden");
       break;
     case "downloading":
       $("updateText").textContent = "Downloading...";
@@ -114,6 +121,7 @@ window.w2gp.onUpdateStatus((status) => {
       break;
     case "downloaded":
       setDesktopUpdateIndicator(false);
+      _updateCardState = "downloaded";
       $("updateText").textContent =
         `v${status.version} downloaded — ready to install`;
       $("updateDownloadBtn").classList.add("hidden");
@@ -125,19 +133,18 @@ window.w2gp.onUpdateStatus((status) => {
       break;
     case "error":
       setDesktopUpdateIndicator(false);
-      $("updateText").textContent =
-        (status.message || "").includes("401") ||
-        (status.message || "").includes("403") ||
-        (status.message || "").includes("authentication")
-          ? "GitHub rate limited — add token in Manage settings"
-          : `Update error: ${status.message}`;
-      $("updateDownloadBtn").classList.add("hidden");
-      $("updateInstallBtn").classList.add("hidden");
-      $("updateActions").classList.add("hidden");
-      $("updateProgress").classList.add("hidden");
-      $("updateBanner").classList.remove("hidden");
-      $("updateDismissBtn").classList.remove("hidden");
-      setTimeout(() => $("updateBanner").classList.add("hidden"), 8000);
+      _updateCardState = null;
+      // Not an update announcement — it goes to the transient toast so the
+        // strip stays reserved for a real new version. Manage → Updates keeps
+        // the last error on screen for as long as it stays open.
+        showToast(
+          (status.message || "").includes("401") ||
+          (status.message || "").includes("403") ||
+            (status.message || "").includes("authentication")
+            ? "GitHub rate limited — add a token in Manage settings"
+            : "Update check failed: " + (status.message || "unknown"),
+      );
+      $("updateBanner").classList.add("hidden");
       break;
   }
 });
