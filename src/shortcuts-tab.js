@@ -76,6 +76,9 @@ function showToast(msg, onClick) {
 }
 
 $("updateCheckBtn").addEventListener("click", (e) => {
+  // The card floats, so a dismissed one stays dismissed — bring it back when
+  // the user acts on the pulsing update dot instead of a fresh re-check only.
+  if (typeof reopenUpdateCard === "function") reopenUpdateCard();
   window.w2gp.checkUpdate(e.shiftKey ? { local: true } : undefined);
 });
 $("updateDownloadBtn").addEventListener("click", () => {

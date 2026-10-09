@@ -4,6 +4,18 @@
 // defined by app.js, and top-level statements here only register listeners,
 // so loading this file after app.js is safe.
 
+// Last non-transient state of the update card, so the floating card can be
+// re-opened from the pulsing dot on the "Check Desktop Updates" control after
+// the user dismissed it — the dot is the affordance, the card is the payload.
+let _updateCardState = null;
+
+/** Re-show the update card if an update is still pending action. */
+function reopenUpdateCard() {
+  if (_updateCardState === "available" || _updateCardState === "downloaded") {
+    $("updateBanner").classList.remove("hidden");
+  }
+}
+
 // ── Auto-Update ──
 
 // Reflect Desktop-Launcher update availability on the dashboard "Check Desktop
@@ -38,14 +50,14 @@ window.w2gp.onUpdateStatus((status) => {
       mS.textContent =
         "v" +
         status.version +
-        " available — click Full Download or Quick Update on Dashboard banner";
+        " available — click Full Download or Quick Update on the update card";
     else if (status.status === "downloading")
       mS.textContent = "Downloading " + (status.percent || 0) + "%";
     else if (status.status === "downloaded")
       mS.textContent =
         "v" +
         status.version +
-        " downloaded — Install & Restart on Dashboard banner";
+        " downloaded — Install & Restart from the update card";
     else if (status.status === "up-to-date") mS.textContent = "Up to date ✓";
     else if (status.status === "error")
       mS.textContent = "Error: " + (status.message || "");
@@ -66,6 +78,7 @@ window.w2gp.onUpdateStatus((status) => {
       if (status.autoDownload === false) {
         // Auto-updates disabled: don't auto-download — offer the manual
         // Download button instead.
+        _updateCardState = "available";
         $("updateText").textContent = `v${status.version} available`;
         $("updateDownloadBtn").classList.remove("hidden");
         $("updateInstallBtn").classList.add("hidden");
@@ -74,6 +87,7 @@ window.w2gp.onUpdateStatus((status) => {
         $("updateBanner").classList.remove("hidden");
         $("updateDismissBtn").classList.add("hidden");
       } else {
+        _updateCardState = "downloading";
         $("updateText").textContent = `v${status.version} — downloading...`;
         $("updateDownloadBtn").classList.add("hidden");
         $("updateInstallBtn").classList.add("hidden");
@@ -87,6 +101,7 @@ window.w2gp.onUpdateStatus((status) => {
       break;
     case "up-to-date":
       setDesktopUpdateIndicator(false);
+      _updateCardState = null;
       $("updateText").textContent = "Up to date ✓";
       // Console trace so the background boot check (30s + every 5h) leaves
       // evidence instead of a 3s banner flash that is easy to miss.
@@ -114,6 +129,7 @@ window.w2gp.onUpdateStatus((status) => {
       break;
     case "downloaded":
       setDesktopUpdateIndicator(false);
+      _updateCardState = "downloaded";
       $("updateText").textContent =
         `v${status.version} downloaded — ready to install`;
       $("updateDownloadBtn").classList.add("hidden");
@@ -125,6 +141,7 @@ window.w2gp.onUpdateStatus((status) => {
       break;
     case "error":
       setDesktopUpdateIndicator(false);
+      _updateCardState = null;
       $("updateText").textContent =
         (status.message || "").includes("401") ||
         (status.message || "").includes("403") ||
