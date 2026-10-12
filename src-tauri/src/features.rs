@@ -730,6 +730,13 @@ let audio = if [2.0, 4.0, 4.5].contains(&profile) {
         if let Some(a) = crate::hw::attention_for_profile(&key) {
             extra.insert("attention_mode".into(), serde_json::json!(a));
         }
+        // v18 compilation mode (wgp.py compile_choices): cudagraph is the
+        // fast path, transformer deprecated. Same classes the known-good
+        // recipe (troubleshoot.rs) prescribes it for; elsewhere unset =
+        // upstream default disabled.
+        if key == "RTX_30" || key == "RTX_40" {
+            extra.insert("compile".into(), serde_json::json!("cudagraph"));
+        }
     }
     extra.insert("read_ahead".into(), serde_json::json!(cfg!(windows)));
         extra.insert("smart_memory_pinning".into(), serde_json::json!(true));
@@ -2122,7 +2129,10 @@ pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool 
         "perc_reserved_mem_max" => matches!(val.as_f64(), Some(n) if (0.0..=100.0).contains(&n)),
         // wgp.py attention_modes_installed + check_attn
         "attention_mode" => ["sdpa", "flash", "sage", "sage2", "sage3", "radial"].contains(&s),
-        "compile" => val.is_boolean(),
+        // v18 wgp.py compile_choices: disabled / cudagraph / transformer.
+        // Legacy booleans match no engine upstream (silently off) and are
+        // rejected here — the recipe and panel only ever write strings.
+        "compile" => matches!(val.as_str(), Some("disabled" | "cudagraph" | "transformer")),
         // wgp.py queue table: "pastel" renders per-row hues, anything else
         // renders the theme-following alternating grey rows. Fail-closed to
         // the two known names so garbage never reaches wgp_config.json.

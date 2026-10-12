@@ -17,6 +17,7 @@ function memProfileCollect() {
   const i8k = $("memInt8Kernels") ? $("memInt8Kernels").value : "";
   const kp = $("memKernelPrecision") ? $("memKernelPrecision").value : "";
   const am = $("memAttentionMode") ? $("memAttentionMode").value : "";
+  const cm = $("memCompileMode") ? $("memCompileMode").value : "";
   // v17 (MMGP v4) — CUDA-only upstream, so Detect never recommends these on
   // AMD/Intel; a manual pick here is still honoured. One control per setting,
   // mirroring WanGP's Configuration > RAM/VRAM Management panel.
@@ -36,6 +37,7 @@ function memProfileCollect() {
   if (i8k) s.int8_kernels = i8k;
   if (kp) s.kernel_precision = kp;
   if (am) s.attention_mode = am;
+  if (cm) s.compile = cm;
   if (va) s.vram_allocator = va;
   if (rma) s.ram_allocator = rma;
   if (hs !== "") s.attention_head_split = Number(hs);
@@ -121,6 +123,13 @@ const MEM_FIELDS = {
     sel: "memAttentionMode",
     rec: "recAttentionMode",
     saved: "savedAttentionMode",
+  },
+  // v18 wgp.py compile_choices (disabled / cudagraph / transformer) — a
+  // boolean matches no engine upstream. Same rec/saved contract as the rest.
+  compile: {
+    sel: "memCompileMode",
+    rec: "recCompileMode",
+    saved: "savedCompileMode",
   },
   vram_allocator: {
     sel: "memVramAllocator",
@@ -230,6 +239,11 @@ const PRELOAD_MODE_LABELS = {
   dynamic: "Dynamic — fill the VRAM each generation leaves free",
   manual: "Manual — use the VRAM Preload amount",
 };
+const COMPILE_MODE_LABELS = {
+  disabled: "Disabled (default)",
+  cudagraph: "CUDA Graph — faster short steps",
+  transformer: "PyTorch — deprecated upstream, very slow first compile",
+};
 function fmtVal(key, v) {
   if (v == null || v === "") return "—";
   if (key === "vae_config") return v + (Number(v) === 0 ? " (AUTO)" : "");
@@ -244,6 +258,7 @@ function fmtVal(key, v) {
   if (key === "ram_allocator")
     return RAM_ALLOCATOR_LABELS[v] || String(v);
   if (key === "attention_mode") return ATTENTION_MODE_LABELS[v] || String(v);
+  if (key === "compile") return COMPILE_MODE_LABELS[v] || String(v);
   if (key === "attention_head_split")
     return HEAD_SPLIT_LABELS[Number(v)] || String(v);
   if (key.endsWith("_preload_mode"))
@@ -308,6 +323,8 @@ function memProfileFromRecommendation(rec) {
         // attention mode is part of the recommendation. Absent on AMD/Intel
         // (no Sage build upstream there), leaving it "— unset —".
         attention_mode: rec.attention_mode,
+        // v18: cudagraph on RTX 30/40, unset (= disabled) elsewhere.
+        compile: rec.compile,
         // v17 levers. Absent on AMD/Intel/CPU (upstream's allocator
         // early-returns there), which leaves those dropdowns on "— unset —".
       vram_allocator: rec.vram_allocator,

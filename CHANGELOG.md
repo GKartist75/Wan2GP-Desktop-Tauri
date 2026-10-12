@@ -59,6 +59,13 @@ Cache, an 11-model 3D stack, workspace folders and expanded MCP support.
   them). "Restore GPU Wheels" no longer downgrades post6 → post4, the
   missing-entry fallback is post6, and all toggle labels now say
   setup_config-as-published instead of promising post4.
+- **`compile` is a 3-state setting in v18, not a boolean** (`disabled` /
+  `cudagraph` / `transformer`; the CLI `--compile` flag forces the
+  deprecated transformer path). Launcher-written booleans matched no engine
+  and silently did nothing. Performance Settings gains a Compile Mode
+  selector, Detect recommends CUDA Graph on RTX 30/40, the known-good
+  recipe prescribes it there too, and the flag table documents the
+  deprecation.
 
 ## [0.10.5] — 2026-10-09
 

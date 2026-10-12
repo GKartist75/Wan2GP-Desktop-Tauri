@@ -203,7 +203,7 @@
           <div class="token-field" style="margin-top:8px">
             <button class="btn btn-ghost small" data-launch-preset="balanced" title="Everyday default: sage2 attention, P4 profile">Balanced</button>
             <button class="btn btn-ghost small" data-launch-preset="lowvram" title="Small VRAM: SDPA, P5 failsafe profile, fp16">Low VRAM</button>
-            <button class="btn btn-ghost small" data-launch-preset="maxperf" title="Fast GPU: compile, sage2, P3, teacache 2.0">Max perf</button>
+            <button class="btn btn-ghost small" data-launch-preset="maxperf" title="Fast GPU: --compile (PyTorch transformer, deprecated upstream), sage2, P3, teacache 2.0">Max perf</button>
             <button class="btn btn-primary small" data-launch-preset="emergency" title="Upstream absolute minimum that boots almost anywhere">Emergency</button>
             <span class="token-hint" id="launchBuilderStatus" style="margin-left:8px"></span>
           </div>
@@ -374,7 +374,7 @@
             <table class="args-table">
               <tr><td><code>--profile 4</code></td><td>Profile 1-5 (4=default, 5=min RAM)</td></tr>
               <tr><td><code>--attention sage2</code></td><td>Attention: sdpa, flash, sage, sage2</td></tr>
-              <tr><td><code>--compile</code></td><td>Enable PyTorch compilation (needs Triton)</td></tr>
+              <tr><td><code>--compile</code></td><td>Force PyTorch transformer compilation (deprecated upstream, very slow first compile; CUDA Graph mode is config-only — set it in Performance Settings)</td></tr>
               <tr><td><code>--fp16</code></td><td>Force fp16 instead of bf16</td></tr>
               <tr><td><code>--perc-reserved-mem-max 0.3</code></td><td>% RAM for model swap cache (0-0.5)</td></tr>
               <tr><td><code>--teacache 2.0</code></td><td>Speed multiplier 0, 1.5, 1.75, 2.0, 2.5</td></tr>
@@ -783,6 +783,16 @@
                   <option value="sdpa">SDPA (PyTorch default, always available)</option>
                 </select>
                 <div class="mem-hint"><span id="recAttentionMode" class="tag-rec">rec: —</span><span id="savedAttentionMode" class="tag-saved">saved: —</span></div>
+              </div>
+              <div class="mem-field">
+              <label class="token-hint" title="v18 compilation mode (needs restart). CUDA Graph kills the CPU time that keeps your GPU waiting — fastest on lighter GPU work and modest CPUs; first steps at a new resolution are slightly slower. PyTorch transformer compilation is deprecated upstream and compiles very slowly. Needs SageAttention 2.2.0 post6+ for the fastest kernels; Veda models run without it.">Compile Mode (restart)</label>
+              <select id="memCompileMode" class="input">
+                <option value="">— unset —</option>
+                <option value="disabled">Disabled (default)</option>
+                <option value="cudagraph">CUDA Graph — faster short steps</option>
+                <option value="transformer">PyTorch — deprecated upstream, very slow first compile</option>
+                </select>
+                <div class="mem-hint"><span id="recCompileMode" class="tag-rec">rec: —</span><span id="savedCompileMode" class="tag-saved">saved: —</span></div>
               </div>
               <div class="mem-field">
               <label class="token-hint" title="MMGP Optimized VRAM Allocator — recycles VRAM that is no longer used, which lowers peak VRAM on long videos, large images and Deepy. VRAM used by other programs is left to them; only when a generation would otherwise run out does it take what they are not using. Applied at startup, so it needs a restart.">VRAM Allocator (restart)</label>
