@@ -774,7 +774,7 @@
             <!-- v17 (MMGP v4) RAM/VRAM controls. Mirrors WanGP's own
                  Configuration > RAM/VRAM Management panel one-for-one. -->
             <div class="mem-field">
-              <label class="token-hint" title="Which attention kernel WanGP uses. Upstream v17.10 is explicit that quite a few of its optimizations depend on Sage2/2+. Needs the matching wheel — Sync GPU Wheels installs SageAttention 2.2.0 for RTX 30/40/50 and 1.0.6 for RTX 20. Left unset on AMD/Intel, where there is no Sage build upstream.">Attention Mode</label>
+              <label class="token-hint" title="Which attention kernel WanGP uses. Upstream v17.10 is explicit that quite a few of its optimizations depend on Sage2/2+. Needs the matching wheel — Sync GPU Wheels installs SageAttention 2.2.0 for RTX 30/40/50 and 1.0.6 for RTX 20. Left unset on AMD/Intel, where there is no Sage build upstream. v18 H3 Veda Sparse models set their own per-task attention (override_attention=veda) — leave this alone when running those.">Attention Mode</label>
               <select id="memAttentionMode" class="input">
                 <option value="">— unset —</option>
                 <option value="sage2">SageAttention 2 / 2+ (recommended — v17 gains depend on it)</option>
@@ -866,6 +866,20 @@
               <label class="token-hint" title="Share of RAM that pinning may lock. Auto is 40% on Windows and 60% on Linux (upstream lowered Linux from 80% in v17.10). WanGP's own slider stops at 80, so this stops there too. Lower it and keep Smart Memory Pinning On if you are short of RAM.">Reserved RAM for Pinning (% — 0 = Auto)</label>
               <input type="number" id="memReservedPct" class="input" min="0" max="80" step="5" placeholder="0 = Auto">
               <div class="mem-hint"><span id="recReservedPct" class="tag-rec">rec: —</span><span id="savedReservedPct" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="WanGP Compute Cache (v18, needs restart). On Blackwell GPUs (RTX 50xx) the NVIDIA driver re-optimizes GPU code at every launch and shares a 1 GB cache that is too small: 10-15 s lost at each first generation plus SSD churn. On gives WanGP its own cache (up to 2 GB, work done once). Older GPUs run shipped code as-is, so this does nothing there — Detect only recommends it on RTX 50.">Compute Cache (restart)</label>
+              <select id="memComputeCache" class="input">
+                <option value="">— unset —</option>
+                <option value="true">On (Blackwell — RTX 50xx)</option>
+                <option value="false">Off</option>
+              </select>
+              <div class="mem-hint"><span id="recComputeCache" class="tag-rec">rec: —</span><span id="savedComputeCache" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="Compute Cache folder — relative to the WanGP folder, or a full path. Leave empty for upstream's default (ComputeCache).">Compute Cache Folder</label>
+              <input type="text" id="memComputeCachePath" class="input" placeholder="ComputeCache">
+              <div class="mem-hint"><span id="recComputeCachePath" class="tag-rec">rec: —</span><span id="savedComputeCachePath" class="tag-saved">saved: —</span></div>
             </div>
             </div>
           <div class="mem-hint" style="padding:10px 12px 0">

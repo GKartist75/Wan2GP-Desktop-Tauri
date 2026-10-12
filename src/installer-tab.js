@@ -991,7 +991,8 @@ async function doInstall(_installed, mode, opts) {
 
 // Model-drive disk gates: checkpoints/LoRAs/outputs may live on other drives
 // (or the same one) — the app-drive check in the install stack doesn't cover
-// them, and a model library eats tens–hundreds of GB. Warn <50 GB, block <10.
+// them, and a model library eats tens–hundreds of GB (v18 adds a 30B video
+// model plus a 3D stack). Warn <80 GB, block <10.
 function driveRootOf(p) {
   const m = /^([A-Za-z]:\\)/.exec(p || "");
   return m ? m[1].toUpperCase() : p || "";
@@ -1042,7 +1043,7 @@ async function refreshModelDiskGates() {
         gb.toFixed(1) +
         " GB free — a model library needs tens of GB. Pick a roomier drive.";
       frag.append(d);
-    } else if (gb < 50) {
+    } else if (gb < 80) {
       const d = document.createElement("div");
       d.className = "istack-hint";
       d.textContent =

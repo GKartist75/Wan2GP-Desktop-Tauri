@@ -46,14 +46,18 @@
     }
     box.innerHTML = goal.picks.map((p, i) => {
       const name = (typeof pickName === 'function') ? pickName(p) : p.model
+      // v18 3D picks carry no steps/guidance (not denoising runs) — only
+      // render the starters that exist.
+      const starters = []
+      if (p.frames) starters.push(esc(p.frames) + ' frames')
+      if (p.steps != null) starters.push(esc(p.steps) + ' steps')
+      if (p.guidance != null) starters.push('guidance ' + esc(p.guidance))
       return (
         '<div class="settings-section" style="margin-top:8px">' +
         '<h3>' + esc(name) + '</h3>' +
         '<p class="token-hint">Model id: <code>' + esc(p.model) + '</code></p>' +
         '<p class="token-hint">' + esc(p.why) + '</p>' +
-        '<p class="token-hint">Starters: ' +
-          (p.frames ? esc(p.frames) + ' frames · ' : '') +
-          esc(p.steps) + ' steps · guidance ' + esc(p.guidance) + '</p>' +
+        (starters.length ? '<p class="token-hint">Starters: ' + starters.join(' · ') + '</p>' : '') +
         '<p class="token-hint">' + esc(p.tip) + '</p>' +
         '<div class="token-field" style="margin-top:6px">' +
           '<button class="btn btn-ghost small" data-guide-copy="' + i + '" title="Copy the full model name for WanGP toolbar search">Copy model name</button>' +

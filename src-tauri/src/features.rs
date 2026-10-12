@@ -696,6 +696,20 @@ let audio = if [2.0, 4.0, 4.5].contains(&profile) {
     let mut extra = serde_json::Map::new();
     if hw.get("cuda_available").and_then(|v| v.as_bool()) == Some(true) {
         extra.insert("vram_allocator".into(), serde_json::json!("vmm_spill"));
+        // v18 Compute Cache: the NVIDIA driver re-optimizes GPU code at every
+        // launch on Blackwell (CC >= 10) and shares a 1 GB cache that is too
+        // small — 10-15 s lost per first generation plus SSD churn. Upstream's
+        // own folder (default "ComputeCache") fixes it once. Recommend On for
+        // RTX 50 (the only profile key that implies Blackwell); elsewhere the
+        // driver runs shipped code as-is and the setting does nothing.
+        // compute_cache_path is left unset so upstream's default applies.
+        let cc_key = crate::hw::kernel_profile_key(
+            hw.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
+            hw.get("gpu_name").and_then(|v| v.as_str()).unwrap_or(""),
+        );
+        if cc_key == "RTX_50" {
+            extra.insert("compute_cache".into(), serde_json::json!(true));
+        }
         // Head Split Medium (2) buys ~20% VRAM for <=10% slower steps
         // (docs/CLI.md, README v17) — the right trade exactly where the
         // tight tier used to need a lower profile instead. Only engages at
@@ -2087,6 +2101,13 @@ pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool 
         "attention_head_split" => matches!(val.as_u64(), Some(0..=3)),
         // bool knobs added with the MMGP v4 runtime
         "read_ahead" | "smart_memory_pinning" => val.is_boolean(),
+        // v18 WanGP Compute Cache (shared/cuda_memory.py COMPUTE_CACHE_KEY):
+        // driver keeps its Blackwell-optimized kernels in WanGP's own folder.
+        "compute_cache" => val.is_boolean(),
+        // shared/cuda_memory.py COMPUTE_CACHE_PATH_KEY (default "ComputeCache",
+        // relative to the WanGP folder or absolute). Fail-closed: non-empty,
+        // bounded length, no NUL.
+        "compute_cache_path" => val.as_str().is_some_and(|s| !s.is_empty() && s.len() <= 260 && !s.contains('\0')),
         // wgp.py preload_mode() — "default" | "dynamic" | "manual"
         "video_preload_mode" | "image_preload_mode" | "audio_preload_mode" => {
             ["default", "dynamic", "manual"].contains(&s)
@@ -2126,6 +2147,10 @@ pub(crate) const MEMORY_OVERRIDE_KEYS: &[&str] = &[
     "attention_head_split",
     "read_ahead",
     "smart_memory_pinning",
+    // v18 Compute Cache (Blackwell-only benefit, harmless elsewhere —
+    // upstream applies it only when CUDA starts without HIP).
+    "compute_cache",
+    "compute_cache_path",
     "video_preload_mode",
     "image_preload_mode",
     "audio_preload_mode",

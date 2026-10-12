@@ -4,6 +4,40 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+### Upstream v18.01 parity (`46005e5` → `8b6012a`, 2026-10-11)
+
+WanGP v18 ("Distortion of Space and Time", now `18.01`) is a major release:
+rewritten LTX/Wan/Hunyuan VAEs, H3 Veda Sparse attention, Kandinsky 6 video,
+Prism i2v+audio, Fun/Uni3C camera control, CUDA Graphs, a Blackwell Compute
+Cache, an 11-model 3D stack, workspace folders and expanded MCP support.
+
+- **Health probe covers the 3D stack.** `requirements.txt` adds `xatlas`,
+  `fast-simplification`, `scikit-image`, `resvg-py`, `chumpy` and `smplfitter`
+  — the dashboard version scan now reports them instead of staying green with
+  broken 3D generation.
+- **Reinstall keeps more, re-downloads less.** `user_skills/` (v18 Deepy
+  skills) joins the reinstall backup + restore set; `ComputeCache/` (up to
+  2 GB of compiled Blackwell kernels) survives the wipe so a reinstall does
+  not force a per-model re-optimize.
+- **Veda documented, not foot-gunned.** H3 Veda Sparse is a per-task
+  `override_attention` set by the model's own defaults — the launcher's
+  global Attention Mode intentionally offers no Veda option (writing it
+  globally risks an invalid config); the label map and hint now say so.
+- **Model-drive warn gate raised 50 → 80 GB** (block stays 10 GB): v18 adds a
+  30B video model plus GBs of 3D weights.
+- **Guide starters for v18:** Kandinsky 6 Lite + Prism picks, a camera-move
+  goal (Fun 1.3B / Uni3C 14B), a 3D-asset goal (TRELLIS.2 / Hunyuan3D /
+  WorldMirror — the renderer now omits steps/guidance where they don't
+  apply), a Veda pruned-FL2VA pick, and verified display names for all four
+  Veda variants.
+- **Compute Cache wired end-to-end** (keys verified against upstream
+  `shared/cuda_memory.py`: `compute_cache` bool + `compute_cache_path`,
+  default `ComputeCache`). Performance Settings gains both controls with
+  rec/saved tags; Detect recommends On for RTX 50 (Blackwell) only; Apply
+  validates through the same allowlist as every other knob. Deepy Goes 3D
+  needs no launcher setting — it runs inside WanGP once the 3D models above
+  are present.
+
 ## [0.10.5] — 2026-10-09
 
 ### The update notice stopped moving your buttons

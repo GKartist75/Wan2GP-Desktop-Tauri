@@ -3253,7 +3253,7 @@ pub async fn reinstall(
         let backup = get_data_dir().join(".reinstall-backup");
         let _ = std::fs::remove_dir_all(&backup);
         let _ = std::fs::create_dir_all(&backup);
-        for sub in ["plugins", "finetunes", "deepy_sessions"] {
+        for sub in ["plugins", "finetunes", "deepy_sessions", "user_skills"] {
             let s = repo.join(sub);
             if s.exists() {
                 let d = backup.join(sub);
@@ -3283,7 +3283,8 @@ pub async fn reinstall(
         emit("[*] Moving old installation to trash…\n");
         // ponytail: .electron is the live WebView2 Shared Dictionary — locked while launcher runs, keep it (Electron d186d49+e3e8505)
         // .reinstall-backup must survive too (data_dir == repo on default installs) — restore_backup() merges it back after install.
-        const KEEP: &[&str] = &[".electron", ".reinstall-backup"];
+        // ComputeCache (v18 Blackwell cache, up to 2 GB of compiled kernels) is kept so a reinstall doesn't force a 10-15s re-optimize per model.
+        const KEEP: &[&str] = &[".electron", ".reinstall-backup", "ComputeCache"];
         let trash = repo.with_file_name(format!(
             "{}.trash-{}",
             repo.file_name().unwrap_or_default().to_string_lossy(),
@@ -3350,7 +3351,7 @@ pub async fn reinstall(
                 let _ = std::fs::remove_dir_all(&trash_clone);
             });
             if ok {
-                emit("[*] Old installation moved to trash (kept .electron) — fresh install starting...\n");
+                emit("[*] Old installation moved to trash (kept .electron, ComputeCache) — fresh install starting...\n");
             }
         }
         if !ok {
@@ -3402,7 +3403,7 @@ pub async fn restore_backup(app: tauri::AppHandle) -> Result<serde_json::Value, 
         return Ok(serde_json::json!({"ok": true, "success": true, "restored": []}));
     }
     let mut restored: Vec<String> = Vec::new();
-    for sub in ["plugins", "finetunes", "deepy_sessions"] {
+    for sub in ["plugins", "finetunes", "deepy_sessions", "user_skills"] {
         let s = backup.join(sub);
         if !s.exists() {
             continue;
