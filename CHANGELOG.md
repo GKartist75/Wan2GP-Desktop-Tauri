@@ -29,6 +29,9 @@ Cache, an 11-model 3D stack, workspace folders and expanded MCP support.
   `fast-simplification`, `scikit-image`, `resvg-py`, `chumpy` and `smplfitter`
   — the dashboard version scan now reports them instead of staying green with
   broken 3D generation.
+- **3D stack visible in Active Environment.** The six probes above now render
+  as panel rows (with Check Updates coverage) instead of living only in the
+  status payload; Compute Cache Folder is labeled RTX 50 only.
 - **Reinstall keeps more, re-downloads less.** `user_skills/` (v18 Deepy
   skills) joins the reinstall backup + restore set; `ComputeCache/` (up to
   2 GB of compiled Blackwell kernels) survives the wipe so a reinstall does

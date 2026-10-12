@@ -163,6 +163,16 @@ const _labelToKey = {
   bitsandbytes: "bitsandbytes",
   NumPy: "numpy",
   Tokenizers: "tokenizers",
+  MMGP: "mmgp",
+  XFormers: "xformers",
+  Torchaudio: "torchaudio",
+  MoviePy: "moviepy",
+  xatlas: "xatlas",
+  "fast-simplification": "fast-simplification",
+  "scikit-image": "scikit-image",
+  "resvg-py": "resvg-py",
+  chumpy: "chumpy",
+  smplfitter: "smplfitter",
 };
 
 // Pinned-upgrade override dialog (explicit Yes/Cancel — no OK/Cancel trap).

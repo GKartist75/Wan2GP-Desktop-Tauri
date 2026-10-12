@@ -82,6 +82,12 @@ async function refreshDashboard() {
         "specTorchaudio",
         "specMoviepy",
         "specSparge",
+        "specXatlas",
+        "specFastSimp",
+        "specSciImage",
+        "specResvg",
+        "specChumpy",
+        "specSmplfitter",
       ].forEach((id) => {
         const el = $(id);
         if (el) el.textContent = "—";
@@ -108,6 +114,12 @@ async function refreshDashboard() {
         "dotXformers",
         "dotTorchaudio",
         "dotMoviepy",
+        "dotXatlas",
+        "dotFastSimp",
+        "dotSciImage",
+        "dotResvg",
+        "dotChumpy",
+        "dotSmplfitter",
       ].forEach((id) => {
         const el = $(id);
         if (el) el.classList.remove("installed");
@@ -254,6 +266,20 @@ async function refreshDashboard() {
       setSpec("specXformers", "dotXformers", status.versions?.xformers);
       setSpec("specTorchaudio", "dotTorchaudio", status.versions?.torchaudio);
       setSpec("specMoviepy", "dotMoviepy", status.versions?.moviepy);
+      setSpec("specXatlas", "dotXatlas", status.versions?.xatlas);
+      setSpec(
+        "specFastSimp",
+        "dotFastSimp",
+        status.versions?.["fast-simplification"],
+      );
+      setSpec(
+        "specSciImage",
+        "dotSciImage",
+        status.versions?.["scikit-image"],
+      );
+      setSpec("specResvg", "dotResvg", status.versions?.["resvg-py"]);
+      setSpec("specChumpy", "dotChumpy", status.versions?.chumpy);
+      setSpec("specSmplfitter", "dotSmplfitter", status.versions?.smplfitter);
 
       // ── GPU Kernel Wheels (profile-driven) ──
       renderKernelWheels(
