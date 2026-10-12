@@ -4,6 +4,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.10.6] — 2026-10-12
+
 ### Stop no longer kills your own OpenCode/Zed on :4096
 
 Stop (serve toggle, WanGP Stop, app close) swept port 4096 and killed any
