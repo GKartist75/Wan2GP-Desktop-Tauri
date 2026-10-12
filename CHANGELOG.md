@@ -37,6 +37,14 @@ Cache, an 11-model 3D stack, workspace folders and expanded MCP support.
   validates through the same allowlist as every other knob. Deepy Goes 3D
   needs no launcher setting — it runs inside WanGP once the 3D models above
   are present.
+- **Sage post4 retired (deepbeepmeep 2026-10).** post4-class builds degrade
+  speed under CUDA Graphs (triton fallback); post6 is the fixed build and
+  the current upstream pin (the `post7` release carries only a ROCm wheel,
+  and the fixed Linux builds are not published yet — the launcher follows
+  `setup_config.json` live, so they apply automatically once upstream ships
+  them). "Restore GPU Wheels" no longer downgrades post6 → post4, the
+  missing-entry fallback is post6, and all toggle labels now say
+  setup_config-as-published instead of promising post4.
 
 ## [0.10.5] — 2026-10-09
 

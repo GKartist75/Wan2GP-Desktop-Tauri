@@ -168,7 +168,7 @@ $("sageSafeSaveBtn")?.addEventListener("click", async () => {
   showToast(
     val === "safe"
       ? "Sage: Safe post6 (applies on next sync/install)"
-      : "Sage: Upstream post4 (100% original, applies on next sync/install)",
+      : "Sage: Upstream pin as published (applies on next sync/install)",
   );
 });
 // Bind Address picker — mirror of gpuDevice picker

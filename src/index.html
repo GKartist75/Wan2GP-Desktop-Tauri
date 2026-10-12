@@ -294,12 +294,12 @@
             <h3>SageAttention wheel</h3>
             <div class="token-field">
               <select id="sageSafeSelect" class="input" style="max-width:360px">
-                <option value="safe">Safe — post6 (fixes fp8 OOM / H3 black frames, RTX 30/40/50)</option>
-                <option value="upstream">Upstream — post4 (100% original)</option>
+                <option value="safe">Safe — post6 (CUDA-graph speed fix, RTX 30/40/50)</option>
+                <option value="upstream">Upstream — setup_config pin as published (post6 today)</option>
               </select>
               <button class="btn btn-primary small" id="sageSafeSaveBtn" title="Save SageAttention wheel choice (applies on next sync/install)">Save</button>
             </div>
-            <p class="token-hint">RTX 30/40/50: <code>post4</code> is deepbeepmeep's published wheel but corrupts CUDA context under torch 2.10; <code>post6</code> is the safe <code>cu130</code> fix. Change applies on next sync/install.</p>
+            <p class="token-hint">RTX 30/40/50: <code>post4</code>-class builds degrade speed when CUDA Graphs are used (triton fallback) — deepbeepmeep Oct 2026. <code>post6</code> is the fixed build and the current upstream pin. Safe swaps a stale post4 to post6; Upstream installs setup_config exactly as published. Change applies on next sync/install.</p>
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>GGUF CUDA Kernel</h3>
@@ -1097,7 +1097,7 @@
           <div class="card-header">
             <span class="card-title">GPU Kernel Wheels</span>
             <span class="env-type-tag" id="kernelProfileTag"></span>
-            <button class="btn btn-ghost small hide-on-collapse" id="restoreKernelsBtn" title="Reinstall deepbeepmeep's setup_config wheels exactly — downgrades launcher overrides (sage safe build, GGUF floor). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
+            <button class="btn btn-ghost small hide-on-collapse" id="restoreKernelsBtn" title="Reinstall setup_config wheels exactly as published — drops launcher overrides (GGUF floor; sage swap only if setup_config ever lags to post4). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
                 <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.25 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
                 <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only: install GGUF 1.0.25 torch210rocm714 HIP wheel for RX 9070/R9700 gfx1201. Needs torch 2.10.0+rocm7.14.0; replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
           </div>
