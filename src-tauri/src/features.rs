@@ -696,6 +696,20 @@ let audio = if [2.0, 4.0, 4.5].contains(&profile) {
     let mut extra = serde_json::Map::new();
     if hw.get("cuda_available").and_then(|v| v.as_bool()) == Some(true) {
         extra.insert("vram_allocator".into(), serde_json::json!("vmm_spill"));
+        // v18 Compute Cache: the NVIDIA driver re-optimizes GPU code at every
+        // launch on Blackwell (CC >= 10) and shares a 1 GB cache that is too
+        // small — 10-15 s lost per first generation plus SSD churn. Upstream's
+        // own folder (default "ComputeCache") fixes it once. Recommend On for
+        // RTX 50 (the only profile key that implies Blackwell); elsewhere the
+        // driver runs shipped code as-is and the setting does nothing.
+        // compute_cache_path is left unset so upstream's default applies.
+        let cc_key = crate::hw::kernel_profile_key(
+            hw.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
+            hw.get("gpu_name").and_then(|v| v.as_str()).unwrap_or(""),
+        );
+        if cc_key == "RTX_50" {
+            extra.insert("compute_cache".into(), serde_json::json!(true));
+        }
         // Head Split Medium (2) buys ~20% VRAM for <=10% slower steps
         // (docs/CLI.md, README v17) — the right trade exactly where the
         // tight tier used to need a lower profile instead. Only engages at
@@ -715,6 +729,13 @@ let audio = if [2.0, 4.0, 4.5].contains(&profile) {
         );
         if let Some(a) = crate::hw::attention_for_profile(&key) {
             extra.insert("attention_mode".into(), serde_json::json!(a));
+        }
+        // v18 compilation mode (wgp.py compile_choices): cudagraph is the
+        // fast path, transformer deprecated. Same classes the known-good
+        // recipe (troubleshoot.rs) prescribes it for; elsewhere unset =
+        // upstream default disabled.
+        if key == "RTX_30" || key == "RTX_40" {
+            extra.insert("compile".into(), serde_json::json!("cudagraph"));
         }
     }
     extra.insert("read_ahead".into(), serde_json::json!(cfg!(windows)));
@@ -1351,116 +1372,78 @@ static OPENCODE_PID: std::sync::OnceLock<std::sync::Mutex<Option<u32>>> =
     std::sync::OnceLock::new();
 // Kill the OpenCode server this launcher spawned (if any). Shared by the
 // serve toggle and the app-close cleanup.
-// Orphan fallback: OPENCODE_PID is memory-only and the child is
-// mem::forget detached, so a restart loses the PID while the server keeps
-// listening on :4096. After the PID kill (or when no PID was stored),
-// sweep local port 4096 and kill ONLY node/opencode owners — never
-// foreign processes. Stays SYNC; returns true if anything was killed.
-/// Fast synchronous kill for app-close (see shutdown_cleanup): tracked PID
-/// only, no port-scan PowerShell. Milliseconds; the :4096 orphan sweep
-/// stays on the toggle/Stop path.
-pub(crate) fn stop_opencode_fast() -> bool {
-    let pid = OPENCODE_PID
-        .get()
-        .and_then(|m| m.lock().ok())
-        .and_then(|mut g| g.take());
-    if let Some(pid) = pid {
-        #[cfg(windows)]
-        {
-            let _ = silent_command("taskkill")
-                .args(["/F", "/T", "/PID", &pid.to_string()])
-                .output();
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = silent_command("kill").arg(pid.to_string()).output();
-        }
-        return true;
-    }
-    false
+// Ownership is by recorded PID, never by port: OPENCODE_PID is memory-only
+// and the child is mem::forget detached, so Start also persists the PID to
+// `.opencode.pid` in the data dir and Stop consumes it (memory first, file
+// second). A :4096 listener whose PID is not the recorded one is someone
+// else's — e.g. the user's own opencode/Zed agent — and is never touched.
+// A blind port sweep used to kill those; it is gone.
+fn opencode_pid_file() -> PathBuf {
+    get_data_dir().join(".opencode.pid")
 }
-pub(crate) fn stop_opencode_server() -> bool {
-    let mut killed_any = false;
-    let pid = OPENCODE_PID
+fn persist_opencode_pid(pid: u32) {
+    let _ = std::fs::write(opencode_pid_file(), pid.to_string());
+}
+/// Our PID for the opencode server: memory first, marker file second.
+/// Consumes both (the file is deleted) — one Stop owns the kill exactly once.
+fn take_opencode_pid() -> Option<u32> {
+    if let Some(pid) = OPENCODE_PID
         .get()
         .and_then(|m| m.lock().ok())
-        .and_then(|mut g| g.take());
-    if let Some(pid) = pid {
-        // ponytail: /T kills the tree — the tracked PID is now the cmd /C wrapper, not the server itself
-        #[cfg(windows)]
-        {
-            let _ = silent_command("taskkill")
-                .args(["/F", "/T", "/PID", &pid.to_string()])
-                .output();
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = silent_command("kill").arg(pid.to_string()).output();
-        }
-        killed_any = true;
+        .and_then(|mut g| g.take())
+    {
+        return (pid != 0).then_some(pid);
     }
-    // Port-sweep fallback for the :4096 orphan (restart lost the PID).
-    // Windows: ONE Get-NetTCPConnection call, owner resolved in-PS.
-    // Non-Windows: lsof -ti tcp:4096. Owner gate (node/opencode,
-    // case-insensitive) is enforced in Rust before any kill.
+    let s = std::fs::read_to_string(opencode_pid_file()).ok()?;
+    let _ = std::fs::remove_file(opencode_pid_file());
+    s.trim().parse::<u32>().ok().filter(|p| *p != 0)
+}
+/// Owner-name guard against PID reuse: only our wrapper/server names.
+/// (Windows tracks the cmd /C wrapper — see term_tool; elsewhere opencode itself.)
+fn opencode_pid_owner_ok(pid: u32) -> bool {
+    #[cfg(windows)]
+    let owner = silent_command("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "(Get-Process -Id {pid} -ErrorAction SilentlyContinue).ProcessName"
+            ),
+        ])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_lowercase())
+        .unwrap_or_default();
+    #[cfg(not(windows))]
+    let owner = silent_command("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_lowercase())
+        .unwrap_or_default();
+    owner == "cmd" || owner.contains("opencode") || owner.contains("node")
+}
+/// PIDs currently listening on 127.0.0.1:4096 (empty when none / on query failure).
+fn opencode_listeners() -> Vec<u32> {
     #[cfg(windows)]
     {
-        let ps = "Get-NetTCPConnection -LocalPort 4096 -State Listen | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p) { $p.Id.ToString() + '|' + $p.ProcessName } }";
-        match silent_command("powershell")
+        let ps = "Get-NetTCPConnection -LocalPort 4096 -State Listen | ForEach-Object { $_.OwningProcess }";
+        silent_command("powershell")
             .args(["-NoProfile", "-Command", ps])
             .output()
-        {
-            Ok(o) if o.status.success() => {
-                for line in String::from_utf8_lossy(&o.stdout).lines() {
-                    let mut parts = line.splitn(2, '|');
-                    if let (Some(pid_s), Some(name)) = (parts.next(), parts.next()) {
-                        let owner = name.trim().to_lowercase();
-                        if !(owner.contains("node") || owner.contains("opencode")) {
-                            continue; // never kill foreign processes
-                        }
-                        if let Ok(pid) = pid_s.trim().parse::<u32>() {
-                            if pid == 0 || pid == std::process::id() {
-                                continue;
-                            }
-                            crate::base::push_log(
-                                &format!(
-                                    "[stop] opencode :4096: killing {name} PID {pid}\n",
-                                    name = name.trim(),
-                                ),
-                                "launch",
-                            );
-                            let _ = silent_command("taskkill")
-                                .args(["/F", "/T", "/PID", &pid.to_string()])
-                                .output();
-                            killed_any = true;
-                        }
-                    }
-                }
-            }
-            // Exit 1 + "No matching" = nothing listening (the CLEAN case).
-            Ok(o) => {
-                let code = o.status.code().unwrap_or(-1);
-                let err: String = String::from_utf8_lossy(&o.stderr)
-                    .chars()
-                    .take(200)
-                    .collect();
-                if !(code == 1 && err.contains("No matching")) {
-                    crate::base::push_log(
-                        &format!("[stop] opencode port scan failed (exit {code}): {err}\n"),
-                        "launch",
-                    );
-                }
-            }
-            Err(e) => crate::base::push_log(
-                &format!("[stop] opencode port scan spawn failed: {e}\n"),
-                "launch",
-            ),
-        }
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .filter_map(|l| l.trim().parse::<u32>().ok())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
     #[cfg(not(windows))]
     {
-        // lsof lists PIDs; owner gate via ps so foreign listeners survive.
-        let pids: Vec<u32> = silent_command("lsof")
+        silent_command("lsof")
             .args(["-ti", "tcp:4096"])
             .output()
             .ok()
@@ -1471,29 +1454,67 @@ pub(crate) fn stop_opencode_server() -> bool {
                     .filter_map(|l| l.trim().parse::<u32>().ok())
                     .collect()
             })
-            .unwrap_or_default();
-        for pid in pids {
-            if pid == 0 || pid == std::process::id() {
-                continue;
-            }
-            let owner = silent_command("ps")
-                .args(["-p", &pid.to_string(), "-o", "comm="])
-                .output()
-                .ok()
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_lowercase())
-                .unwrap_or_default();
-            if !(owner.contains("node") || owner.contains("opencode")) {
-                continue; // never kill foreign processes
-            }
-            crate::base::push_log(
-                &format!("[stop] opencode :4096: killing {owner} PID {pid}\n"),
-                "launch",
-            );
-            let _ = silent_command("kill").arg(pid.to_string()).output();
-            killed_any = true;
+            .unwrap_or_default()
+    }
+}
+fn kill_opencode_pid(pid: u32) {
+    #[cfg(windows)]
+    {
+        // /T kills the tree — the tracked PID is the cmd /C wrapper, not the server itself
+        let _ = silent_command("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = silent_command("kill").arg(pid.to_string()).output();
+    }
+}
+/// Fast synchronous kill for app-close (see shutdown_cleanup): our recorded
+/// PID only, owner-name guarded, no port scan. Milliseconds.
+pub(crate) fn stop_opencode_fast() -> bool {
+    if let Some(pid) = take_opencode_pid() {
+        if pid != std::process::id() && opencode_pid_owner_ok(pid) {
+            kill_opencode_pid(pid);
+            return true;
         }
     }
-    killed_any
+    false
+}
+/// Stop the OpenCode server this launcher spawned (toggle/Stop/app-close paths).
+/// Kills ONLY when the recorded PID is the one listening on :4096 (plus the
+/// owner-name guard) — this closes the PID-reuse hole where a recycled PID
+/// belonging to someone else happens to match by name. Anything else on the
+/// port is reported with its PID for manual cleanup and spared.
+pub(crate) fn stop_opencode_server() -> bool {
+    let Some(pid) = take_opencode_pid() else {
+        let busy = opencode_listeners();
+        if !busy.is_empty() {
+            crate::base::push_log(
+                &format!(
+                    "[stop] opencode :4096 busy (listener PID(s) {busy:?}) but no launcher-spawned server on record — spared\n"
+                ),
+                "launch",
+            );
+        }
+        return false;
+    };
+    if pid == std::process::id() {
+        return false;
+    }
+    if opencode_listeners().contains(&pid) && opencode_pid_owner_ok(pid) {
+        crate::base::push_log(
+            &format!("[stop] opencode :4096: stopping launcher-spawned server PID {pid}\n"),
+            "launch",
+        );
+        kill_opencode_pid(pid);
+        return true;
+    }
+    crate::base::push_log(
+        "[stop] opencode :4096: launcher-spawned server already gone (the port holder is not ours) — spared\n",
+        "launch",
+    );
+    false
 }
 #[tauri::command]
 pub fn llm_engine_serve(engine: String, action: String) -> serde_json::Value {
@@ -1522,6 +1543,9 @@ pub fn llm_engine_serve(engine: String, action: String) -> serde_json::Value {
             {
                 *g = Some(child.id());
             }
+            // Survives restarts as *ours*: Stop consumes this (memory first,
+            // file second) and never sweeps the port blind.
+            persist_opencode_pid(child.id());
             std::mem::forget(child); // detach: lives beyond this command
             serde_json::json!({"ok": true, "success": true, "running": true, "url": "http://127.0.0.1:4096"})
         }
@@ -2087,6 +2111,13 @@ pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool 
         "attention_head_split" => matches!(val.as_u64(), Some(0..=3)),
         // bool knobs added with the MMGP v4 runtime
         "read_ahead" | "smart_memory_pinning" => val.is_boolean(),
+        // v18 WanGP Compute Cache (shared/cuda_memory.py COMPUTE_CACHE_KEY):
+        // driver keeps its Blackwell-optimized kernels in WanGP's own folder.
+        "compute_cache" => val.is_boolean(),
+        // shared/cuda_memory.py COMPUTE_CACHE_PATH_KEY (default "ComputeCache",
+        // relative to the WanGP folder or absolute). Fail-closed: non-empty,
+        // bounded length, no NUL.
+        "compute_cache_path" => val.as_str().is_some_and(|s| !s.is_empty() && s.len() <= 260 && !s.contains('\0')),
         // wgp.py preload_mode() — "default" | "dynamic" | "manual"
         "video_preload_mode" | "image_preload_mode" | "audio_preload_mode" => {
             ["default", "dynamic", "manual"].contains(&s)
@@ -2098,7 +2129,10 @@ pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool 
         "perc_reserved_mem_max" => matches!(val.as_f64(), Some(n) if (0.0..=100.0).contains(&n)),
         // wgp.py attention_modes_installed + check_attn
         "attention_mode" => ["sdpa", "flash", "sage", "sage2", "sage3", "radial"].contains(&s),
-        "compile" => val.is_boolean(),
+        // v18 wgp.py compile_choices: disabled / cudagraph / transformer.
+        // Legacy booleans match no engine upstream (silently off) and are
+        // rejected here — the recipe and panel only ever write strings.
+        "compile" => matches!(val.as_str(), Some("disabled" | "cudagraph" | "transformer")),
         // wgp.py queue table: "pastel" renders per-row hues, anything else
         // renders the theme-following alternating grey rows. Fail-closed to
         // the two known names so garbage never reaches wgp_config.json.
@@ -2126,6 +2160,10 @@ pub(crate) const MEMORY_OVERRIDE_KEYS: &[&str] = &[
     "attention_head_split",
     "read_ahead",
     "smart_memory_pinning",
+    // v18 Compute Cache (Blackwell-only benefit, harmless elsewhere —
+    // upstream applies it only when CUDA starts without HIP).
+    "compute_cache",
+    "compute_cache_path",
     "video_preload_mode",
     "image_preload_mode",
     "audio_preload_mode",

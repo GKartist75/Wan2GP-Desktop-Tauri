@@ -27,7 +27,7 @@ $("restoreKernelsBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   if (
     !confirm(
-      "Reinstall deepbeepmeep's original wheels? This downgrades launcher overrides (sage safe build → post4, GGUF floor off).",
+      "Reinstall setup_config wheels exactly as published? This drops launcher overrides (GGUF floor off; sage installs the published pin).",
     )
   )
     return;

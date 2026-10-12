@@ -4,6 +4,78 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.10.6] — 2026-10-12
+
+### Stop no longer kills your own OpenCode/Zed on :4096
+
+Stop (serve toggle, WanGP Stop, app close) swept port 4096 and killed any
+`node`/`opencode` listener — including the user's own agent, which also
+defaults to 4096. A process-name gate cannot tell ours from yours.
+
+- **Ownership is by recorded PID now.** Start persists the spawned server
+  PID to `.opencode.pid` (memory first, file second, consumed on Stop).
+- **Kill iff the recorded PID is the :4096 listener** (plus an owner-name
+  guard against PID reuse). Anything else on the port is logged with its
+  PID for manual cleanup and spared — the blind sweep is gone.
+- App-close fast path keeps its no-scan guarantee (recorded PID + name
+  guard only).
+
+### Upstream v18.02 parity (`46005e5` → `ad07926`, 2026-10-11/12)
+
+WanGP v18 ("Distortion of Space and Time", now `18.02`) is a major release:
+rewritten LTX/Wan/Hunyuan VAEs, H3 Veda Sparse attention, Kandinsky 6 video,
+Prism i2v+audio, Fun/Uni3C camera control, CUDA Graphs, a Blackwell Compute
+Cache, an 11-model 3D stack, workspace folders and expanded MCP support.
+
+- **Health probe covers the 3D stack.** `requirements.txt` adds `xatlas`,
+  `fast-simplification`, `scikit-image`, `resvg-py`, `chumpy` and `smplfitter`
+  — the dashboard version scan now reports them instead of staying green with
+  broken 3D generation.
+- **3D stack visible in Active Environment.** The six probes above now render
+  as panel rows (with Check Updates coverage) instead of living only in the
+  status payload; Compute Cache Folder is labeled RTX 50 only.
+- **Reinstall keeps more, re-downloads less.** `user_skills/` (v18 Deepy
+  skills) joins the reinstall backup + restore set; `ComputeCache/` (up to
+  2 GB of compiled Blackwell kernels) survives the wipe so a reinstall does
+  not force a per-model re-optimize.
+- **Veda documented, not foot-gunned.** H3 Veda Sparse is a per-task
+  `override_attention` set by the model's own defaults — the launcher's
+  global Attention Mode intentionally offers no Veda option (writing it
+  globally risks an invalid config); the label map and hint now say so.
+- **Model-drive warn gate raised 50 → 80 GB** (block stays 10 GB): v18 adds a
+  30B video model plus GBs of 3D weights.
+- **Guide starters for v18:** Kandinsky 6 Lite + Prism picks, a camera-move
+  goal (Fun 1.3B / Uni3C 14B), a 3D-asset goal (TRELLIS.2 / Hunyuan3D /
+  WorldMirror — the renderer now omits steps/guidance where they don't
+  apply), a Veda pruned-FL2VA pick, and verified display names for all four
+  Veda variants.
+- **`ad07926` (18.02) needs nothing:** VAE Triton kernels migrate
+  `libdevice.*` → `tl.*` with tuner bumps, SeedVC component pin rolls,
+  Deepy workspace-save fix, Gradio polish — all upstream-runtime, no
+  install/config surface. `settings_version` stays 2.80.
+- **Compute Cache wired end-to-end** (keys verified against upstream
+  `shared/cuda_memory.py`: `compute_cache` bool + `compute_cache_path`,
+  default `ComputeCache`). Performance Settings gains both controls with
+  rec/saved tags; Detect recommends On for RTX 50 (Blackwell) only; Apply
+  validates through the same allowlist as every other knob. Deepy Goes 3D
+  needs no launcher setting — it runs inside WanGP once the 3D models above
+  are present.
+- **Sage post4 retired (deepbeepmeep 2026-10).** post4-class builds degrade
+  speed under CUDA Graphs (triton fallback); post6 is the fixed build and
+  the current upstream pin (the `post7` release carries only a ROCm wheel,
+  and the fixed Linux builds are not published yet — the launcher follows
+  `setup_config.json` live, so they apply automatically once upstream ships
+  them). "Restore GPU Wheels" no longer downgrades post6 → post4, the
+  missing-entry fallback is post6, and all toggle labels now say
+  setup_config-as-published instead of promising post4.
+- **`compile` is a 3-state setting in v18, not a boolean** (`disabled` /
+  `cudagraph` / `transformer`; the CLI `--compile` flag forces the
+  deprecated transformer path). Launcher-written booleans matched no engine
+  and silently did nothing. Performance Settings gains a Compile Mode
+  selector, Detect recommends CUDA Graph on RTX 30/40, the known-good
+  recipe prescribes it there too, and the flag table documents the
+  deprecation.
+
 ## [0.10.5] — 2026-10-09
 
 ### The update notice stopped moving your buttons

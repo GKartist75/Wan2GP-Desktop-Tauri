@@ -17,6 +17,7 @@ function memProfileCollect() {
   const i8k = $("memInt8Kernels") ? $("memInt8Kernels").value : "";
   const kp = $("memKernelPrecision") ? $("memKernelPrecision").value : "";
   const am = $("memAttentionMode") ? $("memAttentionMode").value : "";
+  const cm = $("memCompileMode") ? $("memCompileMode").value : "";
   // v17 (MMGP v4) — CUDA-only upstream, so Detect never recommends these on
   // AMD/Intel; a manual pick here is still honoured. One control per setting,
   // mirroring WanGP's Configuration > RAM/VRAM Management panel.
@@ -31,14 +32,19 @@ function memProfileCollect() {
   const ipm = $("memImagePreload") ? $("memImagePreload").value : "";
   const apm = $("memAudioPreload") ? $("memAudioPreload").value : "";
   const prm = $("memReservedPct") ? $("memReservedPct").value : "";
+  const cc = $("memComputeCache") ? $("memComputeCache").value : "";
+  const ccp = $("memComputeCachePath") ? $("memComputeCachePath").value.trim() : "";
   if (i8k) s.int8_kernels = i8k;
   if (kp) s.kernel_precision = kp;
   if (am) s.attention_mode = am;
+  if (cm) s.compile = cm;
   if (va) s.vram_allocator = va;
   if (rma) s.ram_allocator = rma;
   if (hs !== "") s.attention_head_split = Number(hs);
   if (ra) s.read_ahead = ra === "true";
   if (sp) s.smart_memory_pinning = sp === "true";
+  if (cc) s.compute_cache = cc === "true";
+  if (ccp) s.compute_cache_path = ccp;
   if (vpm) s.video_preload_mode = vpm;
   if (ipm) s.image_preload_mode = ipm;
   if (apm) s.audio_preload_mode = apm;
@@ -118,6 +124,13 @@ const MEM_FIELDS = {
     rec: "recAttentionMode",
     saved: "savedAttentionMode",
   },
+  // v18 wgp.py compile_choices (disabled / cudagraph / transformer) — a
+  // boolean matches no engine upstream. Same rec/saved contract as the rest.
+  compile: {
+    sel: "memCompileMode",
+    rec: "recCompileMode",
+    saved: "savedCompileMode",
+  },
   vram_allocator: {
     sel: "memVramAllocator",
     rec: "recVramAllocator",
@@ -165,6 +178,19 @@ const MEM_FIELDS = {
     rec: "recReservedPct",
     saved: "savedReservedPct",
   },
+  // v18 Compute Cache — Config → Performance → WanGP Compute Cache upstream.
+  // rec stays "—" off Blackwell (Detect only recommends it on RTX 50);
+  // the path is manual-only (upstream default "ComputeCache" applies unset).
+  compute_cache: {
+    sel: "memComputeCache",
+    rec: "recComputeCache",
+    saved: "savedComputeCache",
+  },
+  compute_cache_path: {
+    sel: "memComputeCachePath",
+    rec: "recComputeCachePath",
+    saved: "savedComputeCachePath",
+  },
 };
 const INT8_KERNEL_LABELS = {
   auto: "Auto (default)",
@@ -203,11 +229,20 @@ const ATTENTION_MODE_LABELS = {
   sage: "SageAttention 1 (Turing only)",
   flash: "FlashAttention (quality first, less VRAM)",
   sdpa: "SDPA (PyTorch default, always available)",
+  // v18: H3 Veda Sparse models set override_attention per-task in their own
+  // defaults — it is never written here, this label only keeps a saved: tag
+  // readable if WanGP records it.
+  veda: "Veda Sparse (H3 Veda models set this per-task — no change needed here)",
 };
 const PRELOAD_MODE_LABELS = {
   default: "Default — the profile's own choice",
   dynamic: "Dynamic — fill the VRAM each generation leaves free",
   manual: "Manual — use the VRAM Preload amount",
+};
+const COMPILE_MODE_LABELS = {
+  disabled: "Disabled (default)",
+  cudagraph: "CUDA Graph — faster short steps",
+  transformer: "PyTorch — deprecated upstream, very slow first compile",
 };
 function fmtVal(key, v) {
   if (v == null || v === "") return "—";
@@ -223,11 +258,12 @@ function fmtVal(key, v) {
   if (key === "ram_allocator")
     return RAM_ALLOCATOR_LABELS[v] || String(v);
   if (key === "attention_mode") return ATTENTION_MODE_LABELS[v] || String(v);
+  if (key === "compile") return COMPILE_MODE_LABELS[v] || String(v);
   if (key === "attention_head_split")
     return HEAD_SPLIT_LABELS[Number(v)] || String(v);
   if (key.endsWith("_preload_mode"))
     return PRELOAD_MODE_LABELS[v] || String(v);
-  if (key === "read_ahead" || key === "smart_memory_pinning")
+  if (key === "read_ahead" || key === "smart_memory_pinning" || key === "compute_cache")
     return v === true ? "On" : v === false ? "Off" : String(v);
   if (key === "perc_reserved_mem_max")
     return Number(v) === 0 ? "Auto" : Number(v) + "%";
@@ -287,6 +323,8 @@ function memProfileFromRecommendation(rec) {
         // attention mode is part of the recommendation. Absent on AMD/Intel
         // (no Sage build upstream there), leaving it "— unset —".
         attention_mode: rec.attention_mode,
+        // v18: cudagraph on RTX 30/40, unset (= disabled) elsewhere.
+        compile: rec.compile,
         // v17 levers. Absent on AMD/Intel/CPU (upstream's allocator
         // early-returns there), which leaves those dropdowns on "— unset —".
       vram_allocator: rec.vram_allocator,
@@ -297,6 +335,8 @@ function memProfileFromRecommendation(rec) {
       image_preload_mode: rec.image_preload_mode,
       audio_preload_mode: rec.audio_preload_mode,
       perc_reserved_mem_max: rec.perc_reserved_mem_max,
+      // v18: recommended only on RTX 50 (Blackwell); path stays manual.
+      compute_cache: rec.compute_cache,
     },
     { mode: "recommend" },
   );

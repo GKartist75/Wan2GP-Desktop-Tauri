@@ -733,21 +733,29 @@ pub fn troubleshoot_triton_clear(fallback_sdpa: Option<bool>) -> Result<serde_js
 /// owns them, so we fail closed instead of inventing one.
 /// Pure + unit-tested.
 pub(crate) fn known_good_recipe(profile_key: &str) -> Option<serde_json::Value> {
+    // v18: upstream `compile` is a 3-state string (disabled / cudagraph /
+    // transformer), not a boolean — a boolean matches neither engine and
+    // silently engages nothing. "On" now means cudagraph (transformer is
+    // deprecated upstream); the CLI --compile flag still forces transformer.
     let (profile, compile, note) = match profile_key {
-        "GTX_10" => (4.0, false, "Tea Cache 1.5, in WanGP's generation settings"),
+        "GTX_10" => (
+            4.0,
+            "disabled",
+            "Tea Cache 1.5, in WanGP's generation settings",
+        ),
         "RTX_20" => (
             4.0,
-            false,
+            "disabled",
             "Needs SageAttention 1.0.6 (Sync GPU Wheels); Tea Cache 1.5 in WanGP",
         ),
         "RTX_30" | "RTX_40" => (
             3.0,
-            true,
-            "Needs SageAttention 2.2.0 (Sync GPU Wheels); Tea Cache 2.0 in WanGP",
+            "cudagraph",
+            "Needs SageAttention 2.2.0 post6+ (Sync GPU Wheels) for the fastest CUDA-Graph kernels; Tea Cache 2.0 in WanGP",
         ),
         "RTX_50" => (
             4.0,
-            false,
+            "disabled",
             "Upstream pairs this with fp16 — set it per generation in WanGP",
         ),
         _ => return None,
@@ -868,7 +876,7 @@ mod troubleshoot_tests {
         let gtx = known_good_recipe("GTX_10").unwrap();
         assert_eq!(gtx["settings"]["attention_mode"], "sdpa");
         assert_eq!(gtx["settings"]["video_profile"], 4.0);
-        assert_eq!(gtx["settings"]["compile"], false);
+        assert_eq!(gtx["settings"]["compile"], "disabled");
 
         let r20 = known_good_recipe("RTX_20").unwrap();
         assert_eq!(r20["settings"]["attention_mode"], "sage");
@@ -877,7 +885,7 @@ mod troubleshoot_tests {
             let r = known_good_recipe(k).unwrap();
             assert_eq!(r["settings"]["attention_mode"], "sage2");
             assert_eq!(r["settings"]["video_profile"], 3.0);
-            assert_eq!(r["settings"]["compile"], true);
+            assert_eq!(r["settings"]["compile"], "cudagraph");
         }
 
         let r50 = known_good_recipe("RTX_50").unwrap();

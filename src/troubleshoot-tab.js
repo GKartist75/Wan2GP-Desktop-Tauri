@@ -366,7 +366,7 @@ $("tsKnownGoodBtn")?.addEventListener("click", async function () {
       "tsKnownGoodStatus",
       "For " + escHtml(r.profileKey) + ": attention " + escHtml(String(s.attention_mode)) +
         ", video profile " + escHtml(String(s.video_profile)) +
-        ", compile " + (s.compile ? "on" : "off") + ". " + escHtml(r.recipe.note || ""),
+        ", compile " + (s.compile === "cudagraph" ? "CUDA Graph" : s.compile === "transformer" || s.compile === true ? "PyTorch" : "off") + ". " + escHtml(r.recipe.note || ""),
     );
   } finally {
     this.disabled = false;

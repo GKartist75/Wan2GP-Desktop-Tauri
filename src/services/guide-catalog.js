@@ -26,14 +26,25 @@ const GUIDE_GOALS = [
     label: 'Animate a photo (image → video)',
     picks: [
       { model: 'i2v_2_2', why: 'Mature general image-to-video.', frames: 49, steps: 20, guidance: 5, tip: 'Start Image holds the subject — prompt only motion/camera: "she smiles, turns toward the window, camera pushes in".' },
-      { model: 'minimax_h3_fl2va_pruned', why: 'Realistic motion + synced audio in one pass.', frames: 124, steps: 15, guidance: 5, tip: 'Needs 15-20 steps minimum (no distilled ckpt yet).' }
+      { model: 'minimax_h3_fl2va_pruned', why: 'Realistic motion + synced audio in one pass.', frames: 124, steps: 15, guidance: 5, tip: 'Needs 15-20 steps minimum (no distilled ckpt yet).' },
+      { model: 'minimax_h3_fl2va_pruned_veda', why: 'Same settings/LoRAs as pruned FL2VA, up to 2x faster on long/high-res gens.', frames: 124, steps: 15, guidance: 5, tip: 'Needs Triton and a CC 8.0+ NVIDIA GPU; compare fine detail against the standard variant first.' }
     ]
   },
   {
     id: 'cinematic-audio',
     label: 'Cinematic video with native audio',
     picks: [
-      { model: 'ltx2_25_22B_distilled', why: 'Fast video + soundtrack one pass; start/end frames, control, outpaint.', frames: 97, steps: 8, guidance: 1, tip: 'Distilled default; Dev variant trades speed for control.' }
+      { model: 'ltx2_25_22B_distilled', why: 'Fast video + soundtrack one pass; start/end frames, control, outpaint.', frames: 97, steps: 8, guidance: 1, tip: 'Distilled default; Dev variant trades speed for control.' },
+      { model: 'k6_lite_distill', why: 'Small 3B model for short clips with synced speech/music/SFX.', frames: 121, steps: 10, guidance: 1, tip: 'Five seconds at 832x480/24fps to start; no guidance or negative prompt — describe scene, action, camera and sound together.' },
+      { model: 'prism', why: 'Image-to-video with jointly generated audio, up to 2K.', frames: 81, steps: 20, guidance: 5, tip: 'Start image + motion/sound description; use the supplied defaults first. One pass — no end images or continuation.' }
+    ]
+  },
+  {
+    id: 'camera-move',
+    label: 'Camera move from a photo',
+    picks: [
+      { model: 'fun_camera_1.3B', why: 'Small camera-control model; text or start image + preset path.', frames: 49, steps: 20, guidance: 5, tip: 'Begin with a modest move — hidden areas must be invented. No sliding windows.' },
+      { model: 'uni3c', why: '14B camera-control guided by the start image geometry.', frames: 49, steps: 20, guidance: 5, tip: 'Requires a start image; keep the move modest for the same reason.' }
     ]
   },
   {
@@ -117,6 +128,15 @@ const GUIDE_GOALS = [
     ]
   },
   {
+    id: 'object-3d',
+    label: '3D asset from a photo (v18)',
+    picks: [
+      { model: 'trellis2', why: 'GLB mesh with PBR textures (colour, metallic, roughness) from one image.', tip: 'One whole uncropped object on a plain background, three-quarter view, even light. Start with 1024 Cascade; hidden sides are inferred.' },
+      { model: 'hunyuan3d_21', why: 'Shape + PBR texture, shape only, or texture your own mesh from a reference image.', tip: 'Texturing replaces the mesh UVs/materials. To start from text, generate an image first, then use it as the 3D reference.' },
+      { model: 'worldmirror_2', why: 'Photos and/or a reference video to Gaussian splats or a point cloud with cameras.', tip: 'Overlapping views around a static scene; areas no view shows stay empty. Open results in the 3D gallery to inspect, then save a view as a video start image.' }
+    ]
+  },
+  {
     id: 'sfx',
     label: 'Ambience / sound effects',
     picks: [
@@ -129,7 +149,10 @@ const GUIDE_GOALS = [
  * Display names from WanGP defaults/*.json (model.name). The toolbar search
  * matches these — copying the id (e.g. t2v_2_2) is useless there, so the UI
  * copies the full name. Verified 2026-09-21; the three vfx-alpha entries
- * re-verified against upstream v17.10 (ec9566a) on 2026-10-06.
+ * re-verified against upstream v17.10 (ec9566a) on 2026-10-06; the four Veda
+ * entries against upstream v18 (46005e5) on 2026-10-12. k6/prism/camera
+ * picks intentionally unmapped until their defaults names are verified —
+ * pickName falls back to the id.
  */
 const MODEL_NAMES = {
   't2v_1.3B': 'Wan2.1 Text2video 1.3B',
@@ -157,7 +180,11 @@ const MODEL_NAMES = {
   stable_audio3_small: 'Music Stable Audio 3 Small Music',
     ltx2_25_22B_alpha_gen: 'LTX-2 2.5 Alpha Gen 22B',
   ltx2_25_22B_layout_to_render: 'LTX-2 2.5 Layout to Render 22B',
-  alpha2: 'Wan2.1 Alpha v2.0 14B'
+  alpha2: 'Wan2.1 Alpha v2.0 14B',
+  minimax_h3_fl2va_veda: 'MiniMax H3 FL2VA Veda Sparse 33B',
+  minimax_h3_fl2va_pruned_veda: 'MiniMax H3 FL2VA Pruned Veda Sparse 20B',
+  minimax_h3_ref2va_veda: 'MiniMax H3 Ref2VA Veda Sparse 33B',
+  minimax_h3_ref2va_pruned_veda: 'MiniMax H3 Ref2VA Pruned Veda Sparse 20B'
 }
 
 /**

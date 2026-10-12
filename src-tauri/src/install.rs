@@ -3158,9 +3158,9 @@ pub async fn install(
     }
     emit("[*] Install finished.\n");
     // Post-install override pass: setup.py installs upstream's wheel pins
-    // verbatim (GGUF 1.0.14, sage post4) — swap the two wheels the launcher
-    // overrides so a fresh install doesn't land stale with instant
-    // dashboard warnings. Warn-only inside (never fails the install).
+    // verbatim — swap the wheels the launcher overrides when setup_config
+    // lags (stale GGUF, post4 sage) so a fresh install doesn't land stale
+    // with instant dashboard warnings. Warn-only inside (never fails the install).
     sync_post_install_overrides(&app, &repo).await;
     // Fresh-install seeding: fill the Performance Settings keys this box
     // should have from day one (v17 levers included), so the first launch is
@@ -3253,7 +3253,7 @@ pub async fn reinstall(
         let backup = get_data_dir().join(".reinstall-backup");
         let _ = std::fs::remove_dir_all(&backup);
         let _ = std::fs::create_dir_all(&backup);
-        for sub in ["plugins", "finetunes", "deepy_sessions"] {
+        for sub in ["plugins", "finetunes", "deepy_sessions", "user_skills"] {
             let s = repo.join(sub);
             if s.exists() {
                 let d = backup.join(sub);
@@ -3283,7 +3283,8 @@ pub async fn reinstall(
         emit("[*] Moving old installation to trash…\n");
         // ponytail: .electron is the live WebView2 Shared Dictionary — locked while launcher runs, keep it (Electron d186d49+e3e8505)
         // .reinstall-backup must survive too (data_dir == repo on default installs) — restore_backup() merges it back after install.
-        const KEEP: &[&str] = &[".electron", ".reinstall-backup"];
+        // ComputeCache (v18 Blackwell cache, up to 2 GB of compiled kernels) is kept so a reinstall doesn't force a 10-15s re-optimize per model.
+        const KEEP: &[&str] = &[".electron", ".reinstall-backup", "ComputeCache"];
         let trash = repo.with_file_name(format!(
             "{}.trash-{}",
             repo.file_name().unwrap_or_default().to_string_lossy(),
@@ -3350,7 +3351,7 @@ pub async fn reinstall(
                 let _ = std::fs::remove_dir_all(&trash_clone);
             });
             if ok {
-                emit("[*] Old installation moved to trash (kept .electron) — fresh install starting...\n");
+                emit("[*] Old installation moved to trash (kept .electron, ComputeCache) — fresh install starting...\n");
             }
         }
         if !ok {
@@ -3402,7 +3403,7 @@ pub async fn restore_backup(app: tauri::AppHandle) -> Result<serde_json::Value, 
         return Ok(serde_json::json!({"ok": true, "success": true, "restored": []}));
     }
     let mut restored: Vec<String> = Vec::new();
-    for sub in ["plugins", "finetunes", "deepy_sessions"] {
+    for sub in ["plugins", "finetunes", "deepy_sessions", "user_skills"] {
         let s = backup.join(sub);
         if !s.exists() {
             continue;
@@ -3740,9 +3741,9 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
 }
 /// Post-install override wheels: the subset of Sync that setup.py can never
 /// produce — the GGUF floor and the sage safe build. setup.py installs
-/// upstream's pins verbatim (GGUF 1.0.14, sage post4); without this pass a
-/// fresh install lands stale and the dashboard immediately warns about the
-/// wheels it just installed. Pure over (setup_config, profile, sage_safe)
+/// upstream's pins verbatim; without this pass a lagging setup_config
+/// (stale GGUF, post4 sage) lands stale and the dashboard immediately warns
+/// about the wheels it just installed. Pure over (setup_config, profile, sage_safe)
 /// so the selection is unit-tested; `None` per wheel means "upstream pin is
 /// already the launcher set — nothing to do". Mirrors sync_kernels_inner's
 /// URL lookup (components.kernels / components.sage[profile.sage]).
@@ -4077,8 +4078,8 @@ async fn sync_kernels_inner(
         .and_then(|k| k.as_array())
         .cloned()
         .unwrap_or_default();
-    // Restore mode = pure upstream: ignore the launcher's sage-safe default
-    // (upstream setup_config pins post4) so the box returns to deepbeepmeep's set.
+    // Restore mode = pure upstream: install setup_config wheels exactly as
+    // published (upstream itself pins post6 now — no revert).
     let sage_safe = if pure_upstream {
         false
     } else {
@@ -4086,7 +4087,7 @@ async fn sync_kernels_inner(
             .get("sageSafe")
             .and_then(serde_json::Value::as_bool)
             != Some(false)
-    }; // ponytail: default safe post6 (1348e5b) — only false opts into upstream post4
+    }; // ponytail: default safe post6 (1348e5b) — off means setup_config as published
        // ponytail: Sage wheel is not in gpu_profiles[RTX_30].kernels (only nunchaku+gguf) — handle it separately like Electron's setSageAttentionSafe
     let mut all_kernels = kernels.clone();
     if ["RTX_30", "RTX_40", "RTX_50"].contains(&profile.as_str()) {
@@ -4160,12 +4161,9 @@ async fn sync_kernels_inner(
                 }
             };
             if url.is_empty() && (name == "sage" || name == "sageattention") {
-                // fallback to known URLs if setup_config missing sage entry
-                url = if sage_safe {
-                    "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl".into()
-                } else {
-                    "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl".into()
-                };
+                // fallback to known URL if setup_config missing sage entry —
+                // post6 is both upstream's pin and the safe build now.
+                url = SAGE_SAFE_WIN_URL.into();
             }
             if url.is_empty() {
                 // Unknown profile kernel (upstream added a component the
@@ -4177,16 +4175,13 @@ async fn sync_kernels_inner(
                 let _ = app.emit("launch-log", m);
                 continue;
             }
-            // Sage safe toggle: post4 (upstream) vs post6 (safe) — respects Manage → Settings
-            if name == "sage" || name == "sageattention" {
-                if sage_safe && url.contains("sageattention-2.2.0+cu130torch2.9.0andhigher.post4") {
-                    url = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl".into();
-                } else if !sage_safe
-                    && url.contains("sageattention-2.2.0+cu130torch2.10.0andhigher.post6")
-                {
-                    // user chose upstream, but setup_config has safe — revert to post4
-                    url = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl".into();
-                }
+            // Sage safe toggle (deepbeepmeep 2026-10: post4-class builds degrade
+            // speed under CUDA Graphs — triton fallback is needed. post6 is
+            // the fixed build and current upstream pin). Toggle on swaps a
+            // stale post4 pin to post6; toggle off installs the setup_config
+            // URL exactly as published (post6 today).
+            if (name == "sage" || name == "sageattention") && sage_safe && url.contains(SAGE_UPSTREAM_TAG) {
+                url = SAGE_SAFE_WIN_URL.into();
             }
             // Sage3 is gated, never synced (#2280): Blackwell-only AND
             // py>=3.12 wheels, while managed envs are py3.10/3.11. If

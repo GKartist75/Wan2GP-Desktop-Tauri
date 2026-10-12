@@ -203,7 +203,7 @@
           <div class="token-field" style="margin-top:8px">
             <button class="btn btn-ghost small" data-launch-preset="balanced" title="Everyday default: sage2 attention, P4 profile">Balanced</button>
             <button class="btn btn-ghost small" data-launch-preset="lowvram" title="Small VRAM: SDPA, P5 failsafe profile, fp16">Low VRAM</button>
-            <button class="btn btn-ghost small" data-launch-preset="maxperf" title="Fast GPU: compile, sage2, P3, teacache 2.0">Max perf</button>
+            <button class="btn btn-ghost small" data-launch-preset="maxperf" title="Fast GPU: --compile (PyTorch transformer, deprecated upstream), sage2, P3, teacache 2.0">Max perf</button>
             <button class="btn btn-primary small" data-launch-preset="emergency" title="Upstream absolute minimum that boots almost anywhere">Emergency</button>
             <span class="token-hint" id="launchBuilderStatus" style="margin-left:8px"></span>
           </div>
@@ -294,12 +294,12 @@
             <h3>SageAttention wheel</h3>
             <div class="token-field">
               <select id="sageSafeSelect" class="input" style="max-width:360px">
-                <option value="safe">Safe — post6 (fixes fp8 OOM / H3 black frames, RTX 30/40/50)</option>
-                <option value="upstream">Upstream — post4 (100% original)</option>
+                <option value="safe">Safe — post6 (CUDA-graph speed fix, RTX 30/40/50)</option>
+                <option value="upstream">Upstream — setup_config pin as published (post6 today)</option>
               </select>
               <button class="btn btn-primary small" id="sageSafeSaveBtn" title="Save SageAttention wheel choice (applies on next sync/install)">Save</button>
             </div>
-            <p class="token-hint">RTX 30/40/50: <code>post4</code> is deepbeepmeep's published wheel but corrupts CUDA context under torch 2.10; <code>post6</code> is the safe <code>cu130</code> fix. Change applies on next sync/install.</p>
+            <p class="token-hint">RTX 30/40/50: <code>post4</code>-class builds degrade speed when CUDA Graphs are used (triton fallback) — deepbeepmeep Oct 2026. <code>post6</code> is the fixed build and the current upstream pin. Safe swaps a stale post4 to post6; Upstream installs setup_config exactly as published. Change applies on next sync/install.</p>
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>GGUF CUDA Kernel</h3>
@@ -374,7 +374,7 @@
             <table class="args-table">
               <tr><td><code>--profile 4</code></td><td>Profile 1-5 (4=default, 5=min RAM)</td></tr>
               <tr><td><code>--attention sage2</code></td><td>Attention: sdpa, flash, sage, sage2</td></tr>
-              <tr><td><code>--compile</code></td><td>Enable PyTorch compilation (needs Triton)</td></tr>
+              <tr><td><code>--compile</code></td><td>Force PyTorch transformer compilation (deprecated upstream, very slow first compile; CUDA Graph mode is config-only — set it in Performance Settings)</td></tr>
               <tr><td><code>--fp16</code></td><td>Force fp16 instead of bf16</td></tr>
               <tr><td><code>--perc-reserved-mem-max 0.3</code></td><td>% RAM for model swap cache (0-0.5)</td></tr>
               <tr><td><code>--teacache 2.0</code></td><td>Speed multiplier 0, 1.5, 1.75, 2.0, 2.5</td></tr>
@@ -774,7 +774,7 @@
             <!-- v17 (MMGP v4) RAM/VRAM controls. Mirrors WanGP's own
                  Configuration > RAM/VRAM Management panel one-for-one. -->
             <div class="mem-field">
-              <label class="token-hint" title="Which attention kernel WanGP uses. Upstream v17.10 is explicit that quite a few of its optimizations depend on Sage2/2+. Needs the matching wheel — Sync GPU Wheels installs SageAttention 2.2.0 for RTX 30/40/50 and 1.0.6 for RTX 20. Left unset on AMD/Intel, where there is no Sage build upstream.">Attention Mode</label>
+              <label class="token-hint" title="Which attention kernel WanGP uses. Upstream v17.10 is explicit that quite a few of its optimizations depend on Sage2/2+. Needs the matching wheel — Sync GPU Wheels installs SageAttention 2.2.0 for RTX 30/40/50 and 1.0.6 for RTX 20. Left unset on AMD/Intel, where there is no Sage build upstream. v18 H3 Veda Sparse models set their own per-task attention (override_attention=veda) — leave this alone when running those.">Attention Mode</label>
               <select id="memAttentionMode" class="input">
                 <option value="">— unset —</option>
                 <option value="sage2">SageAttention 2 / 2+ (recommended — v17 gains depend on it)</option>
@@ -783,6 +783,16 @@
                   <option value="sdpa">SDPA (PyTorch default, always available)</option>
                 </select>
                 <div class="mem-hint"><span id="recAttentionMode" class="tag-rec">rec: —</span><span id="savedAttentionMode" class="tag-saved">saved: —</span></div>
+              </div>
+              <div class="mem-field">
+              <label class="token-hint" title="v18 compilation mode (needs restart). CUDA Graph kills the CPU time that keeps your GPU waiting — fastest on lighter GPU work and modest CPUs; first steps at a new resolution are slightly slower. PyTorch transformer compilation is deprecated upstream and compiles very slowly. Needs SageAttention 2.2.0 post6+ for the fastest kernels; Veda models run without it.">Compile Mode (restart)</label>
+              <select id="memCompileMode" class="input">
+                <option value="">— unset —</option>
+                <option value="disabled">Disabled (default)</option>
+                <option value="cudagraph">CUDA Graph — faster short steps</option>
+                <option value="transformer">PyTorch — deprecated upstream, very slow first compile</option>
+                </select>
+                <div class="mem-hint"><span id="recCompileMode" class="tag-rec">rec: —</span><span id="savedCompileMode" class="tag-saved">saved: —</span></div>
               </div>
               <div class="mem-field">
               <label class="token-hint" title="MMGP Optimized VRAM Allocator — recycles VRAM that is no longer used, which lowers peak VRAM on long videos, large images and Deepy. VRAM used by other programs is left to them; only when a generation would otherwise run out does it take what they are not using. Applied at startup, so it needs a restart.">VRAM Allocator (restart)</label>
@@ -866,6 +876,20 @@
               <label class="token-hint" title="Share of RAM that pinning may lock. Auto is 40% on Windows and 60% on Linux (upstream lowered Linux from 80% in v17.10). WanGP's own slider stops at 80, so this stops there too. Lower it and keep Smart Memory Pinning On if you are short of RAM.">Reserved RAM for Pinning (% — 0 = Auto)</label>
               <input type="number" id="memReservedPct" class="input" min="0" max="80" step="5" placeholder="0 = Auto">
               <div class="mem-hint"><span id="recReservedPct" class="tag-rec">rec: —</span><span id="savedReservedPct" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="WanGP Compute Cache (v18, needs restart). On Blackwell GPUs (RTX 50xx) the NVIDIA driver re-optimizes GPU code at every launch and shares a 1 GB cache that is too small: 10-15 s lost at each first generation plus SSD churn. On gives WanGP its own cache (up to 2 GB, work done once). Older GPUs run shipped code as-is, so this does nothing there — Detect only recommends it on RTX 50.">Compute Cache (restart)</label>
+              <select id="memComputeCache" class="input">
+                <option value="">— unset —</option>
+                <option value="true">On (Blackwell — RTX 50xx)</option>
+                <option value="false">Off</option>
+              </select>
+              <div class="mem-hint"><span id="recComputeCache" class="tag-rec">rec: —</span><span id="savedComputeCache" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="Compute Cache folder — Blackwell (RTX 50xx) only, like Compute Cache above. Relative to the WanGP folder, or a full path. Leave empty for upstream's default (ComputeCache).">Compute Cache Folder (RTX 50 only)</label>
+              <input type="text" id="memComputeCachePath" class="input" placeholder="ComputeCache">
+              <div class="mem-hint"><span id="recComputeCachePath" class="tag-rec">rec: —</span><span id="savedComputeCachePath" class="tag-saved">saved: —</span></div>
             </div>
             </div>
           <div class="mem-hint" style="padding:10px 12px 0">
@@ -1083,7 +1107,7 @@
           <div class="card-header">
             <span class="card-title">GPU Kernel Wheels</span>
             <span class="env-type-tag" id="kernelProfileTag"></span>
-            <button class="btn btn-ghost small hide-on-collapse" id="restoreKernelsBtn" title="Reinstall deepbeepmeep's setup_config wheels exactly — downgrades launcher overrides (sage safe build, GGUF floor). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
+            <button class="btn btn-ghost small hide-on-collapse" id="restoreKernelsBtn" title="Reinstall setup_config wheels exactly as published — drops launcher overrides (GGUF floor; sage swap only if setup_config ever lags to post4). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
                 <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.25 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
                 <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only: install GGUF 1.0.25 torch210rocm714 HIP wheel for RX 9070/R9700 gfx1201. Needs torch 2.10.0+rocm7.14.0; replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
           </div>
@@ -1133,6 +1157,12 @@
               <div class="spec-row"><span class="spec-label">XFormers</span><span class="spec-dot" id="dotXformers"></span><span class="spec-value" id="specXformers">—</span></div>
               <div class="spec-row"><span class="spec-label">Torchaudio</span><span class="spec-dot" id="dotTorchaudio"></span><span class="spec-value" id="specTorchaudio">—</span></div>
               <div class="spec-row"><span class="spec-label">MoviePy</span><span class="spec-dot" id="dotMoviepy"></span><span class="spec-value" id="specMoviepy">—</span></div>
+              <div class="spec-row"><span class="spec-label">xatlas</span><span class="spec-dot" id="dotXatlas"></span><span class="spec-value" id="specXatlas">—</span></div>
+              <div class="spec-row"><span class="spec-label">fast-simplification</span><span class="spec-dot" id="dotFastSimp"></span><span class="spec-value" id="specFastSimp">—</span></div>
+              <div class="spec-row"><span class="spec-label">scikit-image</span><span class="spec-dot" id="dotSciImage"></span><span class="spec-value" id="specSciImage">—</span></div>
+              <div class="spec-row"><span class="spec-label">resvg-py</span><span class="spec-dot" id="dotResvg"></span><span class="spec-value" id="specResvg">—</span></div>
+              <div class="spec-row"><span class="spec-label">chumpy</span><span class="spec-dot" id="dotChumpy"></span><span class="spec-value" id="specChumpy">—</span></div>
+              <div class="spec-row"><span class="spec-label">smplfitter</span><span class="spec-dot" id="dotSmplfitter"></span><span class="spec-value" id="specSmplfitter">—</span></div>
             </div>
           </div>
         </div>
