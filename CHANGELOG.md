@@ -18,9 +18,9 @@ defaults to 4096. A process-name gate cannot tell ours from yours.
 - App-close fast path keeps its no-scan guarantee (recorded PID + name
   guard only).
 
-### Upstream v18.01 parity (`46005e5` → `8b6012a`, 2026-10-11)
+### Upstream v18.02 parity (`46005e5` → `ad07926`, 2026-10-11/12)
 
-WanGP v18 ("Distortion of Space and Time", now `18.01`) is a major release:
+WanGP v18 ("Distortion of Space and Time", now `18.02`) is a major release:
 rewritten LTX/Wan/Hunyuan VAEs, H3 Veda Sparse attention, Kandinsky 6 video,
 Prism i2v+audio, Fun/Uni3C camera control, CUDA Graphs, a Blackwell Compute
 Cache, an 11-model 3D stack, workspace folders and expanded MCP support.
@@ -44,6 +44,10 @@ Cache, an 11-model 3D stack, workspace folders and expanded MCP support.
   WorldMirror — the renderer now omits steps/guidance where they don't
   apply), a Veda pruned-FL2VA pick, and verified display names for all four
   Veda variants.
+- **`ad07926` (18.02) needs nothing:** VAE Triton kernels migrate
+  `libdevice.*` → `tl.*` with tuner bumps, SeedVC component pin rolls,
+  Deepy workspace-save fix, Gradio polish — all upstream-runtime, no
+  install/config surface. `settings_version` stays 2.80.
 - **Compute Cache wired end-to-end** (keys verified against upstream
   `shared/cuda_memory.py`: `compute_cache` bool + `compute_cache_path`,
   default `ComputeCache`). Performance Settings gains both controls with
