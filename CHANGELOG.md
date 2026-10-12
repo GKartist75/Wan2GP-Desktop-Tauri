@@ -4,6 +4,20 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+### Stop no longer kills your own OpenCode/Zed on :4096
+
+Stop (serve toggle, WanGP Stop, app close) swept port 4096 and killed any
+`node`/`opencode` listener — including the user's own agent, which also
+defaults to 4096. A process-name gate cannot tell ours from yours.
+
+- **Ownership is by recorded PID now.** Start persists the spawned server
+  PID to `.opencode.pid` (memory first, file second, consumed on Stop).
+- **Kill iff the recorded PID is the :4096 listener** (plus an owner-name
+  guard against PID reuse). Anything else on the port is logged with its
+  PID for manual cleanup and spared — the blind sweep is gone.
+- App-close fast path keeps its no-scan guarantee (recorded PID + name
+  guard only).
+
 ### Upstream v18.01 parity (`46005e5` → `8b6012a`, 2026-10-11)
 
 WanGP v18 ("Distortion of Space and Time", now `18.01`) is a major release:
