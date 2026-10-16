@@ -393,6 +393,56 @@ body.wb-origin .wb-origin-frame {
   border: 0; z-index: 50; background: var(--canvas);
 }
 
+/* — visual themes: real accents (Sky/Classic/Emerald/Amethyst/Rose) ship in style.css. */
+/* Famous themes below are MOCK-ONLY token overrides — if adopted, they belong in style.css. */
+html[data-theme="dark"][data-accent="cyberpunk"],
+:root[data-accent="cyberpunk"] { /* neon noir */
+  --canvas: #0d0a14; --surface: #151022; --surface-hover: #1d1631;
+  --border: #2f2248; --border-hover: #573f8a;
+  --text-primary: #f2ecff; --text-secondary: #b9a8e6; --text-tertiary: #6f5c9e;
+  --accent: #ff2bd6; --accent-hover: #ff5ce0; --accent-dim: #38184a;
+  --bg-secondary: #1a142c; --bg-tertiary: #120d1f;
+  --signal-green: #3ef29b; --signal-green-bg: #0f2e23;
+  --signal-blue: #00d1ff; --signal-blue-bg: #06222e;
+  --signal-red: #ff2e5b; --signal-red-bg: #2e0b16;
+  --signal-yellow: #ffe14d; --signal-yellow-bg: #2e2610;
+}
+html[data-theme="dark"][data-accent="matrix"],
+:root[data-accent="matrix"] { /* phosphor terminal */
+  --canvas: #000000; --surface: #060a06; --surface-hover: #0b150b;
+  --border: #17411d; --border-hover: #2f8f3e;
+  --text-primary: #c8ffc8; --text-secondary: #58b35c; --text-tertiary: #2d6b30;
+  --accent: #22ff66; --accent-hover: #55ff99; --accent-dim: #0a3014;
+  --bg-secondary: #081008; --bg-tertiary: #050b05;
+  --signal-green: #31ff5e; --signal-green-bg: #07290f;
+  --signal-blue: #00e5a8; --signal-blue-bg: #06251d;
+  --signal-red: #ff4444; --signal-red-bg: #2b0a0a;
+  --signal-yellow: #eaff00; --signal-yellow-bg: #262a05;
+}
+html[data-accent="fantasy"] { /* parchment & bronze (works dark or light) */
+  --canvas: #f4ead6; --surface: #fbf3e4; --surface-hover: #f2e6cd;
+  --border: #dcc9a4; --border-hover: #b99b66;
+  --text-primary: #382c18; --text-secondary: #7a6544; --text-tertiary: #b39b71;
+  --accent: #8a5a1e; --accent-hover: #6f4818; --accent-dim: #e7d6b8;
+  --bg-secondary: #efe2c8; --bg-tertiary: #e6d5b3;
+  --signal-green: #3f6b2e; --signal-green-bg: #e4eed9;
+  --signal-blue: #35558a; --signal-blue-bg: #e2e9f5;
+  --signal-red: #8a2f22; --signal-red-bg: #f5e0d8;
+  --signal-yellow: #8a6a1a; --signal-yellow-bg: #f3ead0;
+}
+html[data-theme="dark"][data-accent="vaporwave"],
+:root[data-accent="vaporwave"] { /* retina sunset */
+  --canvas: #120b24; --surface: #1a1133; --surface-hover: #221743;
+  --border: #332460; --border-hover: #5a41a0;
+  --text-primary: #f4e9ff; --text-secondary: #c3a9ec; --text-tertiary: #8168c0;
+  --accent: #ff71ce; --accent-hover: #ff9ade; --accent-dim: #2f1c55;
+  --bg-secondary: #201540; --bg-tertiary: #170e2e;
+  --signal-green: #05ffa1; --signal-green-bg: #06302a;
+  --signal-blue: #01cdfe; --signal-blue-bg: #06293a;
+  --signal-red: #ff4d6d; --signal-red-bg: #33091a;
+  --signal-yellow: #f9f871; --signal-yellow-bg: #2e2d16;
+}
+
 /* — DLSS 5 big panel — */
 .wb-dlss { padding: 0 !important; overflow: hidden; }
 .wb-dlss-grid { display: grid; grid-template-columns: 330px 1fr; }
@@ -528,7 +578,20 @@ button .wb-svg { pointer-events: none; }
       <span class="wb-tb-group">
         <button class="btn btn-icon" id="taskMgrBtn" title="Open Windows Task Manager"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-tasks"/></svg></button>
         <button class="btn btn-icon theme-toggle" id="themeToggleBtn" title="Toggle dark/light mode"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><use href="#i-theme"/></svg></button>
-        <button class="btn btn-icon" id="appearPaletteBtn" title="Cycle theme (Mono → Sky → Orca → Cyber → Matrix)"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-palette"/></svg></button>
+        <button class="btn btn-icon" id="appearPaletteBtn" title="Cycle visual theme (Dark, accents, Cyberpunk, Matrix, Fantasy, Vaporwave)"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-palette"/></svg></button>
+        <select class="input" id="themeQuickSelect" style="width:auto;font-size:.66rem" title="Visual theme (mock — real: theme-tab.js data-accent tokens; the 4 famous themes are mock-only overrides)">
+          <option value="dark">Dark · Mono</option>
+          <option value="sky">Sky</option>
+          <option value="emerald">Emerald</option>
+          <option value="classic">Classic</option>
+          <option value="amethyst">Amethyst</option>
+          <option value="rose">Rose</option>
+          <option value="cyberpunk">Cyberpunk</option>
+          <option value="matrix">Matrix</option>
+          <option value="fantasy">Fantasy</option>
+          <option value="vaporwave">Vaporwave</option>
+          <option value="light">Light</option>
+        </select>
       </span>
       <span class="wb-tb-spacer"></span>
       <span class="wb-tb-group">
@@ -1452,12 +1515,43 @@ $("wbFold").addEventListener("click", () => {
   $("wbFold").querySelector(".wb-label").textContent = b.classList.contains("wb-rail-mini") ? "Expand rail" : "Collapse rail";
 });
 document.documentElement.setAttribute("data-theme", document.documentElement.getAttribute("data-theme") || "");
+// ═══ Visual theme system (mock): real accents + mock-only famous themes ═══
+// real mapping: theme-tab.js writes data-theme="dark" + data-accent; famous themes here
+// are token override blocks in this file only — real adoption = move them into style.css.
+const THEME_KEY = "w2gp.visualThemeDemo";
+const SAVED_DARK_KEY = "w2gp.visualThemeLastDark";
+const VISUAL_ORDER = ["dark","sky","emerald","classic","amethyst","rose","cyberpunk","matrix","fantasy","vaporwave","light"];
+function applyVisualTheme(name) {
+  const h = document.documentElement;
+  if (name === "light") {
+    h.removeAttribute("data-theme"); h.removeAttribute("data-accent");
+  } else {
+    h.setAttribute("data-theme", "dark");
+    if (VISUAL_ORDER.includes(name) && name !== "dark") h.setAttribute("data-accent", name);
+    else h.removeAttribute("data-accent");
+  }
+}
+function setVisualTheme(name, viaPalette) {
+  if (!VISUAL_ORDER.includes(name) && name !== "light") return;
+  applyVisualTheme(name);
+  $("themeQuickSelect").value = name;
+  localStorage.setItem(THEME_KEY, name);
+  if (name !== "light") localStorage.setItem(SAVED_DARK_KEY, name);
+  if (!viaPalette) toast("theme → '" + name + "' (real: theme-tab.js + style.css tokens; famous themes are mock-only)");
+}
+$("themeQuickSelect").addEventListener("change", (e) => setVisualTheme(e.target.value));
 // real theme toggle (data-theme switch supplied by style.css)
 $("themeToggleBtn").addEventListener("click", () => {
-  const h = document.documentElement;
-  h.getAttribute("data-theme") === "dark" ? h.removeAttribute("data-theme") : h.setAttribute("data-theme", "dark");
+  setVisualTheme($("themeQuickSelect").value === "light"
+    ? (localStorage.getItem(SAVED_DARK_KEY) || "dark")
+    : "light", true);
 });
-$("appearPaletteBtn").addEventListener("click", () => toast("🎨 real app: cycles Mono → Sky → Orca → Cyber → Matrix"));
+$("appearPaletteBtn").addEventListener("click", () => {
+  const cur = VISUAL_ORDER.indexOf($("themeQuickSelect").value);
+  setVisualTheme(VISUAL_ORDER[(cur + 1) % VISUAL_ORDER.length], true);
+});
+localStorage.setItem(THEME_KEY, localStorage.getItem(THEME_KEY) || "dark");
+setVisualTheme(localStorage.getItem(THEME_KEY) || "dark", true);
 $("settingsBtn").addEventListener("click", () => go("setup"));
 $("guideBtn").addEventListener("click", () => go("guide"));
 $("taskMgrBtn").addEventListener("click", () => toast("open_task_manager — real command"));

@@ -29,3 +29,9 @@ Open by double-clicking the file (any browser), or in the OpenCode review pane.
   the same ids, so the future `classic | workbench | deck | …` selector in
   the real app can keep every existing tab handler working. A compact
   quick-switcher also lives in the topbar in every layout.
+- **Visual theme demo**: topbar theme select (or the ◐/↻ buttons) switches
+  Dark · real accents (Sky, Classic, Emerald, Amethyst, Rose — from
+  `style.css`) **and mock-only famous themes** — Cyberpunk, Matrix,
+  Fantasy, Vaporwave — defined as token-override blocks in the mock file.
+  Real adoption would mean moving those blocks into `style.css` and
+  registering them in `theme-tab.js`.

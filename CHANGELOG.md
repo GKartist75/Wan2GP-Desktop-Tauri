@@ -4,6 +4,11 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.10.10] — 2026-10-16
+
+- **Repair Triton wheel** (Manage → Troubleshooting → Repair wheel): force-reinstalls the exact installed Triton build (`--force-reinstall --no-deps`, torch and everything else untouched — deliberately not floating to latest, which would break upstream parity), clears both JIT cache homes (renamed to backup), then verifies the import and reports the version. For damaged installs (quarantined or half-written files) — stated plainly in the UI, it fixes corrupt files, not antivirus verdicts.
+- **TCC vs MSVC, stated plainly.** Out-of-box stays pure upstream TinyCC. The signed-MSVC pin (Auto/MSVC choice, one-click Build Tools installer, stable cache dir) is a *temporary workaround* for antivirus blocks on Triton's unsigned JIT output — it retires when upstream removes the runtime-JIT need. Documented as temporary in the User Guide so nobody mistakes it for the permanent direction.
+
 ## [0.10.9] — 2026-10-16
 
 - **Window mode setting** (issue #63, Settings → Desktop → Window mode): the
