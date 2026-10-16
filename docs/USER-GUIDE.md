@@ -339,14 +339,17 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 | --- | --- | --- | --- |
 | **Python** | `3.11.14` | `3.12.10` | venv interpreter |
 | **PyTorch** | `2.10.0` + CUDA 13.x | `2.13.0` + ROCm 10 | tensor + GPU runtime |
-| **Triton** | per-GPU pin from `setup_config.json` | `>=3.7,<3.8` | JIT for custom CUDA/attention kernels |
+| **Triton** | `3.2.x` (RTX 20) / `3.6.x` (RTX 30–50) | `>=3.7,<3.8` | JIT for custom CUDA/attention kernels |
 | **SageAttention** | `1.0.6` (RTX 20) / `2.2.0` post6 (RTX 30–50) | `1.0.6`, SDPA default | fused attention — the big speed-up |
 | **SpargeAttn** | RTX 30+ | — | sparsity-aware speed-up alongside Sage |
-| **FlashAttention** | RTX 30+ (Ampere+) | — | memory-efficient exact attention |
+| **FlashAttention** | `2.8.3` (RTX 30+, Ampere+) | `2.8.4` (ROCm/Triton, prebuilt wheel) | memory-efficient exact attention |
 | **Nunchaku** | `1.2.1` | — | SVD-quantized (NF4/SVDQ) runtime |
 | **GGUF llama.cpp** | CUDA build (`cu130` or `cu128` per env) | HIP build, experimental | 4-bit GGUF kernels |
 | **LightX2V** | RTX 50xx only | — | FP4 kernels (sm120+) |
-| **bitsandbytes** | `0.49.2` | — | 8-bit / NF4 dequant |
+| **bitsandbytes** | optional — *not* in WanGP's default set | — | 8-bit / NF4 dequant (WanGP falls back when absent) |
+
+Only RTX 20–50 / AMD rows are shown above; GTX 10xx/16xx stay on Python `3.10.9`
++ torch `2.7.1`/CUDA 12.8 with no Triton/Sage/Flash wheels.
 
 **Version pins follow `setup_config.json`.** The in-app GPU Kernel Wheels card is always authoritative — a future upstream bump installs with no launcher update.
 

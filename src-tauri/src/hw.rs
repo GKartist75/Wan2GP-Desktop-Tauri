@@ -1507,15 +1507,22 @@ fn comp_label(code: &str) -> String {
         "rocm10" => "PyTorch 2.13 + ROCm 10 TheRock (HIP 7.14 opt-in)".into(),
         "rocm65" => "PyTorch 2.12 + ROCm 7.15 TheRock (HIP 7.14 opt-in)".into(),
         "mps" => "PyTorch (MPS)".into(),
-        "v33" => "Triton < 3.3".into(),
-        "v34" => "Triton < 3.4".into(),
+        // Triton / flash / sage / sparge labels mirror upstream
+        // setup_config.json `components.*.label` — the overview must not
+        // invent pins. Both the short display value and the raw upstream
+        // key are accepted (raw keys stay for forward compatibility).
+        "3.2.x" | "v33" => "Triton 3.2.x (RTX 20XX only)".into(),
+        "3.3.x" | "v34" => "Triton 3.3.x (Torch 2.7, RTX 30XX+)".into(),
+        "3.6.x" | "v37" => "Triton 3.6.x (Torch 2.10, RTX 30XX+)".into(),
+        "3.7.x" | "v38" => "Triton 3.7.x (Torch 2.13, AMD ROCm)".into(),
         "latest" => "Triton (latest)".into(),
-        "v1" => "Sage Attention 1.0.6".into(),
-        "v211" => "Sage Attention 2.1.1".into(),
-        "v220" | "v220_cu13" => "Sage Attention 2.2.0 (CUDA 13)".into(),
+        "1.0.6" | "v1" => "Sage Attention 1.0.6".into(),
+        "2.1.1" | "v211" => "Sage Attention 2.1.1".into(),
+        "2.2.0" | "v220" | "v220_cu13" => "Sage Attention 2.2.0 (CUDA 13)".into(),
+        "0.1.0" | "v010_cu13" => "Sparge Attention 0.1.0 (CUDA 13)".into(),
         "v010_cu128" => "Sparge 0.1.0 (CUDA 12.8)".into(),
-        "v010_cu13" => "Sparge 0.1.0 (CUDA 13)".into(),
-        "v210" => "Flash Attention 2.8.3".into(),
+        "2.8.3" | "v210" => "Flash Attention 2.8.3".into(),
+        "2.8.4 (ROCm)" | "v284_rocm" => "Flash Attention 2.8.4 (AMD ROCm / Triton)".into(),
         other => other.to_string(),
     }
 }
@@ -1646,10 +1653,12 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                triton: Some("latest"),
+                triton: Some("3.2.x"),
                 sage: Some("1.0.6"),
                 sparge: None,
-                flash: Some("2.8.3"),
+                // Upstream RTX_20 declares no flash attention (Turing has no
+                // prebuilt wheel in setup_config.json) — don't promise it.
+                flash: None,
                 kernels: &["nunchaku_cu13", "gguf"],
             },
         ),
@@ -1658,7 +1667,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                triton: Some("latest"),
+                triton: Some("3.6.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
@@ -1670,7 +1679,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                triton: Some("latest"),
+                triton: Some("3.6.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
@@ -1682,7 +1691,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                triton: Some("latest"),
+                triton: Some("3.6.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
@@ -1706,10 +1715,12 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.12.10",
                 torch: "ROCm 10 (HIP 7.14 opt-in)",
-                triton: Some("3.7"),
+                triton: Some("3.7.x"),
                 sage: Some("1.0.6"),
                 sparge: None,
-                flash: None,
+                // ROCm has a prebuilt Triton-based flash wheel (upstream
+                // `flash: v284_rocm`) — surface it instead of a dash.
+                flash: Some("2.8.4 (ROCm)"),
                 kernels: &[],
             },
         ),
@@ -1732,7 +1743,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                triton: Some("latest"),
+                triton: Some("3.6.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
@@ -1756,7 +1767,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
     if let Some(f) = prof.flash {
         packages.push(format!("💥 Flash Attn {f}"));
     }
-    packages.push("📋 50+ reqs (diffusers, gradio, opencv, moviepy…)".into());
+    packages.push("📋 100+ reqs (diffusers, transformers, gradio, torchcodec…)".into());
     let kernel_labels: Vec<String> = prof
         .kernels
         .iter()
@@ -2211,6 +2222,44 @@ mod overview_pid_tests {
         assert_eq!(pnum("NVIDIA", "X", 24.0 * 1024.0, None), 4);
         assert_eq!(pnum("AMD", "AMD Radeon RX 9060 XT", 16.0 * 1024.0, None), 4);
         assert_eq!(pnum("AMD", "X", 8.0 * 1024.0, None), 5);
+    }
+    #[test]
+    fn overview_pins_match_upstream_setup_config() {
+        // Sources of truth: setup_config.json gpu_profiles + components.*.label.
+        // RTX_20 pins triton v33 (3.2.x) and declares no flash attention.
+        let rtx20 = hardware_profile_detail_with_ram(
+            "NVIDIA",
+            "NVIDIA GeForce RTX 2080 Ti",
+            11.0 * 1024.0,
+            Some(32.0),
+        );
+        assert!(
+            rtx20["detail"]["triton"].as_str().unwrap().contains("3.2.x"),
+            "RTX_20 triton: {}",
+            rtx20["detail"]["triton"]
+        );
+        assert_eq!(rtx20["detail"]["flash"], serde_json::json!("—"));
+        // RTX 30–50 pin triton v37 (3.6.x) and flash 2.8.3.
+        let rtx40 = hardware_profile_detail_with_ram(
+            "NVIDIA",
+            "NVIDIA GeForce RTX 4090",
+            24.0 * 1024.0,
+            Some(64.0),
+        );
+        assert!(rtx40["detail"]["triton"].as_str().unwrap().contains("3.6.x"));
+        assert!(rtx40["detail"]["flash"].as_str().unwrap().contains("2.8.3"));
+        // AMD pins triton v38 (3.7.x) and ships the ROCm flash wheel.
+        let amd = hardware_profile_detail_with_ram(
+            "AMD",
+            "AMD Radeon RX 9070 XT",
+            16.0 * 1024.0,
+            Some(32.0),
+        );
+        assert!(amd["detail"]["triton"].as_str().unwrap().contains("3.7.x"));
+        assert_eq!(
+            amd["detail"]["flash"],
+            serde_json::json!("Flash Attention 2.8.4 (AMD ROCm / Triton)")
+        );
     }
 }
 #[cfg(test)]

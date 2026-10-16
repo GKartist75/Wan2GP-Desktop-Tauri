@@ -43,6 +43,28 @@ rework, split WGPKernels releases and new kernel enums.
   the install paths now return that guidance instead of a generic failure.
   9060 XT (gfx1200) and RDNA 1–3.5 remain unsupported for these wheels.
 
+### Hardware-overview pins re-checked against upstream (2026-10-16)
+
+The installer's *Detected Hardware* matrix and the guides are generated from
+WanGP's own `setup_config.json` / `requirements.txt`; a parity pass found and
+corrected four stale entries.
+
+- **RTX 20 no longer claims FlashAttention.** Upstream's `RTX_20` profile
+  declares no flash wheel (Turing keeps only Triton `v33`), so the overview and
+  guides show `—` instead of `Flash Attn 2.8.3`.
+- **AMD shows FlashAttention 2.8.4 (ROCm/Triton).** Upstream's `AMD` profile
+  gained `flash: v284_rocm` (the prebuilt `flash_attn-2.8.4-py3-none-win_amd64`
+  wheel) — the installer already installed it, but the overview and guides said
+  `—`.
+- **Triton pins are stated, not "latest":** `3.2.x` (RTX 20), `3.6.x`
+  (RTX 30–50), `3.7.x` (AMD), matching upstream `components.triton` labels.
+- **bitsandbytes is optional.** It is absent from upstream's `requirements.txt`,
+  `setup_config.json`, `setup.py` and plugin requirements (WanGP falls back to a
+  dequantized path when it is missing), so the guides no longer promise an
+  installed `0.49.2`.
+- The installer's requirement chip now reads `100+ reqs` (upstream ships 104
+  active pins).
+
 ## [0.10.6] — 2026-10-12
 
 ### Stop no longer kills your own OpenCode/Zed on :4096
