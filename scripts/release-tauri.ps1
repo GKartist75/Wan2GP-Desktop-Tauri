@@ -58,7 +58,11 @@ if (Test-Path $lockPath) {
     Set-Content $lockPath -NoNewline
 }
 Git add $confPath "src-tauri\Cargo.toml" $lockPath
-if (Git status --porcelain) { Git commit -m "release: v$Version" | Out-Null }
+# Staged-only check: `git status --porcelain` also lists untracked files (e.g.
+# a build log next to the repo), which made an empty `git commit` fail the
+# v0.10.7 run with exit 1.
+$staged = Git diff --cached --name-only
+if ($staged) { Git commit -m "release: v$Version" | Out-Null }
 
 # 2) Build (signs updater artifacts automatically via the env key)
 npx tauri build
