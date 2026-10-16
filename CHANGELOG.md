@@ -4,6 +4,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.10.8] — 2026-10-16
+
 ### Upstream WGPKernels 1.1.2 (`17307e5`, 2026-10-16)
 
 WGPKernels left manual-install land: v1.1.2 is listed in `setup_config.json`
