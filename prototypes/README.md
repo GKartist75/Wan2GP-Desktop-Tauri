@@ -11,7 +11,7 @@ Static, clickable mockups of possible launcher redesigns. **Not part of the app.
 Open by double-clicking the file (any browser), or in the OpenCode review pane.
 
 - `workbench.html` — Option A "Workbench": persistent rail + workspace views.
-  **Full-parity mock**: every one of `index.html`'s 205 buttons and 120
+  **Full-parity mock**: every one of `index.html`'s 209 buttons and 121
   inputs/selects/toggles is present with its real id (remapped real ids like
   `updateCheckBtn2` are marked inline), all 7 modals, the 2×2 launch grid, and
   an Installer view. Elements unique to the redesign carry `.wb-new`/a "new"
