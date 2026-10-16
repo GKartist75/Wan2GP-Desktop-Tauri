@@ -2243,39 +2243,66 @@ fn set_recorded_pin(pin: Option<MsvcPin>) {
     }
 }
 
-/// Apply the MSVC decision for this launch. NVIDIA/Intel/CPU: pin when no
-/// user toolchain is present; AMD: remove our pin so TheRock's clang-cl
-/// discovery (which `CC` would shadow) stays authoritative. Warn-only
-/// throughout — discovery failure just keeps Triton's TinyCC fallback.
+/// Apply the MSVC decision for this launch, honoring the user's Triton
+/// compiler choice (Settings → Desktop, `tritonCompiler`):
+/// - TinyCC mode: upstream default, no pin ever — just scrub ours.
+/// - AMD launch: remove our pin so TheRock's clang-cl discovery (which `CC`
+///   would shadow) stays authoritative, whatever the mode.
+/// - Forced MSVC: pin, or warn loudly when no toolchain exists.
+/// - Auto (default): pin when no user toolchain is present.
+/// Warn-only throughout — discovery failure just keeps Triton's TinyCC
+/// fallback. Takes effect on the NEXT launch (launch-time env).
 pub(crate) fn apply_msvc_cc_pin(is_amd: bool, emit: impl Fn(&str)) {
     let cur = MsvcCurrent {
         cc: std::env::var("CC").ok(),
         include: std::env::var("INCLUDE").ok(),
         lib: std::env::var("LIB").ok(),
     };
-    match decide_msvc_pin(is_amd, &cur, recorded_pin().as_ref()) {
-        MsvcDecision::Unpin { cc, include, lib } => {
-            let mut removed = Vec::new();
-            if cc {
-                std::env::remove_var("CC");
-                removed.push("CC");
-            }
-            if include {
-                std::env::remove_var("INCLUDE");
-                removed.push("INCLUDE");
-            }
-            if lib {
-                std::env::remove_var("LIB");
-                removed.push("LIB");
-            }
-            if !removed.is_empty() {
-                set_recorded_pin(None);
+    let recorded = recorded_pin();
+    let mode = triton_compiler_mode();
+    // Explicit TinyCC reuses the AMD cleanup: our MSVC values must not be
+    // in this env either.
+    if mode == TritonCompilerMode::TinyCc {
+        let removed = remove_recorded_pin(&cur, recorded.as_ref());
+        if removed.is_empty() {
+            emit("[i] Triton JIT compiler: TinyCC (upstream default) per user setting — no MSVC pin\n");
+        } else {
+            emit(&format!(
+                "[i] Triton JIT compiler: TinyCC per user setting — removed launcher-pinned {} (MSVC pin off)\n",
+                removed.join(", ")
+            ));
+        }
+        return;
+    }
+    if is_amd {
+        let removed = remove_recorded_pin(&cur, recorded.as_ref());
+        if !removed.is_empty() {
+            emit(&format!(
+                "[i] removed launcher-pinned MSVC compiler env ({}) for the AMD launch — TheRock clang-cl discovery stays authoritative\n",
+                removed.join(", ")
+            ));
+        }
+        return;
+    }
+    if mode == TritonCompilerMode::Msvc {
+        match discover_msvc_pin_live() {
+            Some(pin) => {
+                std::env::set_var("CC", &pin.cc);
+                std::env::set_var("INCLUDE", &pin.include);
+                std::env::set_var("LIB", &pin.lib);
+                set_recorded_pin(Some(pin.clone()));
                 emit(&format!(
-                    "[i] removed launcher-pinned MSVC compiler env ({}) for the AMD launch — TheRock clang-cl discovery stays authoritative\n",
-                    removed.join(", ")
+                    "[i] Triton JIT compiler pinned to signed MSVC ({}) — stub builds no longer use the bundled unsigned TinyCC\n",
+                    pin.cc
                 ));
             }
+            None => emit(MSVC_FORCED_MISSING_HINT),
         }
+        return;
+    }
+    match decide_msvc_pin(false, &cur, recorded.as_ref()) {
+        // Unpin is unreachable off-AMD (decide only unpins for AMD).
+        MsvcDecision::Unpin { .. } => {}
         MsvcDecision::KeepUser { keys } => {
             emit(&format!(
                 "[i] CC/INCLUDE/LIB already set outside the launcher ({}) — leaving the user toolchain untouched (Triton keeps its bundled TinyCC fallback)\n",
@@ -2302,6 +2329,89 @@ pub(crate) fn apply_msvc_cc_pin(is_amd: bool, emit: impl Fn(&str)) {
 /// the Troubleshooting status command — the discovery itself is unit-tested.
 pub(crate) fn msvc_toolchain_cc() -> Option<String> {
     discover_msvc_pin_live().map(|p| p.cc)
+}
+
+/// User-facing Triton JIT compiler choice (Settings → Desktop →
+/// `tritonCompiler` in desktop-config.json). Auto is the default: signed
+/// MSVC when installed, else the upstream TinyCC fallback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TritonCompilerMode {
+    Auto,
+    Msvc,
+    TinyCc,
+}
+
+/// Normalize free-form input to a mode: "msvc" / "tinycc" (or "tcc") win,
+/// everything else (including "" and "auto") is Auto. Pure + unit-tested.
+pub(crate) fn triton_compiler_normalize(s: &str) -> TritonCompilerMode {
+    match s.trim().to_lowercase().as_str() {
+        "msvc" => TritonCompilerMode::Msvc,
+        "tinycc" | "tcc" => TritonCompilerMode::TinyCc,
+        _ => TritonCompilerMode::Auto,
+    }
+}
+
+/// Persisted choice, Auto when unset. Read at each launch (cheap JSON read).
+pub(crate) fn triton_compiler_mode() -> TritonCompilerMode {
+    let cfg = load_config_value();
+    let s = cfg
+        .get("tritonCompiler")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto");
+    triton_compiler_normalize(s)
+}
+
+/// Persist the Triton JIT compiler choice. Takes effect on the NEXT launch
+/// (the pin is launch-time env) — unlike the window mode there is nothing
+/// live to apply. Mirrors set_window_mode's shape ({ok, mode}).
+#[tauri::command]
+pub fn set_triton_compiler(mode: String) -> serde_json::Value {
+    let s = match triton_compiler_normalize(&mode) {
+        TritonCompilerMode::Msvc => "msvc",
+        TritonCompilerMode::TinyCc => "tinycc",
+        TritonCompilerMode::Auto => "auto",
+    };
+    let mut full = load_config_value();
+    if let Some(m) = full.as_object_mut() {
+        m.insert("tritonCompiler".into(), serde_json::json!(s));
+    }
+    if let Err(e) = crate::config::config_save(full) {
+        return serde_json::json!({"ok": false, "error": e});
+    }
+    serde_json::json!({"ok": true, "mode": s})
+}
+
+/// Warned when tritonCompiler=msvc finds no toolchain: the fallback stays
+/// TinyCC, and the message must say so plus where the fix lives. Const so
+/// the pointer is unit-tested.
+pub(crate) const MSVC_FORCED_MISSING_HINT: &str = "[i] tritonCompiler=msvc but no MSVC toolchain found — TinyCC fallback active. Install Build Tools (Manage → Troubleshooting) or switch the Triton compiler back to Auto.\n";
+
+/// Remove exactly the keys still holding our recorded values. Shared by the
+/// AMD cleanup and the explicit-TinyCC mode — both mean "our MSVC values
+/// must not be in this env". Clears the recording when it removes anything.
+pub(crate) fn remove_recorded_pin(
+    cur: &MsvcCurrent,
+    recorded: Option<&MsvcPin>,
+) -> Vec<&'static str> {
+    let mut removed = Vec::new();
+    if let Some(r) = recorded {
+        if cur.cc.as_deref() == Some(r.cc.as_str()) {
+            std::env::remove_var("CC");
+            removed.push("CC");
+        }
+        if cur.include.as_deref() == Some(r.include.as_str()) {
+            std::env::remove_var("INCLUDE");
+            removed.push("INCLUDE");
+        }
+        if cur.lib.as_deref() == Some(r.lib.as_str()) {
+            std::env::remove_var("LIB");
+            removed.push("LIB");
+        }
+    }
+    if !removed.is_empty() {
+        set_recorded_pin(None);
+    }
+    removed
 }
 
 #[cfg(test)]
@@ -2503,7 +2613,9 @@ cmd,
 mod msvc_pin_tests {
     use super::{
         decide_msvc_pin, discover_msvc_pin_in, msvc_toolchain_paths, parse_vswhere_root,
-        pick_newest_versioned, MsvcCurrent, MsvcDecision, MsvcPin, NO_MSVC_TOOLCHAIN_HINT,
+        pick_newest_versioned, remove_recorded_pin, triton_compiler_normalize,
+        MsvcCurrent, MsvcDecision, MsvcPin, TritonCompilerMode,
+        MSVC_FORCED_MISSING_HINT, NO_MSVC_TOOLCHAIN_HINT,
     };
 
     fn rec_pin() -> MsvcPin {
@@ -2523,8 +2635,52 @@ mod msvc_pin_tests {
     }
 
     #[test]
-    fn no_msvc_hint_points_at_the_free_fix() {
-        // The whole point of the None branch is telling a MSVC-less user how
+    fn compiler_mode_normalizes_user_input() {
+        use TritonCompilerMode::*;
+        assert_eq!(triton_compiler_normalize("msvc"), Msvc);
+        assert_eq!(triton_compiler_normalize("MSVC"), Msvc);
+        assert_eq!(triton_compiler_normalize("tinycc"), TinyCc);
+        assert_eq!(triton_compiler_normalize(" tcc "), TinyCc);
+        for auto in ["", "auto", "AUTO", "clang", "gcc"] {
+            assert_eq!(triton_compiler_normalize(auto), Auto, "{auto}");
+        }
+    }
+
+    #[test]
+    fn forced_msvc_hint_names_the_way_out() {
+        assert!(MSVC_FORCED_MISSING_HINT.contains("TinyCC fallback"));
+        assert!(MSVC_FORCED_MISSING_HINT.contains("Troubleshooting"));
+    }
+
+    #[test]
+    fn recorded_pin_removal_spares_user_keys() {
+        // Our CC/INCLUDE go, a user LIB survives — then everything restored.
+        let saved: Vec<(String, Option<String>)> = ["CC", "INCLUDE", "LIB"]
+            .iter()
+            .map(|k| (k.to_string(), std::env::var(k).ok()))
+            .collect();
+        let r = rec_pin();
+        std::env::set_var("CC", &r.cc);
+        std::env::set_var("INCLUDE", &r.include);
+        std::env::set_var("LIB", r"C:\user\lib");
+        let cur = MsvcCurrent {
+            cc: std::env::var("CC").ok(),
+            include: std::env::var("INCLUDE").ok(),
+            lib: std::env::var("LIB").ok(),
+        };
+        let removed = remove_recorded_pin(&cur, Some(&r));
+        assert_eq!(removed, vec!["CC", "INCLUDE"]);
+        assert_eq!(std::env::var("LIB").as_deref(), Ok(r"C:\user\lib"));
+        for (k, v) in saved {
+            match v {
+                Some(val) => std::env::set_var(&k, val),
+                None => std::env::remove_var(&k),
+            }
+        }
+    }
+
+    #[test]
+    fn no_msvc_hint_points_at_the_free_fix() {        // The whole point of the None branch is telling a MSVC-less user how
         // to get the pin: name the fallback truthfully and point at Build Tools.
         assert!(NO_MSVC_TOOLCHAIN_HINT.contains("TinyCC fallback"));
         assert!(NO_MSVC_TOOLCHAIN_HINT.contains("Build Tools"));

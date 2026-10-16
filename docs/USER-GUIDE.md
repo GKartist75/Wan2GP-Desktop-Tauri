@@ -370,6 +370,8 @@ Only RTX 20–50 / AMD rows are shown above; GTX 10xx/16xx stay on Python `3.10.
 
 Or press **Install MSVC Build Tools** in Manage → Troubleshooting (same Microsoft installer, guided, with a Recheck button).
 
+**Triton compiler choice (Settings → Desktop).** `Auto` (default) pins signed MSVC when installed, else TinyCC; `MSVC cl.exe` forces the pin (warns when missing); `TinyCC` keeps the upstream default with no pin. Takes effect on the next WanGP launch (it is launch-time environment, unlike the window mode which applies live).
+
 
 ## Manage → Auto-Tune
 
