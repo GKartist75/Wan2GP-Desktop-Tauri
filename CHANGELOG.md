@@ -4,6 +4,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.10.7] — 2026-10-16
+
 ### Upstream v18.11 parity (`5290e89` → `a827cf2`, 2026-10-15/16)
 
 WanGP v18.11 adds Flux 3 Klein and Fish Audio Drama 3, an mmgp CPU-expert
