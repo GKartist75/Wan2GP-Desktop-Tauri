@@ -1,0 +1,1590 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workbench Mockup (full parity) — Wan2GP Desktop (Tauri)</title>
+<!-- ‼️ PROTOTYPE — not part of the app. Lives outside src/ so tauri never
+     bundles it. Reuses the REAL stylesheet for tokens/components so the
+     mock looks native. All data is fake; no Tauri, no w2gp.js bridge.
+
+     FULL-PARITY VERSION: inventories index.html's ~204 buttons + ~119
+     inputs/selects/toggles. Real ids kept verbatim so a future real
+     implementation can be diffed 1:1 against the classic DOM. Elements
+     that exist only in this redesign carry class .wb-new (badge "new"). -->
+<link rel="stylesheet" href="../src/style.css">
+<style>
+/* ── Workbench shell (mock-only, wb- prefixed) ───────────────────── */
+html, body { height: 100%; overflow: hidden; }
+body {
+  display: flex;
+  background: var(--canvas);
+  color: var(--text-primary);
+  font-size: calc(13px * var(--ui-scale, 1));
+}
+.wb-rail {
+  width: 200px; flex: 0 0 auto;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 10px 8px 12px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto; overflow-x: hidden;
+  transition: width .15s ease;
+}
+body.wb-rail-mini .wb-rail { width: 58px; }
+.wb-brand { display: flex; align-items: center; gap: 8px; padding: 6px 10px 14px; }
+.wb-logo {
+  width: 28px; height: 28px; flex: 0 0 auto; border-radius: 7px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dim));
+  color: var(--surface); display: grid; place-items: center;
+  font-weight: 700; font-size: 13px;
+}
+.wb-brand-name { font-weight: 650; font-size: 0.92rem; line-height: 1.1; white-space: nowrap; }
+.wb-brand-sub { font-size: 0.7rem; color: var(--text-tertiary); white-space: nowrap; }
+body.wb-rail-mini .wb-brand-name, body.wb-rail-mini .wb-brand-sub { display: none; }
+
+.wb-group { font-size: 0.62rem; letter-spacing: .08em; font-weight: 700;
+  color: var(--text-tertiary); padding: 12px 10px 4px; text-transform: uppercase; white-space: nowrap; }
+body.wb-rail-mini .wb-group { opacity: 0; height: 14px; padding: 6px 0 2px 10px; }
+
+.wb-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 10px; border-radius: 8px; cursor: pointer;
+  color: var(--text-secondary); border: 1px solid transparent;
+  white-space: nowrap; user-select: none;
+}
+.wb-item:hover { background: var(--surface-hover); color: var(--text-primary); }
+.wb-item.wb-active {
+  background: var(--accent-dim); color: var(--text-primary);
+  border-color: var(--border); font-weight: 600;
+}
+.wb-ico { width: 18px; text-align: center; flex: 0 0 18px; }
+body.wb-rail-mini .wb-item .wb-label, body.wb-rail-mini .wb-fold .wb-label { display: none; }
+.wb-dot { width: 7px; height: 7px; border-radius: 50%; margin-left: auto; flex: 0 0 7px; }
+body.wb-rail-mini .wb-dot { display: none; }
+.wb-dot.green { background: var(--signal-green); }
+.wb-dot.yellow { background: var(--signal-yellow); }
+.wb-dot.red { background: var(--signal-red); }
+.wb-dot.blue { background: var(--signal-blue); }
+.wb-dot.grey { background: var(--text-tertiary); }
+
+.wb-rail-foot { margin-top: auto; padding: 8px 10px 0; display: flex; flex-direction: column; gap: 2px; }
+.wb-fold { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px;
+  cursor: pointer; color: var(--text-tertiary); }
+.wb-fold:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* ── Workspace ── */
+.wb-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.wb-topbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 16px; border-bottom: 1px solid var(--border);
+  background: var(--surface); flex: 0 0 auto; flex-wrap: wrap;
+}
+.wb-title { font-size: 1rem; font-weight: 700; }
+.wb-subtitle { font-size: 0.72rem; color: var(--text-secondary); margin-top: 1px; }
+.wb-mock-badge {
+  font-size: 0.6rem; font-weight: 700; letter-spacing: .06em;
+  padding: 3px 8px; border-radius: 20px;
+  background: var(--signal-yellow-bg); color: var(--signal-yellow);
+  border: 1px solid var(--signal-yellow);
+}
+.wb-topbar-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.wb-undo-note { font-size: 0.68rem; color: var(--text-tertiary); }
+
+.wb-view { flex: 1; overflow-y: auto; padding: 14px 16px 40px; }
+.wb-view[data-view] { display: none; }
+.wb-view.wb-show { display: block; }
+
+/* chips */
+.wb-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.wb-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 0.72rem; font-weight: 600;
+  padding: 5px 11px; border-radius: 20px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.wb-chip:hover { background: var(--surface-hover); color: var(--text-primary); border-color: var(--border-hover); }
+.wb-chip b { color: var(--text-primary); }
+.wb-chip .wb-dot { margin: 0; }
+
+/* banners + rows */
+.wb-alert {
+  display: flex; gap: 10px; align-items: center;
+  padding: 9px 12px; border-radius: 8px; font-size: 0.74rem;
+  margin-bottom: 8px; border: 1px solid var(--signal-yellow);
+  background: var(--signal-yellow-bg); color: var(--signal-yellow);
+}
+.wb-alert .btn { margin-left: auto; }
+.wb-alert.red { border-color: var(--signal-red); background: var(--signal-red-bg); color: var(--signal-red); }
+
+/* hero + launch grid */
+.wb-hero { display: flex; gap: 16px; align-items: center; padding: 16px; }
+.wb-hero-w2gp { font-size: 1.7rem; font-weight: 800; letter-spacing: .01em; line-height: 1.05; }
+.wb-hero-sub { font-size: 0.74rem; color: var(--text-secondary); margin-top: 3px; }
+.wb-hero-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.wb-launch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.wb-launch-grid .btn { justify-content: center; display: flex; align-items: center; gap: 7px; min-height: 58px; white-space: normal; text-align: center; font-size: 0.8rem; }
+
+/* grids */
+.wb-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.wb-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+@media (max-width: 1100px) { .wb-grid2, .wb-grid3 { grid-template-columns: 1fr; } }
+
+/* meters */
+.wb-meter { margin: 6px 0 2px; }
+.wb-meter-label { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--text-secondary); }
+.wb-meter-track { height: 10px; border-radius: 6px; background: var(--bg-tertiary, var(--canvas)); overflow: hidden; margin-top: 3px; }
+.wb-meter-fill { height: 100%; border-radius: 6px; background: var(--accent); transition: width .3s ease; }
+.wb-meter-fill.warn { background: var(--signal-yellow); }
+.wb-meter-fill.ok { background: var(--signal-green); }
+
+/* profile ladder */
+.wb-profiles { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; margin-top: 10px; }
+@media (max-width: 1150px) { .wb-profiles { grid-template-columns: repeat(4, 1fr); } }
+.wb-p {
+  border: 1px solid var(--border); border-radius: 9px; padding: 9px 10px;
+  cursor: pointer; background: var(--surface); position: relative;
+}
+.wb-p:hover { border-color: var(--border-hover); }
+.wb-p.wb-rec { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.wb-p.wb-sel { background: var(--accent-dim); border-color: var(--accent); }
+.wb-p-name { font-weight: 700; font-size: 0.8rem; }
+.wb-p-line { font-size: 0.66rem; color: var(--text-secondary); margin-top: 3px; line-height: 1.35; }
+.wb-p-flag { position: absolute; top: -8px; right: 8px; font-size: 0.6rem; font-weight: 700;
+  padding: 1px 7px; border-radius: 10px; background: var(--accent); color: var(--surface); }
+.wb-axis { display: flex; justify-content: space-between; font-size: 0.66rem; color: var(--text-tertiary); margin: 6px 2px 0; }
+
+/* pipeline (DLSS-style) */
+.wb-pipe { display: flex; align-items: stretch; margin-top: 10px; }
+.wb-stage { flex: 1; text-align: center; padding: 10px 6px; position: relative; }
+.wb-stage:not(:last-child)::after {
+  content: ""; position: absolute; right: -12px; top: 50%; width: 22px; height: 1px;
+  background: var(--border); z-index: 1;
+}
+.wb-stage-ball {
+  width: 26px; height: 26px; border-radius: 50%; margin: 0 auto 6px;
+  border: 2px solid var(--border); display: grid; place-items: center;
+  font-size: 0.72rem; font-weight: 700; color: var(--text-tertiary);
+  background: var(--surface); position: relative; z-index: 2;
+}
+.wb-stage.done .wb-stage-ball { border-color: var(--signal-green); color: var(--signal-green); background: var(--signal-green-bg); }
+.wb-stage.active .wb-stage-ball { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.wb-stage-name { font-size: 0.68rem; font-weight: 600; color: var(--text-secondary); }
+.wb-stage-sub { font-size: 0.62rem; color: var(--text-tertiary); }
+
+/* rows: every real control listed compactly */
+.wb-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--border); min-height: 38px; }
+.wb-row:first-child { border-top: none; }
+.wb-row-label { font-size: 0.76rem; min-width: 150px; flex: 0 0 auto; }
+.wb-row-val { font-size: 0.76rem; color: var(--text-secondary); flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-row .input { font-size: 0.76rem; }
+.wb-row .btn { flex: 0 0 auto; }
+.wb-ctl { flex: 0 0 auto; min-width: 180px; max-width: 320px; }
+.wb-hint { flex: 1 1 auto; }
+
+/* drawers */
+.wb-drawer-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; user-select: none; }
+.wb-drawer-head:hover { background: var(--surface-hover); }
+.wb-drawer-head .card-title { flex: 1; }
+.wb-drawer-body { border-top: 1px solid var(--border); }
+.wb-drawer-body.wb-closed { display: none; }
+
+/* console mock */
+.wb-console {
+  font-family: ui-monospace, Consolas, monospace; font-size: 0.68rem; line-height: 1.55;
+  background: var(--canvas); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; height: 170px; overflow-y: auto; white-space: pre-wrap;
+}
+.wb-console .dim { color: var(--text-tertiary); }
+.wb-console .ok { color: var(--signal-green); }
+.wb-console .warn { color: var(--signal-yellow); }
+
+/* checklist */
+.wb-check { display: flex; align-items: center; gap: 9px; padding: 7px 4px; font-size: 0.76rem; }
+.wb-check-ball { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border);
+  display: grid; place-items: center; font-size: 10px; color: var(--signal-green); flex: 0 0 18px; }
+.wb-check.done .wb-check-ball { border-color: var(--signal-green); background: var(--signal-green-bg); }
+.wb-check.now  .wb-check-ball { border-color: var(--accent); border-style: dashed; }
+
+/* "new in this redesign" badge */
+.wb-new {
+  display: inline-block; font-size: 0.58rem; font-weight: 700; letter-spacing: .05em;
+  vertical-align: middle; padding: 1px 6px; border-radius: 9px;
+  background: var(--signal-yellow-bg); color: var(--signal-yellow); border: 1px solid var(--signal-yellow);
+}
+
+/* field pairs for memory-profile grid */
+.wb-memgrid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px 12px; padding: 8px 12px; }
+.wb-memgrid .mem-field { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; display: flex; gap: 8px; align-items: center; }
+.wb-memgrid .mem-field label { font-size: 0.72rem; color: var(--text-secondary); min-width: 120px; flex: 0 0 auto; }
+.wb-memgrid .mem-field .input { flex: 1; min-width: 0; font-size: 0.72rem; padding: 4px 8px; }
+.wb-memgrid .mem-hint { flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px; align-items: flex-end; }
+
+/* toast */
+.wb-toast {
+  position: fixed; bottom: 18px; left: 50%; transform: translate(-50%, 8px);
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 8px 16px; border-radius: 10px; font-size: 0.76rem; opacity: 0;
+  transition: all .2s ease; pointer-events: none; box-shadow: 0 6px 24px rgba(0,0,0,.25);
+  z-index: 99;
+}
+.wb-toast.wb-show { opacity: 1; transform: translate(-50%, 0); }
+</style>
+<style>
+/* ═══ POLISH LAYER (mock-only): icon system, elevation, motion ═══ */
+.wb-svg { width: 16px; height: 16px; display: block; flex: 0 0 auto; }
+.wb-ico { display: grid; place-items: center; }
+
+/* — rail — */
+.wb-rail { width: 226px; padding: 12px 10px 14px; }
+body.wb-rail-mini .wb-rail { width: 60px; }
+.wb-brand { padding: 4px 8px 14px; }
+.wb-logo { box-shadow: 0 6px 14px -6px color-mix(in srgb, var(--accent) 45%, transparent); }
+.wb-group { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.wb-group::after { content: ""; flex: 1; height: 1px; background: var(--border); opacity: .55; }
+.wb-item { position: relative; padding: 8px 10px; border-radius: 10px;
+  transition: background .15s ease, color .15s ease; }
+.wb-item.wb-active::before {
+  content: ""; position: absolute; left: -10px; top: 7px; bottom: 7px; width: 3px;
+  border-radius: 3px; background: var(--accent);
+}
+.wb-dot.green, .wb-dot.blue, .wb-dot.grey, .wb-dot.red, .wb-dot.yellow { --dotc: var(--text-tertiary); }
+.wb-dot.green { --dotc: var(--signal-green); background: var(--dotc); }
+.wb-dot.yellow { --dotc: var(--signal-yellow); background: var(--dotc); animation: wbPulse 2.6s ease-in-out infinite; }
+.wb-dot.red { --dotc: var(--signal-red); background: var(--dotc); animation: wbPulse 2.6s ease-in-out infinite; }
+.wb-dot.blue { --dotc: var(--signal-blue); background: var(--dotc); }
+.wb-dot.grey { --dotc: var(--text-tertiary); background: var(--dotc); }
+@keyframes wbPulse {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--dotc, var(--accent)) 25%, transparent); }
+}
+.wb-rail-foot { border-top: 1px solid var(--border); padding-top: 8px; }
+body.wb-rail-mini .wb-rail-foot { border-top: none; }
+
+/* — topbar — */
+.wb-topbar { padding: 9px 18px; gap: 12px; box-shadow: 0 1px 0 var(--border); }
+.wb-tb-sep { width: 1px; height: 22px; background: var(--border); flex: 0 0 1px; }
+.wb-tb-group { display: flex; align-items: center; gap: 5px; }
+.wb-tb-spacer { flex: 1; }
+.wb-topbar .btn-icon { color: var(--text-secondary); border-radius: 8px; width: 32px; height: 32px;
+  display: grid; place-items: center; }
+.wb-topbar .btn-icon:hover { background: var(--surface-hover); color: var(--text-primary); }
+.wb-topbar .btn-icon#stopAllBtn:hover { color: var(--signal-red); }
+.wb-verpill { font-size: .64rem; font-weight: 650; padding: 3px 9px; border-radius: 999px;
+  background: var(--bg-tertiary, var(--bg-secondary)); color: var(--text-secondary); white-space: nowrap; }
+.wb-title { letter-spacing: -.01em; }
+
+/* — view + cards — */
+.wb-view { padding: 18px 24px 60px; }
+.wb-view.wb-show { animation: wbIn .22s cubic-bezier(.2, .7, .3, 1); }
+@keyframes wbIn { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+.wb-view > .card, .wb-view > .wb-chips, .wb-view > .wb-alert, .wb-view > .wb-launch-grid {
+  max-width: 1240px; margin-left: auto; margin-right: auto; width: 100%;
+}
+.wb-view .card { border-radius: 13px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05), 0 12px 32px -22px rgba(0,0,0,.35); }
+.wb-view .wb-row:hover { background: var(--surface-hover); }
+.wb-view .wb-row:first-child { border-top-left-radius: 12px; border-top-right-radius: 12px; }
+
+/* — hero — */
+.wb-hero { position: relative; overflow: hidden; padding: 22px 26px; border-radius: 15px;
+  background: linear-gradient(115deg, var(--surface) 25%, var(--bg-secondary)); }
+.wb-hero::before { content: ""; position: absolute; right: -100px; bottom: -150px;
+  width: 320px; height: 320px; border-radius: 50%;
+  background: radial-gradient(closest-side, var(--accent-dim), transparent 72%); opacity: .65; }
+.wb-hero-logo { width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center;
+  color: var(--surface); background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  box-shadow: 0 10px 22px -10px color-mix(in srgb, var(--accent) 55%, transparent); }
+.wb-hero-eyebrow { font-size: .6rem; font-weight: 750; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--text-tertiary); }
+.wb-hero-sub { font-variant-numeric: tabular-nums; }
+.wb-hero-actions { position: relative; z-index: 1; }
+.btn-hero { padding: 11px 22px; font-size: .9rem; border-radius: 11px;
+  display: inline-flex; align-items: center; gap: 8px;
+  box-shadow: 0 10px 26px -12px color-mix(in srgb, var(--accent) 70%, transparent); }
+
+/* — launch mode cards — */
+.wb-launch-grid .btn { display: flex; align-items: center; gap: 12px; justify-content: flex-start;
+  text-align: left; white-space: normal; padding: 12px 14px; min-height: 58px; border-radius: 12px;
+  background: var(--surface); box-shadow: none; }
+.wb-launch-grid .btn:hover { background: var(--surface-hover); border-color: var(--border-hover); }
+.wb-mode-ico { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+  background: var(--bg-tertiary, var(--bg-secondary)); color: var(--text-secondary); }
+.wb-mode b { display: block; font-size: .8rem; font-weight: 650; color: var(--text-primary); }
+.wb-mode small { display: block; font-size: .66rem; color: var(--text-tertiary); margin-top: 1px; }
+
+/* — chips / meters / pipeline / checklist — */
+.wb-chip { padding: 6px 13px; transition: transform .13s ease, box-shadow .13s ease, border-color .15s, background .15s; }
+.wb-chip:hover { transform: translateY(-1px); box-shadow: 0 8px 18px -10px rgba(0,0,0,.35); }
+.wb-meter-track { height: 8px; }
+.wb-meter-label, .wb-row-val, .tag-rec, .tag-saved, .env-type-tag { font-variant-numeric: tabular-nums; }
+.wb-stage-name { font-size: .7rem; }
+.wb-stage.active .wb-stage-ball { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 20%, transparent); }
+.wb-check + .wb-check { border-top: 1px dashed var(--border); }
+.wb-check-ball { width: 20px; height: 20px; font-weight: 800; }
+.wb-drawer-head { border-radius: 13px 13px 0 0; }
+
+/* — console, toast, modals — */
+.wb-console { border-radius: 10px; }
+.wb-toast { display: flex; align-items: center; gap: 9px; border-radius: 12px; padding: 10px 16px;
+  box-shadow: 0 18px 44px -14px rgba(0,0,0,.5); }
+.wb-toast-ico { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--signal-green-bg); color: var(--signal-green); font-size: .68rem; font-weight: 800;
+  flex: 0 0 20px; }
+.modal-box { border-radius: 14px; box-shadow: 0 30px 80px -30px rgba(0,0,0,.55); }
+
+/* — layout theme: classic demo (real: classic = current index.html untouched) — */
+body.wb-classic .wb-rail, body.wb-classic .wb-tb-sep, body.wb-classic .wb-subtitle { display: none; }
+body.wb-classic .wb-topbar { padding: 10px 22px; }
+body.wb-classic .wb-title { font-weight: 750; }
+body.wb-classic .wb-view { display: block; }
+body.wb-classic .wb-view:not(.wb-show) { display: none; }
+body.wb-classic .wb-view { padding: 22px 30px 34px; scroll-margin-top: 56px; }
+body.wb-classic .wb-view[data-heading]::before {
+  content: attr(data-heading); display: block;
+  font-size: .68rem; font-weight: 750; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-tertiary); margin: 0 0 12px;
+}
+body.wb-classic .wb-hero { border-radius: 15px; }
+body.wb-classic .wb-view.wb-show { animation: none; }
+
+/* — layout theme: deck demo (Command Deck / option B) — */
+body.wb-deck { flex-direction: column; }
+body.wb-deck .wb-rail {
+  width: 100%; flex: 0 0 auto; flex-direction: row; align-items: center;
+  padding: 7px 16px; gap: 4px; border-bottom: 1px solid var(--border);
+  background: var(--surface); overflow-x: auto; overflow-y: visible;
+}
+body.wb-deck .wb-brand { display: flex; align-items: center; gap: 9px;
+  padding: 0 12px 0 4px; margin-right: 6px; border-right: 1px solid var(--border); }
+body.wb-deck .wb-brand-sub { display: none; }
+body.wb-deck .wb-brand-name { font-size: .88rem; }
+body.wb-deck .wb-group { display: none; }
+body.wb-deck .wb-item { padding: 7px 13px; border-radius: 9px; white-space: nowrap; }
+body.wb-deck .wb-item.wb-active::before { display: none; }
+body.wb-deck .wb-item.wb-active { background: var(--accent-dim);
+  box-shadow: inset 0 0 0 1px var(--border-hover); }
+body.wb-deck .wb-rail-foot { display: none; }
+body.wb-deck .wb-view { padding: 16px 24px 44px; }
+.wb-deck-strip { display: none; }
+body.wb-deck .wb-deck-strip {
+  display: flex; gap: 10px; align-self: stretch; flex-wrap: wrap;
+  max-width: 1240px; margin: 2px auto 0; padding: 10px 24px 0; width: 100%;
+}
+.wb-deck-tile { display: grid; gap: 1px; padding: 8px 14px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface); min-width: 110px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+.wb-deck-tile small { font-size: .58rem; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text-tertiary); }
+.wb-deck-tile b { font-size: .78rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.wb-deck-tile.ok b { color: var(--signal-green); }
+.wb-deck-tile.warn b { color: var(--signal-yellow); }
+
+/* — layout theme: real 0.10.8 original (iframe of actual app files) — */
+.wb-origin-frame { display: none; }
+body.wb-origin { background: var(--canvas); }
+body.wb-origin .wb-rail, body.wb-origin .wb-topbar, body.wb-origin .wb-deck-strip,
+body.wb-origin .wb-view, body.wb-origin .wb-console { display: none !important; }
+body.wb-origin .wb-toast { z-index: 90; }
+body.wb-origin .wb-origin-frame {
+  display: block; position: fixed; inset: 0; width: 100%; height: 100%;
+  border: 0; z-index: 50; background: var(--canvas);
+}
+
+/* — DLSS 5 big panel — */
+.wb-dlss { padding: 0 !important; overflow: hidden; }
+.wb-dlss-grid { display: grid; grid-template-columns: 330px 1fr; }
+.wb-dlss-side { position: relative; overflow: hidden; padding: 20px 22px 18px;
+  border-right: 1px solid var(--border);
+  background: linear-gradient(155deg, var(--surface) 40%, var(--bg-secondary)); }
+.wb-dlss-side::before { content: ""; position: absolute; left: -70px; bottom: -110px;
+  width: 240px; height: 240px; border-radius: 50%;
+  background: radial-gradient(closest-side, var(--accent-dim), transparent 72%); opacity: .55; }
+.wb-dlss-side > * { position: relative; z-index: 1; }
+.wb-dlss-eyebrow { font-size: .6rem; font-weight: 750; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--text-tertiary); }
+.wb-dlss-title { display: flex; align-items: center; gap: 9px;
+  font-size: 1.08rem; font-weight: 750; letter-spacing: -.01em; margin-top: 3px; }
+.wb-dlss-desc { font-size: .73rem; line-height: 1.55; color: var(--text-secondary); margin: 9px 0 14px; }
+.wb-dlss-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.wb-dlss-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); }
+.wb-dlss-meta label { display: flex; gap: 6px; align-items: center; font-size: 0.72rem; }
+.wb-dlss-main { padding: 20px 24px 18px; }
+.wb-dlss-kicker { font-size: .66rem; font-weight: 650; color: var(--text-tertiary);
+  margin-bottom: 10px; }
+.wb-pipe-lg .wb-stage { padding: 14px 8px; }
+.wb-pipe-lg .wb-stage-ball { width: 38px; height: 38px; border-radius: 12px;
+  font-size: .84rem; margin-bottom: 8px; }
+.wb-pipe-lg .wb-stage-name { font-size: .76rem; font-weight: 650; }
+.wb-pipe-lg .wb-stage-sub { font-size: .66rem; }
+.wb-pipe-lg .wb-stage.active .wb-stage-ball {
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent); }
+.wb-dlss-row { margin-top: 12px; }
+@media (max-width: 980px) { .wb-dlss-grid { grid-template-columns: 1fr; }
+  .wb-dlss-side { border-right: none; border-bottom: 1px solid var(--border); } }
+
+/* — focus & scrollbars — */
+.wb-item:focus-visible, .wb-chip:focus-visible, .wb-p:focus-visible, .wb-fold:focus-visible,
+.btn:focus-visible, .input:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px;
+}
+.wb-view::-webkit-scrollbar, .wb-rail::-webkit-scrollbar, .wb-console::-webkit-scrollbar {
+  width: 10px; height: 10px; }
+.wb-view::-webkit-scrollbar-thumb, .wb-rail::-webkit-scrollbar-thumb, .wb-console::-webkit-scrollbar-thumb {
+  background: var(--border-hover); border-radius: 8px; border: 3px solid transparent;
+  background-clip: padding-box; }
+.wb-view::-webkit-scrollbar-track, .wb-rail::-webkit-scrollbar-track, .wb-console::-webkit-scrollbar-track {
+  background: transparent; }
+button .wb-svg { pointer-events: none; }
+</style>
+</head>
+<body class="wb-rail-mini">
+
+<!-- ═══ SVG ICON SPRITE (mock-only) ═══ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9.5 21v-6h5v6"/></symbol>
+    <symbol id="i-tune" viewBox="0 0 24 24"><path d="M13 2 4.5 13.5h6L11 22l8.5-11.5h-6L13 2z"/></symbol>
+    <symbol id="i-pkg" viewBox="0 0 24 24"><path d="M21 8v8l-9 5-9-5V8l9-5 9 5z"/><path d="M3.3 8 12 13l8.7-5"/><path d="M12 22V13"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 7V3m6 4V3"/><path d="M7 7h10v4a5 5 0 0 1-5 5 5 5 0 0 1-5-5V7z"/><path d="M12 16v5"/></symbol>
+    <symbol id="i-files" viewBox="0 0 24 24"><path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8z"/></symbol>
+    <symbol id="i-tool" viewBox="0 0 24 24"><path d="m4 20 8-8-1.5-1.5L4 17v3z"/><path d="M14.7 3a4.5 4.5 0 0 1 6 6l-3.2-.4-2.4-2.4L14.7 3z"/><path d="m13 10 4-4"/></symbol>
+    <symbol id="i-remote" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M10.5 18.5h3"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M3.9 7.2l2.6 1.5M17.5 15.3l2.6 1.5M3.9 16.8l2.6-1.5M17.5 7.2l2.6-1.5"/></symbol>
+    <symbol id="i-sys" viewBox="0 0 24 24"><path d="M12 3l8 4.6v8.8L12 21l-8-4.6V7.6L12 3z"/><path d="M12 21v-8.8M4 7.6l8 4.6 8-4.6"/></symbol>
+    <symbol id="i-guide" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 8v8l-9 5-9-5V8l9-5 9 5z"/><path d="M3.3 8 12 13l8.7-5"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5L7 4.5z"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"/></symbol>
+    <symbol id="i-globe-off" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"/><path d="M4 4l16 16"/></symbol>
+    <symbol id="i-term" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></symbol>
+    <symbol id="i-term-off" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/><path d="M4 4l16 16"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></symbol>
+    <symbol id="i-stop-d" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="none"/><text x="12" y="15.5" text-anchor="middle" font-size="8" fill="currentColor">D</text></symbol>
+    <symbol id="i-tasks" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9h8M8 13h5M8 17h3"/></symbol>
+    <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 2v2.2M12 19.8V22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2 12h2.2M19.8 12H22M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"/></symbol>
+    <symbol id="i-palette" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="8.4" cy="10" r="1.3"/><circle cx="12" cy="7.4" r="1.3"/><circle cx="15.6" cy="10" r="1.3"/><path d="M12 21c-1 0-1-1-1-2 0-1.5 1-2 1-3.5 0-1-1-1.6-1-1.6S9 14.5 7 14c-1-.3-1.5-1-1-1.5"/></symbol>
+    <symbol id="i-reload" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8z"/></symbol>
+    <symbol id="i-folder-open" viewBox="0 0 24 24"><path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1H6.5L3 19V8z"/><path d="M3.5 20 6.8 10.5H21l-3.2 9.5H3.5z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M4 12.5l5.2 5.2L20 6.5"/></symbol>
+    <symbol id="i-arrow-r" viewBox="0 0 24 24"><path d="M6 18L18 6M9 6h9v9"/></symbol>
+    <symbol id="i-arrow-d" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  </defs>
+</svg>
+
+<!-- ═══════════ RAIL ═══════════ -->
+<nav class="wb-rail">
+  <div class="wb-brand">
+    <div class="wb-logo">W</div>
+    <div><div class="wb-brand-name">Wan2GP</div><div class="wb-brand-sub">Desktop · mockup</div></div>
+  </div>
+
+  <div class="wb-item wb-active" data-view="home"><span class="wb-ico"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-home"/></svg></span><span class="wb-label">Home</span></div>
+  <div class="wb-item" data-view="guide"><span class="wb-ico"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-guide"/></svg></span><span class="wb-label">Guide</span><span class="wb-dot grey"></span></div>
+
+  <div class="wb-group">Performance</div>
+  <div class="wb-item" data-view="tune"><span class="wb-ico"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-tune"/></svg></span><span class="wb-label">Auto-Tune</span><span class="wb-dot green" title="P4 · saved to wgp_config.json"></span></div>
+
+  <div class="wb-group">Setup</div>
+  <div class="wb-item" data-view="comps"><span class="wb-ico"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-pkg"/></svg></span><span class="wb-label">Components</span><span class="wb-dot yellow" title="1 needs attention"></span></div>
+  <div class="wb-item" data-view="plugins"><span class="wb-ico"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-plug"/></svg></span><span class="wb-label">Plugins</span><span class="wb-dot grey"></span></div>
+  <div class="wb-item" data-view="files"><span class="wb-ico"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-files"/></svg></span><span class="wb-label">Files</span><span class="wb-dot yellow" title="Migration offered"></span></div>
+  <div class="wb-item" data-view="installer"><span class="wb-ico"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-tool"/></svg></span><span class="wb-label">Installer</span><span class="wb-dot green" title="Installed — view kept for repair / migrate"></span></div>
+  <div class="wb-item" data-view="remote"><span class="wb-ico"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-remote"/></svg></span><span class="wb-label">Remote &amp; Deepy</span><span class="wb-dot grey" title="Deepy Web not running"></span></div>
+  <div class="wb-item" data-view="setup"><span class="wb-ico"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-gear"/></svg></span><span class="wb-label">Settings</span><span class="wb-dot grey"></span></div>
+
+  <div class="wb-group">System</div>
+  <div class="wb-item" data-view="system"><span class="wb-ico"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-sys"/></svg></span><span class="wb-label">System</span><span class="wb-dot blue" title="0.10.11 available"></span></div>
+
+  <div class="wb-rail-foot">
+    <div class="wb-fold" id="wbFold"><span class="wb-ico"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-back"/></svg></span><span class="wb-label">Collapse rail</span></div>
+  </div>
+</nav>
+
+<!-- ═══════════ WORKSPACE ═══════════ -->
+<main class="wb-main">
+  <div class="wb-topbar">
+    <div>
+      <div class="wb-title" id="wbTitle">Home</div>
+      <div class="wb-subtitle" id="wbSubtitle">Launch Wan2GP and see what needs your attention.</div>
+    </div>
+    <div class="wb-topbar-right" style="margin-left:0">
+      <span id="settingsVersionNum" class="wb-verpill">v0.10.8</span>
+      <span class="wb-tb-sep"></span>
+      <span class="wb-tb-group">
+        <button class="btn btn-ghost small" id="backToDashboardBtn" title="Close the Wan2GP view and return to the Dashboard" style="display:none">‹ Dashboard</button>
+        <button class="btn btn-icon" id="settingsBackBtn" title="Close settings" style="display:none">✕</button>
+        <button class="btn btn-icon" id="wvReloadBtn" title="Reload Wan2GP view"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-reload"/></svg></button>
+        <button class="btn btn-icon" id="browserRefreshBtn" title="Refresh the browser-mode page (reload embedded view)" style="display:none"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-reload"/></svg></button>
+        <button class="btn btn-icon" id="stopAllBtn" title="Stop all servers (Wan2GP + OpenCode)" style="color:var(--signal-red)"><svg class="wb-svg" fill="currentColor"><use href="#i-stop"/></svg></button>
+        <button class="btn btn-icon" id="stopDeepyBtn" title="Stop Deepy Web only (keeps Wan2GP running)"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-stop-d"/></svg></button>
+      </span>
+      <span class="wb-tb-sep"></span>
+      <span class="wb-tb-group">
+        <button class="btn btn-icon" id="taskMgrBtn" title="Open Windows Task Manager"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-tasks"/></svg></button>
+        <button class="btn btn-icon theme-toggle" id="themeToggleBtn" title="Toggle dark/light mode"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><use href="#i-theme"/></svg></button>
+        <button class="btn btn-icon" id="appearPaletteBtn" title="Cycle theme (Mono → Sky → Orca → Cyber → Matrix)"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-palette"/></svg></button>
+      </span>
+      <span class="wb-tb-spacer"></span>
+      <span class="wb-tb-group">
+        <select class="input" id="layoutThemeQuick" style="width:auto;font-size:.66rem" title="Layout theme: switch the launcher shell layout (mock — real: layoutTheme in desktop-config.json)">
+          <option value="workbench">◫ Workbench</option>
+          <option value="real08">◉ Original 0.10.8</option>
+          <option value="classic">▤ Classic</option>
+          <option value="deck">▣ Deck</option>
+        </select>
+        <button class="btn btn-ghost small" id="guideBtn" title="Open the Guide: what to make, which model and settings to pick">Guide</button>
+        <button class="btn btn-ghost small" id="settingsBtn" title="Open settings: tokens, launch, system, auto-tune, plugins">Settings</button>
+        <span class="wb-mock-badge" title="Static mockup — all data is fake. Not part of the app.">MOCKUP</span>
+      </span>
+    </div>
+  </div>
+
+  <!-- ═══ DECK STAT STRIP (deck layout only, mock-only) ═══ -->
+  <div class="wb-deck-strip wb-new" aria-hidden="true">
+    <span class="wb-deck-tile"><small>GPU</small><b>RTX 4090 · 76°</b></span>
+    <span class="wb-deck-tile"><small>VRAM</small><b>4.1 / 24 GB</b></span>
+    <span class="wb-deck-tile"><small>RAM</small><b>31 / 64 GB</b></span>
+    <span class="wb-deck-tile"><small>Torch</small><b>2.13 · P4</b></span>
+    <span class="wb-deck-tile ok"><small>Launcher</small><b>running · :7860</b></span>
+    <span class="wb-deck-tile warn"><small>Attention</small><b>2 (kernels · HAGS)</b></span>
+  </div>
+
+<!-- ═══════════ HOME ═══════════ -->
+  <section class="wb-view wb-show" data-view="home">
+    <div class="card wb-hero">
+      <div class="wb-hero-logo"><svg class="wb-svg" style="width:20px;height:20px" fill="currentColor"><use href="#i-play"/></svg></div>
+      <div>
+        <div class="wb-hero-eyebrow">Launcher · ready</div>
+        <div class="wb-hero-w2gp">Wan2GP Desktop</div>
+        <div class="wb-hero-sub">torch-2.13 · RTX 4090 24 GB · P4 profile saved · port 7860</div>
+      </div>
+      <div class="wb-hero-actions">
+        <button class="btn btn-ghost" onclick="go('setup')">Configure…</button>
+        <button class="btn btn-primary btn-hero" id="appBtn" title="Launch Wan2GP embedded in the Desktop app"><svg class="wb-svg" style="width:14px;height:14px" fill="currentColor"><use href="#i-play"/></svg>Launch</button>
+      </div>
+    </div>
+
+    <!-- 2×2 alternative launch grid (real: appBtn/browserBtn/browserNoGpuBtn/termBtn/termNoGpuBtn) -->
+    <div class="wb-launch-grid">
+      <button class="btn btn-ghost wb-mode" id="browserBtn" title="Launch Wan2GP in your browser">
+        <span class="wb-mode-ico"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-globe"/></svg></span>
+        <span><b>Open in browser</b><small>Runs in your selected browser</small></span></button>
+      <button class="btn btn-ghost wb-mode" id="browserNoGpuBtn" title="Launch in your selected browser with GPU disabled to free VRAM for generation">
+        <span class="wb-mode-ico" style="color:var(--signal-blue)"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-globe-off"/></svg></span>
+        <span><b>Browser, GPU off</b><small>Frees VRAM for generation</small></span></button>
+      <button class="btn btn-ghost wb-mode" id="termBtn" title="Launch in a real external terminal window">
+        <span class="wb-mode-ico"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-term"/></svg></span>
+        <span><b>Terminal window</b><small>Real external terminal session</small></span></button>
+      <button class="btn btn-ghost wb-mode" id="termNoGpuBtn" title="External terminal window plus the selected browser with GPU disabled">
+        <span class="wb-mode-ico" style="color:var(--signal-blue)"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-term-off"/></svg></span>
+        <span><b>Terminal + GPU-off browser</b><small>Terminal session plus fallback browser</small></span></button>
+    </div>
+
+    <div class="wb-chips">
+      <span class="wb-chip wb-new" data-go="tune"><span class="wb-dot green"></span> Performance <b>P4 · tuned ✓</b></span>
+      <span class="wb-chip wb-new" data-go="comps"><span class="wb-dot green"></span> Kernels <b>v1.1.2 sync ✓</b></span>
+      <span class="wb-chip wb-new" data-go="comps"><span class="wb-dot grey"></span> DLSS 5 <b>not installed</b></span>
+      <span class="wb-chip wb-new" data-go="comps"><span class="wb-dot green"></span> Env <b>healthy ✓</b></span>
+      <span class="wb-chip wb-new" data-go="system"><span class="wb-dot blue"></span> Update <b>0.10.11</b></span>
+    </div>
+
+    <div class="wb-alert" id="sageSyncBanner"><b>SAGE</b><span>SageAttention fp8 wheel has a known bug on RTX 40/50 — stable build available.</span>
+      <button class="btn btn-primary small" id="sageSyncBtn" title="Install the stable SageAttention build for your GPU">Sync Kernels</button>
+      <button class="btn btn-ghost small" id="sageSyncDismissBtn" title="Hide this warning for now">Dismiss</button></div>
+    <div class="wb-alert" id="modelsWarnBanner"><b>MODELS</b><span>Your model folders are inside roaming AppData — move to a fast dedicated drive.</span>
+      <button class="btn btn-primary small hidden" id="modelsWarnMigrateBtn" title="Move the install and model folders out of AppData">Migrate to new location</button>
+      <button class="btn btn-ghost small" id="modelsWarnDismissBtn" title="Dismiss this warning">Dismiss</button></div>
+
+    <div class="wb-grid3">
+      <div class="card wb-new" id="wbSessionCard">
+        <div class="card-header"><span class="card-title">Session</span><span class="env-type-tag" id="wbSessionTag">idle</span></div>
+        <div style="padding:10px 12px 12px">
+          <div class="wb-meter">
+            <div class="wb-meter-label"><span>VRAM · RTX 4090</span><span id="wbVramTxt">4.1 / 24 GB</span></div>
+            <div class="wb-meter-track"><div class="wb-meter-fill ok" id="wbVramBar" style="width:17%"></div></div>
+          </div>
+          <div class="wb-meter">
+            <div class="wb-meter-label"><span>RAM</span><span>31 / 64 GB</span></div>
+            <div class="wb-meter-track"><div class="wb-meter-fill ok" style="width:48%"></div></div>
+          </div>
+          <div class="wb-row" style="margin-top:6px"><span class="wb-row-val">Uptime — · Queue 0 · Last gen —</span>
+            <button class="btn btn-ghost small" id="webviewMemBtn" title="Measure WebView2 + launcher memory once to compare embed modes">Measure memory</button>
+            <button class="btn btn-ghost small" id="autoTuneDashBtn" data-go="tune" title="Open hardware-calibrated performance settings"><span style="display:flex;align-items:center;gap:6px"><svg class="wb-svg" style="width:13px;height:13px" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-tune"/></svg></span>Auto-Tune</button></div>
+          <div class="wb-row"><span class="wb-row-label">Floating terminal</span>
+            <button class="btn btn-ghost small" id="ftFollowBtn" title="Auto-scroll the console to new output">Follow</button>
+            <button class="btn btn-ghost small" id="ftClearBtn" title="Clear the console">Clear</button>
+            <button class="btn btn-ghost small" id="ftCloseBtn" title="Close the console">✕</button></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Updates</span>
+          <span style="margin-left:auto;display:flex;gap:8px">
+            <button class="btn btn-ghost small" id="updateCheckBtn" title="Check GitHub for a new Desktop Launcher release">Check updates</button>
+            <button class="btn btn-ghost small" id="updateBtn" title="Install the launcher update">Update launcher</button>
+          </span></div>
+        <div style="padding:4px 0 8px">
+          <div class="wb-row"><span class="wb-row-label">Launcher</span><span class="wb-row-val">0.10.8 → <b>0.10.11</b></span><button class="btn btn-ghost small" id="manageUpdateDesktopBtn" title="Update the Desktop Launcher">Review</button></div>
+          <div class="wb-row"><span class="wb-row-label">Wan2GP app</span><span class="wb-row-val">0.9.3 — up to date</span><button class="btn btn-ghost small" id="manageUpdateWan2gpBtn" title="Pull the latest Wan2GP core and reinstall changed packages">Pull core</button></div>
+          <div class="wb-row"><span class="wb-row-label">Upstream</span><span class="wb-row-val">2 commits ahead</span><button class="btn btn-ghost small" id="cfgChangelogBtn" title="Open the desktop changelog">Changelog</button></div>
+          <div class="wb-row"><span class="wb-row-label">Dependency drift</span><span class="wb-row-val" style="color:var(--signal-yellow)">1 pinned override detected after core pull</span>
+            <button class="btn btn-ghost small" onclick="showModal('driftModal')">Resolve…</button>
+            <button class="btn btn-ghost small" onclick="showModal('pinOverrideModal')" title="Upgrade a pinned package anyway">Pin conflict…</button></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Console</span>
+          <span style="margin-left:auto;display:flex;gap:4px">
+            <input class="input" id="logSearch" placeholder="🔍 filter…" style="width:110px;font-size:0.7rem;padding:2px 6px">
+            <button class="btn btn-ghost small" id="dashTermFollowBtn" title="Auto-scroll the Console to new output" aria-pressed="true">Follow</button>
+            <button class="btn btn-ghost small" id="dashTermClearBtn" title="Clear the console">Clear</button>
+            <button class="btn btn-ghost small" id="logExportBtn" title="Export logs">Export</button>
+            <button class="btn btn-ghost small" id="dashTermMaxBtn" title="Console fills the dashboard">⤢</button>
+            <button class="btn btn-ghost small" id="ftToggleBtn" title="Pop into the floating terminal window (native + floating console logic)">Float</button>
+          </span></div>
+        <div style="padding:6px 12px 12px"><div class="wb-console" id="wbConsole"><span class="dim">[launcher] ready — watching for events…</span></div>
+          <p class="token-hint" style="margin:4px 2px 0">Floating-terminal controls live with the standalone console window: <span id="ftFollowBtn" title="Auto-scroll" style="cursor:pointer;font-weight:700">Follow</span> · <span id="ftClearBtn" title="Clear this window" style="cursor:pointer;font-weight:700">Clear</span> · <span id="ftCloseBtn" title="Close the floating window" style="cursor:pointer;font-weight:700">✕</span></p></div>
+      </div>
+    </div>
+
+    <div class="card wb-new" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">Get the most out of Wan2GP</span><span class="wb-new" style="margin-left:6px">new</span></div>
+      <div style="padding:8px 14px 12px">
+        <div class="wb-check done"><div class="wb-check-ball">✓</div> Hardware detected — RTX 4090 · 24 GB VRAM · 64 GB RAM</div>
+        <div class="wb-check done"><div class="wb-check-ball">✓</div> Wan2GP installed 0.9.3 on <span class="path-val">D:\Wan2GP</span></div>
+        <div class="wb-check done"><div class="wb-check-ball">✓</div> Performance tuned — <b>P4 profile saved</b></div>
+        <div class="wb-check now"><div class="wb-check-ball">→</div> Try DLSS 5 <button class="btn btn-ghost small" style="margin-left:auto" data-go="comps">Set up</button></div>
+        <div class="wb-check"><div class="wb-check-ball"></div> First generation — pick a model in the Guide <button class="btn btn-ghost small" style="margin-left:auto" data-go="guide">Guide</button></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">Batch processing</span></div>
+      <div style="padding:8px 14px 12px">
+        <div class="wb-row"><span class="wb-row-label">Queue file</span><input class="input wb-ctl" id="batchQueueInput" placeholder="queue.txt — one prompt per line"><input type="checkbox" id="batchDryRun" style="width:auto"><span class="wb-row-val" style="flex:0 0 auto">Dry run</span></div>
+        <div class="wb-row"><span class="wb-row-label">Output folder</span><input class="input wb-ctl" id="batchOutputInput" placeholder="defaults to current output"><button class="btn btn-primary small" id="batchRunBtn" title="Run scripts/batch_wan2gp over the queue file">Run batch</button></div>
+      </div>
+    </div>
+  </section>
+
+<!-- ═══════════ GUIDE ═══════════ -->
+  <section class="wb-view" data-view="guide">
+    <div class="card">
+      <div class="card-header"><span class="card-title">Guide — what to make &amp; which model</span><button class="btn btn-ghost small" id="guideBackBtn" style="margin-left:auto" title="Back">‹ Dashboard</button></div>
+      <div style="padding:8px 14px 12px">
+        <div class="wb-row"><span class="wb-row-label">Goal</span>
+          <select class="input wb-ctl" id="guideGoalSelect"><option>Narrative video, 15s</option><option>Action shot</option><option>Image, portrait</option></select></div>
+        <div class="wb-row"><span class="wb-row-label">Profile template</span><select class="input wb-ctl" id="lbProfile"><option>14B t2v balanced</option><option>1.3B speed</option></select></div>
+        <div class="wb-row"><span class="wb-row-label">Attention</span><select class="input wb-ctl" id="lbAttention"><option>sage2</option><option>sdpa</option></select><select class="input" style="width:140px" id="lbCompile"><option>compile: off</option></select></div>
+        <div class="wb-row"><span class="wb-row-label">fp16 / Teacache</span><select class="input" style="width:120px" id="lbFp16"><option>fp16</option></select><select class="input" style="width:140px" id="lbTeacache"><option>teacache: auto</option></select></div>
+        <p class="token-hint" style="padding:4px 12px">Real Guide keeps its tips + model pickers; they live in this view instead of behind a modal button.</p>
+      </div>
+    </div>
+  </section>
+
+<!-- ═══════════ AUTO-TUNE ═══════════ -->
+  <section class="wb-view" data-view="tune">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">1 · Detect</span>
+        <button class="btn btn-ghost small" style="margin-left:auto" id="autotuneDetectBtn" title="Scan hardware and recommend optimal performance settings">⟳ Detect</button>
+      </div>
+      <div style="padding:10px 14px 14px">
+        <div class="wb-grid2">
+          <div>
+            <div class="wb-meter"><div class="wb-meter-label"><span>VRAM · NVIDIA RTX 4090</span><span>24 GB total · 21.3 GB free at detect</span></div>
+              <div class="wb-meter-track"><div class="wb-meter-fill ok" style="width:88%"></div></div></div>
+            <div class="wb-meter"><div class="wb-meter-label"><span>RAM</span><span>64 GB total · 23 GB reserved budget</span></div>
+              <div class="wb-meter-track"><div class="wb-meter-fill ok" style="width:36%"></div></div></div>
+          </div>
+          <p class="token-hint">Real probes (get_hardware_profile / auto_tune_detect). Bars are drawn from values the commands already return.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">2 · Tune plan — profile ladder</span>
+        <span class="tag-saved" id="wbPlanState">saved: P4</span>
+        <button class="btn btn-ghost small wb-new" style="margin-left:auto" id="autotuneProfileSwitch" title="Switch the ladder between Video / Image / Audio">Ladder: Video</button></div>
+      <div style="padding:4px 14px 14px">
+        <div class="wb-profiles" id="wbPList">
+          <div class="wb-p" data-p="1"><div class="wb-p-name">P1</div><div class="wb-p-line">P2 + dynamic preload · fastest, most RAM</div></div>
+          <div class="wb-p" data-p="2"><div class="wb-p-name">P2</div><div class="wb-p-line">all in reserved RAM, sent part by part</div></div>
+          <div class="wb-p" data-p="3"><div class="wb-p-name">P3</div><div class="wb-p-line">P4 + dynamic preload (audio ⭐)</div></div>
+          <div class="wb-p" data-p="3.5"><div class="wb-p-name">P3+</div><div class="wb-p-line">P3 without reserved RAM</div></div>
+          <div class="wb-p wb-rec wb-sel" data-p="4"><span class="wb-p-flag">rec</span><div class="wb-p-name">P4</div><div class="wb-p-line">main models reserved — recommended</div></div>
+          <div class="wb-p" data-p="4.5"><div class="wb-p-name">P4+</div><div class="wb-p-line">one part at a time, ~1 GB less VRAM</div></div>
+          <div class="wb-p" data-p="5"><div class="wb-p-name">P5</div><div class="wb-p-line">failsafe — maximum compatibility</div></div>
+        </div>
+        <div class="wb-axis wb-new"><span>← fastest</span><span>most compatible / least VRAM →</span></div>
+
+        <div class="wb-row wb-new" style="margin-top:10px">
+          <span class="wb-row-label">Other media</span><span class="wb-row-val">Image P4 · Audio P3</span>
+          <span class="tag-rec">rec: 4 / 3</span><span class="tag-saved">saved: 4 / —</span>
+          <button class="btn btn-ghost small" onclick="wbToast('ladder retargets to Media — same 7 cards')">Edit image / audio</button></div>
+
+        <div class="wb-meter wb-new" style="margin-top:10px">
+          <div class="wb-meter-label"><span>Profile footprint preview</span><span id="wbPlanPreview">P4: main models reserved in RAM — good fit for 24 GB + 40 GB reserve</span></div>
+          <div class="wb-meter-track"><div class="wb-meter-fill" id="wbPlanBar" style="width:62%"></div></div>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-primary" id="memProfileApplyBtn" title="Write these performance settings to wgp_config.json">Apply Overrides</button>
+          <label style="display:flex;align-items:center;gap:7px;font-size:0.75rem;color:var(--text-secondary);cursor:pointer" title="Force the P5 minimum-compatibility profile — slower, but maximizes the chance generation works. Check and press Detect to re-seed fields with P5 values.">
+            <input type="checkbox" id="autotuneFailsafeChk" style="width:auto"> Prefer failsafe (P5)
+          </label>
+          <span class="token-hint">rec = Detect's proposal · saved = currently on disk</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="wb-drawer-head" data-drawer="adv"><span class="card-title">3 · Advanced — all mmgp knobs</span><span id="wbAdvCaret">▾</span></div>
+      <div class="wb-drawer-body" id="adv">
+        <div class="wb-memgrid">
+          <div class="mem-field"><label>VRAM coeff (0.1–1)</label><input class="input" type="number" id="memCoeff" min="0.1" max="1" step="0.05" value="0.80"><div class="mem-hint"><span class="tag-rec">rec: 0.80</span><span class="tag-saved">saved: 0.80</span></div></div>
+          <div class="mem-field"><label>RAM allocator</label><select class="input" id="memRamAllocator"><option>Default</option><option>Reserve</option></select><div class="mem-hint"><span class="tag-rec">rec: —</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>Reserved RAM %</label><input class="input" type="number" id="memReservedPct" min="0" max="90" value="60"><div class="mem-hint"><span class="tag-rec">rec: 60</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>VRAM allocator</label><select class="input" id="memVramAllocator"><option>Default</option><option>Auto</option></select><div class="mem-hint"><span class="tag-rec">rec: —</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>VAE tiling</label><select class="input" id="memVae"><option>0 — auto</option><option selected>2 — 8GB+</option><option>3 — 6GB+</option></select><div class="mem-hint"><span class="tag-rec">rec: 2</span><span class="tag-saved">saved: 2</span></div></div>
+          <div class="mem-field"><label>Transformer quant</label><select class="input" id="memQuant"><option>none</option><option>int8</option><option selected>fp8</option><option>nvfp4</option></select><div class="mem-hint"><span class="tag-rec">rec: fp8</span><span class="tag-saved">saved: fp8</span></div></div>
+          <div class="mem-field"><label>Text encoder quant</label><select class="input" id="memTextEncoderQuant"><option selected>int8 — 8-bit (less RAM, default)</option><option>bf16 — 16-bit (better quality)</option></select><div class="mem-hint"><span class="tag-rec">rec: int8</span><span class="tag-saved">saved: int8</span></div></div>
+          <div class="mem-field"><label>INT8 kernels</label><select class="input" id="memInt8Kernels"><option selected>On (needs Triton)</option><option>Off</option></select><div class="mem-hint"><span class="tag-rec">rec: on</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>fp8 kernels</label><select class="input" id="memFp8Kernels"><option selected>Auto</option><option>On</option><option>Off</option></select><div class="mem-hint"><span class="tag-rec">rec: —</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>Kernel precision</label><select class="input" id="memKernelPrecision"><option selected>Default</option></select><div class="mem-hint"><span class="tag-rec">rec: —</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>Smart pinning</label><select class="input" id="memSmartPinning"><option selected>Off — restart needed</option><option>On</option></select><div class="mem-hint"><span class="tag-rec">rec: off</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>Head split</label><select class="input" id="memHeadSplit"><option selected>Off (8192+ tokens only)</option><option>On</option></select><div class="mem-hint"><span class="tag-rec">rec: —</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>Dynamic preload · video</label><select class="input" id="memVideoPreload"><option selected>Default</option></select><div class="mem-hint"><span class="tag-rec">rec: —</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>Dynamic preload · image</label><select class="input" id="memImagePreload"><option selected>Default</option></select><div class="mem-hint"><span class="tag-rec">rec: —</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>Dynamic preload · audio</label><select class="input" id="memAudioPreload"><option selected>Default</option></select><div class="mem-hint"><span class="tag-rec">rec: —</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>Attention mode</label><select class="input" id="memAttentionMode"><option selected>sage2</option><option>sage</option><option>sdpa</option></select><div class="mem-hint"><span class="tag-rec">rec: —</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>Compile mode</label><select class="input" id="memCompileMode"><option selected>Off</option><option>On</option></select><div class="mem-hint"><span class="tag-rec">rec: —</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>Compute cache</label><select class="input" id="memComputeCache"><option selected>On</option><option>Off</option></select><div class="mem-hint"><span class="tag-rec">rec: —</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>Cache path</label><input class="input" id="memComputeCachePath" value="D:\Wan2GP\mmgp_cache"><div class="mem-hint"><span class="tag-rec">rec: —</span><span class="tag-saved">saved: —</span></div></div>
+          <div class="mem-field"><label>Read ahead</label><select class="input" id="memReadAhead"><option selected>Auto (40% Windows)</option><option>60%</option></select><div class="mem-hint"><span class="tag-rec">rec: —</span><span class="tag-saved">saved: —</span></div></div>
+        </div>
+        <p class="token-hint" style="padding:0 14px 12px">Every control above keeps today's real id and the same command paths — presentation only. The v17 semantics notes (restart needed, not bit-identical output…) move into the field tooltips.</p>
+        <div class="wb-row" title="The three media-profile dropdowns exist here for control parity — the ladder above replaces them in the redesign; keep as an 'advanced fallback' the classic UI can still mount.">
+          <span class="wb-row-label">Legacy profile selects</span>
+          <select class="input" id="memVideoProfile" style="max-width:200px"><option value="1">V: P1 — P2 + Dynamic Preload</option><option value="2">V: P2</option><option value="3">V: P3</option><option value="3.5">V: P3+</option><option value="4" selected>V: P4</option><option value="4.5">V: P4+</option><option value="5">V: P5</option></select>
+          <select class="input" id="memImageProfile" style="max-width:200px"><option value="1">I: P1</option><option value="2">I: P2</option><option value="3">I: P3</option><option value="3.5">I: P3+</option><option value="4" selected>I: P4</option><option value="4.5">I: P4+</option><option value="5">I: P5</option></select>
+          <select class="input" id="memAudioProfile" style="max-width:200px"><option value="1">A: P1</option><option value="2">A: P2</option><option value="3" selected>A: P3</option><option value="3.5">A: P3+</option><option value="4">A: P4</option><option value="4.5">A: P4+</option><option value="5">A: P5</option></select>
+        </div>
+      </div>
+    </div>
+  </section>
+
+<!-- ═══════════ COMPONENTS ═══════════ -->
+  <section class="wb-view" data-view="comps">
+    <div class="card">
+      <div class="card-header"><span class="card-title">Active environment</span><span class="env-type-tag green">torch-2.13 · cu13 · healthy</span></div>
+      <div style="padding:4px 0 10px">
+        <div class="wb-row"><span class="wb-row-label">Python / location</span><span class="wb-row-val">3.11 · uv-managed · D:\Wan2GP\env</span></div>
+        <div class="wb-row"><span class="wb-row-label">Lifecycle</span>
+          <span style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-ghost small" id="envSetupBtn" title="Open the installer to set up a fresh environment">Fresh install / migrate…</button>
+            <button class="btn btn-ghost small" id="validateInstallBtn" title="Validate the installation">Validate</button>
+            <button class="btn btn-ghost small" id="repairFilesBtn" title="Verify & repair Wan2GP core files">Repair files</button>
+            <button class="btn btn-ghost small" id="rollbackBtn" title="Roll back last update">Rollback update</button>
+          </span></div>
+        <div class="wb-row"><span class="wb-row-label">Packages</span>
+          <span style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-ghost small" id="envReinstallBtn" title="Reinstall all packages from requirements.txt. Progress in the Console below.">Reinstall requirements</button>
+            <button class="btn btn-ghost small" id="envRestoreBtn" title="Recreate the whole environment (Python, PyTorch, packages, kernels). Models & settings are kept.">Recreate env</button>
+            <button class="btn btn-danger small" id="envUnlinkBtn" title="Uninstall active environment" style="color:var(--signal-red)">Unlink env</button>
+          </span></div>
+        <div class="wb-row"><span class="wb-row-label">Other installs</span>
+          <span style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-ghost small" id="installWgpkernelsBtn" title="Install the older WGPKernels 1.0.x stack if v1.1.2 fails">WGPKernels fallback</button>
+            <button class="btn btn-ghost small" id="installAmdSetupBtn" title="AMD ROCm workstation recipe (HIP only)">AMD setup (exp)</button>
+            <button class="btn btn-ghost small" id="installHipGgufBtn" title="Install HIP-suffixed GGUF kernels for RDNA3/4">HIP GGUF wheels</button>
+            <button class="btn btn-ghost small" id="xetInstallBtn" title="Install hf_xet for faster HuggingFace downloads">Install hf_xet</button>
+          </span></div>
+        <div class="wb-row"><span class="wb-row-label">Electron duplicate</span><span class="wb-row-val">Tauri launcher active — old Electron install not found</span><button class="btn btn-ghost small" id="removeElectronBtn" title="Remove leftover Electron desktop install">Scan &amp; remove…</button></div>
+      </div>
+    </div>
+
+    <div class="card wb-dlss" style="margin-top:12px">
+      <div class="wb-dlss-grid">
+        <div class="wb-dlss-side">
+          <div class="wb-dlss-eyebrow">Optional runtime</div>
+          <div class="wb-dlss-title">DLSS 5<span class="wb-dot grey" style="position:static" title="not installed"></span></div>
+          <p class="wb-dlss-desc">Upscaling + frame-gen runtime for RTX 40/50. Consent and per-file SHA verification become a 4-stage pipeline — the same flow component kernel syncs and plugin installs reuse.</p>
+          <div class="wb-dlss-actions">
+            <button class="btn btn-primary small" id="dlss5InstallBtn" title="Open the DLSS 5 installer (consent step required)">Install DLSS 5…</button>
+            <button class="btn btn-ghost small" id="dlss5CheckBtn" title="Run the DLSS 5 compatibility check (GPU tier, files, HAGS, frame-gen probe)">Check compatibility</button>
+          </div>
+          <div class="wb-dlss-meta">
+            <label><input type="checkbox" id="dlss5ForceChk" style="width:auto"> Force (backup + replace)</label>
+            <button class="btn btn-ghost small" id="dlss5FixBtn" title="Patch Wan2GP's GPU check so workstation cards (RTX PRO, Ada, RTX Ax000) pass DLSS gating — backed up, reversible">Apply workstation GPU fix</button>
+          </div>
+        </div>
+        <div class="wb-dlss-main">
+          <div class="wb-dlss-kicker">INSTALL PIPELINE · strict consent + per-file SHA verification</div>
+          <div class="wb-pipe wb-pipe-lg wb-new">
+            <div class="wb-stage"><div class="wb-stage-ball">1</div><div class="wb-stage-name">Consent</div><div class="wb-stage-sub">third-party risk accepted</div></div>
+            <div class="wb-stage"><div class="wb-stage-ball">2</div><div class="wb-stage-name">Download</div><div class="wb-stage-sub">4 native files</div></div>
+            <div class="wb-stage"><div class="wb-stage-ball">3</div><div class="wb-stage-name">Verify</div><div class="wb-stage-sub">SHA-256 per file</div></div>
+            <div class="wb-stage done"><div class="wb-stage-ball">4</div><div class="wb-stage-name">Activate</div><div class="wb-stage-sub">into dlss5/</div></div>
+          </div>
+          <div class="wb-row wb-dlss-row"><span class="wb-row-label">Compat check</span>
+            <span class="wb-row-val" id="dlss5CheckResult">RTX 40/50 ✓ · dlss5/ empty ✓ · <span style="color:var(--signal-yellow)">HAGS off ✗</span></span>
+            <button class="btn btn-ghost small" id="dlss5DocsLink" title="Open DLSS 5 documentation" onclick="wbToast('dlss5 docs — real opens docs/DLSS5.md')">Docs</button></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">GPU Kernel Wheels</span><span class="env-type-tag">RTX 40 · cu12.8 profile</span>
+        <span style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn btn-ghost small" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF floor). Takes a few minutes — watch the Console.">↻ Update GPU Wheels</button>
+          <button class="btn btn-ghost small" id="restoreKernelsBtn" title="Reinstall setup_config wheels exactly as published — drops launcher overrides. Use when a launcher wheel override misbehaves.">Restore GPU Wheels</button>
+        </span></div>
+      <div style="padding:4px 0 10px">
+        <div class="wb-row"><span class="wb-row-label">nunchaku / gguf-cuda</span><span class="wb-row-val">installed · launcher floor 1.0.25 ✓</span></div>
+        <div class="wb-row"><span class="wb-row-label">SageAttention</span><span class="wb-row-val" style="color:var(--signal-yellow)">fp8 bug → stable build proposed</span>
+          <select class="input" style="width:150px" id="sageSafeSelect" title="SageAttention safe-build channel"><option>safe 1.8.3+</option><option>bleeding edge</option></select>
+          <button class="btn btn-ghost small" id="sageSafeSaveBtn" title="Save the SageAttention rebuild mode → staged change for next wheel/setup_config sync">Save</button></div>
+        <div class="wb-row"><span class="wb-row-label">Managed packages</span>
+          <button class="btn btn-ghost small" id="checkPkgUpdatesBtn" title="Check the pinned launcher-managed packages for new versions">Check for updates</button>
+          <span class="wb-row-val">torch/triton/sage pins healthy · flash-attn not offered (PyPI has no Windows wheels)</span></div>
+        <div class="wb-row"><span class="wb-row-label">lightx2v (RTX 50)</span><span class="wb-row-val">—</span></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">GGUF / CUDA env controls</span><button class="btn btn-primary small" id="ggufSaveBtn" style="margin-left:auto" title="Save GGUF env settings">Save</button></div>
+      <div style="padding:4px 0 10px">
+        <div class="wb-row"><span class="wb-row-label">GGUF env</span><label style="display:flex;gap:6px;align-items:center;font-size:0.75rem"><input type="checkbox" id="ggufEnabled" checked style="width:auto"> enabled</label></div>
+        <div class="wb-row"><span class="wb-row-label">Matmul mode / short batch</span>
+          <select class="input" style="width:140px" id="ggufMatmulMode"><option>auto</option></select>
+          <select class="input" style="width:140px" id="ggufShortBatch"><option>auto</option></select></div>
+        <div class="wb-row"><span class="wb-row-label">AMD</span><label style="display:flex;gap:6px;align-items:center;font-size:0.75rem"><input type="checkbox" id="amdMiopenDisabled" style="width:auto"> disable MiOpen</label>
+          <button class="btn btn-ghost small" id="amdSaveBtn" title="Save AMD env settings">Save AMD</button></div>
+        <div class="wb-row"><span class="wb-row-label">GPU preference</span>
+          <select class="input" style="width:220px" id="gpuDeviceSelect" title="Which GPU the launcher UI runs on"><option>Auto — OS decides</option><option>Integrated</option><option>Dedicated</option><option>Disabled (SwiftShader)</option></select>
+          <button class="btn btn-ghost small" id="gpuDeviceSaveBtn" title="Save GPU device selection for launcher UI" onclick="wbToast('restart required to move WebView2 — noted in toast in real app')">Apply</button></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">pip packages (advanced)</span></div>
+      <div style="padding:6px 14px 14px">
+        <div style="display:flex;gap:6px">
+          <input type="text" id="pipInput" class="input" style="flex:1" placeholder="package (e.g. claude-agent-sdk==0.1.66)" spellcheck="false">
+          <button class="btn btn-primary small" id="pipInstallBtn" title="Install this package into the active environment">pip install</button>
+        </div>
+        <div class="wb-row" style="border:none"><span class="wb-row-val"><code id="pipCmdText">uv pip install … (preview)</code><button class="btn btn-ghost small" id="pipCmdCopy" title="Copy command">copy</button></span></div>
+        <p class="token-hint">Pins allowed (==, &gt;=, ~=). Flags and shell characters are blocked; the exact command is shown.</p>
+      </div>
+    </div>
+  </section>
+
+<!-- ═══════════ PLUGINS ═══════════ -->
+  <section class="wb-view" data-view="plugins">
+    <div class="card">
+      <div class="card-header"><span class="card-title">Wan2GP plugins</span>
+        <span style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn btn-ghost small" id="pluginRefreshBtn" title="Refresh the plugin catalog from GitHub">Refresh catalog</button>
+          <button class="btn btn-ghost small" id="pluginCheckUpdatesBtn" title="Check all plugins for updates">Check updates</button>
+          <button class="btn btn-primary small" id="pluginInstallBtn" title="Install a plugin from a GitHub URL">Install from URL…</button>
+        </span></div>
+      <div style="padding:6px 14px 14px">
+        <input type="text" id="pluginSearchInput" class="input" style="width:300px" placeholder="🔍 search plugins…">
+        <div style="margin-top:8px">
+          <div class="wb-row"><span class="wb-row-label">Status Pro</span><span class="wb-row-val">installed &amp; locked-on · up to date</span><span class="tag-saved">locked</span><button class="btn btn-ghost small">Settings</button><button class="btn btn-ghost small" style="color:var(--signal-red)">Uninstall</button></div>
+          <div class="wb-row"><span class="wb-row-label">deepseek-perf-lab</span><span class="wb-row-val" style="color:var(--signal-blue)">enabled · update available v2.1.0</span><button class="btn btn-ghost small">Update</button><button class="btn btn-ghost small" style="color:var(--signal-red)">Uninstall</button></div>
+          <div class="wb-row"><span class="wb-row-label">wgp-canvas-annotator</span><span class="wb-row-val">enabled · up to date</span><button class="btn btn-ghost small" style="color:var(--signal-red)">Uninstall</button></div>
+        </div>
+        <input type="text" id="pluginUrlInput" class="input" style="width:300px;margin-top:8px" placeholder="https://github.com/…plugin repo URL">
+        <button class="btn btn-ghost small" id="pluginSaveBtn" title="Save plugin preferences">Save prefs</button>
+      </div>
+    </div>
+  </section>
+
+<!-- ═══════════ FILES ═══════════ -->
+  <section class="wb-view" data-view="files">
+    <div class="card">
+      <div class="card-header"><span class="card-title">Install &amp; model folders</span></div>
+      <div style="padding:4px 0 10px">
+        <div class="wb-row"><span class="wb-row-label">Wan2GP install</span><span class="wb-row-val">D:\Wan2GP · 412 GB free</span>
+          <button class="btn btn-ghost small" id="openAppDataBtn" title="Open folder">📂 Open</button>
+          <button class="btn btn-ghost small" id="browseAppDataPath" title="Browse for install folder"><span style="display:flex;align-items:center;gap:6px"><svg class="wb-svg" style="width:13px;height:13px" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"/></svg></span>Browse</button>
+          <button class="btn btn-ghost small" id="clearAppDataPath" title="Reset install folder to default">↺</button>
+          <button class="btn btn-ghost small" id="changeAppDataBtn" title="Move Wan2GP to another location">Move…</button>
+          <button class="btn btn-ghost small" id="moveToPreferredBtn" title="Move to the preferred location">Preferred…</button></div>
+        <div class="wb-row"><span class="wb-row-label">Checkpoints</span><span class="wb-row-val">C:\Wan2GP-Models\checkpoints</span>
+          <button class="btn btn-ghost small" id="openCkptBtn" title="Open folder"><svg class="wb-svg" style="width:14px;height:14px" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder-open"/></svg></button><button class="btn btn-ghost small" id="browseCkptsPath" title="Browse checkpoints folder"><svg class="wb-svg" style="width:14px;height:14px" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"/></svg></button>
+          <button class="btn btn-ghost small" id="clearCkptsPath" title="Reset to default">↺</button><button class="btn btn-ghost small" id="dashBrowseCkpt" title="Change checkpoints folder">Change…</button></div>
+        <div class="wb-row"><span class="wb-row-label">LoRAs</span><span class="wb-row-val">C:\Wan2GP-Models\loras</span>
+          <button class="btn btn-ghost small" id="openLoraBtn" title="Open folder"><svg class="wb-svg" style="width:14px;height:14px" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder-open"/></svg></button><button class="btn btn-ghost small" id="browseLorasPath" title="Browse LoRAs folder"><svg class="wb-svg" style="width:14px;height:14px" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"/></svg></button>
+          <button class="btn btn-ghost small" id="clearLorasPath" title="Reset to default">↺</button><button class="btn btn-ghost small" id="dashBrowseLora" title="Change LoRAs folder">Change…</button></div>
+        <div class="wb-row"><span class="wb-row-label">Output</span><span class="wb-row-val">D:\Wan2GP\samples</span>
+          <button class="btn btn-ghost small" id="openOutputBtn" title="Open folder"><svg class="wb-svg" style="width:14px;height:14px" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder-open"/></svg></button><button class="btn btn-ghost small" id="browseOutputPath" title="Browse output folder"><svg class="wb-svg" style="width:14px;height:14px" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"/></svg></button>
+          <button class="btn btn-ghost small" id="clearOutputPath" title="Reset to default">↺</button><button class="btn btn-ghost small" id="dashBrowseOutput" title="Change output folder">Change…</button></div>
+        <p class="path-hint" style="padding:6px 12px">↻ Restart reminder is preserved: Wan2GP reads these paths only at startup.</p>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">Library — LoRA families &amp; finetunes</span></div>
+      <div style="padding:6px 14px 14px">
+        <div class="wb-row"><span class="wb-row-label">Import</span><input class="input wb-ctl" id="libImportInput" placeholder="path or URL">
+          <button class="btn btn-primary small" id="libImportBtn">Import</button><button class="btn btn-ghost small" id="libRefreshBtn">Refresh</button></div>
+        <div class="wb-row"><span class="wb-row-label">Finetune definitions</span><span class="wb-row-val">14 families loaded</span></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">Data dir</span></div>
+      <div style="padding:6px 14px 14px">
+        <div class="wb-row"><span class="wb-row-label">Roaming check</span><span class="wb-row-val">D:\Wan2GP-Data (not in AppData ✓)</span>
+          <button class="btn btn-ghost small" id="targetBrowseBtn" title="Browse data dir"><svg class="wb-svg" style="width:14px;height:14px" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"/></svg></button>
+          <button class="btn btn-ghost small" id="targetUseModelsBtn" title="Use the models folder as data dir">Use models dir</button></div>
+      </div>
+    </div>
+  </section>
+
+<!-- ═══════════ INSTALLER ═══════════ -->
+  <section class="wb-view" data-view="installer">
+    <div class="card">
+      <div class="card-header"><span class="card-title">Installer — fresh install, repair or migrate</span>
+        <span class="env-type-tag green" id="installSubtitle" style="margin-left:auto">D:\Wan2GP · installed 0.9.3 (mock: re-open state)</span></div>
+      <div style="padding:4px 0 10px">
+        <div class="wb-row wb-new"><span class="wb-row-label">Install location</span><input class="input" id="installAppDataPath" value="D:\Wan2GP" style="flex:1">
+          <button class="btn btn-ghost small" id="browseAppDataPath2" onclick="wbToast('select_folder — real')"><svg class="wb-svg" style="width:14px;height:14px" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"/></svg></button>
+          <span class="wb-row-val" id="installRootWarn" style="flex:0 1 auto"></span></div>
+        <div class="wb-row wb-new"><span class="wb-row-label">Checkpoints</span><input class="input" id="installCkptsPath" value="C:\Wan2GP-Models\checkpoints" style="flex:1"></div>
+        <div class="wb-row wb-new"><span class="wb-row-label">LoRAs</span><input class="input" id="installLorasPath" value="C:\Wan2GP-Models\loras" style="flex:1"></div>
+        <div class="wb-row wb-new"><span class="wb-row-label">Output</span><input class="input" id="installOutputPath" value="D:\Wan2GP\samples" style="flex:1"></div>
+        <div class="wb-row"><span class="wb-row-label">Hardware plan</span>
+          <div class="wb-row-val" style="white-space:normal"><b>RTX 4090 · 24 GB</b> → profile <b>P4 wheels</b> · python 3.11 · uv cache <b>D:\</b>
+          <span class="token-hint">install_plan profiles chosen from detect_gpu (real)</span></div></div>
+        <div class="wb-row"><span class="wb-row-label">Prerequisites</span>
+          <span class="wb-row-val" id="prereqText">Python 3.11 ✓ · Git ✓ · uv ✓ · ffmpeg ✓ — long paths off (not required)</span>
+          <button class="btn btn-ghost small" id="prereqDownloadBtn" title="Download the missing prerequisite">Download missing…</button>
+          <button class="btn btn-ghost small" id="prereqManualBtn" title="Open instructions to install manually">Manual…</button></div>
+        <div class="wb-row"><span class="wb-row-label">Kick off</span>
+          <button class="btn btn-primary" id="installStartBtn" title="Start the install (or repair / migrate in the same flow)"><span style="display:flex;align-items:center;gap:7px"><svg class="wb-svg" style="width:13px;height:13px" fill="currentColor"><use href="#i-play"/></svg></span>Start install</button>
+          <button class="btn btn-ghost small" id="installFollowBtn" title="Auto-scroll the installer console to new output" aria-pressed="true">Follow</button>
+          <span class="wb-row-val" id="installProgress" style="color:var(--signal-green)">✓ would stream into this console (installPkgs list + progress, real)</span></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">Backup gate (real flow)</span>
+        <button class="btn btn-ghost small" id="wsBackupBtn2" onclick="showModal('backupModal')" style="margin-left:auto">Backup before install…</button></div>
+      <div style="padding:6px 14px 14px"><p class="token-hint">Fresh install and migrate both gate on the backup modal (real ids: backupGoBtn / migrationModal) before touching anything.</p></div>
+    </div>
+  </section>
+
+<!-- ═══════════ REMOTE & DEEPY ═══════════ -->
+  <section class="wb-view" data-view="remote">
+    <div class="card">
+      <div class="card-header"><span class="card-title">Deepy (WanGP assistant)</span>
+        <button class="btn btn-primary small" id="deepyApplyBtn" style="margin-left:auto" title="Apply Deepy settings">Apply</button></div>
+      <div style="padding:4px 0 10px">
+        <div class="wb-row"><span class="wb-row-label">Enhancer mode</span><select class="input" style="width:200px" id="deepyEnhancerMode"><option>off</option><option selected>on</option></select>
+          <span class="wb-row-label" style="min-width:100px">Quant</span><select class="input" style="width:140px" id="deepyQuantSelect"><option>int8</option></select></div>
+        <div class="wb-row"><span class="wb-row-label">Prime backend</span><select class="input" style="width:240px" id="deepyPrimeBackendSelect"><option>Qwen3.8 VL 27B (local)</option></select></div>
+        <div class="wb-row"><span class="wb-row-label">Session mode</span><select class="input" style="width:160px" id="deepySessionMode"><option>continue</option><option>fresh</option></select>
+          <select class="input" style="width:190px" id="deepySessionReset" title="Reset or start a new saved Deepy session"><option value="new_session">Start a new saved session</option><option value="reset_session">Reset current session</option></select>
+          <span class="wb-row-label" style="min-width:90px">Gallery</span><select class="input" style="width:120px" id="deepySessionGallery"><option>show</option></select></div>
+        <div class="wb-row"><span class="wb-row-label">Checks</span><button class="btn btn-ghost small" id="deepyChecksRunBtn" title="Run Deepy environment checks">Run checks</button>
+          <span class="wb-row-val">• last friendly run: all pass</span></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">Prompt enhancement</span></div>
+      <div style="padding:6px 14px 14px">
+        <div class="wb-row"><span class="wb-row-label">Template</span><select class="input" style="width:280px" id="promptTemplateSelect"><option> Wan2GP cinematic default</option></select>
+          <button class="btn btn-primary small" id="deepyPromptApplyBtn" title="Write the template back to wgp_config.json">Apply template</button></div>
+        <div class="wb-row"><span class="wb-row-label">Test text</span><input class="input" id="promptCheckInput" style="flex:1" placeholder="paste a prompt to check against the template">
+          <button class="btn btn-ghost small" id="promptCheckBtn" title="Run wgp.py --process on this file">Check</button>
+          <button class="btn btn-ghost small" id="promptCopyBtn" title="Copy the template text">Copy template</button></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">Deepy Web — phone &amp; remote access</span>
+        <span style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn btn-primary small" id="deepyWebStartBtn" title="Start the Deepy Web front-end"><span style="display:flex;align-items:center;gap:6px"><svg class="wb-svg" style="width:11px;height:11px" fill="currentColor"><use href="#i-play"/></svg></span>Start</button>
+          <button class="btn btn-ghost small" id="deepyWebStopBtn" title="Stop the Deepy Web front-end">■ Stop</button>
+        </span></div>
+      <div style="padding:4px 0 10px">
+        <div class="wb-row"><span class="wb-row-label">Port</span><input class="input" style="width:110px" id="deepyWebPortInput" value="5099"><button class="btn btn-ghost small" id="deepyWebPortSave" title="Save Deepy Web port">Save</button>
+          <span class="wb-row-label" style="min-width:80px">Extra args</span><input class="input" id="deepyWebExtraArgsInput" placeholder="--listen" style="flex:1"></div>
+        <div class="wb-row"><span class="wb-row-label">Auth key</span><input class="input" style="width:200px" id="deepyWebKeyInput" placeholder="(hidden)">
+          <label style="font-size:0.72rem;display:flex;gap:6px"><input type="checkbox" id="deepyWebAuthFixed" style="width:auto"> fixed</label>
+          <input class="input" style="width:90px" id="deepyWebAuthLen" value="16" title="Auth key length">
+          <label style="font-size:0.72rem;display:flex;gap:6px"><input type="checkbox" id="deepyWebAuthRemember" style="width:auto"> remember</label></div>
+        <div class="wb-row"><span class="wb-row-label">Auth key actions</span>
+          <button class="btn btn-ghost small" id="deepyWebAuthGen" title="Generate a new auth key">Generate</button>
+          <button class="btn btn-ghost small" id="deepyWebAuthShow" title="Show the stored auth key">Show</button>
+          <button class="btn btn-ghost small" id="deepyWebAuthForget" title="Forget the stored auth key">Forget</button></div>
+        <div class="wb-row"><span class="wb-row-label">HTTPS cert</span><input class="input" style="flex:1" id="deepyWebCertInput" placeholder="— none —">
+          <button class="btn btn-ghost small" id="deepyWebCertCreate" title="Create a self-signed certificate">Create</button>
+          <button class="btn btn-ghost small" id="deepyWebCertBring" title="Use your own certificate (cert/key staged into Deepy Web data dir)">Bring own…</button></div>
+        <div class="wb-row"><span class="wb-row-label">Public URL</span><input class="input" style="flex:1" id="deepyWebPublicUrlInput" placeholder="https://wan.tunnel.example">
+          <button class="btn btn-ghost small" id="netUrlValidateBtn" title="Validate and stage --public-url">Validate</button></div>
+        <div class="wb-row"><span class="wb-row-label">Access links</span>
+          <span style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-ghost small" id="deepyWebSamePcOpen" title="Open Deepy Web on this PC (localhost)">Open same-PC</button>
+            <button class="btn btn-ghost small" id="deepyWebSamePcCopy" title="Copy same-PC URL">Copy</button>
+            <button class="btn btn-ghost small" id="deepyWebSamePcQr" title="Show QR code same-PC">QR</button>
+            <button class="btn btn-ghost small" id="deepyWebPhoneOpen" title="Open Deepy Web from phone (LAN URL)">Open phone</button>
+            <button class="btn btn-ghost small" id="deepyWebPhoneCopy" title="Copy phone URL">Copy</button>
+            <button class="btn btn-ghost small" id="deepyWebPhoneQr" title="QR code phone">QR</button>
+            <button class="btn btn-ghost small" id="deepyWebTailnetOpen" title="Open Deepy Web via Tailscale/Tailnet">Open tailnet</button>
+            <button class="btn btn-ghost small" id="deepyWebTailnetCopy" title="Copy tailnet URL">Copy</button>
+            <button class="btn btn-ghost small" id="deepyWebTailnetQr" title="QR code tailnet">QR</button>
+            <button class="btn btn-ghost small" id="deepyWebExternalOpen" title="Open Deepy Web from outside your network (staged --public-url)">Open external</button>
+            <button class="btn btn-ghost small" id="deepyWebExternalCopy" title="Copy the external URL">Copy ext</button>
+            <button class="btn btn-ghost small" id="deepyWebExternalQr" title="QR code external URL">QR ext</button>
+            <button class="btn btn-ghost small" id="deepyWebOutputsBtn" title="Open Deepy Web outputs folder">Outputs 📂</button>
+          </span></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">Wan2GP LAN access (main URL)</span></div>
+      <div style="padding:4px 0 10px">
+        <div class="wb-row"><span class="wb-row-label">LAN toggle</span><label style="font-size:0.75rem;display:flex;gap:6px"><input type="checkbox" id="mainLanToggle" style="width:auto"> publish LAN URL</label></div>
+        <div class="wb-row"><span class="wb-row-label">HTTPS stage</span>
+          <input class="input" style="width:130px" id="netHttpsPortInput" placeholder="https port" title="--https-port">
+          <input class="input" style="width:150px" id="netCertInput" placeholder="cert.pem" title="--ssl-certfile">
+          <input class="input" style="width:150px" id="netKeyInput" placeholder="key.pem" title="--ssl-keyfile">
+          <input class="input" style="width:180px" id="netPublicUrlInput" placeholder="public URL" title="public URL staged to wgp_config.json">
+          <button class="btn btn-ghost small" id="netTlsStageBtn" title="Stage --ssl-certfile/--ssl-keyfile/--https-port">Stage TLS…</button></div>
+        <div class="wb-row"><span class="wb-row-label">Links</span>
+          <span style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-ghost small" id="mainLanSamePcOpen" title="Open main URL on this PC">Open same-PC</button>
+            <button class="btn btn-ghost small" id="mainLanSamePcCopy" title="Copy main URL">Copy</button>
+            <button class="btn btn-ghost small" id="mainLanPhoneOpen" title="Open main URL from phone">Open phone</button>
+            <button class="btn btn-ghost small" id="mainLanPhoneCopy" title="Copy phone URL">Copy</button>
+            <button class="btn btn-ghost small" id="mainLanPhoneQr" title="QR main URL phone">QR</button>
+            <button class="btn btn-ghost small" id="mainLanPhoneDeepyCopy" title="Copy Deepy URL for phone">Deepy copy</button>
+            <button class="btn btn-ghost small" id="mainLanPhoneDeepyOpen" title="Open Deepy URL for phone">Deepy open</button>
+          </span></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">Log server (share console)</span></div>
+      <div style="padding:4px 0 10px">
+        <div class="wb-row"><span class="wb-row-label">HTTP log feed</span><label style="font-size:0.75rem;display:flex;gap:6px"><input type="checkbox" id="logServerToggle" style="width:auto"> on</label>
+          <input class="input" style="width:110px" id="logServerPortInput" value="4097">
+          <label style="font-size:0.75rem;display:flex;gap:6px"><input type="checkbox" id="logServerLanToggle" style="width:auto"> LAN</label>
+          <button class="btn btn-ghost small" id="logServerSave" title="Save log server settings">Save</button>
+          <button class="btn btn-ghost small" id="logServerSamePcOpen" title="Open log URL same-PC">Open</button>
+          <button class="btn btn-ghost small" id="logServerSamePcCopy" title="Copy log URL">Copy</button>
+          <button class="btn btn-ghost small" id="logServerPhoneOpen" title="Open log URL from phone (LAN)">Phone</button>
+          <button class="btn btn-ghost small" id="logServerPhoneCopy" title="Copy phone URL">Copy</button>
+          <button class="btn btn-ghost small" id="logServerPhoneQr" title="Log URL QR phone">QR</button></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">LLM engines</span><button class="btn btn-ghost small" id="llmEnginesRefresh" style="margin-left:auto" title="Refresh engine list">⟳ Refresh</button></div>
+      <div style="padding:4px 0 10px">
+        <div class="wb-row"><span class="wb-row-label">Claude bridge</span><span class="wb-row-val">claudelite 0.1.66 installed</span>
+          <button class="btn btn-ghost small">Serve</button><button class="btn btn-ghost small">Auth</button><button class="btn btn-ghost small" style="color:var(--signal-red)">Uninstall</button></div>
+        <div class="wb-row"><span class="wb-row-label">Ollama</span><span class="wb-row-val">not installed</span><button class="btn btn-ghost small">Install</button></div>
+        <div class="wb-row"><span class="wb-row-label">MCP config</span>
+          <input class="input" style="width:150px" id="mcpHost" placeholder="host 127.0.0.1">
+          <input class="input" style="width:90px" id="mcpPort" value="4096">
+          <select class="input" style="width:130px" id="mcpTransport"><option>http</option></select>
+          <input class="input" id="mcpApi" placeholder="api key (optional)" style="max-width:160px">
+          <input class="input" style="flex:0 1 120px" id="mcpCommand" placeholder="command">
+          <button class="btn btn-ghost small" id="mcpCopyBtn" title="Copy MCP config">Copy</button></div>
+      </div>
+    </div>
+  </section>
+
+<!-- ═══════════ SETTINGS ═══════════ -->
+  <section class="wb-view" data-view="setup">
+    <div class="card">
+      <div class="card-header"><span class="card-title">API access</span></div>
+      <div style="padding:6px 14px 14px">
+        <div class="wb-row"><span class="wb-row-label">GitHub token</span><input type="password" class="input" id="githubTokenInput" placeholder="ghp_..." style="flex:1">
+          <button class="btn btn-primary small" id="tokenSaveBtn" title="Save GitHub token locally">Save</button><button class="btn btn-ghost small" id="tokenClearBtn" title="Remove saved GitHub token">Clear</button></div>
+        <div class="wb-row"><span class="wb-row-label">HuggingFace token</span><input type="password" class="input" id="hfTokenInput" placeholder="hf_..." style="flex:1">
+          <button class="btn btn-primary small" id="hfTokenSaveBtn" title="Save HuggingFace token (needed for gated models)">Save</button><button class="btn btn-ghost small" id="hfTokenClearBtn" title="Remove saved HuggingFace token">Clear</button></div>
+        <div class="wb-row"><span class="wb-row-label">Claude API key</span><input type="password" class="input" id="claudeApiKeyInput" placeholder="sk-ant-..." style="flex:1">
+          <button class="btn btn-primary small" id="claudeApiKeySaveBtn" title="Save Anthropic API key locally">Save</button><button class="btn btn-ghost small" id="claudeApiKeyClearBtn" title="Remove saved Anthropic API key">Clear</button></div>
+        <p class="token-hint" style="padding:0 12px 6px">Same hints as today (rate limits, gated models, API-vs-OAuth billing note) — tooltips carry the full text.</p>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">Launch options</span></div>
+      <div style="padding:6px 14px 14px">
+        <div class="wb-row"><span class="wb-row-label">Launch args</span><input class="input" id="launchArgsInput" placeholder="--context-attention, --freetype" style="flex:1">
+          <button class="btn btn-primary small" id="launchArgsSaveBtn" title="Save launch arguments">Save</button></div>
+        <div class="wb-row"><span class="wb-row-label">Server port</span><input class="input" id="portInput" value="7860" style="width:110px">
+          <button class="btn btn-ghost small" id="portSaveBtn" title="Save server port">Save</button>
+          <span class="wb-row-label" style="min-width:120px">Server name</span><select class="input" style="width:180px" id="serverNameSelect"><option>wan2gp · default</option></select>
+          <button class="btn btn-ghost small" id="serverNameSaveBtn" title="Save server name">Save</button></div>
+        <div class="wb-row"><span class="wb-row-label">Embed mode</span><select class="input" style="width:220px" id="embedModeSelect" title="How Wan2GP appears inside the launcher"><option>Embedded webview (current)</option><option>External browser</option></select>
+          <button class="btn btn-ghost small" id="embedModeSaveBtn" title="Save embed mode">Save</button>
+          <label style="font-size:0.72rem;display:flex;gap:6px"><input type="checkbox" id="embedModeTop" style="width:auto"> launch embedded by default on top</label></div>
+        <div class="wb-row"><span class="wb-row-label">Launcher GPU</span><select class="input" style="width:230px" id="launcherGpuSelect" title="Which GPU the launcher UI itself uses"><option>Auto</option><option>Integrated (iGPU)</option><option>Dedicated (dGPU)</option><option>Disabled (SwiftShader)</option></select>
+          <button class="btn btn-ghost small" id="launcherGpuSaveBtn" title="Save launcher GPU preference">Save</button></div>
+        <div class="wb-row"><span class="wb-row-label">Share app</span><label style="font-size:0.75rem;display:flex;gap:6px"><input type="checkbox" id="shareToggle" style="width:auto"> opt in to anonymous usage sharing</label></div>
+        <div class="wb-row"><span class="wb-row-label">Window mode</span>
+          <select id="windowModeSelect" class="input" style="width:230px" title="How the launcher window appears on startup — applies now and on every launch. Settings stay reachable in fullscreen via the top bar.">
+            <option value="windowed">Windowed (resizable, ~1280×800)</option><option value="maximized" selected>Maximized (default)</option><option value="fullscreen">Fullscreen (hides Windows chrome)</option></select>
+          <span class="appear-val" id="windowModeStatus"></span></div>
+        <div class="wb-row"><span class="wb-row-label">Auto-update check</span><label style="font-size:0.75rem;display:flex;gap:6px"><input type="checkbox" id="autoUpdateToggle" style="width:auto" checked> quietly check for a new version on launch (never auto-installs)</label></div>
+        <div class="wb-row"><span class="wb-row-label">Auto-start with Windows</span><label style="font-size:0.75rem;display:flex;gap:6px"><input type="checkbox" id="autoStartToggle" style="width:auto"> start launcher on login</label></div>
+        <div class="wb-row"><span class="wb-row-label">Debug view bounds</span><label style="font-size:0.75rem;display:flex;gap:6px"><input type="checkbox" id="debugBoundsChk" style="width:auto"> overlay child-webview bounds (debug)</label></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">Notifications</span></div>
+      <div style="padding:6px 14px 14px">
+        <div class="wb-row"><span class="wb-row-label">Enable</span><label style="font-size:0.75rem;display:flex;gap:6px"><input type="checkbox" id="notificationsToggle" checked style="width:auto"> desktop notifications</label>
+          <span class="wb-row-label" style="min-width:130px">Follow system theme</span><label style="font-size:0.75rem;display:flex;gap:6px"><input type="checkbox" id="followSystemThemeToggle" style="width:auto"></label></div>
+        <div class="wb-row"><span class="wb-row-label">Native (Apprise)</span><input class="input" id="nativeNotifUrls" placeholder="ntfys://topic discord://webhook …" style="flex:1">
+          <button class="btn btn-primary small" id="nativeNotifSaveBtn" title="Save native notification settings to wgp_config.json">Save</button>
+          <button class="btn btn-ghost small" id="nativeNotifTestBtn" title="Send a test notification to the entered destinations">Send test</button>
+          <button class="btn btn-ghost small" id="nativeNotifEnsureBtn" title="Install Apprise + keyring into the active environment">Install Apprise</button></div>
+        <div class="wb-row"><span class="wb-row-label">Native events</span>
+          <label style="font-size:0.72rem;display:flex;gap:5px"><input type="checkbox" id="nativeNotifOnGeneration" style="width:auto"> per-gen</label>
+          <label style="font-size:0.72rem;display:flex;gap:5px"><input type="checkbox" id="nativeNotifOnQueueComplete" style="width:auto"> queue done</label>
+          <label style="font-size:0.72rem;display:flex;gap:5px"><input type="checkbox" id="nativeNotifOnQueueInterrupted" style="width:auto"> interrupted</label>
+          <label style="font-size:0.72rem;display:flex;gap:5px"><input type="checkbox" id="nativeNotifSecure" checked style="width:auto"> store in Credential Manager</label></div>
+        <div class="wb-row"><span class="wb-row-label">Legacy notifier</span>
+          <label style="font-size:0.72rem;display:flex;gap:5px"><input type="checkbox" id="notifEnabled" style="width:auto"> enable</label>
+          <label style="font-size:0.72rem;display:flex;gap:5px"><input type="checkbox" id="notifOnComplete" checked style="width:auto"> completion</label>
+          <label style="font-size:0.72rem;display:flex;gap:5px"><input type="checkbox" id="notifOnFail" checked style="width:auto"> failure</label>
+          <label style="font-size:0.72rem;display:flex;gap:5px"><input type="checkbox" id="notifOnProgress" style="width:auto"> progress</label>
+          <input class="input" id="notifProgressStep" value="25" style="width:70px" title="progress step %">
+          <input class="input" id="notifUrl" placeholder="ntfys://legacy…" style="width:170px">
+          <button class="btn btn-ghost small" id="notifEnsureBtn" title="Install notifier dependency">Install</button>
+          <button class="btn btn-ghost small" id="notifSaveBtn" title="Save notifier settings">Save</button>
+          <button class="btn btn-ghost small" id="notifTestBtn" title="Send test notification">Test</button></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">Appearance</span></div>
+      <div style="padding:6px 14px 14px">
+        <div class="wb-row wb-new"><span class="wb-row-label">Layout theme</span>
+          <select class="input" style="width:300px" id="layoutThemeSelect" title="Choose the launcher shell layout. Real: saved as layoutTheme in desktop-config.json, applied live and on launch">
+            <option value="classic">Classic — simplified demo of the stacked layout</option>
+            <option value="real08">Original 0.10.8 — the real current app layout</option>
+            <option value="workbench">Workbench — October 2026 mockup</option>
+            <option value="deck">Command Deck — option B (horizontal strip)</option>
+            <option value="duo" disabled>Duo — option C (planned)</option>
+          </select>
+          <span class="wb-row-val" id="layoutThemeStatus">workbench · saved</span>
+          <button class="btn btn-ghost small" id="layoutThemeApplyBtn" title="Re-apply the selected shell right now (real: class-based shells swap without restart)">Apply now</button></div>
+        <div class="wb-row"><span class="wb-row-label">UI scale</span><input type="range" id="uiScaleInput" min="85" max="130" step="5" value="100" style="width:180px"><span class="wb-row-val" style="flex:0 0 auto">100%</span>
+          <span class="wb-row-label" style="min-width:110px">Terminal scale</span><input type="range" id="termScaleInput" min="85" max="150" step="5" value="100" style="width:180px"><span class="wb-row-val" style="flex:0 0 auto">100%</span></div>
+        <div class="wb-row"><span class="wb-row-label">Zoom</span><input type="range" id="zoomSlider" min="60" max="140" value="100" style="width:180px">
+          <span class="wb-row-label" style="min-width:120px">Queue row colors</span><select class="input" style="width:220px" id="queueColorsSelect"><option>Pastel rainbow (upstream default)</option><option>Theme grey</option></select></div>
+        <div class="wb-row"><span class="wb-row-label">Custom theme editor</span>
+          <input type="color" id="customAccentInput" value="#15805d" style="width:auto"><input type="text" class="input" id="customAccentHex" value="#15805d" maxlength="7" style="width:80px">
+          <input type="color" id="customBgInput" value="#142d26" style="width:auto"><input type="text" class="input" id="customBgHex" value="#142d26" maxlength="7" style="width:80px">
+          <input type="color" id="customTextInput" value="#e0f8eb" style="width:auto"><input type="text" class="input" id="customTextHex" value="#e0f8eb" maxlength="7" style="width:80px"></div>
+        <div class="wb-row"><span class="wb-row-label">Editor actions</span>
+          <button class="btn btn-primary small" id="customSaveBtn" title="Save these 3 colors into the selected theme">Save theme</button>
+          <button class="btn btn-ghost small" id="customDefaultBtn" title="Make this theme the startup default">Set as default</button>
+          <button class="btn btn-ghost small" id="customResetBtn" title="Restore this theme's shipped colors">Reset</button></div>
+      </div>
+    </div>
+  </section>
+
+<!-- ═══════════ SYSTEM ═══════════ -->
+  <section class="wb-view" data-view="system">
+    <div class="card">
+      <div class="card-header"><span class="card-title">Updates</span>
+        <span style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn btn-ghost small" id="updateCheckBtn2" onclick="wbToast('real: same updateCheckBtn wired twice in this mock')">Check now</button>
+          <button class="btn btn-primary small" id="manageUpdateDesktopBtn2" onclick="wbToast('install_update flow')">Install 0.10.11</button>
+        </span></div>
+      <div style="padding:4px 0 10px">
+        <div class="wb-row"><span class="wb-row-label">Channel</span><span class="wb-row-val">signed updater · passive install · endpoint latest.json</span></div>
+        <div class="wb-row"><span class="wb-row-label">Upstream core</span><span class="wb-row-val">2 commits behind Deepy's latest</span><button class="btn btn-ghost small" id="manageUpdateWan2gpBtn2" onclick="wbToast('update command — real')">Pull core</button></div>
+        <div class="wb-row"><span class="wb-row-label">Install again</span><button class="btn btn-ghost small" id="manageRunSetupBtn" title="Re-open the installer: fresh install, repair or migrate">Re-open installer…</button></div>
+        <div class="wb-row"><span class="wb-row-label">Old launcher</span><span class="wb-row-val">Electron twin not detected</span><button class="btn btn-ghost small" id="removeElectronBtn2" onclick="wbToast('same flow as Components → env dup')">Scan…</button></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">Diagnostics &amp; troubleshoot</span><label style="margin-left:auto;font-size:0.72rem;display:flex;gap:6px"><input type="checkbox" id="tsVerboseChk" style="width:auto"> verbose</label></div>
+      <div style="padding:4px 0 10px">
+        <div class="wb-row"><span class="wb-row-label">GPU</span>
+          <button class="btn btn-ghost small" id="tsCudaBtn" title="Run a torch + CUDA smoke test in the active environment">CUDA smoke test</button>
+          <button class="btn btn-ghost small" id="tsComputeBtn" title="Verify the GPU can actually run compute workloads">Compute check</button>
+          <button class="btn btn-ghost small" id="tsVramListBtn" title="Per-process VRAM usage (scripts/gpumem.cmd) — WDDM hides it from nvidia-smi">VRAM by process</button>
+          <button class="btn btn-ghost small" id="tsVramTrimBtn" title="Ask Windows to trim idle VRAM allocations (screen may briefly flash)">Trim idle VRAM</button></div>
+        <div class="wb-row"><span class="wb-row-label">Failsafe / RAM</span>
+          <button class="btn btn-ghost small" id="tsFailsafeBtn" title="Apply the failsafe profile">Failsafe profile</button>
+          <button class="btn btn-ghost small" id="tsFailsafeP5Btn" title="Force P5 minimum-compatibility profile">Force P5</button>
+          <button class="btn btn-ghost small" id="tsLowerRamBtn" title="Lower RAM pressure settings">Lower RAM</button>
+          <button class="btn btn-ghost small" id="tsHeadSplitBtn" title="Toggle attention head split">Head split</button>
+          <button class="btn btn-ghost small" id="tsKnownGoodBtn" title="Show known-good combos">Known-good…</button>
+          <button class="btn btn-ghost small" id="tsKnownGoodApplyBtn" title="Apply the selected known-good combo">Apply</button></div>
+        <div class="wb-row"><span class="wb-row-label">Triton</span>
+          <button class="btn btn-ghost small" id="tsTritonTestBtn" title="Test triton-windows installation">Test</button>
+          <button class="btn btn-ghost small" id="tsTritonSdpaBtn" title="Fall back to SDPA (no Triton)">SDPA fallback</button>
+          <button class="btn btn-ghost small" id="tsTritonClearBtn" title="Clear Triton test artifacts">Clear artifacts</button></div>
+        <div class="wb-row"><span class="wb-row-label">Ports / paths</span>
+          <button class="btn btn-ghost small" id="tsPortCheckBtn" title="Check who is on the port">Check port</button>
+          <button class="btn btn-ghost small" id="tsPortKillBtn" title="Kill the process on the port">Kill holder</button>
+          <button class="btn btn-ghost small" id="tsPortBumpBtn" title="Bump to a free port">Bump port</button>
+          <button class="btn btn-ghost small" id="tsLongPathsBtn" title="Enable long-path support on Windows">Long paths</button>
+          <button class="btn btn-ghost small" id="tsDebugCopyBtn" title="Copy the debug info block to the clipboard">Copy debug info</button></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">Cache &amp; storage</span></div>
+      <div style="padding:4px 0 10px">
+        <div class="wb-row"><span class="wb-row-label">uv cache</span><span class="wb-row-val">18.4 GB</span>
+          <button class="btn btn-ghost small" id="uvCacheSizeBtn" title="Show uv cache size">Size</button>
+          <button class="btn btn-ghost small" id="uvCachePurgeBtn" title="Purge the uv cache">Purge</button>
+          <button class="btn btn-ghost small" id="uvCacheRemoveBtn" title="Remove the uv cache entirely">Remove</button></div>
+        <div class="wb-row"><span class="wb-row-label">Config backups</span><span class="wb-row-val">4 stored · auto on every save</span>
+          <button class="btn btn-ghost small" id="cfgBackupsRefreshBtn" title="Refresh the config backups list">Refresh list</button></div>
+        <div class="wb-row"><span class="wb-row-label">Logs</span><button class="btn btn-ghost small" id="logExportBtn2" onclick="wbToast('export_logs — real')">Export logs</button>
+          <button class="btn btn-ghost small" id="copyDiagnosticsBtn" title="Copy full diagnostics to the clipboard">Copy diagnostics</button>
+          <button class="btn btn-ghost small" id="reportIssueBtn" title="Open a pre-filled issue report">Report issue</button>
+          <button class="btn btn-ghost small" id="repairSettingsBtn" title="Scan & Repair Settings — fixes 'Value: N is not in the list of choices' errors in wgp_config.json">Scan &amp; repair settings</button></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px;border-color:var(--signal-red)">
+      <div class="card-header"><span class="card-title" style="color:var(--signal-red)">Danger zone</span></div>
+      <div style="padding:6px 14px 14px">
+        <div class="wb-row"><span class="wb-row-label">Uninstall Wan2GP</span><span class="wb-row-val">keeps models unless you opt out</span>
+          <button class="btn btn-ghost small" id="uninstallBtn" style="color:var(--signal-red)" onclick="showModal('uninstallModal')">Uninstall…</button></div>
+        <div class="wb-row"><span class="wb-row-label">Desktop shortcut</span><button class="btn btn-ghost small" id="desktopShortcutBtn" title="Create a desktop shortcut">Recreate</button></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ═══════════ MODALS (real ones, real ids) ═══════════ -->
+<div id="dlss5Modal" class="modal-overlay hidden" onclick="if(event.target===this)hideModal('dlss5Modal')">
+  <div class="modal-box">
+    <h3 style="margin:0 0 8px">Install DLSS 5 runtime?</h3>
+    <p class="path-hint">This downloads and runs native third-party binaries — NVIDIA DLSS, ReShade, RenoDX and DLSSNR 310.8.SF-v2. They are community-hosted, unsigned and proprietary, with GPU and filesystem access. Wan2GP grants no redistribution rights and guarantees nothing about these files. Details: docs/DLSS5.md</p>
+    <label class="path-hint" style="display:flex;gap:8px;align-items:flex-start;margin:10px 0 12px;cursor:pointer"><input type="checkbox" id="dlss5AcceptChk"> <span>I accept the copyright, licensing, and security risks above.</span></label>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-ghost" id="dlss5CancelBtn" onclick="hideModal('dlss5Modal')">Cancel</button>
+      <button class="btn btn-primary" id="dlss5ConfirmBtn" disabled title="Download and run the DLSS 5 installer">Install</button>
+    </div>
+  </div>
+</div>
+
+<div id="uninstallModal" class="modal-overlay hidden" onclick="if(event.target===this)hideModal('uninstallModal')">
+  <div class="modal-box">
+    <h3 style="margin:0 0 8px">Uninstall Wan2GP?</h3>
+    <p class="path-hint">Removes the environment and launcher-managed files. Type <b>UNINSTALL</b> to confirm.</p>
+    <input class="input" id="uninstallAgreeInput" placeholder="type UNINSTALL" style="width:240px">
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+      <button class="btn btn-ghost" id="uninstallCancelBtn" onclick="hideModal('uninstallModal')">Cancel</button>
+      <button class="btn btn-ghost" id="uninstallCloseBtn" title="Close without acting">✕</button>
+      <button class="btn btn-primary" id="uninstallKeepBtn" onclick="hideModal('uninstallModal');wbToast('keep models path — sweep runs')">Uninstall (keep models)</button>
+      <button class="btn btn-primary" id="uninstallDeleteBtn" style="background:var(--signal-red)" onclick="hideModal('uninstallModal');wbToast('delete everything — sweep runs')">Uninstall (delete all)</button>
+    </div>
+  </div>
+</div>
+
+<div id="migrationModal" class="modal-overlay hidden" onclick="if(event.target===this)hideModal('migrationModal')">
+  <div class="modal-box">
+    <h3 style="margin:0 0 8px">Move Wan2GP to a new location</h3>
+    <p class="path-hint">Choose which folders travel with the move:</p>
+    <div class="wb-row"><label><input type="checkbox" id="migCkpts" checked style="width:auto"> Checkpoints</label>
+      <label><input type="checkbox" id="migLoras" checked style="width:auto"> LoRAs</label>
+      <label><input type="checkbox" id="migOutput" checked style="width:auto"> Output</label>
+      <label><input type="checkbox" id="migDataDir" checked style="width:auto"> Data dir</label></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+      <button class="btn btn-ghost" id="migrationCancelBtn" onclick="hideModal('migrationModal')">Cancel</button>
+      <button class="btn btn-ghost" id="migrationCloseBtn" title="Close">✕</button>
+      <button class="btn btn-primary" id="migrationMoveBtn" title="Move the whole install">Move + reconfigure</button>
+      <button class="btn btn-ghost" id="migrationPointBtn" title="Just point the launcher at the existing folder">Point only</button>
+    </div>
+  </div>
+</div>
+
+<div id="backupModal" class="modal-overlay hidden" onclick="if(event.target===this)hideModal('backupModal')">
+  <div class="modal-box">
+    <h3 style="margin:0 0 8px">Backup before install/update</h3>
+    <label class="path-hint" style="display:flex;gap:8px"><input type="checkbox" id="backupIncludeCheckbox" checked style="width:auto"> Include models in backup</label>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+      <button class="btn btn-ghost" id="backupCancelBtn" onclick="hideModal('backupModal')">Cancel</button>
+      <button class="btn btn-primary" id="backupGoBtn">Backup &amp; continue</button>
+    </div>
+    <p class="path-hint"><button class="btn btn-ghost small" id="backupSkipBtn" style="display:inline">Skip backup</button>
+      <button class="btn btn-ghost small" id="wsBackupBtn" title="Open the workspace backup (protect current wgp_config + workspace)" style="display:inline">Workspace backup…</button>
+      <button class="btn btn-ghost small" id="backupCloseBtn" onclick="hideModal('backupModal')" style="display:inline">Close</button></p>
+  </div>
+</div>
+
+<div id="driftModal" class="modal-overlay hidden" onclick="if(event.target===this)hideModal('driftModal')">
+  <div class="modal-box">
+    <h3 style="margin:0 0 8px">Dependency drift after upstream update</h3>
+    <p class="path-hint">A pinned override (GGUF floor 1.0.25) differs from upstream requirements. Restore upstream or keep the pin?</p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+      <button class="btn btn-ghost" id="driftDismissBtn" title="Hide this warning for now. It will reappear on the next update if drift is still detected.">Dismiss</button>
+      <button class="btn btn-primary" id="driftRestoreBtn" title="Reinstall all pinned packages from requirements.txt to fix missing or outdated dependencies. Takes a few minutes — watch the Console.">Restore requirements</button>
+    </div>
+  </div>
+</div>
+
+<div id="pinOverrideModal" class="modal-overlay hidden" onclick="if(event.target===this)hideModal('pinOverrideModal')">
+  <div class="modal-box">
+    <h3 style="margin:0 0 8px">Upgrade despite the pin?</h3>
+    <p class="path-hint">This package is pinned by the launcher for a reason (known Sage bug). Upgrading may return the bug.</p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+      <button class="btn btn-ghost" id="pinOverrideCancelBtn" onclick="hideModal('pinOverrideModal')">Cancel</button>
+      <button class="btn btn-ghost" id="pinOverrideCloseBtn" title="Close">✕</button>
+      <button class="btn btn-primary" id="pinOverrideYesBtn" onclick="hideModal('pinOverrideModal');wbToast('upgraded despite pin — your risk')">Upgrade anyway</button>
+    </div>
+  </div>
+</div>
+
+<div id="qrModal" class="modal-overlay hidden" onclick="if(event.target===this)hideModal('qrModal')">
+  <div class="modal-box" style="text-align:center">
+    <h3 style="margin:0 0 10px">Scan to open</h3>
+    <div style="width:160px;height:160px;margin:0 auto;background:conic-gradient(#000 0 25%,#fff 0 50%,#000 0 75%,#fff 0);border-radius:8px" title="mock QR"></div>
+    <p class="path-hint">http://10.0.0.7:5099</p>
+    <button class="btn btn-ghost small" id="deepyWebQrClose" onclick="hideModal('qrModal')">Close</button>
+  </div>
+</div>
+
+<div class="wb-toast" id="wbToast"><span class="wb-toast-ico">✓</span><span class="wb-toast-msg">mockup only — nothing here touches the real app</span></div>
+
+<!-- ═══ REAL 0.10.8 ORIGINAL LAYOUT (loaded on demand from ../src/index.html) ═══ -->
+<iframe id="wbOriginFrame" class="wb-origin-frame wb-new" title="Original 0.10.8 launcher layout — the real app files, read-only demo" data-src="../src/index.html"></iframe>
+
+<script>
+// ── mock-only logic (no Tauri, no w2gp bridge) ─────────────────────
+const $ = (id) => document.getElementById(id);
+const titles = {
+  home:    ["Home", "Launch Wan2GP and see what needs your attention."],
+  guide:   ["Guide", "What to make, which model and settings to pick."],
+  tune:    ["Auto-Tune", "Hardware-calibrated performance — written to wgp_config.json on Apply."],
+  comps:   ["Components", "Environments, kernel wheels, DLSS 5, pip — one install language."],
+  plugins: ["Plugins", "Wan2GP plugins: enable, install, update, uninstall."],
+  files:   ["Files", "Install location, model folders, library, data dir."],
+  installer: ["Installer", "Fresh install, repair or migrate — the setup screen lives here instead of a modal takeover."],
+  remote:  ["Remote & Deepy", "Assistant, prompt tools, phone/remote access, LLM engines."],
+  setup:   ["Settings", "Tokens, launch options, window mode, notifications, appearance."],
+  system:  ["System", "Updates, diagnostics, cache, backups, uninstall."],
+};
+
+function toast(msg) {
+  const t = $("wbToast"); t.querySelector(".wb-toast-msg").textContent = msg; t.classList.add("wb-show");
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("wb-show"), 2400);
+}
+const wbToast = toast;
+function go(view) {
+  // real-original mode: the mock shell is hidden behind the real app iframe
+  if (document.body.classList.contains("wb-origin")) return;
+  // classic layout demo: rail is hidden, all sections stack — so "go" scrolls instead of showing
+  if (document.body.classList.contains("wb-classic")) {
+    const sec = document.querySelector('.wb-view[data-view="' + view + '"]');
+    if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    $("wbTitle").textContent = titles[view][0];
+    return;
+  }
+  document.querySelectorAll(".wb-view").forEach(v => v.classList.toggle("wb-show", v.dataset.view === view));
+  document.querySelectorAll(".wb-item").forEach(i => i.classList.toggle("wb-active", i.dataset.view === view));
+  $("wbTitle").textContent = titles[view][0];
+  $("wbSubtitle").textContent = titles[view][1];
+  document.querySelector(".wb-view.wb-show").scrollTop = 0;
+  // running-state topbar affordances (real topbar buttons live here)
+  $("backToDashboardBtn").style.display = "none";
+}
+function showModal(id) { $(id).classList.remove("hidden"); }
+function hideModal(id) { $(id).classList.add("hidden"); }
+
+// ═══ Layout theme (mock of the real layoutTheme setting in desktop-config.json) ═══
+// real: shell picks which markup mounts; both shells reuse the same ids + tab handlers
+const LAYOUT_KEY = "w2gp.layoutThemeDemo";
+function applyLayout(theme) {
+  document.body.classList.toggle("wb-classic", theme === "classic");
+  document.body.classList.toggle("wb-deck", theme === "deck");
+  document.body.classList.toggle("wb-origin", theme === "real08");
+  if (theme === "real08") { // lazy-load the real app files only when first selected
+    const f = $("wbOriginFrame"); if (!f.src) f.src = f.dataset.src;
+  }
+  // section headings for stacked classic mode come from the existing titles table
+  document.querySelectorAll(".wb-view").forEach(v => {
+    const t = titles[v.dataset.view]; if (t) v.setAttribute("data-heading", t[0]);
+  });
+  $("layoutThemeStatus").textContent = theme + " · saved (mock)";
+  $("layoutThemeQuick").value = theme;
+  $("layoutThemeSelect").value = theme;
+  if (theme !== "classic" && !document.querySelector(".wb-view.wb-show")) go("home");
+}
+$("layoutThemeSelect").addEventListener("change", (e) => {
+  localStorage.setItem(LAYOUT_KEY, e.target.value);
+  applyLayout(e.target.value);
+  toast("layoutTheme '" + e.target.value + "' — real: saved to desktop-config.json, re-shell live + next launch");
+});
+$("layoutThemeApplyBtn").addEventListener("click", () => {
+  applyLayout($("layoutThemeSelect").value);
+  toast("re-applied '" + ($("layoutThemeSelect").value) + "' — no restart needed (class-based shells)");
+});
+$("layoutThemeQuick").addEventListener("change", (e) => {
+  localStorage.setItem(LAYOUT_KEY, e.target.value);
+  applyLayout(e.target.value);
+  toast("layout → '" + e.target.value + "' (saved for next launch)");
+});
+localStorage.setItem(LAYOUT_KEY, localStorage.getItem(LAYOUT_KEY) || "workbench");
+$("layoutThemeSelect").value = localStorage.getItem(LAYOUT_KEY);
+applyLayout($("layoutThemeSelect").value);
+
+document.querySelectorAll("[data-view].wb-item").forEach(i => i.addEventListener("click", () => go(i.dataset.view)));
+document.querySelectorAll("[data-go]").forEach(c => c.addEventListener("click", () => go(c.dataset.go)));
+$("wbFold").addEventListener("click", () => {
+  const b = document.body; b.classList.toggle("wb-rail-mini"); b.classList.toggle("wb-rail-open");
+  $("wbFold").querySelector(".wb-label").textContent = b.classList.contains("wb-rail-mini") ? "Expand rail" : "Collapse rail";
+});
+document.documentElement.setAttribute("data-theme", document.documentElement.getAttribute("data-theme") || "");
+// real theme toggle (data-theme switch supplied by style.css)
+$("themeToggleBtn").addEventListener("click", () => {
+  const h = document.documentElement;
+  h.getAttribute("data-theme") === "dark" ? h.removeAttribute("data-theme") : h.setAttribute("data-theme", "dark");
+});
+$("appearPaletteBtn").addEventListener("click", () => toast("🎨 real app: cycles Mono → Sky → Orca → Cyber → Matrix"));
+$("settingsBtn").addEventListener("click", () => go("setup"));
+$("guideBtn").addEventListener("click", () => go("guide"));
+$("taskMgrBtn").addEventListener("click", () => toast("open_task_manager — real command"));
+$("stopAllBtn").addEventListener("click", () => toast("stop_all_servers — real command (ordered shutdown sweep)"));
+$("stopDeepyBtn").addEventListener("click", () => toast("stop Deepy Web only — real command"));
+$("wvReloadBtn").addEventListener("click", () => toast("reload Wan2GP webview — real"));
+$("backToDashboardBtn").addEventListener("click", () => toast("destroy_browser_view → dashboard — real"));
+
+// fake console feed
+const logLines = [
+  '<span class="dim">[launcher]</span> ready — watching for events…',
+  '<span class="ok">[w2gp]</span> env healthy · torch 2.13 + cu13 ✓  <span class="ok">Kernels v1.1.2 sync ✓</span>',
+  '<span class="warn">[kernels]</span> sage fp8 bug flagged for RTX 40/50 — stable build available',
+  '<span class="dim">[session]</span> metrics loop would stream here (reuse metrics-tab.js feed)',
+];
+let li = 0;
+setInterval(() => {
+  const c = $("wbConsole"); c.insertAdjacentHTML("beforeend", "\n" + logLines[li++ % logLines.length]);
+  c.scrollTop = c.scrollHeight;
+}, 3500);
+
+// launch → session "runs"
+$("appBtn").addEventListener("click", () => {
+  toast("▶ appBtn — real same command would call create_browser_view / launch_webview");
+  $("wbSessionTag").textContent = "running";
+  $("backToDashboardBtn").style.display = "";
+  const vram = $("wbVramBar"), txt = $("wbVramTxt");
+  const anim = setInterval(() => {
+    const w = Math.min(88, parseInt(vram.style.width) + 7);
+    vram.style.width = w + "%"; vram.className = "wb-meter-fill " + (w > 70 ? "warn" : "ok");
+    txt.textContent = (w * 0.24).toFixed(1) + " / 24 GB";
+    if (w >= 88) clearInterval(anim);
+  }, 500);
+});
+setTimeout(() => {}, 0);
+
+// profile ladder pick → footprint preview
+const footprints = { 1: [92, "P1: everything resident — needs your full 24 GB + 40 GB RAM"], 2: [84, "P2: all in reserved RAM — RAM-heavy"], 3: [66, "P3: P4 + dynamic preload"], 4: [62, "P4: main models reserved in RAM — recommended fit"], 4.5: [55, "P4+: one part at a time — ~1 GB less VRAM"], 5: [18, "P5: nearly no reserved RAM — failsafe"], 3.5: [40, "P3+: preload without reserve — slower loads"] };
+document.querySelectorAll("#wbPList .wb-p").forEach(p => p.addEventListener("click", () => {
+  document.querySelectorAll("#wbPList .wb-p").forEach(x => x.classList.remove("wb-sel"));
+  p.classList.add("wb-sel");
+  const k = p.dataset.p;
+  $("wbPlanBar").style.width = footprints[k][0] + "%";
+  $("wbPlanPreview").textContent = footprints[k][1];
+  $("wbPlanState").textContent = "override: P" + k + " (unsaved)";
+}));
+$("autotuneProfileSwitch").addEventListener("click", (e) => {
+  const t = e.target.textContent.includes("Video") ? "Image" : e.target.textContent.includes("Image") ? "Audio" : "Video";
+  e.target.textContent = "Ladder: " + t;
+  toast("ladder retargeted to " + t + " — fires the same values that mem" + t + "Profile dropdown writes");
+});
+$("memProfileApplyBtn").addEventListener("click", () => {
+  $("wbPlanState").textContent = "saved: " + document.querySelector("#wbPList .wb-sel").dataset.p;
+  toast("✓ Apply Overrides → wgp_config.json (mock — no write)");
+});
+$("autotuneDetectBtn").addEventListener("click", () => toast("⟳ Detect: auto_tune_detect + recommend — real, replays last result"));
+$("dlss5InstallBtn").addEventListener("click", () => showModal("dlss5Modal"));
+$("dlss5CheckBtn").addEventListener("click", () => toast("dlss5_check — real probe"));
+
+// DLSS consent gating (real behavior)
+const accept = $("dlss5AcceptChk"), confirmBtn = $("dlss5ConfirmBtn");
+accept.addEventListener("change", () => confirmBtn.disabled = !accept.checked);
+confirmBtn.addEventListener("click", () => { hideModal("dlss5Modal"); toast("dlss5_install → pipeline runs in Console (mock)"); });
+
+// batch save buttons — generic toasts, many wired individually for parity
+const generic = ["browserBtn","browserNoGpuBtn","termBtn","termNoGpuBtn","deepyWebAuthGen","deepyWebAuthShow","deepyWebAuthForget",
+  "deepyWebCertCreate","deepyWebCertBring","deepyWebStartBtn","deepyWebStopBtn","deepyWebPortSave","deepyWebOutputsBtn",
+  "deepyApplyBtn","deepyChecksRunBtn","ftFollowBtn","ftClearBtn","ftCloseBtn","promptCheckBtn","promptCopyBtn","llmEnginesRefresh","mcpCopyBtn",
+  "mainLanSamePcOpen","mainLanSamePcCopy","mainLanPhoneOpen","mainLanPhoneCopy","mainLanPhoneQr","mainLanPhoneDeepyCopy","mainLanPhoneDeepyOpen",
+  "logServerSave","logServerSamePcOpen","logServerSamePcCopy","logServerPhoneOpen","logServerPhoneCopy","logServerPhoneQr",
+  "tokenSaveBtn","tokenClearBtn","hfTokenSaveBtn","hfTokenClearBtn","claudeApiKeySaveBtn","claudeApiKeyClearBtn",
+  "launchArgsSaveBtn","portSaveBtn","serverNameSaveBtn","embedModeSaveBtn","launcherGpuSaveBtn","gpuDeviceSaveBtn","ggufSaveBtn","amdSaveBtn",
+  "nativeNotifSaveBtn","nativeNotifTestBtn","nativeNotifEnsureBtn","notifEnsureBtn","notifSaveBtn","notifTestBtn",
+  "customSaveBtn","customDefaultBtn","customResetBtn","pluginRefreshBtn","pluginCheckUpdatesBtn","pluginInstallBtn","pluginSaveBtn",
+  "batchRunBtn","pipInstallBtn","pipCmdCopy","libImportBtn","libRefreshBtn","openAppDataBtn","browseAppDataPath","clearAppDataPath",
+  "changeAppDataBtn","moveToPreferredBtn","openCkptBtn","browseCkptsPath","clearCkptsPath","dashBrowseCkpt","openLoraBtn","browseLorasPath",
+  "clearLorasPath","dashBrowseLora","openOutputBtn","browseOutputPath","clearOutputPath","dashBrowseOutput","targetBrowseBtn","targetUseModelsBtn",
+  "envSetupBtn","envReinstallBtn","envRestoreBtn","envUnlinkBtn","validateInstallBtn","repairFilesBtn","rollbackBtn",
+  "installWgpkernelsBtn","installAmdSetupBtn","installHipGgufBtn","xetInstallBtn","removeElectronBtn",
+  "syncKernelsBtn","restoreKernelsBtn","sageSyncBtn","webviewMemBtn",
+  "updateCheckBtn","updateBtn","manageUpdateDesktopBtn","manageUpdateWan2gpBtn","cfgChangelogBtn","manageRunSetupBtn",
+  "tsCudaBtn","tsComputeBtn","tsVramListBtn","tsVramTrimBtn","tsFailsafeBtn","tsFailsafeP5Btn","tsLowerRamBtn","tsHeadSplitBtn",
+  "tsKnownGoodBtn","tsKnownGoodApplyBtn","tsTritonTestBtn","tsTritonSdpaBtn","tsTritonClearBtn","tsPortCheckBtn","tsPortKillBtn",
+  "tsPortBumpBtn","tsLongPathsBtn","tsDebugCopyBtn","uvCacheSizeBtn","uvCachePurgeBtn","uvCacheRemoveBtn","cfgBackupsRefreshBtn",
+  "copyDiagnosticsBtn","reportIssueBtn","desktopShortcutBtn","logExportBtn","dashTermFollowBtn","dashTermClearBtn","dashTermMaxBtn",
+  "sageSyncDismissBtn","modelsWarnDismissBtn","modelsWarnMigrateBtn","setupBtn",
+  // full-parity additions
+  "sageSafeSaveBtn","checkPkgUpdatesBtn","deepyPromptApplyBtn","deepyWebExternalCopy","deepyWebExternalOpen","deepyWebExternalQr",
+  "netTlsStageBtn","wsBackupBtn","repairSettingsBtn","browserRefreshBtn","settingsBackBtn","migrationCloseBtn","pinOverrideCloseBtn",
+  "uninstallCloseBtn","ftToggleBtn","ftFollowBtn","ftClearBtn","ftCloseBtn","autoTuneDashBtn",
+  "installStartBtn","installFollowBtn","prereqDownloadBtn","prereqManualBtn"];
+generic.forEach(id => { const el = $(id); if (el && !el._wiredWb) { el._wiredWb = true; el.addEventListener("click", () => toast(id + " → real handler in the app (mock: '" + (el.getAttribute("title") || id) + "')")); } });
+
+// modals wiring
+$("driftDismissBtn").addEventListener("click", () => { hideModal("driftModal"); toast("drift dismissed (mock)"); });
+$("driftRestoreBtn").addEventListener("click", () => { hideModal("driftModal"); toast("envRestore/reinstall requirements — real"); });
+$("migrationPointBtn") && $("migrationPointBtn").addEventListener("click", () => { hideModal("migrationModal"); toast("migrate_choose point-only — real"); });
+$("migrationMoveBtn").addEventListener("click", () => { hideModal("migrationModal"); toast("move_folder sweep — real"); });
+$("backupGoBtn").addEventListener("click", () => { hideModal("backupModal"); toast("workspace_backup — real"); });
+$("backupSkipBtn").addEventListener("click", () => { hideModal("backupModal"); toast("backup skipped"); });
+$("pinOverrideYesBtn") && ($("pinOverrideYesBtn").onclick = () => { hideModal("pinOverrideModal"); wbToast("upgraded despite pin — your risk"); });
+$("dlss5FixBtn").addEventListener("click", () => toast("dlss5_apply_workstation_fix — real, reversible"));
+
+// QR buttons reuse one modal
+["deepyWebSamePcQr","deepyWebPhoneQr","deepyWebTailnetQr","mainLanPhoneQr","logServerPhoneQr"].forEach(id => {
+  const el = $(id); if (el) el.addEventListener("click", () => showModal("qrModal"));
+});
+
+// failsafe → force P5 pick
+$("autotuneFailsafeChk").addEventListener("change", (e) => {
+  if (e.target.checked) {
+    document.querySelector('#wbPList .wb-p[data-p="5"]').click();
+    toast("P5 failsafe seeded — press Detect to calibrate around it");
+  }
+});
+
+// Ctrl+K quick jump
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    const q = prompt("Mock palette:\n home · guide · tune · comps · plugins · files · remote · setup · system");
+    if (q && titles[q]) go(q);
+  }
+});
+
+// window mode select (real feature from this session)
+$("windowModeSelect").addEventListener("change", (e) => toast("set_window_mode('" + e.target.value + "') — real command"));
+</script>
+</body>
+</html>

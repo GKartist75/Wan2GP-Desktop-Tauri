@@ -1,4 +1,20 @@
 // ponytail: plain script — no import/export — loads before app.js and sets window.w2gp via Tauri invoke
+// Browser-demo fallback (no production impact): the launcher always runs inside Tauri,
+// which injects window.__TAURI__ before any script loads. When index.html is opened
+// outside Tauri (mockup previews, doc screenshots), this provides a no-op bridge so the
+// real UI still renders instead of crashing on startup.
+if (!window.__TAURI__) {
+    const demoData = {
+        check_installed: { repo: "D:\\Wan2GP", env: "w2gp", version: "0.9.3", missingPrevious: false },
+    };
+    window.__TAURI__ = {
+        core: {
+            invoke: (cmd) =>
+                Promise.resolve(demoData[cmd] !== undefined ? demoData[cmd] : null),
+        },
+        event: { listen: () => Promise.resolve(() => {}) },
+    };
+}
 (() => {
     const inv = (name, args) => window.__TAURI__.core.invoke(name, args);
     function call(name, args) {
@@ -648,6 +664,9 @@
         tsLongPathsEnable: () => call("troubleshoot_long_paths_enable"),
         tsDebugBundle: () => call("troubleshoot_debug_bundle"),
         tsTritonTest: () => call("troubleshoot_triton_test"),
+        setTritonCompiler: (m) => call("set_triton_compiler", { mode: m }),
+        tsMsvcStatus: () => call("troubleshoot_msvc_status"),
+        tsMsvcInstall: () => call("troubleshoot_msvc_install"),
         tsGpuCompute: () => call("troubleshoot_gpu_compute"),
         tsTritonClear: (fb) =>
             call("troubleshoot_triton_clear", { fallbackSdpa: !!fb }),
@@ -689,6 +708,7 @@
         setAutoStart: (e) => call("set_auto_start", { enabled: e }),
         setThemeFollowSystem: (e) =>
             call("set_theme_follow_system", { enabled: e }),
+        setWindowMode: (m) => call("set_window_mode", { mode: m }),
         setNotificationsEnabled: (e) =>
             call("set_notifications_enabled", { enabled: e }),
         checkUpdate: (o) => call("check_update", { opts: o }),

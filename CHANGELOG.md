@@ -4,6 +4,65 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.10.9] — 2026-10-16
+
+- **Window mode setting** (issue #63, Settings → Desktop → Window mode): the
+  launcher had been hard-coded to open maximized since v0.2.0 and nothing
+  could change that — `windowed | maximized | fullscreen` is now a persisted
+  setting in `desktop-config.json` (`desktopWindowMode`, default maximized so
+  existing behavior is unchanged). Applies immediately on change and on every
+  launch: the main window now ships hidden and pre-maximized, setup applies
+  the saved mode invisibly then shows it — no maximized→windowed flash on
+  either path. Fullscreen is true OS fullscreen (Windows chrome hidden; the
+  top bar keeps Settings reachable for switching back).
+
+
+### Triton JIT hardening (Bitdefender python.exe-to-tcc.exe block)
+
+- **Pinned Triton JIT cache** at `<data folder>\triton-cache` (`TRITON_CACHE_DIR`,
+  set-if-absent): Triton's compiled helpers (`cuda_utils`, `__triton_launcher`)
+  are unsigned with a fresh hash per build, so heuristic AV quarantines them
+  mid-compile. One stable folder replaces `%TEMP%`/`~\.triton` roulette as the
+  single AV-exclusion path. **Manage → Troubleshooting → Clear Triton cache**
+  now clears both homes (rename-to-backup preserved).
+- **Pinned Triton JIT compiler to signed MSVC cl.exe** (NVIDIA/Intel/CPU
+  launches; AMD excluded so TheRock clang-cl stays authoritative): without a
+  VS shell in its environment Triton falls back to the wheel-bundled unsigned
+  TinyCC, whose execution Bitdefender's behavioral engine blocks outright,
+  failing every sage/sage2 generation. CC/INCLUDE/LIB come from the newest VS
+  plus Win10 SDK via vswhere, all-or-nothing against a user toolchain (a
+  VsDevCmd shell always wins), recorded per-process so AMD launches remove
+  exactly what was pinned. Warn-only throughout; the console names the pinned
+  compiler on every launch.
+- **No-MSVC boxes stay fully working** via the TinyCC fallback (same AV
+  exposure as before — the pin just can't apply). The console names the
+  missing piece and the User Guide carries the one-line Build Tools install;
+  the hint text itself is unit-tested so the pointer can't rot.
+- **One-click MSVC Build Tools offer** (Manage → Troubleshooting): status line
+  shows whether `cl.exe` is present; otherwise a guided button downloads
+  Microsoft's official bootstrapper at click-time (nothing compiler-shaped is
+  bundled — MSVC can't be redistributed that way, and any third-party compiler
+  we shipped would be unsigned anyway) and runs it elevated with the C++
+  workload. Returns as soon as the installer starts; Recheck/next Launch
+  picks up the pin. Windows-only row, confirm dialog states size/admin/time.
+- **Triton compiler choice** (Settings → Desktop, `tritonCompiler` in
+  desktop-config.json): out-of-box is pure upstream TinyCC (the MSVC pin is
+  a workaround and stays opt-in); explicit `auto` pins MSVC when installed,
+  `msvc` forces it (warns when missing), `tinycc` keeps upstream with the pin
+  scrubbed. Takes effect on next launch; AMD launches still remove the pin
+  whatever the mode.
+- **Performance Settings dropdowns reflect disk.** The panel seeded dropdowns
+  from saved settings only when one field was empty, so after any Detect run
+  keys Detect never recommends (RAM allocator above all) sat on "unset" while
+  `saved:` told the truth. Each still-unset dropdown now seeds per-field —
+  Detect results and user picks always win, `rec:` tags only ever come from
+  Detect. (The setting itself was never lost: `wgp_config.json` holds it and
+  WanGP boots with it.)
+- **INT8/FP8 live backends moved beside Running.** The Active Environment rows
+  sat on "—" whenever the server wasn't running, reading as a forgotten
+  setting. The live chips are now topbar pills shown only while a backend is
+  known — no server, no pills.
+
 ## [0.10.8] — 2026-10-16
 
 ### Upstream WGPKernels 1.1.2 (`17307e5`, 2026-10-16)

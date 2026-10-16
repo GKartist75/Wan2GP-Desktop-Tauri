@@ -2629,6 +2629,57 @@ pub fn set_notifications_enabled(enabled: bool) -> serde_json::Value {
     serde_json::json!({"ok": true})
 }
 
+// ── Desktop window mode (issue #63) ────────────────────────────────────
+// The launcher opened maximized since v0.2.0 (`maximized: true` in the
+// window config) and nothing could change that — users saw "fullscreen
+// only". One setting fixes all three: `desktopWindowMode` in
+// desktop-config.json — "windowed" | "maximized" | "fullscreen", default
+// "maximized" to keep the 0.2.0 behavior for every existing user.
+// set_window_mode persists + applies live; lib.rs setup() re-applies the
+// saved mode on launch while the config window (shipped `visible: false`)
+// is still invisible, so the mode settles before the first paint.
+pub(crate) fn window_mode_normalize(mode: &str) -> String {
+    match mode {
+        "windowed" | "fullscreen" => mode.to_string(),
+        _ => "maximized".to_string(),
+    }
+}
+
+/// Apply a normalized mode to the main window. Shared by the live command
+/// and the startup hook in lib.rs so both paths behave identically.
+pub(crate) fn apply_window_mode(window: &tauri::WebviewWindow, mode: &str) {
+    // Fullscreen flips first: on Windows leaving fullscreen must happen
+    // before maximize/unmaximize, or the old fullscreen state lingers.
+    let _ = window.set_fullscreen(mode == "fullscreen");
+    match mode {
+        "windowed" => {
+            let _ = window.unmaximize();
+        }
+        // Config already builds the window maximized; this only does work on
+        // live switches back from fullscreen/windowed.
+        // Unknown values fall to maximized — never leave a launch windowed.
+        _ => {
+            if !window.is_maximized().unwrap_or(true) {
+                let _ = window.maximize();
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub fn set_window_mode(window: tauri::WebviewWindow, mode: String) -> serde_json::Value {
+    let mode = window_mode_normalize(&mode);
+    let mut full = load_config_value();
+    if let Some(m) = full.as_object_mut() {
+        m.insert("desktopWindowMode".into(), serde_json::json!(mode));
+    }
+    if let Err(e) = crate::config::config_save(full) {
+        return serde_json::json!({"ok": false, "error": e});
+    }
+    apply_window_mode(&window, &mode);
+    serde_json::json!({"ok": true, "mode": mode})
+}
+
 #[cfg(test)]
 mod deepy_roundtrip_tests {
     use super::*;
