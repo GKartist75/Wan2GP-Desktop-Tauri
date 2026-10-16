@@ -3093,6 +3093,21 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
  color: var(--text-secondary);
 }
 
+/* Live backend chips (INT8/FP8 beside the Running LED) */
+.backend-leds {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 10px;
+  font-size: 0.6625rem;
+  font-weight: 500;
+  font-family: "Geist Mono", monospace;
+}
+.backend-chip {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
 /* ── Dock Menu (reused for floating terminal) ── */
 .dock-btns {
  display: flex;

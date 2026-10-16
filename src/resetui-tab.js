@@ -4,28 +4,32 @@
 // defined by app.js, and top-level statements here only register listeners,
 // so loading this file after app.js is safe.
 
-// ── Live INT8/FP8 backend chips ──
+// ── Live INT8/FP8 backend chips (topbar, beside Running) ──
 // WanGP prints its selected kernel backends at boot (`[INT8] Backend: X
-// (setting: auto)`). This subscriber mirrors those lines into the Active
-// Environment rows so the answer is visible without digging the console.
-// Latest line wins; a server exit clears both back to "—".
+// (setting: auto)`). This subscriber mirrors those lines into two pills
+// beside the Running LED. Visibility is value-gated: the pills exist only
+// while a backend is known (server booted and reported) — no server, no
+// pills, so there is never a "—" row to mistake for a forgotten setting.
+// Latest line wins; a server exit clears both (and hides the pills).
 function _paintBackendChips() {
   try {
     const pairs = [
-      ["specInt8Backend", "dotInt8Backend", window._int8Backend],
-      ["specFp8Backend", "dotFp8Backend", window._fp8Backend],
+      ["ledInt8", "INT8", window._int8Backend],
+      ["ledFp8", "FP8", window._fp8Backend],
     ];
-    for (const [specId, dotId, val] of pairs) {
-      const el = $(specId);
-      if (el) el.textContent = val || "—";
-      const dot = $(dotId);
-      if (dot) {
-        if (val) {
-          dot.classList.remove("has-update", "error", "installing");
-          dot.classList.add("installed");
-        } else dot.classList.remove("installed");
+    for (const [id, label, val] of pairs) {
+      const el = $(id);
+      if (el) {
+        el.textContent = label + " · " + (val || "…");
+        el.title = val
+          ? label + " backend WanGP selected at boot: " + val
+          : label + " backend not reported yet";
       }
     }
+    const box = $("backendLeds");
+    if (box)
+      box.style.display =
+        window._int8Backend || window._fp8Backend ? "inline-flex" : "none";
   } catch {}
 }
 try {
