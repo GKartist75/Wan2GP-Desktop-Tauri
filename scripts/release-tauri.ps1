@@ -6,6 +6,22 @@
 # (or TAURI_SIGNING_PRIVATE_KEY with its contents). Key stays out of the repo.
 param([Parameter(Mandatory=$true)][string]$Version, [string]$Notes = "")
 
+# git prints CRLF/autocrlf notices to stderr, and under `$ErrorActionPreference
+# = "Stop"` PowerShell promotes those notices to terminating errors that kill
+# the release (seen twice on `git add src-tauri/Cargo.toml`; `2>$null` does not
+# help). Every git call goes through here: notices print, success is judged by
+# exit code only.
+function Git {
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    # git.exe, not git: the function itself is named Git and PowerShell
+    # resolves case-insensitively, so `& git` recursed until stack overflow.
+    & git.exe @args
+    if ($LASTEXITCODE -ne 0) { throw "git $args failed with exit $LASTEXITCODE" }
+  } finally { $ErrorActionPreference = $prev }
+}
+
 $ErrorActionPreference = "Stop"
 $Root = Split-Path $PSScriptRoot -Parent
 Set-Location $Root
@@ -41,8 +57,8 @@ if (Test-Path $lockPath) {
   (Get-Content $lockPath -Raw) -replace '(?m)^(name = "wan2gp-desktop-launcher-tauri"\r?\nversion = ")[^"]*(")', $lockRepl |
     Set-Content $lockPath -NoNewline
 }
-git add $confPath "src-tauri\Cargo.toml" $lockPath
-if (git status --porcelain) { git commit -m "release: v$Version" | Out-Null }
+Git add $confPath "src-tauri\Cargo.toml" $lockPath
+if (Git status --porcelain) { Git commit -m "release: v$Version" | Out-Null }
 
 # 2) Build (signs updater artifacts automatically via the env key)
 npx tauri build
@@ -88,15 +104,15 @@ if ([System.IO.File]::ReadAllBytes($latestPath)[0] -eq 0xEF) { throw "latest.jso
 # that happened for v0.10.3 (tag landed on 8bdab92, the release was ac20e95).
 # Creating it here keeps the tag, the signed assets and the release on one
 # commit, and pushes the branch before anything goes public.
-$branch = (git branch --show-current).Trim()
-if ($branch) { git push -u origin $branch }
-if (-not (git tag -l $tag)) { git tag $tag HEAD }
+$branch = (Git branch --show-current).Trim()
+if ($branch) { Git push -u origin $branch }
+if (-not (Git tag -l $tag)) { Git tag $tag HEAD }
 # `git ls-remote` prints NOTHING for an unknown ref, and PowerShell hands that
 # to .Trim() as $null - "You cannot call a method on a null-valued expression",
 # which killed the v0.10.4 run at the very last step. Out-String always yields a
 # (possibly empty) string.
-$remoteTag = (git ls-remote --tags origin "refs/tags/$tag" | Out-String).Trim()
-if ($remoteTag -eq "") { git push origin "refs/tags/$tag" }
+$remoteTag = (Git ls-remote --tags origin "refs/tags/$tag" | Out-String).Trim()
+if ($remoteTag -eq "") { Git push origin "refs/tags/$tag" }
 
 # 5) Publish (latest.json must be on a published release — /latest/download/ 404s on drafts)
 $msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | Where-Object { $_.Name -like "*$Version*" } | Select-Object -First 1
