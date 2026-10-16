@@ -762,6 +762,117 @@ pub fn troubleshoot_triton_clear(fallback_sdpa: Option<bool>) -> Result<serde_js
     )
 }
 
+/// MSVC C++ toolchain status for the Triton JIT compiler pin (see
+/// launch.rs `MsvcPin`). `{ok, supported, installed, cc?}` — the panel
+/// shows the pin state on open and offers the installer when missing.
+#[tauri::command]
+pub fn troubleshoot_msvc_status() -> serde_json::Value {
+    if cfg!(not(windows)) {
+        return serde_json::json!({"ok": true, "supported": false});
+    }
+    match crate::launch::msvc_toolchain_cc() {
+        Some(cc) => {
+            serde_json::json!({"ok": true, "supported": true, "installed": true, "cc": cc})
+        }
+        None => serde_json::json!({"ok": true, "supported": true, "installed": false}),
+    }
+}
+
+/// Official Microsoft VS 2022 Build Tools bootstrapper (evergreen link) and
+/// the filename it is staged as under %TEMP%. Nothing compiler-shaped is
+/// bundled with the launcher — MSVC cannot be redistributed that way and any
+/// third-party compiler we shipped would be unsigned (the exact pattern the
+/// pin exists to escape) — so the offer is always download-at-click-time
+/// from Microsoft, correctly licensed and Microsoft-signed.
+pub(crate) const VS_BUILDTOOLS_URL: &str = "https://aka.ms/vs/17/release/vs_BuildTools.exe";
+pub(crate) const VS_BUILDTOOLS_EXE: &str = "wgp-vs_BuildTools.exe";
+
+/// Bootstrapper args: the C++ build-tools workload plus recommended (which
+/// pulls the Windows SDK our INCLUDE/LIB discovery requires). `--passive`
+/// shows progress without prompts.
+pub(crate) fn vs_buildtools_args() -> Vec<&'static str> {
+    vec![
+        "--passive",
+        "--add",
+        "Microsoft.VisualStudio.Workload.VCTools",
+        "--includeRecommended",
+    ]
+}
+
+/// PowerShell one-liner launching the staged bootstrapper elevated (UAC
+/// prompt). Fire-and-forget BY DESIGN: a C++ workload install runs 10+
+/// minutes and the installer has its own progress UI — awaiting it would
+/// wedge the invoke. powershell exits 0 once the elevated child starts (a
+/// UAC decline fails the command instead). Pure + unit-tested.
+pub(crate) fn vs_buildtools_ps_launch(exe: &str) -> String {
+    format!(
+        "Start-Process '{exe}' -ArgumentList '{args}' -Verb RunAs",
+        args = vs_buildtools_args().join(" ")
+    )
+}
+
+/// Opt-in MSVC Build Tools install behind the Troubleshooting button.
+/// Downloads Microsoft's official bootstrapper, stages it under %TEMP%,
+/// and launches it elevated. Returns as soon as the installer starts; the
+/// Microsoft installer runs its own UI, and the next app Launch
+/// auto-detects cl.exe (or the panel Recheck does). A failed download errors
+/// out before anything executes — never a partial state.
+#[tauri::command]
+pub async fn troubleshoot_msvc_install(
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    use tauri::Emitter;
+    if cfg!(not(windows)) {
+        return Err("Windows only".into());
+    }
+    if let Some(cc) = crate::launch::msvc_toolchain_cc() {
+        return Ok(serde_json::json!({"ok": true, "already": true, "cc": cc}));
+    }
+    let emit = |m: &str| {
+        crate::base::push_log(m, "setup");
+        let _ = app.emit("launch-log", m.to_string());
+    };
+    emit("[*] Downloading Microsoft VS 2022 Build Tools bootstrapper…\n");
+    let bytes = reqwest::Client::new()
+        .get(VS_BUILDTOOLS_URL)
+        .header("User-Agent", "wan2gp-tauri")
+        .send()
+        .await
+        .map_err(|e| format!("bootstrapper download failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("bootstrapper download failed: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| format!("bootstrapper download failed: {e}"))?;
+    // Captive-portal guard: the real bootstrapper is several MB; an HTML
+    // login page is kilobytes. Never execute a stub download.
+    if bytes.len() < 1_000_000 {
+        return Err(format!(
+            "bootstrapper download too small ({} bytes) — captive portal or blocked host? Use the manual winget command in the User Guide instead.",
+            bytes.len()
+        ));
+    }
+    let dest = std::env::temp_dir().join(VS_BUILDTOOLS_EXE);
+    std::fs::write(&dest, &bytes).map_err(|e| format!("could not stage bootstrapper: {e}"))?;
+    emit(&format!(
+        "[*] Bootstrapper staged ({} MB) — launching the Microsoft installer elevated (UAC prompt)…\n",
+        bytes.len() / 1_000_000
+    ));
+    // Blocking spawn is fine here: powershell returns once the elevated
+    // child starts (or the user declines UAC) — the 10-minute install itself
+    // runs detached in its own UI.
+    let ps = vs_buildtools_ps_launch(&dest.to_string_lossy());
+    let out = silent_command("powershell")
+        .args(["-NoProfile", "-Command", &ps])
+        .output()
+        .map_err(|e| format!("could not start the installer: {e}"))?;
+    if !out.status.success() {
+        return Err("The installer did not start (admin declined the UAC prompt, or elevation is blocked). Re-run and accept, or install manually via the User Guide command.".into());
+    }
+    emit("[*] Microsoft installer running elevated — complete it (C++ workload, a few GB), then press Recheck. The next Launch auto-detects cl.exe.\n");
+    Ok(serde_json::json!({"ok": true, "launched": true, "exe": dest.to_string_lossy()}))
+}
+
 /// Upstream's known-good recipe per GPU class (docs/TROUBLESHOOTING.md →
 /// Performance Issues → GPU-Specific Optimizations).
 ///
@@ -910,6 +1021,33 @@ pub fn troubleshoot_vram_diag(action: Option<String>) -> serde_json::Value {
 #[cfg(test)]
 mod troubleshoot_tests {
     use super::*;
+    #[test]
+    fn vs_buildtools_offer_is_official_and_complete() {
+        // Evergreen Microsoft short link, exact bootstrapper binary.
+        assert!(
+            VS_BUILDTOOLS_URL.starts_with("https://aka.ms/vs/"),
+            "{VS_BUILDTOOLS_URL}"
+        );
+        assert!(VS_BUILDTOOLS_URL.ends_with("vs_BuildTools.exe"));
+        let args = vs_buildtools_args();
+        assert!(args.contains(&"--passive"), "{args:?}");
+        assert!(args.contains(&"Microsoft.VisualStudio.Workload.VCTools"));
+        assert!(
+            args.contains(&"--includeRecommended"),
+            "without the SDK our INCLUDE/LIB discovery finds nothing: {args:?}"
+        );
+    }
+    #[test]
+    fn vs_buildtools_launch_is_elevated_fire_and_forget() {
+        let ps = vs_buildtools_ps_launch(r"C:\Temp\wgp-vs_BuildTools.exe");
+        assert!(ps.contains("-Verb RunAs"), "UAC elevation is the whole point");
+        assert!(ps.contains("Microsoft.VisualStudio.Workload.VCTools"));
+        assert!(ps.contains(r"C:\Temp\wgp-vs_BuildTools.exe"));
+        assert!(
+            !ps.contains("-Wait"),
+            "a 10-minute -Wait would wedge the invoke; the installer has its own UI"
+        );
+    }
     #[test]
     fn known_good_recipe_covers_every_nvidia_class() {
         // Attention + profile + compile, exactly as documented.

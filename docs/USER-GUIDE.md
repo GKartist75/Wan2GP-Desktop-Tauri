@@ -368,6 +368,8 @@ Only RTX 20–50 / AMD rows are shown above; GTX 10xx/16xx stay on Python `3.10.
 
 `winget install -e --id Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --passive"`
 
+Or press **Install MSVC Build Tools** in Manage → Troubleshooting (same Microsoft installer, guided, with a Recheck button).
+
 
 ## Manage → Auto-Tune
 

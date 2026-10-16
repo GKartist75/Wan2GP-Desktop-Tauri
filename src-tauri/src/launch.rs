@@ -2298,6 +2298,12 @@ pub(crate) fn apply_msvc_cc_pin(is_amd: bool, emit: impl Fn(&str)) {
     }
 }
 
+/// Current MSVC `cl.exe` path via live discovery, if any. Thin accessor for
+/// the Troubleshooting status command — the discovery itself is unit-tested.
+pub(crate) fn msvc_toolchain_cc() -> Option<String> {
+    discover_msvc_pin_live().map(|p| p.cc)
+}
+
 #[cfg(test)]
 mod launch_args_tests {
     use super::*;

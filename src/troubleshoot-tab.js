@@ -303,6 +303,71 @@ async function tsTritonClear(fallback) {
 $("tsTritonClearBtn")?.addEventListener("click", () => tsTritonClear(false));
 $("tsTritonSdpaBtn")?.addEventListener("click", () => tsTritonClear(true));
 
+// ── MSVC Build Tools (signed compiler for Triton JIT) ──
+// Status on open: found → pin applies on next launch; missing → TinyCC
+// fallback with the installer one click away. Off-Windows the row hides
+// (no MSVC there, and no TinyCC problem either).
+async function tsMsvcRefresh() {
+  try {
+    const r = await window.w2gp.tsMsvcStatus();
+    if (!r || !r.supported) return;
+    tsStatus(
+      "tsMsvcStatus",
+      r.installed
+        ? "✓ MSVC cl.exe present — the signed-compiler pin applies on next launch."
+        : "MSVC C++ toolchain not found — Triton builds through its bundled TinyCC fallback.",
+    );
+  } catch {}
+}
+$("tsMsvcRecheckBtn")?.addEventListener("click", () => tsMsvcRefresh());
+$("tsMsvcInstallBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  this.disabled = true;
+  try {
+    const st = await window.w2gp.tsMsvcStatus();
+    if (st && st.installed) {
+      tsStatus("tsMsvcStatus", "Already installed" + (st.cc ? " (" + st.cc + ")" : "."));
+      appendLog("[*] MSVC toolchain already present.");
+      return;
+    }
+    const choice = await window.w2gp.confirmDialog({
+      title: "Install MSVC Build Tools?",
+      message: "Downloads Microsoft's official VS 2022 Build Tools bootstrapper and runs it elevated.",
+      detail:
+        "One-time, a few GB downloaded by the Microsoft installer, needs admin approval (UAC prompt) and can take 10+ minutes — the installer shows its own progress. Afterwards the launcher pins Triton JIT builds to the signed MSVC compiler automatically (relaunch or Recheck to confirm). Without it, Triton builds through its bundled unsigned TinyCC, which antivirus behavioral engines may block mid-generation. Proceed?",
+    });
+    if (choice !== "ok" && choice !== 0) {
+      tsStatus("tsMsvcStatus", "Cancelled.");
+      return;
+    }
+    tsStatus("tsMsvcStatus", "Downloading bootstrapper…");
+    const r = await window.w2gp.tsMsvcInstall();
+    if (r && r.already) {
+      tsStatus("tsMsvcStatus", "Already installed.");
+      appendLog("[*] MSVC toolchain already present.");
+    } else {
+      tsStatus("tsMsvcStatus", "Installer running elevated — finish it, then press Recheck.");
+      appendLog(
+        "[*] MSVC Build Tools installer launched elevated — complete it, then Recheck (next Launch auto-detects cl.exe).",
+      );
+      showToast("Finish the Microsoft installer, then press Recheck");
+    }
+  } catch (e) {
+    tsStatus("tsMsvcStatus", "✗ " + errText(e));
+    showToast("✗ " + errText(e));
+  } finally {
+    this.disabled = false;
+  }
+});
+try {
+  if (window.w2gp.platform !== "win32") {
+    const row = $("tsMsvcRow");
+    if (row) row.style.display = "none";
+  } else {
+    tsMsvcRefresh();
+  }
+} catch {}
+
 // ── v17 RAM/VRAM (upstream TROUBLESHOOTING.md → Memory Issues, v17 additions) ──
 // Every write goes through memoryProfileApply: fail-closed gate + snapshot,
 // so a remedy can never land a value WanGP would ignore.
