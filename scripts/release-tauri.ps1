@@ -64,9 +64,16 @@ Git add $confPath "src-tauri\Cargo.toml" $lockPath
 $staged = Git diff --cached --name-only
 if ($staged) { Git commit -m "release: v$Version" | Out-Null }
 
-# 2) Build (signs updater artifacts automatically via the env key)
+# 2) Build (signs updater artifacts automatically via the env key).
+# Native stderr tolerance (see Git helper above): the Tauri CLI prints an
+# "Info Looking up installed tauri packages..." notice to stderr, which is
+# fatal under Stop. Real failures still throw via the exit code.
+$prevEA = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 npx tauri build
-if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
+$buildCode = $LASTEXITCODE
+$ErrorActionPreference = $prevEA
+if ($buildCode -ne 0) { throw "tauri build failed" }
 
 # 2b) Versioned portable copy next to the unversioned one (local testing).
 $portable = "src-tauri\target\release\wan2gp-desktop-launcher-tauri.exe"
@@ -124,6 +131,11 @@ if (-not $msi) { $msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi
 # ponytail: gh drops an empty --notes value ("flag needs an argument"), so only pass it when set.
 $notesArgs = @()
 if ($Notes -and $Notes.Trim()) { $notesArgs = @("--notes", $Notes) }
+$prevEA = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 gh release create $tag $setup.FullName ($setup.FullName + ".sig") $msi.FullName $latestPath `
   --repo GKartist75/Wan2GP-Desktop-Tauri --title $tag @notesArgs
+$ghCode = $LASTEXITCODE
+$ErrorActionPreference = $prevEA
+if ($ghCode -ne 0) { throw "gh release create failed" }
 Write-Host "Released $tag - updater will pick it up from latest.json" -ForegroundColor Green
