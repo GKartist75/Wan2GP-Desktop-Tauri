@@ -627,7 +627,7 @@ pub fn auto_tune_recommend(
     if !failsafe && cuda_off && !amd_usable {
         return serde_json::json!({
             "video_profile": 4.5, "image_profile": 4.5, "audio_profile": 4.5,
-            "vram_safety_coefficient": 0.70, "vae_config": 0, "transformer_quantization": "int8", "int8_kernels": "auto", "fp8_kernels": "auto", "kernel_precision": "fast",
+            "vram_safety_coefficient": 0.70, "vae_config": 0, "transformer_quantization": "int8", "text_encoder_quantization": "int8", "int8_kernels": "auto", "fp8_kernels": "auto", "kernel_precision": "fast",
             "_recommendation_label": "Auto-tune unavailable on this hardware",
             "_recommendation_reason": "No CUDA-capable GPU detected. Conservative profile applied — generation may be limited.",
             "packages": ["torch","triton","sageattention"],
@@ -770,7 +770,7 @@ pub fn auto_tune_recommend(
     }
     let mut out = serde_json::json!({
         "video_profile": profile, "image_profile": profile, "audio_profile": audio,
-        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8", "int8_kernels": "auto", "fp8_kernels": "auto", "kernel_precision": "fast",
+        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8", "text_encoder_quantization": if ram_tier == "high" { "bf16" } else { "int8" }, "int8_kernels": "auto", "fp8_kernels": "auto", "kernel_precision": "fast",
         "_recommendation_label": label,
         "_recommendation_reason": "Auto-tuned for your hardware",
         "packages": ["torch","triton","sageattention"],
@@ -2115,6 +2115,9 @@ pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool 
         // shared/kernels/fp8_backend.py CHOICES (v18.11): FP8 math kernels for
         // Quanto qfloat8 / scaled_fp8 weights. "cuda" needs RTX 40xx+.
         "fp8_kernels" => ["auto", "pytorch", "triton", "cuda"].contains(&s),
+        // Configuration → Text Encoder Quantization (plugins/configuration/plugin.py):
+        // bf16 = 16-bit (more RAM, better quality), int8 = 8-bit (less RAM).
+        "text_encoder_quantization" => ["bf16", "int8"].contains(&s),
         // shared/kernels/kernel_policy.py CHOICES ("strict"/"fast")
         "kernel_precision" => ["fast", "strict"].contains(&s),
         // shared/cuda_memory.py VRAM_ALLOCATOR_CHOICES
@@ -2164,6 +2167,7 @@ pub(crate) const MEMORY_OVERRIDE_KEYS: &[&str] = &[
     "vram_safety_coefficient",
     "vae_config",
     "transformer_quantization",
+    "text_encoder_quantization",
     "int8_kernels",
     "fp8_kernels",
     "kernel_precision",
@@ -2897,6 +2901,13 @@ mod autotune_matrix_tests {
             assert_eq!(r["audio_profile"].as_f64().unwrap(), a, "{vt}/{rt} audio");
             assert_eq!(r["vae_config"], 0);
             assert_eq!(r["transformer_quantization"], "int8");
+            // Text encoder quant (Configuration → Text Encoder Quantization):
+            // bf16 (more RAM, better quality) on high-RAM boxes, int8 otherwise.
+            assert_eq!(
+                r["text_encoder_quantization"],
+                if rt == "high" { "bf16" } else { "int8" },
+                "{vt}/{rt} text encoder"
+            );
             // Upstream v13.13 kernel settings (legacy enable_int8_kernels is gone).
             assert_eq!(r["int8_kernels"], "auto");
             // v18.11: FP8 math kernels follow the same Auto policy.
@@ -3184,6 +3195,26 @@ mod kernel_setting_tests {
             );
         }
         assert!(!valid_memory_override("fp8_kernels", &serde_json::json!(1)));
+    }
+    #[test]
+    fn text_encoder_quantization_match_upstream_choices() {
+        // plugins/configuration/plugin.py: bf16 ("16-bit") / int8 ("8-bit").
+        for good in ["bf16", "int8"] {
+            assert!(
+                valid_memory_override("text_encoder_quantization", &serde_json::json!(good)),
+                "{good}"
+            );
+        }
+        for bad in ["", "fp8", "none", "nvfp4", "16-bit", "BF16", "Int8", "auto"] {
+            assert!(
+                !valid_memory_override("text_encoder_quantization", &serde_json::json!(bad)),
+                "{bad}"
+            );
+        }
+        assert!(!valid_memory_override(
+            "text_encoder_quantization",
+            &serde_json::json!(1)
+        ));
     }
     #[test]
     fn kernel_precision_match_upstream_choices() {

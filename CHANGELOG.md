@@ -32,6 +32,9 @@ rework, split WGPKernels releases and new kernel enums.
   now also offers `materialized` (cuBLAS dense).
 - **Guide covers the new models** — Flux 3 Klein 5.6B (image) and Fish Audio
   Drama 3 (speech) display names, with a Flux 3 starter in the image goal.
+- **Text Encoder Quant** (`bf16` / `int8`) joins Performance Settings and
+  Auto-Tune — recommends `bf16` on high-RAM boxes (better quality) and `int8`
+  elsewhere (less RAM), matching Configuration → Text Encoder Quantization.
 
 ## [0.10.6] — 2026-10-12
 

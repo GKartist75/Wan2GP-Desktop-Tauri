@@ -14,6 +14,7 @@ function memProfileCollect() {
   const co = $("memCoeff").value;
   const ve = $("memVae").value;
   const q = $("memQuant").value;
+  const teq = $("memTextEncoderQuant") ? $("memTextEncoderQuant").value : "";
   const i8k = $("memInt8Kernels") ? $("memInt8Kernels").value : "";
   const f8k = $("memFp8Kernels") ? $("memFp8Kernels").value : "";
   const kp = $("memKernelPrecision") ? $("memKernelPrecision").value : "";
@@ -37,6 +38,7 @@ function memProfileCollect() {
   const ccp = $("memComputeCachePath") ? $("memComputeCachePath").value.trim() : "";
   if (i8k) s.int8_kernels = i8k;
   if (f8k) s.fp8_kernels = f8k;
+  if (teq) s.text_encoder_quantization = teq;
   if (kp) s.kernel_precision = kp;
   if (am) s.attention_mode = am;
   if (cm) s.compile = cm;
@@ -108,6 +110,11 @@ const MEM_FIELDS = {
     sel: "memQuant",
     rec: "recQuant",
     saved: "savedQuant",
+  },
+  text_encoder_quantization: {
+    sel: "memTextEncoderQuant",
+    rec: "recTextEncoderQuant",
+    saved: "savedTextEncoderQuant",
   },
   int8_kernels: {
     sel: "memInt8Kernels",
@@ -212,6 +219,10 @@ const FP8_KERNEL_LABELS = {
   triton: "Triton",
   pytorch: "PyTorch",
 };
+const TEXT_ENCODER_LABELS = {
+  int8: "int8 — 8-bit (less RAM)",
+  bf16: "bf16 — 16-bit (better quality)",
+};
 const KERNEL_PRECISION_LABELS = {
   fast: "Approximate (default)",
   strict: "Preserve precision",
@@ -265,6 +276,8 @@ function fmtVal(key, v) {
     return INT8_KERNEL_LABELS[v] || String(v);
   if (key === "fp8_kernels")
     return FP8_KERNEL_LABELS[v] || String(v);
+  if (key === "text_encoder_quantization")
+    return TEXT_ENCODER_LABELS[v] || String(v);
   if (key === "kernel_precision")
     return KERNEL_PRECISION_LABELS[v] || String(v);
   if (key === "queue_color_scheme")
@@ -335,6 +348,7 @@ function memProfileFromRecommendation(rec) {
         rec.int8_kernels ||
         (rec.enable_int8_kernels === 0 ? "disabled" : "auto"),
       fp8_kernels: rec.fp8_kernels || "auto",
+      text_encoder_quantization: rec.text_encoder_quantization || "int8",
       kernel_precision: rec.kernel_precision || "fast",
         // v17.10 (ec9566a): "quite a few optimizations depends on" Sage2/2+, so the
         // attention mode is part of the recommendation. Absent on AMD/Intel

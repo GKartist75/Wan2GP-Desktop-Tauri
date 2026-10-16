@@ -222,7 +222,7 @@ Profiles run 1 (max performance) to 5 (failsafe). Upstream v17 made Profile 4 up
 
 Audio lands on **P3+** almost everywhere, even where video gets P4 — audio models fit whole in VRAM, where upstream's own default applies. Two deliberate exceptions: P5 follows down, and P1/P3 are left alone.
 
-Settings written: `video/image/audio_profile`, `transformer_quantization`, `int8_kernels`, `fp8_kernels`, `kernel_precision`, `vae_config`, `vram_safety_coefficient`, plus the v17 levers (`attention_mode`, `vram_allocator`, `attention_head_split`, `read_ahead`, `smart_memory_pinning`, `*_preload_mode`, `perc_reserved_mem_max`). **These are CUDA-only** — on AMD and Intel Auto-Tune leaves them unset rather than persisting a setting that silently does nothing. Conditions are stated in the panel itself: the allocator needs a restart, pinning reloads the model, head split only engages at ≥8192 tokens.
+Settings written: `video/image/audio_profile`, `transformer_quantization`, `text_encoder_quantization`, `int8_kernels`, `fp8_kernels`, `kernel_precision`, `vae_config`, `vram_safety_coefficient`, plus the v17 levers (`attention_mode`, `vram_allocator`, `attention_head_split`, `read_ahead`, `smart_memory_pinning`, `*_preload_mode`, `perc_reserved_mem_max`). **These are CUDA-only** — on AMD and Intel Auto-Tune leaves them unset rather than persisting a setting that silently does nothing. Conditions are stated in the panel itself: the allocator needs a restart, pinning reloads the model, head split only engages at ≥8192 tokens.
 
 A fresh install seeds the recommended values once, with setdefault semantics, so day one is already calibrated. An update never re-seeds over settings you tuned.
 

@@ -759,6 +759,15 @@
               <div class="mem-hint"><span id="recQuant" class="tag-rec">rec: —</span><span id="savedQuant" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
+              <label class="token-hint" title="Text encoder (prompt) quantization — Configuration → Text Encoder Quantization. bf16 = 16-bit (more RAM, better quality); int8 = 8-bit (less RAM, slightly lower quality).">Text Encoder Quant</label>
+              <select id="memTextEncoderQuant" class="input">
+                <option value="">— unset —</option>
+                <option value="int8">int8 — 8-bit (less RAM, default)</option>
+                <option value="bf16">bf16 — 16-bit (more RAM, better quality)</option>
+              </select>
+              <div class="mem-hint"><span id="recTextEncoderQuant" class="tag-rec">rec: —</span><span id="savedTextEncoderQuant" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
               <label class="token-hint">INT8 Math Kernels (INT8 linear layers)</label>
               <select id="memInt8Kernels" class="input">
                 <option value="">— unset —</option>

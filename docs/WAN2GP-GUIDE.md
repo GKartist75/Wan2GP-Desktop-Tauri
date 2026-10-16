@@ -307,7 +307,8 @@ Essentials (names as in `SETTINGS.md` / Export Settings JSON):
 > default, P5 failsafe. `vae_config` is `0=auto, 1=16GB+, 2=8GB+, 3=6GB+` — Auto
 > defers tiling to runtime (Wan vs Qwen 2.1 tile presets + 16000/8000 MiB
 > thresholds), so a fixed tier wastes VRAM or adds banding. `transformer_quantization`
-> is `none/int8/fp8/nvfp4`; int8 is the recommended balance. `int8_kernels`
+> is `none/int8/fp8/nvfp4`; int8 is the recommended balance. `text_encoder_quantization`
+> is `bf16` (16-bit, better quality, more RAM) or `int8` (8-bit, less RAM). `int8_kernels`
 > (`auto/disabled/wgpkernels/triton/kitchen`) + `fp8_kernels` (`auto/pytorch/triton/cuda`)
 > + `kernel_precision` (`fast/strict`) are the kernel settings (v18.11). There is NO reserved-memory key in `wgp_config.json` —
 > that is the CLI `--perc-reserved-mem-max`. Safety: `0.80` for >=12 GB VRAM,
