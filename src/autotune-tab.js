@@ -325,6 +325,18 @@ function memProfilePopulate(settings, opts = {}) {
       // Show what's currently written to disk (preferred/saved).
       const saved = $(f.saved);
       if (saved) setTag(saved, "saved: " + fmtVal(key, v));
+    } else if (opts.mode === "saved-seed") {
+      // Paint each still-unset dropdown from disk without touching rec: tags.
+      // Detect results and user picks already sitting in a dropdown always
+      // win; only genuinely empty controls are seeded. (The old approach
+      // gated the whole panel on memVideoProfile alone, so once any Detect
+      // ran, keys Detect never recommends — ram_allocator above all — stayed
+      // on "unset" forever even with a value on disk.)
+      const sel = $(f.sel);
+      if (sel && (sel.value == null || sel.value === "")) {
+        if (v != null && v !== "") sel.value = String(v);
+        else if (key === "vae_config") sel.value = "0"; // AUTO is upstream's default
+      }
     }
   }
 }
@@ -379,11 +391,9 @@ async function memProfileLoad() {
     if (res && res.ok) {
       // Show the currently-saved (preferred) values from disk.
       memProfilePopulate(res.settings, { mode: "saved" });
-      // If a detection already populated the dropdowns, leave them; otherwise
-      // seed the dropdowns from the saved config too so the panel isn't empty.
-      const first = $("memVideoProfile");
-      if (first && first.value === "")
-        memProfilePopulate(res.settings, { mode: "recommend" });
+      // Seed every still-unset dropdown from disk (per-field, never
+      // clobbering Detect results or user picks, never touching rec: tags).
+      memProfilePopulate(res.settings, { mode: "saved-seed" });
     } else
       setMemStatus(
         (res && res.error) || "Failed to read memory settings",
