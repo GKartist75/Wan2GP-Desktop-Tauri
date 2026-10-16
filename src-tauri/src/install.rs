@@ -3739,6 +3739,111 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
     }
     Ok(serde_json::json!({"ok": true, "success": true, "wheel": HIP_GGUF_WHEEL_URL}))
 }
+
+/// Torch build tag of the active env, used to pick the matching CUDA/ROCm
+/// wheel variant: `cu130` / `cu128` (from `torch.version.cuda`) or `rocm714`
+/// (from `torch.version.hip`). None when torch is missing or unreadable.
+fn env_torch_kind(py: &str) -> Option<String> {
+    // hip "7.14.0" -> "rocm714"; cuda "13.0" -> "cu130", "12.8" -> "cu128".
+    let code = "import torch\n\
+        hip = getattr(torch.version, 'hip', None)\n\
+        if hip:\n    print(('rocm' + '.'.join(hip.split('.')[:2])).replace('.', ''))\n\
+        else:\n    print('cu' + (torch.version.cuda or '').replace('.', ''))";
+    let out = silent_command(py).args(["-c", code]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+/// Opt-in WGPKernels INT8 wheel (upstream docs/INSTALLATION.md, Oct 2026;
+/// deepbeepmeep/WGPKernels v1.1.1). Not in setup_config/requirements, so it is
+/// a manual install beside Sync Kernels — the same shape as the HIP GGUF
+/// opt-in. The dist name is `wgpkernels`, so `--force-reinstall` swaps the
+/// CUDA/ROCm variant cleanly; `--no-deps` preserves the installed torch.
+/// Hardware-aware: the torch build tag comes from the active env (cu130,
+/// cu128, rocm714) and the GPU must be one that can actually run it.
+#[tauri::command]
+pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    mutating_try("install-wgpkernels")?;
+    let emit_log = |msg: &str| {
+        crate::base::push_log(msg, "setup");
+        let _ = app.emit("launch-log", msg.to_string());
+    };
+    let gpu = get_gpu_info_sync();
+    let profile = kernel_profile_key(
+        gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
+        gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+    );
+    if !crate::hw::wgpkernels_supported_profile(&profile) {
+        mutating_done();
+        return Err(format!(
+            "WGPKernels needs an NVIDIA RTX 30/40/50 (compute capability 8.0+) or an AMD RX 9070/R9700 on a rocm7.14 torch env; this box reports {profile}."
+        ));
+    }
+    let repo = get_repo_dir();
+    let env = get_active_env();
+    let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
+    let base = if std::path::Path::new(raw).is_absolute() {
+        PathBuf::from(raw)
+    } else {
+        repo.join(raw.trim_start_matches(".\\").trim_start_matches("./"))
+    };
+    let py = if cfg!(windows) {
+        base.join("Scripts\\python.exe")
+    } else {
+        base.join("bin/python3")
+    };
+    if !py.exists() {
+        mutating_done();
+        return Err("python not found for active env".into());
+    }
+    let py_s = py.to_string_lossy().to_string();
+    let Some(kind) = env_torch_kind(&py_s) else {
+        mutating_done();
+        return Err("Could not read the active env's torch build — install PyTorch first (Run Setup / restore).".into());
+    };
+    let os = if cfg!(windows) { "win_amd64" } else { "linux_x86_64" };
+    let Some(url) = crate::hw::wgpkernels_wheel_url(&kind, os) else {
+        mutating_done();
+        return Err(format!(
+            "No WGPKernels wheel for torch build '{kind}' — published builds are cu130, cu128 and rocm714 (Windows). Update PyTorch (Run Setup) or pick a supported GPU."
+        ));
+    };
+    emit_log(&format!(
+        "[*] Installing WGPKernels {} ({kind}) — INT8 fast path for int8_kernels = auto/wgpkernels…\n",
+        crate::hw::WGPKERNELS_VERSION
+    ));
+    let ok = crate::base::run_logged(
+        &app,
+        &py_s,
+        &[
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            "--force-reinstall",
+            "--upgrade",
+            &url,
+        ],
+        None,
+        |s: &str| {
+            crate::base::push_log(s, "setup");
+            let _ = app.emit("launch-log", s.to_string());
+        },
+    )
+    .await;
+    mutating_done();
+    if !ok {
+        return Err("WGPKernels wheel install failed — see console output. The wheel must match your torch/CUDA build (cu130 for torch 2.10+cu13, cu128 for torch 2.7+cu12.8).".into());
+    }
+    Ok(serde_json::json!({"ok": true, "success": true, "wheel": url, "version": crate::hw::WGPKERNELS_VERSION, "torchKind": kind}))
+}
 /// Post-install override wheels: the subset of Sync that setup.py can never
 /// produce — the GGUF floor and the sage safe build. setup.py installs
 /// upstream's pins verbatim; without this pass a lagging setup_config

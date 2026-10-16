@@ -4,6 +4,35 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+### Upstream v18.11 parity (`5290e89` → `a827cf2`, 2026-10-15/16)
+
+WanGP v18.11 adds Flux 3 Klein and Fish Audio Drama 3, an mmgp CPU-expert
+rework, split WGPKernels releases and new kernel enums.
+
+- **WGPKernels is installable (optional).** Upstream's `int8_kernels = auto`
+  now ranks WGPKernels > Kitchen > Triton > PyTorch, but the wheel is manual
+  install only (absent from `requirements.txt` / `setup_config.json`). A new
+  **GPU Kernel Wheels → WGPKernels (INT8)** button installs v1.1.1 from its own
+  repo (`deepbeepmeep/WGPKernels`, moved in `a827cf2`), auto-picking the wheel
+  from the active env's torch build (`cu130` / `cu128`, or the experimental
+  `rocm714` build on RX 9070/R9700). Shown for RTX 30/40/50 (compute 8.0+) and
+  gfx1201; the installed version appears in Active Environment.
+- **`int8_kernels` gains `wgpkernels`;** new **`fp8_kernels`** control
+  (`auto` / `pytorch` / `triton` / `cuda`) for FP8 checkpoints. Auto-Tune
+  recommends `auto` for both and validates the full upstream enum.
+- **Audio profile default is P3 again.** Upstream made P3 "recommended for
+  audio" (P4 + Dynamic Preload) and reserved P3+ for RAM-starved cards, so
+  Auto-Tune now sends audio to P3 instead of P3.5 on video/image profiles
+  2/4/4.5. Profile labels explain the new P1 = P2+Dynamic and P3 = P4+Dynamic
+  semantics.
+- **GGUF controls match wheel 1.0.25.** Verified against the installed wheel's
+  `__init__.py`: the pre-1.0.25 Stream-K and BF16→FP16 env vars are gone, so
+  those switches are retired and a **Short-batch mode** control
+  (`LLAMACPP_GGUF_SHORT_BATCH`, auto/native/mma) takes their place. Matmul mode
+  now also offers `materialized` (cuBLAS dense).
+- **Guide covers the new models** — Flux 3 Klein 5.6B (image) and Fish Audio
+  Drama 3 (speech) display names, with a Flux 3 starter in the image goal.
+
 ## [0.10.6] — 2026-10-12
 
 ### Stop no longer kills your own OpenCode/Zed on :4096

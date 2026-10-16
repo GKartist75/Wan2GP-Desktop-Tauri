@@ -64,6 +64,7 @@ async function refreshDashboard() {
         "specTorch",
         "specCuda",
         "specTriton",
+        "specWgpk",
         "specSage",
         "specFlash",
         "specDiffusers",
@@ -97,6 +98,7 @@ async function refreshDashboard() {
         "dotTorch",
         "dotCuda",
         "dotTriton",
+        "dotWgpk",
         "dotSage",
         "dotFlash",
         "dotDiffusers",
@@ -230,6 +232,7 @@ async function refreshDashboard() {
       const m = (status.versions?.torch || "").match(/cu(\d+)/);
       setSpec("specCuda", "dotCuda", m ? `CUDA ${m[1]}` : null);
       setSpec("specTriton", "dotTriton", status.versions?.triton, "triton");
+      setSpec("specWgpk", "dotWgpk", status.versions?.wgpkernels, "wgpkernels");
       setSpec(
         "specSage",
         "dotSage",

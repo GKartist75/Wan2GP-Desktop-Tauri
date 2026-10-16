@@ -661,13 +661,11 @@ function openSettings() {
     const g = cfg.ggufEnv || {
       enabled: true,
       matmulMode: "auto",
-      streamK: true,
-      bf16Fp16: false,
+      shortBatch: "auto",
     };
     if ($("ggufEnabled")) $("ggufEnabled").checked = g.enabled !== false;
     if ($("ggufMatmulMode")) $("ggufMatmulMode").value = g.matmulMode || "auto";
-    if ($("ggufStreamK")) $("ggufStreamK").checked = g.streamK !== false;
-    if ($("ggufBf16Fp16")) $("ggufBf16Fp16").checked = g.bf16Fp16 === true;
+    if ($("ggufShortBatch")) $("ggufShortBatch").value = g.shortBatch || "auto";
     // AMD ROCm controls (backend: amdEnv.miopenDisabled, default false)
     const a = cfg.amdEnv || { miopenDisabled: false };
     if ($("amdMiopenDisabled"))

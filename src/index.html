@@ -303,18 +303,25 @@
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>GGUF CUDA Kernel</h3>
-            <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the FP16/BF16 multiply policy; <em>Stream-K</em> (default on) enables CUDA-graph-safe Stream-K; <em>BF16→FP16</em> restores the legacy path; <em>Disable</em> turns the GGUF CUDA kernels off entirely.</p>
+            <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the weight-multiply policy: <code>fast</code>/<code>low_vram</code> use the packed MMVQ/MMQ kernels, <code>materialized</code> dequantizes and uses cuBLAS. <em>Short-batch mode</em> drives the Q4_K/PTQ1_0 tensor-core path for 2–8 row batches (auto = per-shape). These are the knobs wheel <strong>1.0.25</strong> actually reads — the older Stream-K and BF16→FP16 switches were dropped upstream.</p>
             <label class="toggle-row"><input type="checkbox" id="ggufEnabled"> <span>Enable GGUF CUDA kernels</span></label>
             <div class="token-field" style="margin-top:8px">
               <label class="token-hint" style="display:block;margin-bottom:4px">Matmul mode</label>
               <select id="ggufMatmulMode" class="input">
                 <option value="auto">auto (wheel default)</option>
                 <option value="fast">fast</option>
+                <option value="materialized">materialized (cuBLAS dense)</option>
                 <option value="low_vram">low_vram</option>
               </select>
             </div>
-            <label class="toggle-row" style="margin-top:8px"><input type="checkbox" id="ggufStreamK"> <span>Enable Stream-K (CUDA graphs)</span></label>
-            <label class="toggle-row"><input type="checkbox" id="ggufBf16Fp16"> <span>BF16 → FP16 (legacy cuBLAS path)</span></label>
+            <div class="token-field" style="margin-top:8px">
+              <label class="token-hint" style="display:block;margin-bottom:4px">Short-batch mode</label>
+              <select id="ggufShortBatch" class="input">
+                <option value="auto">auto (per-shape)</option>
+                <option value="native">native</option>
+                <option value="mma">mma (tensor cores)</option>
+              </select>
+            </div>
             <button class="btn btn-primary small" id="ggufSaveBtn" style="margin-top:8px" title="Save GGUF kernel settings (applies on next launch)">Save GGUF settings</button>
           </div>
           <div class="settings-section" style="margin-top:12px">
@@ -679,7 +686,7 @@
             <button class="btn btn-primary small" id="memProfileApplyBtn" style="margin-left:auto" title="Write these performance settings to wgp_config.json">Apply Overrides</button>
           </div>
           <p class="token-hint" style="padding:4px 12px 0">Detect scans your hardware and calibrates these mmgp knobs in <code>wgp_config.json</code>. Each dropdown defaults to the <strong>recommended</strong> value — change any to override. <span class="tag-rec">rec</span> = recommended, <span class="tag-saved">saved</span> = currently written to disk. Values changed inside WanGP show up here as <span class="tag-saved">saved</span> — Detect only proposes, <strong>Apply Overrides</strong> is what writes.</p>
-            <p class="token-hint" style="padding:4px 12px 0;margin:0"><strong>v17 RAM/VRAM controls:</strong> the allocator needs a restart · Smart Memory Pinning reloads the model · Head Split only engages on long sequences (8192+ tokens) and its output is not bit-identical to Off — details, sometimes motion, can differ · Dynamic preload needs the MMGP allocator and only runs on Profiles 2, 4 and 5 — Profiles 1, 3 and 3+ load whole models and have nothing to preload · most of the v17 gain assumes Sage2/2+ attention · all of them are NVIDIA-only (upstream skips them on AMD/Intel), so Detect leaves them unset on those cards.</p>
+            <p class="token-hint" style="padding:4px 12px 0;margin:0"><strong>v17 RAM/VRAM controls:</strong> the allocator needs a restart · Smart Memory Pinning reloads the model · Head Split only engages on long sequences (8192+ tokens) and its output is not bit-identical to Off — details, sometimes motion, can differ · Dynamic preload needs the MMGP allocator: it is built into Profiles 1 and 3 (they are P2/P4 + Dynamic Preload) and selectable on Profiles 2, 4 and 5 · most of the v17 gain assumes Sage2/2+ attention · all of them are NVIDIA-only (upstream skips them on AMD/Intel), so Detect leaves them unset on those cards.</p>
           <label style="display:flex;align-items:center;gap:8px;padding:8px 12px 0;font-size:0.75rem;color:var(--text-secondary);cursor:pointer"
                  title="Force the P5 minimum-compatibility profile — slower, but maximizes the chance generation works (e.g. a 10GB card that still crashes on P4+). Check and press Detect to re-seed these fields with P5 values.">
             <input type="checkbox" id="autotuneFailsafeChk" style="accent-color:var(--signal-yellow)">
@@ -690,10 +697,10 @@
               <label class="token-hint">Video Profile</label>
               <select id="memVideoProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="1">P1 — whole models in VRAM, all in Reserved RAM (fastest; most RAM &amp; VRAM)</option>
+                <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM (fastest; most RAM &amp; VRAM)</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part (needs a lot of RAM)</option>
-                  <option value="3">P3 — whole models in VRAM, main models in Reserved RAM</option>
-                <option value="3.5">P3+ — P3 with no Reserved RAM (recommended for audio)</option>
+                  <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM (recommended for audio)</option>
+                <option value="3.5">P3+ — P3 without Reserved RAM; Dynamic Preload keeps what fits in VRAM (slower loads)</option>
                 <option value="4">P4 — main models in Reserved RAM, sent part by part (recommended)</option>
                 <option value="4.5">P4+ — P4 one part at a time, ~1 GB less VRAM, slightly slower</option>
                 <option value="5">P5 — almost no Reserved RAM (fail safe; slow on short steps)</option>
@@ -704,10 +711,10 @@
               <label class="token-hint">Image Profile</label>
               <select id="memImageProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="1">P1 — whole models in VRAM, all in Reserved RAM (fastest; most RAM &amp; VRAM)</option>
+                <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM (fastest; most RAM &amp; VRAM)</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part (needs a lot of RAM)</option>
-                  <option value="3">P3 — whole models in VRAM, main models in Reserved RAM</option>
-                <option value="3.5">P3+ — P3 with no Reserved RAM</option>
+                  <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM</option>
+                <option value="3.5">P3+ — P3 without Reserved RAM; Dynamic Preload keeps what fits in VRAM (slower loads)</option>
                 <option value="4">P4 — main models in Reserved RAM, sent part by part (recommended)</option>
                 <option value="4.5">P4+ — P4 one part at a time, ~1 GB less VRAM, slightly slower</option>
                 <option value="5">P5 — almost no Reserved RAM (fail safe; slow on short steps)</option>
@@ -718,10 +725,10 @@
               <label class="token-hint">Audio Profile</label>
               <select id="memAudioProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="1">P1 — whole models in VRAM, all in Reserved RAM</option>
+                <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part</option>
-                  <option value="3">P3 — whole models in VRAM, main models in Reserved RAM</option>
-                <option value="3.5">P3+ — P3 with no Reserved RAM (recommended for audio)</option>
+                  <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM (recommended for audio)</option>
+                <option value="3.5">P3+ — P3 without Reserved RAM; Dynamic Preload keeps what fits in VRAM</option>
                 <option value="4">P4 — main models in Reserved RAM, sent part by part</option>
                 <option value="4.5">P4+ — P4 one part at a time, ~1 GB less VRAM, slightly slower</option>
                 <option value="5">P5 — almost no Reserved RAM (fail safe)</option>
@@ -755,12 +762,24 @@
               <label class="token-hint">INT8 Math Kernels (INT8 linear layers)</label>
               <select id="memInt8Kernels" class="input">
                 <option value="">— unset —</option>
-                <option value="auto">Auto — Kitchen CUDA/HIP, then Triton, then PyTorch (default)</option>
+                <option value="auto">Auto — WGPKernels, then Kitchen, then Triton, then PyTorch (default)</option>
+                <option value="wgpkernels">WGPKernels (needs the wheel from GPU Kernel Wheels)</option>
                 <option value="kitchen">Comfy Kitchen kernels (needs R580+ driver)</option>
                 <option value="triton">Triton (needs Triton installed)</option>
                 <option value="disabled">Disabled — PyTorch/Quanto path</option>
               </select>
               <div class="mem-hint"><span id="recInt8Kernels" class="tag-rec">rec: —</span><span id="savedInt8Kernels" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="Math kernels for FP8 checkpoints (Quanto qfloat8 / scaled_fp8). auto = fastest available (CUDA, then Triton, then PyTorch). CUDA FP8 tensor cores need RTX 40xx or later.">FP8 Math Kernels</label>
+              <select id="memFp8Kernels" class="input">
+                <option value="">— unset —</option>
+                <option value="auto">Auto — fastest available (default)</option>
+                <option value="cuda">CUDA FP8 tensor cores (RTX 40xx+, fastest, lower precision)</option>
+                <option value="triton">Triton (fast, precise)</option>
+                <option value="pytorch">PyTorch (slowest, precise)</option>
+              </select>
+              <div class="mem-hint"><span id="recFp8Kernels" class="tag-rec">rec: —</span><span id="savedFp8Kernels" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
               <label class="token-hint">Optimized Ops Precision (H3 VAE fusions)</label>
@@ -1110,6 +1129,7 @@
             <button class="btn btn-ghost small hide-on-collapse" id="restoreKernelsBtn" title="Reinstall setup_config wheels exactly as published — drops launcher overrides (GGUF floor; sage swap only if setup_config ever lags to post4). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
                 <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.25 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
                 <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only: install GGUF 1.0.25 torch210rocm714 HIP wheel for RX 9070/R9700 gfx1201. Needs torch 2.10.0+rocm7.14.0; replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="installWgpkernelsBtn" title="Optional INT8 fast path (WGPKernels 1.1.1). Manual-install only upstream — installs the wheel matching your torch build (cu130/cu128) for RTX 30/40/50 (compute 8.0+), or the rocm714 build for RX 9070/R9700." style="margin-left:8px;display:none">WGPKernels (INT8)</button>
           </div>
           <div class="env-subsection" id="kernelWheelsSubsection" style="margin-top:0;border-top:none;padding-top:0">
             <div class="env-specs" id="kernelWheels">
@@ -1139,6 +1159,7 @@
               <div class="spec-row"><span class="spec-label">Torch</span><span class="spec-dot" id="dotTorch"></span><span class="spec-value" id="specTorch">—</span></div>
               <div class="spec-row"><span class="spec-label">CUDA</span><span class="spec-dot" id="dotCuda"></span><span class="spec-value" id="specCuda">—</span></div>
               <div class="spec-row"><span class="spec-label">Triton</span><span class="spec-dot" id="dotTriton"></span><span class="spec-value" id="specTriton">—</span></div>
+              <div class="spec-row"><span class="spec-label">WGPKernels</span><span class="spec-dot" id="dotWgpk"></span><span class="spec-value" id="specWgpk">—</span></div>
               <div class="spec-row"><span class="spec-label">Sage Attn</span><span class="spec-dot" id="dotSage"></span><span class="spec-value" id="specSage">—</span></div>
               <div class="spec-row"><span class="spec-label">Flash Attn</span><span class="spec-dot" id="dotFlash"></span><span class="spec-value" id="specFlash">—</span></div>
               <div class="spec-row"><span class="spec-label">Sparge Attn</span><span class="spec-value" id="specSparge">—</span></div>

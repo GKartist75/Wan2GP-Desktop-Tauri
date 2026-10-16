@@ -222,7 +222,7 @@ Profiles run 1 (max performance) to 5 (failsafe). Upstream v17 made Profile 4 up
 
 Audio lands on **P3+** almost everywhere, even where video gets P4 — audio models fit whole in VRAM, where upstream's own default applies. Two deliberate exceptions: P5 follows down, and P1/P3 are left alone.
 
-Settings written: `video/image/audio_profile`, `transformer_quantization`, `int8_kernels`, `kernel_precision`, `vae_config`, `vram_safety_coefficient`, plus the v17 levers (`attention_mode`, `vram_allocator`, `attention_head_split`, `read_ahead`, `smart_memory_pinning`, `*_preload_mode`, `perc_reserved_mem_max`). **These are CUDA-only** — on AMD and Intel Auto-Tune leaves them unset rather than persisting a setting that silently does nothing. Conditions are stated in the panel itself: the allocator needs a restart, pinning reloads the model, head split only engages at ≥8192 tokens.
+Settings written: `video/image/audio_profile`, `transformer_quantization`, `int8_kernels`, `fp8_kernels`, `kernel_precision`, `vae_config`, `vram_safety_coefficient`, plus the v17 levers (`attention_mode`, `vram_allocator`, `attention_head_split`, `read_ahead`, `smart_memory_pinning`, `*_preload_mode`, `perc_reserved_mem_max`). **These are CUDA-only** — on AMD and Intel Auto-Tune leaves them unset rather than persisting a setting that silently does nothing. Conditions are stated in the panel itself: the allocator needs a restart, pinning reloads the model, head split only engages at ≥8192 tokens.
 
 A fresh install seeds the recommended values once, with setdefault semantics, so day one is already calibrated. An update never re-seeds over settings you tuned.
 
@@ -334,7 +334,7 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 ## 🧭 Guide & 📚 Library
 
-**Guide** (topbar tab, next to Manage) answers *what to make and with what*: goal picker with curated model picks + starter settings (copy the full model name into WanGP's toolbar search), 6 prompt templates with the line mode each needs, offline `[/...]` window-command checker, VACE pre-flight checklist, post-processing at a glance. Read-only — nothing changes until you pick inside WanGP. Full walkthroughs: [docs/WAN2GP-GUIDE.md](docs/WAN2GP-GUIDE.md) — all 232 models and 116 settings.
+**Guide** (topbar tab, next to Manage) answers *what to make and with what*: goal picker with curated model picks + starter settings (copy the full model name into WanGP's toolbar search), 6 prompt templates with the line mode each needs, offline `[/...]` window-command checker, VACE pre-flight checklist, post-processing at a glance. Read-only — nothing changes until you pick inside WanGP. Full walkthroughs: [docs/WAN2GP-GUIDE.md](docs/WAN2GP-GUIDE.md) — all 238 models and 116 settings.
 
 **Manage → Library** inventories what's on disk: downloaded checkpoints (sizes + kind tags), LoRA families (files/size/known URLs), finetunes (import validated JSON, export to share, delete), workspaces (real sizes, missing-file flags, archive lock, definitions backup).
 

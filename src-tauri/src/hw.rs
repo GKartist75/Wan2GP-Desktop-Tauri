@@ -857,6 +857,84 @@ pub(crate) fn apply_gguf_override_with(url: &str, floor: &str) -> String {
     }
 }
 
+/// WGPKernels: the INT8 (and general) fast-kernel family behind upstream's
+/// `int8_kernels = auto` ranking (wgpkernels > kitchen > triton > pytorch).
+/// Manual-install only — it appears in neither `setup_config.json` nor
+/// `requirements.txt` — so the launcher surfaces it as an opt-in beside the
+/// Sage/GGUF wheels instead of pulling it during a normal install.
+///
+/// Repo moved on Oct 16 2026 (upstream a827cf2) from
+/// `deepbeepmeep/kernels/releases/download/wgpkernels-v1.1.1/` to its own
+/// `deepbeepmeep/WGPKernels/releases/download/v1.1.1/`; 1.1.1 is current.
+/// The wheel is `py3-none` (no CPython ABI tag), so one asset serves every
+/// Python — only the CUDA/ROCm tag has to match the env's torch build.
+/// Needs compute capability >= 8.0 (RTX 30/40/50) on NVIDIA; the
+/// `rocm714` build is the RX 9070 (gfx1201) experimental path.
+pub(crate) const WGPKERNELS_VERSION: &str = "1.1.1";
+pub(crate) const WGPKERNELS_BASE: &str =
+    "https://github.com/deepbeepmeep/WGPKernels/releases/download/v1.1.1";
+
+/// Resolve the WGPKernels wheel URL for a torch build tag and OS. `torch_kind`
+/// is `cu130` / `cu128` (NVIDIA) or `rocm714` (AMD RX 9070, Windows-only);
+/// `os` is `win_amd64` / `linux_x86_64`. Anything else has no published wheel
+/// (MPS/CPU). Pure + unit-tested.
+pub(crate) fn wgpkernels_wheel_url(torch_kind: &str, os: &str) -> Option<String> {
+    let ok_os = matches!(os, "win_amd64" | "linux_x86_64");
+    let tag = match torch_kind {
+        "cu130" | "cu128" => torch_kind,
+        // The RX 9070 build is Windows-only upstream.
+        "rocm714" if os == "win_amd64" => "rocm714",
+        _ => return None,
+    };
+    if !ok_os {
+        return None;
+    }
+    Some(format!(
+        "{WGPKERNELS_BASE}/wgpkernels-{WGPKERNELS_VERSION}%2B{tag}-py3-none-{os}.whl"
+    ))
+}
+
+/// GPU profile keys that can run WGPKernels. NVIDIA RTX 30/40/50 are
+/// compute capability >= 8.0 (Ampere and later); RTX_20 (Turing, 7.5) and
+/// GTX_10 (Pascal, 6.1) are below the kernels' floor. AMD_GFX1201 (RX
+/// 9070/R9700) only via the experimental `rocm714` wheel. Pure + unit-tested.
+pub(crate) fn wgpkernels_supported_profile(profile_key: &str) -> bool {
+    matches!(profile_key, "RTX_30" | "RTX_40" | "RTX_50" | "AMD_GFX1201")
+}
+
+#[cfg(test)]
+mod wgpkernels_tests {
+    use super::{wgpkernels_supported_profile, wgpkernels_wheel_url, WGPKERNELS_VERSION};
+    #[test]
+    fn cuda_and_rocm_urls_match_upstream() {
+        assert_eq!(
+            wgpkernels_wheel_url("cu130", "win_amd64").unwrap(),
+            format!("https://github.com/deepbeepmeep/WGPKernels/releases/download/v{WGPKERNELS_VERSION}/wgpkernels-{WGPKERNELS_VERSION}%2Bcu130-py3-none-win_amd64.whl")
+        );
+        assert_eq!(
+            wgpkernels_wheel_url("cu128", "linux_x86_64").unwrap(),
+            format!("https://github.com/deepbeepmeep/WGPKernels/releases/download/v{WGPKERNELS_VERSION}/wgpkernels-{WGPKERNELS_VERSION}%2Bcu128-py3-none-linux_x86_64.whl")
+        );
+        // rocm714 is Windows-only.
+        assert!(wgpkernels_wheel_url("rocm714", "win_amd64").is_some());
+        assert!(wgpkernels_wheel_url("rocm714", "linux_x86_64").is_none());
+        // No wheel for CPU/MPS or unknown tags.
+        for bad in ["cpu", "", "cu121", "rocm10", "mps"] {
+            assert!(wgpkernels_wheel_url(bad, "win_amd64").is_none(), "{bad}");
+        }
+        assert!(wgpkernels_wheel_url("cu130", "macosx").is_none());
+    }
+    #[test]
+    fn only_cc8_plus_and_gfx1201_profiles_qualify() {
+        for good in ["RTX_30", "RTX_40", "RTX_50", "AMD_GFX1201"] {
+            assert!(wgpkernels_supported_profile(good), "{good}");
+        }
+        for bad in ["RTX_20", "GTX_10", "AMD_GFX110X", "AMD_GFX1200", "CPU"] {
+            assert!(!wgpkernels_supported_profile(bad), "{bad}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod amd_profile_tests {
     use super::kernel_profile_key;

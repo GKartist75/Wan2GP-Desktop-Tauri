@@ -272,8 +272,10 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **GPU Device** — `auto` or a pinned `cuda:N` for generation.
 - **Launcher GPU** — which GPU the launcher UI itself prefers.
 - **SageAttention wheel** — which Sage build to use.
-- **GGUF CUDA Kernel** — llama.cpp CUDA offload switch (matmul mode,
-  Stream-K, BF16→FP16 legacy path, or disable). Applies on next launch.
+- **GGUF CUDA Kernel** — llama.cpp CUDA offload switch (matmul mode —
+  packed MMVQ/MMQ or cuBLAS dense — short-batch mode for the Q4_K/PTQ1_0
+  tensor-core path, or disable). Applies on next launch. Verified against wheel
+  1.0.25: the older Stream-K and BF16→FP16 switches were dropped upstream.
 - **AMD ROCm** (AMD only, applies on next launch) — *Disable MIOpen* leaves
   `MIOPEN_FIND_MODE` fully unset (the upstream guide's `cudnn.enabled = False`
   alternative). Try it if generation crashes with MIOpen/HIP errors while the
@@ -385,7 +387,7 @@ Two caveats if you override video to `dynamic`: it **only engages with the MMGP 
 
 ### Settings written by older Auto-Tune tiers
 
-`video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `int8_kernels` (Auto / Comfy Kitchen / Triton / Disabled — upstream v13.13 replacement for the old numeric toggle), `kernel_precision` (fast approximate / strict), `vae_config` (always Auto: 16GB+ / 8GB+ / 6GB+ presets), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** forces P5 for hardware where the recommendation still crashes.
+`video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `int8_kernels` (Auto / WGPKernels / Comfy Kitchen / Triton / Disabled), `fp8_kernels` (Auto / CUDA / Triton / PyTorch), `kernel_precision` (fast approximate / strict), `vae_config` (always Auto: 16GB+ / 8GB+ / 6GB+ presets), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** forces P5 for hardware where the recommendation still crashes. Audio models now default to **P3** (upstream's "recommended for audio": P4 + Dynamic Preload), not P3+.
 
 
 ## Manage → Plugins

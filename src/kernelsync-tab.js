@@ -70,6 +70,33 @@ $("installHipGgufBtn")?.addEventListener("click", async function () {
     setTimeout(refreshDashboard, 1500);
   }
 });
+// Optional WGPKernels INT8 wheel (upstream v18.11; deepbeepmeep/WGPKernels
+// v1.1.1). Manual-install only, so it is an explicit opt-in here. The
+// backend picks the wheel from the active env's torch build (cu130/cu128,
+// or rocm714 on an AMD rocm7.14 env) and refuses GPUs below compute 8.0.
+$("installWgpkernelsBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  if (
+    !confirm(
+      "Install the WGPKernels 1.1.1 wheel for INT8 fast kernels?\n\nOptional upstream wheel (not part of a normal install). It matches your torch build automatically: cu130/cu128 for NVIDIA RTX 30/40/50, or the experimental rocm714 build for RX 9070/R9700. WanGP's int8_kernels = Auto will prefer it once present.",
+    )
+  )
+    return;
+  this.disabled = true;
+  this.textContent = "Installing…";
+  try {
+    const r = await window.w2gp.installWgpkernels();
+    if (r && r.success)
+      showToast("✓ WGPKernels " + (r.version || "") + " installed (" + (r.torchKind || "") + ")");
+    else showToast("✗ WGPKernels install failed: " + (r && r.error ? r.error : "unknown"));
+  } catch (e) {
+    showToast("✗ WGPKernels install failed: " + errText(e));
+  } finally {
+    this.disabled = false;
+    this.textContent = "WGPKernels (INT8)";
+    setTimeout(refreshDashboard, 1500);
+  }
+});
 
 async function loadModelPaths() {
   const paths = await window.w2gp.getModelPaths();

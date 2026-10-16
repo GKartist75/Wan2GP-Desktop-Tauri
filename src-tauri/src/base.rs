@@ -530,7 +530,7 @@ pub(crate) fn load_config_value() -> serde_json::Value {
         "serverPort": 7861, "serverName": "localhost", "defaultBrowser": "system", // ponytail: 7861 for side-by-side with Electron 7860
 
         "termDockDefault": "bottom", "electronGpu": true, "launcherGpu": "auto", "sageSafe": true, "share": false,
-        "autoUpdateEnabled": true, "ggufEnv": { "enabled": true, "matmulMode": "auto", "streamK": true, "bf16Fp16": false }
+        "autoUpdateEnabled": true, "ggufEnv": { "enabled": true, "matmulMode": "auto", "shortBatch": "auto" }
     })
 }
 pub(crate) fn atomic_write(path: &Path, content: &str) -> std::io::Result<()> {

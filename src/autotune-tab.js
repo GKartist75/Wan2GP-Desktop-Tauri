@@ -15,6 +15,7 @@ function memProfileCollect() {
   const ve = $("memVae").value;
   const q = $("memQuant").value;
   const i8k = $("memInt8Kernels") ? $("memInt8Kernels").value : "";
+  const f8k = $("memFp8Kernels") ? $("memFp8Kernels").value : "";
   const kp = $("memKernelPrecision") ? $("memKernelPrecision").value : "";
   const am = $("memAttentionMode") ? $("memAttentionMode").value : "";
   const cm = $("memCompileMode") ? $("memCompileMode").value : "";
@@ -35,6 +36,7 @@ function memProfileCollect() {
   const cc = $("memComputeCache") ? $("memComputeCache").value : "";
   const ccp = $("memComputeCachePath") ? $("memComputeCachePath").value.trim() : "";
   if (i8k) s.int8_kernels = i8k;
+  if (f8k) s.fp8_kernels = f8k;
   if (kp) s.kernel_precision = kp;
   if (am) s.attention_mode = am;
   if (cm) s.compile = cm;
@@ -111,6 +113,11 @@ const MEM_FIELDS = {
     sel: "memInt8Kernels",
     rec: "recInt8Kernels",
     saved: "savedInt8Kernels",
+  },
+  fp8_kernels: {
+    sel: "memFp8Kernels",
+    rec: "recFp8Kernels",
+    saved: "savedFp8Kernels",
   },
   kernel_precision: {
     sel: "memKernelPrecision",
@@ -194,9 +201,16 @@ const MEM_FIELDS = {
 };
 const INT8_KERNEL_LABELS = {
   auto: "Auto (default)",
+  wgpkernels: "WGPKernels",
   kitchen: "Comfy Kitchen",
   triton: "Triton",
   disabled: "Disabled (PyTorch)",
+};
+const FP8_KERNEL_LABELS = {
+  auto: "Auto (default)",
+  cuda: "CUDA FP8 tensor cores",
+  triton: "Triton",
+  pytorch: "PyTorch",
 };
 const KERNEL_PRECISION_LABELS = {
   fast: "Approximate (default)",
@@ -249,6 +263,8 @@ function fmtVal(key, v) {
   if (key === "vae_config") return v + (Number(v) === 0 ? " (AUTO)" : "");
   if (key === "int8_kernels")
     return INT8_KERNEL_LABELS[v] || String(v);
+  if (key === "fp8_kernels")
+    return FP8_KERNEL_LABELS[v] || String(v);
   if (key === "kernel_precision")
     return KERNEL_PRECISION_LABELS[v] || String(v);
   if (key === "queue_color_scheme")
@@ -318,6 +334,7 @@ function memProfileFromRecommendation(rec) {
       int8_kernels:
         rec.int8_kernels ||
         (rec.enable_int8_kernels === 0 ? "disabled" : "auto"),
+      fp8_kernels: rec.fp8_kernels || "auto",
       kernel_precision: rec.kernel_precision || "fast",
         // v17.10 (ec9566a): "quite a few optimizations depends on" Sage2/2+, so the
         // attention mode is part of the recommendation. Absent on AMD/Intel
@@ -379,7 +396,7 @@ $("memProfileApplyBtn")?.addEventListener("click", async () => {
     if (res && res.ok) {
       // Re-read from disk so the `saved:` tags show what Apply just wrote.
       // Without this they keep whatever the panel was loaded with, and a value
-      // that genuinely changed (audio P4 → P3+) sits there showing `rec: 3.5`
+      // that genuinely changed (audio P4 → P3) sits there showing `rec: 3`
       // beside a stale `saved: 4` until the panel is reopened.
       await memProfileLoad();
       setMemStatus(

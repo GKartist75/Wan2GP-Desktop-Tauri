@@ -33,6 +33,16 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
       }
     }
   } catch {}
+  // Optional WGPKernels INT8 opt-in: NVIDIA RTX 30/40/50 (compute 8.0+) and
+  // the AMD gfx1201 RX 9070/R9700 experimental path only.
+  try {
+    const wgpkBtn = $("installWgpkernelsBtn");
+    if (wgpkBtn) {
+      const p = String(kernelProfile || "");
+      const ok = ["RTX_30", "RTX_40", "RTX_50", "AMD_GFX1201"].includes(p);
+      wgpkBtn.style.display = ok ? "" : "none";
+    }
+  } catch {}
   const list = Array.isArray(wheels) ? wheels : [];
   if (!list.length) {    // Distinguish "no GPU profile" (genuinely nothing to show) from a data
     // error so the user isn't left staring at a blank section.

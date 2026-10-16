@@ -271,8 +271,7 @@ fn launch_in_terminal(
     for k in [
         "WGP_GGUF_LLAMACPP_CUDA",
         "WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE",
-        "WGP_GGUF_LLAMACPP_CUDA_STREAM_K",
-        "WGP_GGUF_LLAMACPP_CUDA_BF16_FP16",
+        "LLAMACPP_GGUF_SHORT_BATCH",
     ] {
         if let Ok(val) = std::env::var(k) {
             env_lines.push(format!("set {k}={val}"));
@@ -635,7 +634,12 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     if !claude_key.is_empty() {
         std::env::set_var("ANTHROPIC_API_KEY", &claude_key);
     }
-    // GGUF CUDA kernel knobs from Manage → GGUF CUDA Kernel (docs/INSTALLATION.md parity).
+    // GGUF CUDA kernel knobs from Settings → GGUF CUDA Kernel. Verified against
+    // the 1.0.25 wheel's llamacpp_gguf_cuda/__init__.py: it reads
+    // WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE (fast/mmq/packed/low_vram -> packed
+    // MMVQ/MMQ; materialized/dense/cublas -> cuBLAS on a dequant copy) and
+    // LLAMACPP_GGUF_SHORT_BATCH (auto/native/mma). The pre-1.0.25 Stream-K and
+    // BF16->FP16 env vars were removed upstream and are no longer set.
     // std::env persists in OUR process across launches, so always reconcile:
     // set what's configured, REMOVE stale leftovers.
     {
@@ -648,34 +652,37 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             std::env::set_var("WGP_GGUF_LLAMACPP_CUDA", "0");
         } else {
             std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA");
-            match g
+            let matmul = g
                 .get("matmulMode")
                 .and_then(|v| v.as_str())
-                .unwrap_or("auto")
-            {
-                "fast" | "low_vram" => std::env::set_var(
-                    "WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE",
-                    g["matmulMode"].as_str().unwrap(),
-                ),
+                .unwrap_or("auto");
+            match matmul {
+                "fast" | "low_vram" | "materialized" => {
+                    std::env::set_var("WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE", matmul)
+                }
                 _ => std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE"),
             }
-            if g.get("streamK").and_then(|v| v.as_bool()) == Some(false) {
-                std::env::set_var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K", "0");
-            } else {
-                std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K");
+            // Successor to the removed Stream-K knob (wheel 1.0.25): the
+            // Q4_K/PTQ1_0 tensor-core path for 2-8 row batches. "auto" (and
+            // anything unknown) leaves the wheel's own per-shape default.
+            let short = g
+                .get("shortBatch")
+                .and_then(|v| v.as_str())
+                .unwrap_or("auto");
+            match short {
+                "native" | "mma" => std::env::set_var("LLAMACPP_GGUF_SHORT_BATCH", short),
+                _ => std::env::remove_var("LLAMACPP_GGUF_SHORT_BATCH"),
             }
-            if g.get("bf16Fp16").and_then(|v| v.as_bool()) == Some(true) {
-                std::env::set_var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16", "1");
-            } else {
-                std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16");
-            }
+            // Retire the dead pre-1.0.25 knobs so a stale process env can't
+            // leak them into a launch that no longer honours them.
+            std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K");
+            std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16");
         }
         emit(&format!(
-            "[i] GGUF env: CUDA={} MATMUL={} STREAM_K={} BF16_FP16={}\n",
+            "[i] GGUF env: CUDA={} MATMUL={} SHORT_BATCH={}\n",
             std::env::var("WGP_GGUF_LLAMACPP_CUDA").unwrap_or("1".into()),
             std::env::var("WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE").unwrap_or("auto".into()),
-            std::env::var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K").unwrap_or("1".into()),
-            std::env::var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16").unwrap_or("0".into())
+            std::env::var("LLAMACPP_GGUF_SHORT_BATCH").unwrap_or("auto".into())
         ));
     }
     // AMD GPU profile env from setup_config.json (e.g. HSA_OVERRIDE_GFX_VERSION).
