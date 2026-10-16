@@ -81,7 +81,9 @@ From `INSTALLATION.md` — the launcher automates all of this; listed so you kno
 | Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.25, LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2 (optional, manual), Comfy Kitchen via requirements, WGPKernels 1.1.1 (optional, RTX 30+/gfx1201) | — | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back) | — |
 
 Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
-`int8_kernels`: Auto tries WGPKernels → Kitchen CUDA/HIP → Triton → PyTorch;
+`int8_kernels`: Auto tries WGPKernels → Kitchen CUDA/HIP → Triton → PyTorch
+(fastest *without quality degradation* — backends differ slightly at identical
+seed, so garbage output means trying Triton/PyTorch explicitly);
 `fp8_kernels` (Auto / CUDA / Triton / PyTorch) picks the same kind of kernel for
 FP8 checkpoints; `kernel_precision` fast/strict controls H3 VAE fusions.
 WGPKernels is an optional wheel (not in `requirements.txt`/`setup_config.json`) —

@@ -46,6 +46,13 @@ rework, split WGPKernels releases and new kernel enums.
   initializing the ROCm SDK for Veda sparse attention; upstream's main-env doc
   says it isn't needed there, so the copied recipe marks it as the optional
   step 3 of the *separate* 7.14 env with a skip-if-unrecognized note.
+- **Active INT8/FP8 backend chips.** The dashboard's Active Environment card
+  gains live `INT8 backend` / `FP8 backend` rows fed by WanGP's boot lines
+  (`[INT8] Backend: …`), so the selected kernel is visible without digging the
+  console (Discord question); cleared on server exit, survives refreshes.
+- **Backend quality note.** Performance Settings + guide state that backends
+  differ slightly at identical seed and Auto means fastest *without quality
+  degradation* — garbage output calls for Triton/PyTorch explicitly.
 
 ### Hardware-overview pins re-checked against upstream (2026-10-16)
 

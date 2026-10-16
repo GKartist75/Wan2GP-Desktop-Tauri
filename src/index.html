@@ -778,6 +778,7 @@
                 <option value="disabled">Disabled — PyTorch/Quanto path</option>
               </select>
               <div class="mem-hint"><span id="recInt8Kernels" class="tag-rec">rec: —</span><span id="savedInt8Kernels" class="tag-saved">saved: —</span></div>
+              <div class="mem-hint">Backends differ slightly at identical seed — Auto is fastest without quality loss; if output looks wrong, try Triton or Disabled explicitly.</div>
             </div>
             <div class="mem-field">
               <label class="token-hint" title="Math kernels for FP8 checkpoints (Quanto qfloat8 / scaled_fp8). auto = fastest available (CUDA, then Triton, then PyTorch). CUDA FP8 tensor cores need RTX 40xx or later.">FP8 Math Kernels</label>
@@ -1173,6 +1174,8 @@
               <div class="spec-row"><span class="spec-label">Sage Attn</span><span class="spec-dot" id="dotSage"></span><span class="spec-value" id="specSage">—</span></div>
               <div class="spec-row"><span class="spec-label">Flash Attn</span><span class="spec-dot" id="dotFlash"></span><span class="spec-value" id="specFlash">—</span></div>
               <div class="spec-row"><span class="spec-label">Sparge Attn</span><span class="spec-value" id="specSparge">—</span></div>
+              <div class="spec-row"><span class="spec-label">INT8 backend</span><span class="spec-dot" id="dotInt8Backend"></span><span class="spec-value" id="specInt8Backend">—</span></div>
+              <div class="spec-row"><span class="spec-label">FP8 backend</span><span class="spec-dot" id="dotFp8Backend"></span><span class="spec-value" id="specFp8Backend">—</span></div>
               <div class="spec-row"><span class="spec-label">Diffusers</span><span class="spec-dot" id="dotDiffusers"></span><span class="spec-value" id="specDiffusers">—</span></div>
               <div class="spec-row"><span class="spec-label">Transformers</span><span class="spec-dot" id="dotTransformers"></span><span class="spec-value" id="specTransformers">—</span></div>
               <div class="spec-row"><span class="spec-label">Gradio</span><span class="spec-dot" id="dotGradio"></span><span class="spec-value" id="specGradio">—</span></div>
@@ -2183,6 +2186,7 @@
   <script src="launch-builder.js" defer></script>
   <script src="library-tab.js" defer></script>
   <script src="services/net-validate.js" defer></script>
+  <script src="services/parse-backend.js" defer></script>
   <script src="safety-tab.js" defer></script>
   <script src="deepy-checks.js" defer></script>
 </body>

@@ -307,6 +307,11 @@ async function refreshDashboard() {
           status.versions?.sparge ||
           (status.profile && status.profile.sparge) ||
           "—";
+      // Live INT8/FP8 backend chips are runtime state from the launch log, not
+      // version probes — repaint them so a refresh never blanks a live value.
+      try {
+        if (typeof _paintBackendChips === "function") _paintBackendChips();
+      } catch {}
     }
     // ponytail: batch DOM swap to avoid flicker — build fragment then single replace
     const list = $("envList");
