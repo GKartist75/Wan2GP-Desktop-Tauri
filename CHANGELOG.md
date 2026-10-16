@@ -4,6 +4,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+- **Roll back Triton to post24** (Manage → Troubleshooting): the Repair command takes an optional version; the new button pins `triton-windows==3.6.0.post24` (previous known-good 3.6.x) with the same reinstall-and-clear-and-verify flow. Warns that a later setup floats forward again on upstream's `-U` range spec.
+
 ## [0.10.10] — 2026-10-16
 
 - **Repair Triton wheel** (Manage → Troubleshooting → Repair wheel): force-reinstalls the exact installed Triton build (`--force-reinstall --no-deps`, torch and everything else untouched — deliberately not floating to latest, which would break upstream parity), clears both JIT cache homes (renamed to backup), then verifies the import and reports the version. For damaged installs (quarantined or half-written files) — stated plainly in the UI, it fixes corrupt files, not antivirus verdicts.
