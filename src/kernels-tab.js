@@ -41,6 +41,25 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
       const p = String(kernelProfile || "");
       const ok = ["RTX_30", "RTX_40", "RTX_50", "AMD_GFX1201"].includes(p);
       wgpkBtn.style.display = ok ? "" : "none";
+      // AMD is the experimental rocm714 path: that wheel needs a torch 2.10+
+      // rocm7.14 env the installer does not create, so say so up front instead
+      // of failing after the click.
+      if (p === "AMD_GFX1201") {
+        wgpkBtn.title =
+          "Experimental AMD-only on gfx1201 (RX 9070/R9700): the WGPKernels 1.1.1 " +
+          "rocm714 wheel needs PyTorch 2.10.0+rocm7.14.0 and does not load in the " +
+          "installer's torch 2.13+rocm10 env. Use AMD setup (exp) to build the " +
+          "separate env, then install from it.";
+      }
+    }
+  } catch {}
+  // AMD experimental-stack helper: shown for every AMD profile (upstream
+  // targets gfx1201) so the rocm7.14 setup commands are always one click away.
+  try {
+    const amdBtn = $("installAmdSetupBtn");
+    if (amdBtn) {
+      const p = String(kernelProfile || "");
+      amdBtn.style.display = p.indexOf("AMD") === 0 ? "" : "none";
     }
   } catch {}
   const list = Array.isArray(wheels) ? wheels : [];

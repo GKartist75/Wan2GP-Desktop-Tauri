@@ -3811,6 +3811,15 @@ pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_jso
     let os = if cfg!(windows) { "win_amd64" } else { "linux_x86_64" };
     let Some(url) = crate::hw::wgpkernels_wheel_url(&kind, os) else {
         mutating_done();
+        // AMD is a special case: the rocm714 wheel exists but needs a torch
+        // build (2.10.0+rocm7.14.0) the installer does not create — upstream
+        // says to install it into a SEPARATE AMD environment. Point the user
+        // at the copy-paste recipe instead of a dead-end message.
+        if profile == "AMD_GFX1201" {
+            return Err(format!(
+                "WGPKernels on AMD RX 9070/R9700 (gfx1201) ships only a rocm714 wheel, and it needs PyTorch 2.10.0+rocm7.14.0 — this environment is '{kind}'. Upstream requires a SEPARATE AMD environment: click 'AMD setup (exp)' in GPU Kernel Wheels to copy the exact commands, then install here from that env."
+            ));
+        }
         return Err(format!(
             "No WGPKernels wheel for torch build '{kind}' — published builds are cu130, cu128 and rocm714 (Windows). Update PyTorch (Run Setup) or pick a supported GPU."
         ));
@@ -3843,6 +3852,39 @@ pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_jso
         return Err("WGPKernels wheel install failed — see console output. The wheel must match your torch/CUDA build (cu130 for torch 2.10+cu13, cu128 for torch 2.7+cu12.8).".into());
     }
     Ok(serde_json::json!({"ok": true, "success": true, "wheel": url, "version": crate::hw::WGPKERNELS_VERSION, "torchKind": kind}))
+}
+
+/// Copy-paste recipe for the SEPARATE AMD ROCm 7.14 environment (gfx1201).
+/// Upstream (docs/INSTALLATION.md, Oct 2026): the `rocm714` WGPKernels wheel
+/// and the `torch210rocm714` HIP GGUF wheel target PyTorch 2.10.0+rocm7.14.0
+/// and do NOT load in the installer's TheRock torch 2.13+rocm10 env — they need
+/// their own env. Single source of truth for the dashboard's "AMD setup (exp)"
+/// helper so the commands always match hw.rs's wheel URLs. Pure + unit-tested.
+#[tauri::command]
+pub fn amd_rocm714_recipe() -> serde_json::Value {
+    let torch_args = amd_hip_stable_cmds("AMD_GFX1201").unwrap_or_default();
+    let wgpk = crate::hw::wgpkernels_wheel_url("rocm714", "win_amd64").unwrap_or_default();
+    let torch_cmd = format!("python -m pip install {torch_args}");
+    let wgpk_cmd = format!("python -m pip install --no-deps {wgpk}");
+    let hip_cmd = format!("python -m pip install --no-deps {HIP_GGUF_WHEEL_URL}");
+    let text = format!(
+        "# Separate AMD ROCm 7.14 environment (Windows, gfx1201 — RX 9070 / 9070 XT / R9700)\n\
+         # 1) PyTorch 2.10 + ROCm 7.14 (the installer's AMD env is torch 2.13 + rocm10 instead)\n\
+         {torch_cmd}\n\
+         # 2) Experimental kernels (optional, from the same env)\n\
+         {wgpk_cmd}\n\
+         {hip_cmd}\n"
+    );
+    serde_json::json!({
+        "ok": true,
+        "gfxTarget": "gfx1201 (RX 9070 / 9070 XT / R9700)",
+        "torchCmd": torch_cmd,
+        "wgpkernelsCmd": wgpk_cmd,
+        "hipGgufCmd": hip_cmd,
+        "wgpkernelsVersion": crate::hw::WGPKERNELS_VERSION,
+        "helpUrl": "https://github.com/deepbeepmeep/WanGP/blob/main/docs/INSTALLATION.md#wgpkernels-installation",
+        "text": text,
+    })
 }
 /// Post-install override wheels: the subset of Sync that setup.py can never
 /// produce — the GGUF floor and the sage safe build. setup.py installs
@@ -7681,6 +7723,45 @@ mod exit_106_tests {
                 "got {primary}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod amd_recipe_tests {
+    use super::amd_rocm714_recipe;
+    use crate::hw::{wgpkernels_wheel_url, WGPKERNELS_VERSION};
+    #[test]
+    fn amd_recipe_matches_wheel_sources() {
+        let r = amd_rocm714_recipe();
+        // Torch stack: the gfx1201-only rocm7.14 pin (not the installer's
+        // TheRock rocm10 build).
+        let torch = r["torchCmd"].as_str().unwrap();
+        assert!(torch.starts_with("python -m pip install "), "{torch}");
+        assert!(
+            torch.contains("torch[device-gfx1201]==2.10.0+rocm7.14.0"),
+            "{torch}"
+        );
+        assert!(
+            torch.contains("rocm[libraries,device-gfx1201]==7.14.0"),
+            "{torch}"
+        );
+        // Kernel wheels come from the same source of truth as the installers,
+        // so the copied commands can never drift from hw.rs.
+        let wgpk = r["wgpkernelsCmd"].as_str().unwrap();
+        assert_eq!(
+            wgpk,
+            format!(
+                "python -m pip install --no-deps {}",
+                wgpkernels_wheel_url("rocm714", "win_amd64").unwrap()
+            ),
+            "WGPKernels rocm714 URL must match hw.rs"
+        );
+        assert!(wgpk.contains(WGPKERNELS_VERSION), "{wgpk}");
+        assert!(r["hipGgufCmd"]
+            .as_str()
+            .unwrap()
+            .contains("torch210rocm714py311"));
+        assert!(r["text"].as_str().unwrap().contains("torch[device-gfx1201]"));
     }
 }
 

@@ -35,6 +35,13 @@ rework, split WGPKernels releases and new kernel enums.
 - **Text Encoder Quant** (`bf16` / `int8`) joins Performance Settings and
   Auto-Tune — recommends `bf16` on high-RAM boxes (better quality) and `int8`
   elsewhere (less RAM), matching Configuration → Text Encoder Quantization.
+- **AMD experimental kernels are explained, not a dead end.** The `rocm714`
+  WGPKernels wheel (and the `torch210rocm714` HIP GGUF wheel) require PyTorch
+  2.10.0+rocm7.14.0 and — per upstream — a *separate* AMD environment; they do
+  not load in the installer's torch 2.13+rocm10 env. A new **AMD setup (exp)**
+  button (RX 9070/9070 XT/R9700, gfx1201) copies the exact setup commands, and
+  the install paths now return that guidance instead of a generic failure.
+  9060 XT (gfx1200) and RDNA 1–3.5 remain unsupported for these wheels.
 
 ## [0.10.6] — 2026-10-12
 

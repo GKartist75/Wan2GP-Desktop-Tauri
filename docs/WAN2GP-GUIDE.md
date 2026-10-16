@@ -86,6 +86,11 @@ Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
 FP8 checkpoints; `kernel_precision` fast/strict controls H3 VAE fusions.
 WGPKernels is an optional wheel (not in `requirements.txt`/`setup_config.json`) —
 install it from **GPU Kernel Wheels → WGPKernels (INT8)**; Auto prefers it once present.
+On AMD only gfx1201 (RX 9070/9070 XT/R9700) has a wheel, and it is the experimental
+`rocm714` build — it needs a **separate** PyTorch 2.10+rocm7.14 env (the installer's AMD
+env is torch 2.13+rocm10), so it never loads in the default AMD environment. The
+**AMD setup (exp)** button copies the commands to build it. 9060 XT (gfx1200) and all
+RDNA 1–3.5 cards have no WGPKernels wheel.
 Pinokio installs are detected and left
 untouched — the launcher can reuse their model library instead of re-downloading.
 

@@ -156,6 +156,7 @@
         restoreKernels: () => call("restore_kernels"),
         installHipGguf: () => call("install_hip_gguf_wheel"),
         installWgpkernels: () => call("install_wgpkernels_wheel"),
+        amdRocm714Recipe: () => call("amd_rocm714_recipe"),
         installPlan: () => call("install_plan"),
         validateInstall: () => call("validate_install"),
         classifyTarget: () => call("classify_target"),

@@ -52,7 +52,7 @@ $("installHipGgufBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   if (
     !confirm(
-      "Install experimental HIP GGUF 1.0.25 (torch210rocm714) for RX 9070/R9700?\n\nNeeds a SEPARATE torch 2.10.0+rocm7.14.0 env — the wheel rejects other builds at import and does not load in the installer's torch 2.13+rocm10 env. Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
+      "Install experimental HIP GGUF 1.0.25 (torch210rocm714) for RX 9070/R9700?\n\nNeeds a SEPARATE torch 2.10.0+rocm7.14.0 env — the wheel rejects other builds at import and does not load in the installer's torch 2.13+rocm10 env (use AMD setup (exp) to copy the env commands). Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
     )
   )
     return;
@@ -95,6 +95,42 @@ $("installWgpkernelsBtn")?.addEventListener("click", async function () {
     this.disabled = false;
     this.textContent = "WGPKernels (INT8)";
     setTimeout(refreshDashboard, 1500);
+  }
+});
+// AMD experimental ROCm 7.14 setup helper. The WGPKernels (rocm714) and HIP
+// GGUF (torch210rocm714) wheels need their own torch 2.10.0+rocm7.14.0 env —
+// upstream: "install into a separate AMD environment". This just surfaces the
+// exact commands (one source of truth in the backend) and copies them, so AMD
+// users don't have to reverse-engineer the stack.
+$("installAmdSetupBtn")?.addEventListener("click", async function () {
+  try {
+    const r = await window.w2gp.amdRocm714Recipe();
+    const text = (r && r.text) || "";
+    if (!text) {
+      showToast("✗ Could not build the AMD setup recipe");
+      return;
+    }
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch {}
+    await window.w2gp.confirmDialog({
+      title: "AMD ROCm 7.14 setup (experimental)",
+      message: copied
+        ? "Setup commands copied to your clipboard."
+        : "Copy the setup commands below.",
+      detail:
+        "AMD RX 9070/R9700 (gfx1201) only. The WGPKernels and HIP GGUF wheels " +
+        "need PyTorch 2.10.0+rocm7.14.0 and do NOT load in the installer's " +
+        "torch 2.13+rocm10 environment — upstream requires a SEPARATE AMD " +
+        "environment. Create one (fresh venv/conda), run the commands there, " +
+        "then activate it so the launcher runs Wan2GP with the experimental " +
+        "kernels.\n\n" +
+        text,
+    });
+  } catch (e) {
+    showToast("✗ " + errText(e));
   }
 });
 
