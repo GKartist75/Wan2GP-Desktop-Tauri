@@ -2217,6 +2217,12 @@ fn discover_msvc_pin_live() -> Option<MsvcPin> {
     discover_msvc_pin_in(&vs, &default_kits_roots())
 }
 
+/// Guidance logged when no MSVC toolchain exists on the box. Triton still
+/// works (bundled TinyCC fallback — same AV exposure as before, nothing
+/// breaks); the pin just can't apply. Points at the free fix. The text is
+/// a const so the pointer it gives is unit-tested, not left to rot.
+pub(crate) const NO_MSVC_TOOLCHAIN_HINT: &str = "[i] no MSVC toolchain found — Triton keeps its bundled TinyCC fallback for JIT stub builds (unsigned: more AV-prone). Install VS 2022 Build Tools with the C++ workload (free) and relaunch to get the signed-compiler pin — one-line command in the User Guide (Antivirus section).\n";
+
 static MSVC_PIN_RECORDED: std::sync::OnceLock<std::sync::Mutex<Option<MsvcPin>>> =
     std::sync::OnceLock::new();
 
@@ -2287,7 +2293,7 @@ pub(crate) fn apply_msvc_cc_pin(is_amd: bool, emit: impl Fn(&str)) {
                     pin.cc
                 ));
             }
-            None => emit("[i] no MSVC toolchain found — Triton keeps its bundled TinyCC fallback for JIT stub builds\n"),
+            None => emit(NO_MSVC_TOOLCHAIN_HINT),
         },
     }
 }
@@ -2491,7 +2497,7 @@ cmd,
 mod msvc_pin_tests {
     use super::{
         decide_msvc_pin, discover_msvc_pin_in, msvc_toolchain_paths, parse_vswhere_root,
-        pick_newest_versioned, MsvcCurrent, MsvcDecision, MsvcPin,
+        pick_newest_versioned, MsvcCurrent, MsvcDecision, MsvcPin, NO_MSVC_TOOLCHAIN_HINT,
     };
 
     fn rec_pin() -> MsvcPin {
@@ -2511,8 +2517,16 @@ mod msvc_pin_tests {
     }
 
     #[test]
-    fn vswhere_parse_takes_first_non_empty_line() {
-        assert_eq!(
+    fn no_msvc_hint_points_at_the_free_fix() {
+        // The whole point of the None branch is telling a MSVC-less user how
+        // to get the pin: name the fallback truthfully and point at Build Tools.
+        assert!(NO_MSVC_TOOLCHAIN_HINT.contains("TinyCC fallback"));
+        assert!(NO_MSVC_TOOLCHAIN_HINT.contains("Build Tools"));
+        assert!(NO_MSVC_TOOLCHAIN_HINT.contains("User Guide"));
+    }
+
+    #[test]
+    fn vswhere_parse_takes_first_non_empty_line() {        assert_eq!(
             parse_vswhere_root("C:\\VS\\2022\\Community\r\n"),
             Some(std::path::PathBuf::from("C:\\VS\\2022\\Community"))
         );
