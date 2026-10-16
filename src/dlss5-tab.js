@@ -144,6 +144,17 @@ $("dlss5CheckBtn")?.addEventListener("click", async () => {
       r.files.present === r.files.total,
     );
     checkRow("HAGS", hagsText, r.hags !== false);
+    if (r.hags !== true) {
+      // HAGS lives in HKLM (HwSchMode: 2 = on, 1 = off) — the launcher only
+      // reads it. Point at the manual toggle: writing it needs admin + reboot.
+      const hagsNote = document.createElement("div");
+      hagsNote.className = "pip-advanced-hint";
+      hagsNote.textContent =
+        r.hags === false
+          ? "HAGS is OFF — Frame Generation needs it on: Windows Settings → System → Display → Graphics → Hardware-accelerated GPU scheduling → On, then reboot. (Changing it requires administrator rights.)"
+          : "HAGS state is unknown — the registry value couldn't be read (on some drivers the key only appears after HAGS was toggled once). Check it at Windows Settings → System → Display → Graphics → Hardware-accelerated GPU scheduling; turning it on needs admin rights + a reboot.";
+      box.append(hagsNote);
+    }
     if (r.workstationMismatch) {
       const note = document.createElement("div");
       note.className = "pip-advanced-hint";
