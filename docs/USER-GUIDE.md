@@ -68,12 +68,12 @@ The home screen. Top to bottom:
 
 **GPU Kernel Wheels card** — per-GPU wheels (torch, triton, sage/flash attention, nunchaku/GGUF) with installed versions. *↻ Update GPU Wheels* installs upstream's wanted set plus launcher fixes (sage safe build, GGUF floor that follows `setup_config.json` forward), *Restore GPU Wheels* reinstalls deepbeepmeep's pure upstream set. Sync follows your local checkout — if it is behind `origin/main`, the console warns you to update Wan2GP first, otherwise you install stale wheels. After every Wan2GP update the launcher also runs a compat check (setup_config shape + GGUF pins) and says so in the Console — re-run Sync when it reports new wheels.
 
-**AMD and the experimental kernels (RX 9070 / 9070 XT / R9700 — gfx1201).** WGPKernels and HIP GGUF are the two manual-install wheels:
+**AMD and the experimental kernels (RX 9060 / 9070 series — gfx1200/gfx1201).** WGPKernels 1.1.2 ships a `rocm100` wheel that installs in place; only HIP GGUF still needs a separate env:
 
-- **WGPKernels (INT8)** — the INT8 fast path. One-click on NVIDIA RTX 30/40/50 (the launcher picks `cu130`/`cu128` from your torch build). On AMD the only published wheel is `rocm714`, which needs **PyTorch 2.10.0+rocm7.14.0** — *not* the installer's TheRock torch 2.13+rocm10 env — so it refuses there.
-- **HIP GGUF (exp)** — the AMD build of the GGUF CUDA wheel, same `rocm7.14` requirement.
+- **WGPKernels (INT8)** — the INT8 fast path. One-click on NVIDIA RTX 30/40/50 (the launcher picks `cu130`/`cu128` from your torch build) and on AMD RDNA4 (the `rocm100` build installs right in the installer's TheRock torch 2.13+rocm10 env — no separate env). *↻ Update GPU Wheels* also installs it now that upstream profiles list it.
+- **HIP GGUF (exp)** — the AMD build of the GGUF CUDA wheel, still on the `torch210rocm714` build, which needs **PyTorch 2.10.0+rocm7.14.0** — *not* the installer's env — so it refuses there.
 
-Both AMD wheels must live in a **separate environment** (upstream: *"install into a separate AMD environment"*). Click **AMD setup (exp)** in the GPU Kernel Wheels card to copy the exact commands (torch 2.10 + rocm7.14, then the two wheels), build that env, and activate it so the launcher runs Wan2GP from it. The **9060 XT / 9060 (gfx1200)** and all RDNA 1–3.5 cards have **no** WGPKernels/HIP wheel.
+Only the HIP GGUF wheel must live in a **separate environment** (upstream: *"install into a separate AMD environment"*). Click **AMD setup (exp)** in the GPU Kernel Wheels card to copy the exact commands (torch 2.10 + rocm7.14, then the wheel). RDNA 1–3.5 cards have **no** WGPKernels/HIP wheel.
 
 **Active Environment card** — the selected Python env (`uv`, `venv` or `conda`):
 

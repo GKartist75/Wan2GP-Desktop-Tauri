@@ -859,31 +859,31 @@ pub(crate) fn apply_gguf_override_with(url: &str, floor: &str) -> String {
 
 /// WGPKernels: the INT8 (and general) fast-kernel family behind upstream's
 /// `int8_kernels = auto` ranking (wgpkernels > kitchen > triton > pytorch).
-/// Manual-install only — it appears in neither `setup_config.json` nor
-/// `requirements.txt` — so the launcher surfaces it as an opt-in beside the
-/// Sage/GGUF wheels instead of pulling it during a normal install.
+/// Since upstream 17307e5 (v1.1.2) the wheels are listed in WanGP's
+/// `setup_config.json` (`components.kernels.wgpkernels*`, referenced by the
+/// RTX_30/40/50 + AMD profiles), so Sync installs them — the dashboard
+/// button stays as the explicit opt-in / reinstall path.
 ///
-/// Repo moved on Oct 16 2026 (upstream a827cf2) from
-/// `deepbeepmeep/kernels/releases/download/wgpkernels-v1.1.1/` to its own
-/// `deepbeepmeep/WGPKernels/releases/download/v1.1.1/`; 1.1.1 is current.
+/// v1.1.1 assets were deleted upstream (404). `rocm100` (ROCm 10, RDNA4)
+/// replaces the retired Windows-only `rocm714` and ships win+linux.
 /// The wheel is `py3-none` (no CPython ABI tag), so one asset serves every
 /// Python — only the CUDA/ROCm tag has to match the env's torch build.
 /// Needs compute capability >= 8.0 (RTX 30/40/50) on NVIDIA; the
-/// `rocm714` build is the RX 9070 (gfx1201) experimental path.
-pub(crate) const WGPKERNELS_VERSION: &str = "1.1.1";
+/// `rocm100` build is the RDNA4 (gfx1200/gfx1201) experimental path and
+/// loads in the installer's torch 2.13+rocm10 env (no separate env).
+pub(crate) const WGPKERNELS_VERSION: &str = "1.1.2";
 pub(crate) const WGPKERNELS_BASE: &str =
-    "https://github.com/deepbeepmeep/WGPKernels/releases/download/v1.1.1";
+    "https://github.com/deepbeepmeep/WGPKernels/releases/download/v1.1.2";
 
 /// Resolve the WGPKernels wheel URL for a torch build tag and OS. `torch_kind`
-/// is `cu130` / `cu128` (NVIDIA) or `rocm714` (AMD RX 9070, Windows-only);
+/// is `cu130` / `cu128` (NVIDIA) or `rocm100` (AMD RDNA4, win+linux);
 /// `os` is `win_amd64` / `linux_x86_64`. Anything else has no published wheel
 /// (MPS/CPU). Pure + unit-tested.
 pub(crate) fn wgpkernels_wheel_url(torch_kind: &str, os: &str) -> Option<String> {
     let ok_os = matches!(os, "win_amd64" | "linux_x86_64");
     let tag = match torch_kind {
         "cu130" | "cu128" => torch_kind,
-        // The RX 9070 build is Windows-only upstream.
-        "rocm714" if os == "win_amd64" => "rocm714",
+        "rocm100" => "rocm100",
         _ => return None,
     };
     if !ok_os {
@@ -896,10 +896,14 @@ pub(crate) fn wgpkernels_wheel_url(torch_kind: &str, os: &str) -> Option<String>
 
 /// GPU profile keys that can run WGPKernels. NVIDIA RTX 30/40/50 are
 /// compute capability >= 8.0 (Ampere and later); RTX_20 (Turing, 7.5) and
-/// GTX_10 (Pascal, 6.1) are below the kernels' floor. AMD_GFX1201 (RX
-/// 9070/R9700) only via the experimental `rocm714` wheel. Pure + unit-tested.
+/// GTX_10 (Pascal, 6.1) are below the kernels' floor. AMD RDNA4
+/// (AMD_GFX1200 RX 9060/9060 XT + AMD_GFX1201 RX 9070/9070 XT/R9700) via the
+/// experimental `rocm100` wheel. Pure + unit-tested.
 pub(crate) fn wgpkernels_supported_profile(profile_key: &str) -> bool {
-    matches!(profile_key, "RTX_30" | "RTX_40" | "RTX_50" | "AMD_GFX1201")
+    matches!(
+        profile_key,
+        "RTX_30" | "RTX_40" | "RTX_50" | "AMD_GFX1200" | "AMD_GFX1201"
+    )
 }
 
 #[cfg(test)]
@@ -915,21 +919,28 @@ mod wgpkernels_tests {
             wgpkernels_wheel_url("cu128", "linux_x86_64").unwrap(),
             format!("https://github.com/deepbeepmeep/WGPKernels/releases/download/v{WGPKERNELS_VERSION}/wgpkernels-{WGPKERNELS_VERSION}%2Bcu128-py3-none-linux_x86_64.whl")
         );
-        // rocm714 is Windows-only.
-        assert!(wgpkernels_wheel_url("rocm714", "win_amd64").is_some());
-        assert!(wgpkernels_wheel_url("rocm714", "linux_x86_64").is_none());
+        // rocm100 ships win+linux (unlike the retired rocm714).
+        assert_eq!(
+            wgpkernels_wheel_url("rocm100", "win_amd64").unwrap(),
+            format!("https://github.com/deepbeepmeep/WGPKernels/releases/download/v{WGPKERNELS_VERSION}/wgpkernels-{WGPKERNELS_VERSION}%2Brocm100-py3-none-win_amd64.whl")
+        );
+        assert!(wgpkernels_wheel_url("rocm100", "linux_x86_64").is_some());
+        // Retired tags (v1.1.1 assets deleted upstream) resolve to nothing.
+        for bad in ["rocm714", "rocm10"] {
+            assert!(wgpkernels_wheel_url(bad, "win_amd64").is_none(), "{bad}");
+        }
         // No wheel for CPU/MPS or unknown tags.
-        for bad in ["cpu", "", "cu121", "rocm10", "mps"] {
+        for bad in ["cpu", "", "cu121", "mps"] {
             assert!(wgpkernels_wheel_url(bad, "win_amd64").is_none(), "{bad}");
         }
         assert!(wgpkernels_wheel_url("cu130", "macosx").is_none());
     }
     #[test]
-    fn only_cc8_plus_and_gfx1201_profiles_qualify() {
-        for good in ["RTX_30", "RTX_40", "RTX_50", "AMD_GFX1201"] {
+    fn only_cc8_plus_and_rdna4_profiles_qualify() {
+        for good in ["RTX_30", "RTX_40", "RTX_50", "AMD_GFX1200", "AMD_GFX1201"] {
             assert!(wgpkernels_supported_profile(good), "{good}");
         }
-        for bad in ["RTX_20", "GTX_10", "AMD_GFX110X", "AMD_GFX1200", "CPU"] {
+        for bad in ["RTX_20", "GTX_10", "AMD_GFX110X", "AMD_GFX103X", "CPU"] {
             assert!(!wgpkernels_supported_profile(bad), "{bad}");
         }
     }
@@ -1573,6 +1584,9 @@ fn kernel_display(key: &str) -> (&str, &str) {
         "sageattention" => ("SageAttention", "sageattention"),
         "spas_sage_attn" => ("Sparge (Sage)", "spas_sage_attn"),
         "flash_attn" => ("FlashAttention", "flash_attn"),
+        "wgpkernels" | "wgpkernels_cu128" | "wgpkernels_rocm10" => {
+            ("WGPKernels (INT8)", "wgpkernels")
+        }
         "bitsandbytes" => ("bitsandbytes NF4", "bitsandbytes"),
         _ => (key, key),
     }
@@ -1708,7 +1722,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
-                kernels: &["nunchaku_cu13", "gguf"],
+                kernels: &["wgpkernels", "nunchaku_cu13", "gguf"],
             },
         ),
         "RTX_40" => (
@@ -1720,7 +1734,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
-                kernels: &["nunchaku_cu13", "gguf"],
+                kernels: &["wgpkernels", "nunchaku_cu13", "gguf"],
             },
         ),
         "RTX_50" => (
@@ -1732,7 +1746,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
-                kernels: &["nunchaku_cu13", "light2xv", "gguf"],
+                kernels: &["wgpkernels", "nunchaku_cu13", "light2xv", "gguf"],
             },
         ),
         "MPS" => (
@@ -1758,7 +1772,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
                 // ROCm has a prebuilt Triton-based flash wheel (upstream
                 // `flash: v284_rocm`) — surface it instead of a dash.
                 flash: Some("2.8.4 (ROCm)"),
-                kernels: &[],
+                kernels: &["wgpkernels"],
             },
         ),
         // Intel → CPU torch, no kernels: XPU acceleration is not possible
@@ -1784,7 +1798,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
-                kernels: &["nunchaku_cu13", "gguf"],
+                kernels: &["wgpkernels", "nunchaku_cu13", "gguf"],
             },
         ),
     };
@@ -2297,6 +2311,26 @@ mod overview_pid_tests {
             amd["detail"]["flash"],
             serde_json::json!("Flash Attention 2.8.4 (AMD ROCm / Triton)")
         );
+        // WGPKernels 1.1.2 is in setup_config profiles (RTX + AMD RDNA4).
+        let labels = |d: serde_json::Value| {
+            d["kernels"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|k| k.get("label"))
+                .filter_map(|l| l.as_str())
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert!(labels(rtx40).contains(&"WGPKernels (INT8)".to_string()));
+        assert!(labels(amd).contains(&"WGPKernels (INT8)".to_string()));
+        let rtx20 = hardware_profile_detail_with_ram(
+            "NVIDIA",
+            "NVIDIA GeForce RTX 2080 Ti",
+            11.0 * 1024.0,
+            Some(32.0),
+        );
+        assert!(!labels(rtx20).contains(&"WGPKernels (INT8)".to_string()));
     }
 }
 #[cfg(test)]

@@ -84,6 +84,11 @@ pub fn get_status() -> serde_json::Value {
                                     "light2xv" | "lightx2v_kernel" => {
                                         ("LightX2V", "lightx2v_kernel")
                                     }
+                                    "wgpkernels"
+                                    | "wgpkernels_cu128"
+                                    | "wgpkernels_rocm10" => {
+                                        ("WGPKernels", "wgpkernels")
+                                    }
                                     _ => (key, key),
                                 };
                                 // configured version from setup_config.json components.kernels[key].cmd[win]

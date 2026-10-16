@@ -78,21 +78,25 @@ From `INSTALLATION.md` — the launcher automates all of this; listed so you kno
 | PyTorch | 2.10.0 + CUDA 13.0/13.1 (cu130, needs R580+ driver) | 2.7.1 + CUDA 12.8 (no R580 needed) | 2.13.0 ROCm 10 TheRock (stable whl-next, per-box device-gfx targets) | CPU / MPS (SDPA only) |
 | Triton | `triton-windows>=3.6,<3.7` (torch 2.10); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | `triton-windows>=3.7,<3.8` (torch 2.13) | — |
 | Attention | Sage 2.2.0 (RTX 30+, Ampere+) / Sage 1.0.6 (RTX 20) / Flash 2.8.3 / Sparge 0.1.0 | SDPA | SDPA (default, AOTriton on RDNA3+) / Sage 1.0.6 / Flash 2.8.4 (ROCm/Triton) | SDPA |
-| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.25, LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2 (optional, manual), Comfy Kitchen via requirements, WGPKernels 1.1.1 (optional, RTX 30+/gfx1201) | — | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back) | — |
+| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.25, LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2 (optional, manual), Comfy Kitchen via requirements, WGPKernels 1.1.2 (in setup_config: RTX 30+/RDNA4, recommended) | — | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back) | — |
 
 Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
 `int8_kernels`: Auto tries WGPKernels → Kitchen CUDA/HIP → Triton → PyTorch
-(fastest *without quality degradation* — backends differ slightly at identical
-seed, so garbage output means trying Triton/PyTorch explicitly);
+(upstream calls WGPKernels "recommended, second fastest, precise" and Kitchen
+"fastest, least precise" — backends differ slightly at identical seed, so
+garbage output means trying Triton/PyTorch explicitly);
 `fp8_kernels` (Auto / CUDA / Triton / PyTorch) picks the same kind of kernel for
 FP8 checkpoints; `kernel_precision` fast/strict controls H3 VAE fusions.
-WGPKernels is an optional wheel (not in `requirements.txt`/`setup_config.json`) —
-install it from **GPU Kernel Wheels → WGPKernels (INT8)**; Auto prefers it once present.
-On AMD only gfx1201 (RX 9070/9070 XT/R9700) has a wheel, and it is the experimental
-`rocm714` build — it needs a **separate** PyTorch 2.10+rocm7.14 env (the installer's AMD
-env is torch 2.13+rocm10), so it never loads in the default AMD environment. The
-**AMD setup (exp)** button copies the commands to build it. 9060 XT (gfx1200) and all
-RDNA 1–3.5 cards have no WGPKernels wheel.
+WGPKernels 1.1.2 is in `setup_config.json` (RTX 30/40/50 + AMD profiles) —
+install/update it from **GPU Kernel Wheels → WGPKernels (INT8)** or
+**↻ Update GPU Wheels** (after a WanGP update, re-run Sync: upstream's
+*Update* only refreshes code and requirements, new pinned wheels arrive via
+Sync); Auto prefers it once present.
+On AMD, RDNA4 (RX 9060/9060 XT gfx1200 + RX 9070/9070 XT/R9700 gfx1201) uses
+the experimental `rocm100` build, which loads in the installer's torch
+2.13+rocm10 env — no separate env. Only the HIP GGUF wheel still needs a
+**separate** PyTorch 2.10+rocm7.14 env. The **AMD setup (exp)** button copies
+the commands to build it. RDNA 1–3.5 cards have no WGPKernels/HIP wheel.
 Pinokio installs are detected and left
 untouched — the launcher can reuse their model library instead of re-downloading.
 

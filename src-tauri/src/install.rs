@@ -3741,10 +3741,11 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
 }
 
 /// Torch build tag of the active env, used to pick the matching CUDA/ROCm
-/// wheel variant: `cu130` / `cu128` (from `torch.version.cuda`) or `rocm714`
-/// (from `torch.version.hip`). None when torch is missing or unreadable.
+/// wheel variant: `cu130` / `cu128` (from `torch.version.cuda`) or `rocm100`
+/// (from `torch.version.hip` 10.x, TheRock). None when torch is missing or
+/// unreadable.
 fn env_torch_kind(py: &str) -> Option<String> {
-    // hip "7.14.0" -> "rocm714"; cuda "13.0" -> "cu130", "12.8" -> "cu128".
+    // hip "10.0.x" -> "rocm100"; cuda "13.0" -> "cu130", "12.8" -> "cu128".
     let code = "import torch\n\
         hip = getattr(torch.version, 'hip', None)\n\
         if hip:\n    print(('rocm' + '.'.join(hip.split('.')[:2])).replace('.', ''))\n\
@@ -3762,12 +3763,13 @@ fn env_torch_kind(py: &str) -> Option<String> {
 }
 
 /// Opt-in WGPKernels INT8 wheel (upstream docs/INSTALLATION.md, Oct 2026;
-/// deepbeepmeep/WGPKernels v1.1.1). Not in setup_config/requirements, so it is
-/// a manual install beside Sync Kernels — the same shape as the HIP GGUF
-/// opt-in. The dist name is `wgpkernels`, so `--force-reinstall` swaps the
+/// deepbeepmeep/WGPKernels v1.1.2). Since upstream 17307e5 the wheels are
+/// listed in setup_config (RTX_30/40/50 + AMD profiles), so Sync installs
+/// them — this button stays as the explicit opt-in / reinstall path.
+/// The dist name is `wgpkernels`, so `--force-reinstall` swaps the
 /// CUDA/ROCm variant cleanly; `--no-deps` preserves the installed torch.
 /// Hardware-aware: the torch build tag comes from the active env (cu130,
-/// cu128, rocm714) and the GPU must be one that can actually run it.
+/// cu128, rocm100) and the GPU must be one that can actually run it.
 #[tauri::command]
 pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     mutating_try("install-wgpkernels")?;
@@ -3783,7 +3785,7 @@ pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_jso
     if !crate::hw::wgpkernels_supported_profile(&profile) {
         mutating_done();
         return Err(format!(
-            "WGPKernels needs an NVIDIA RTX 30/40/50 (compute capability 8.0+) or an AMD RX 9070/R9700 on a rocm7.14 torch env; this box reports {profile}."
+            "WGPKernels needs an NVIDIA RTX 30/40/50 (compute capability 8.0+) or an AMD RDNA4 card (RX 9060/9070 series); this box reports {profile}."
         ));
     }
     let repo = get_repo_dir();
@@ -3811,17 +3813,8 @@ pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_jso
     let os = if cfg!(windows) { "win_amd64" } else { "linux_x86_64" };
     let Some(url) = crate::hw::wgpkernels_wheel_url(&kind, os) else {
         mutating_done();
-        // AMD is a special case: the rocm714 wheel exists but needs a torch
-        // build (2.10.0+rocm7.14.0) the installer does not create — upstream
-        // says to install it into a SEPARATE AMD environment. Point the user
-        // at the copy-paste recipe instead of a dead-end message.
-        if profile == "AMD_GFX1201" {
-            return Err(format!(
-                "WGPKernels on AMD RX 9070/R9700 (gfx1201) ships only a rocm714 wheel, and it needs PyTorch 2.10.0+rocm7.14.0 — this environment is '{kind}'. Upstream requires a SEPARATE AMD environment: click 'AMD setup (exp)' in GPU Kernel Wheels to copy the exact commands, then install here from that env."
-            ));
-        }
         return Err(format!(
-            "No WGPKernels wheel for torch build '{kind}' — published builds are cu130, cu128 and rocm714 (Windows). Update PyTorch (Run Setup) or pick a supported GPU."
+            "No WGPKernels wheel for torch build '{kind}' — published builds are cu130, cu128 and rocm100. Update PyTorch (Run Setup) or pick a supported GPU."
         ));
     };
     emit_log(&format!(
@@ -3855,24 +3848,24 @@ pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_jso
 }
 
 /// Copy-paste recipe for the SEPARATE AMD ROCm 7.14 environment (gfx1201).
-/// Upstream (docs/INSTALLATION.md, Oct 2026): the `rocm714` WGPKernels wheel
-/// and the `torch210rocm714` HIP GGUF wheel target PyTorch 2.10.0+rocm7.14.0
-/// and do NOT load in the installer's TheRock torch 2.13+rocm10 env — they need
-/// their own env. Single source of truth for the dashboard's "AMD setup (exp)"
-/// helper so the commands always match hw.rs's wheel URLs. Pure + unit-tested.
+/// Since upstream 17307e5 this env is only needed for the `torch210rocm714`
+/// HIP GGUF wheel: WGPKernels 1.1.2 ships a `rocm100` wheel that installs
+/// directly in the installer's TheRock torch 2.13+rocm10 env (button/sync).
+/// The HIP GGUF wheel still targets PyTorch 2.10.0+rocm7.14.0 and does NOT
+/// load in the installer env. Single source of truth for the dashboard's
+/// "AMD setup (exp)" helper. Pure + unit-tested.
 #[tauri::command]
-pub fn amd_rocm714_recipe() -> serde_json::Value {
+pub fn amd_hip_recipe() -> serde_json::Value {
     let torch_args = amd_hip_stable_cmds("AMD_GFX1201").unwrap_or_default();
-    let wgpk = crate::hw::wgpkernels_wheel_url("rocm714", "win_amd64").unwrap_or_default();
     let torch_cmd = format!("python -m pip install {torch_args}");
-    let wgpk_cmd = format!("python -m pip install --no-deps {wgpk}");
     let hip_cmd = format!("python -m pip install --no-deps {HIP_GGUF_WHEEL_URL}");
     let text = format!(
         "# Separate AMD ROCm 7.14 environment (Windows, gfx1201 — RX 9070 / 9070 XT / R9700)\n\
+         # Only needed for the experimental HIP GGUF wheel below: WGPKernels 1.1.2\n\
+         # (rocm100) installs directly in the installer's torch 2.13+rocm10 env.\n\
          # 1) PyTorch 2.10 + ROCm 7.14 (the installer's AMD env is torch 2.13 + rocm10 instead)\n\
          {torch_cmd}\n\
-         # 2) Experimental kernels (optional, from the same env)\n\
-         {wgpk_cmd}\n\
+         # 2) HIP GGUF (optional, from the same env)\n\
          {hip_cmd}\n\
          # 3) ROCm SDK init (community recommendation for Veda sparse attention;\n\
          #    upstream's main-env doc says it isn't needed there, but this is a\n\
@@ -3883,9 +3876,7 @@ pub fn amd_rocm714_recipe() -> serde_json::Value {
         "ok": true,
         "gfxTarget": "gfx1201 (RX 9070 / 9070 XT / R9700)",
         "torchCmd": torch_cmd,
-        "wgpkernelsCmd": wgpk_cmd,
         "hipGgufCmd": hip_cmd,
-        "wgpkernelsVersion": crate::hw::WGPKERNELS_VERSION,
         "helpUrl": "https://github.com/deepbeepmeep/WanGP/blob/main/docs/INSTALLATION.md#wgpkernels-installation",
         "text": text,
     })
@@ -4222,9 +4213,22 @@ async fn sync_kernels_inner(
         gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
         gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""),
     );
+    // Unified AMD key (mirrors status.rs): launcher sub-profiles (AMD_GFX*)
+    // resolve through setup_config's single `AMD` profile, which since
+    // upstream 17307e5 lists `wgpkernels` in its kernels.
+    let cfg_profile: &str = if profile.starts_with("AMD")
+        && cfg
+            .get("gpu_profiles")
+            .and_then(|p| p.get("AMD"))
+            .is_some()
+    {
+        "AMD"
+    } else {
+        &profile
+    };
     let kernels = cfg
         .get("gpu_profiles")
-        .and_then(|p| p.get(&profile))
+        .and_then(|p| p.get(cfg_profile))
         .and_then(|pr| pr.get("kernels"))
         .and_then(|k| k.as_array())
         .cloned()
@@ -4273,10 +4277,40 @@ async fn sync_kernels_inner(
                     .unwrap_or("")
                     .to_string()
             } else {
+                // WGPKernels stack split (upstream 17307e5, mirrors
+                // setup.py): profiles list `wgpkernels` but cu128/rocm10
+                // envs need their own component. rocm10 is RDNA4-only
+                // (setup.py gates on the device-gfx1200/1201 torch extra).
+                if name == "wgpkernels" {
+                    let kind = env_torch_kind(&py.to_string_lossy().to_string());
+                    let comp = match kind.as_deref() {
+                        Some("cu128") => "wgpkernels_cu128",
+                        Some("rocm100")
+                            if ["AMD_GFX1200", "AMD_GFX1201"]
+                                .contains(&profile.as_str()) =>
+                        {
+                            "wgpkernels_rocm10"
+                        }
+                        Some("rocm100") => {
+                            let m = format!("[*] profile '{profile}' lists WGPKernels but the rocm100 wheel is RDNA4-only (gfx1200/gfx1201) — skipping it\n");
+                            crate::base::push_log(&m, "setup");
+                            let _ = app.emit("launch-log", m);
+                            continue;
+                        }
+                        _ => "wgpkernels",
+                    };
+                    cfg.get("components")
+                        .and_then(|c| c.get("kernels"))
+                        .and_then(|m| m.get(comp))
+                        .and_then(|e| e.get("cmd"))
+                        .and_then(|c| c.get("win"))
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("")
+                        .to_string()
                 // GGUF cu128 split (upstream 5533384): profiles list `gguf`
                 // (cu130/py311) but py310 envs need `gguf_cu128`. Mirror
                 // setup.py's (torch_k, py_k) remap via the env python major/minor.
-                if name == "gguf" {
+                } else if name == "gguf" {
                     let base_url = cfg
                         .get("components")
                         .and_then(|c| c.get("kernels"))
@@ -5003,6 +5037,7 @@ pub(crate) fn changed_path_count(out: &str) -> usize {
 fn kernel_dist_names(name: &str) -> &'static [&'static str] {
     match name {
         "gguf" | "gguf_cu128" => &["llamacpp-gguf-cuda"],
+        "wgpkernels" | "wgpkernels_cu128" | "wgpkernels_rocm10" => &["wgpkernels"],
         "sage" | "sageattention" => &["sageattention"],
         "nunchaku" | "nunchaku_cu13" => &["nunchaku"],
         "flash" | "flash_attn" => &["flash-attn"],
@@ -5927,7 +5962,14 @@ mod kernel_skip_tests {
 
     #[test]
     fn every_synced_component_has_a_pip_dist_name() {
-        for name in ["gguf", "sage", "nunchaku_cu13", "flash", "triton"] {
+        for name in [
+            "gguf",
+            "sage",
+            "nunchaku_cu13",
+            "flash",
+            "triton",
+            "wgpkernels",
+        ] {
             assert!(
                 !kernel_dist_names(name).is_empty(),
                 "{name} has no dist name — the guard can never skip it"
@@ -7732,13 +7774,12 @@ mod exit_106_tests {
 
 #[cfg(test)]
 mod amd_recipe_tests {
-    use super::amd_rocm714_recipe;
-    use crate::hw::{wgpkernels_wheel_url, WGPKERNELS_VERSION};
+    use super::amd_hip_recipe;
     #[test]
     fn amd_recipe_matches_wheel_sources() {
-        let r = amd_rocm714_recipe();
+        let r = amd_hip_recipe();
         // Torch stack: the gfx1201-only rocm7.14 pin (not the installer's
-        // TheRock rocm10 build).
+        // TheRock rocm10 build) — still needed for the HIP GGUF wheel.
         let torch = r["torchCmd"].as_str().unwrap();
         assert!(torch.starts_with("python -m pip install "), "{torch}");
         assert!(
@@ -7749,18 +7790,12 @@ mod amd_recipe_tests {
             torch.contains("rocm[libraries,device-gfx1201]==7.14.0"),
             "{torch}"
         );
-        // Kernel wheels come from the same source of truth as the installers,
-        // so the copied commands can never drift from hw.rs.
-        let wgpk = r["wgpkernelsCmd"].as_str().unwrap();
-        assert_eq!(
-            wgpk,
-            format!(
-                "python -m pip install --no-deps {}",
-                wgpkernels_wheel_url("rocm714", "win_amd64").unwrap()
-            ),
-            "WGPKernels rocm714 URL must match hw.rs"
-        );
-        assert!(wgpk.contains(WGPKERNELS_VERSION), "{wgpk}");
+        // WGPKernels installs in place now (rocm100) — the recipe states so
+        // instead of shipping a wheel command.
+        assert!(r["text"]
+            .as_str()
+            .unwrap()
+            .contains("WGPKernels 1.1.2"));
         assert!(r["hipGgufCmd"]
             .as_str()
             .unwrap()

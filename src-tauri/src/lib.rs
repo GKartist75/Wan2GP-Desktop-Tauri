@@ -194,7 +194,7 @@ pub fn run() {
             install::restore_kernels,
             install::install_hip_gguf_wheel,
             install::install_wgpkernels_wheel,
-            install::amd_rocm714_recipe,
+            install::amd_hip_recipe,
             install::update,
             install::dep_check,
             install::dlss5_status,

@@ -4,6 +4,26 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+### Upstream WGPKernels 1.1.2 (`17307e5`, 2026-10-16)
+
+WGPKernels left manual-install land: v1.1.2 is listed in `setup_config.json`
+(RTX 30/40/50 + AMD profiles), so **↻ Update GPU Wheels** installs it —
+re-run Sync after a WanGP update, since upstream's *Update* only refreshes
+code and requirements.
+
+- **v1.1.1 URLs are dead (404)** — the button, sync and overview now target
+  v1.1.2 (`cu130` / `cu128` / new `rocm100`).
+- **AMD needs no separate env for WGPKernels anymore.** The `rocm100` wheel
+  (ROCm 10, Win+Linux) loads in the installer's torch 2.13+rocm10 env and
+  covers RDNA4 gfx1200 (RX 9060/9060 XT) *and* gfx1201 — the retired
+  Windows-only `rocm714` wheel did gfx1201 only. Only HIP GGUF keeps its
+  torch-2.10 separate env (the **AMD setup (exp)** recipe is now HIP-only).
+- Sync mirrors `setup.py`'s per-stack remap (`wgpkernels` / `_cu128` /
+  `_rocm10`, RDNA4-gated) and resolves AMD sub-profiles through the unified
+  `AMD` key, with a no-re-download skip guard.
+- INT8 wording follows upstream's new labels: WGPKernels "recommended,
+  precise", Kitchen "fastest, least precise".
+
 ## [0.10.7] — 2026-10-16
 
 ### Upstream v18.11 parity (`5290e89` → `a827cf2`, 2026-10-15/16)
