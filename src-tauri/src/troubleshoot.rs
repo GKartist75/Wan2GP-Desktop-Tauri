@@ -842,7 +842,17 @@ pub(crate) fn valid_repair_version(v: &str) -> bool {
 /// not pin: the next setup run floats forward again on upstream's `-U`
 /// range spec.
 #[tauri::command]
-pub fn troubleshoot_triton_repair(version: Option<String>) -> Result<serde_json::Value, String> {
+pub fn troubleshoot_triton_repair(
+    app: tauri::AppHandle,
+    version: Option<String>,
+) -> Result<serde_json::Value, String> {
+    use tauri::Emitter;
+    // push_log alone only reaches history — the live console needs the event
+    // (that is why the first version of this echo never displayed).
+    let echo = |m: &str| {
+        crate::base::push_log(m, "setup");
+        let _ = app.emit("launch-log", m.to_string());
+    };
     let Some(py) = active_python() else {
         return Err("No Python environment installed — run Install first".into());
     };
@@ -851,7 +861,7 @@ pub fn troubleshoot_triton_repair(version: Option<String>) -> Result<serde_json:
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let _ = crate::base::push_log(&format!("{}\n", render_py_command(&py_s, &show_argv)), "setup");
+    let _ = echo(&format!("{}\n", render_py_command(&py_s, &show_argv)));
     let show = silent_command(&py_s)
         .args(&show_argv)
         .output()
@@ -873,10 +883,7 @@ pub fn troubleshoot_triton_repair(version: Option<String>) -> Result<serde_json:
     };
     let spec = triton_reinstall_spec(&dist, &want);
     let inst_argv = triton_pip_reinstall_argv(&spec);
-    let _ = crate::base::push_log(
-        &format!("{}\n", render_py_command(&py_s, &inst_argv)),
-        "setup",
-    );
+    echo(&format!("{}\n", render_py_command(&py_s, &inst_argv)));
     let inst = silent_command(&py_s)
         .args(&inst_argv)
         .output()
@@ -889,10 +896,7 @@ pub fn troubleshoot_triton_repair(version: Option<String>) -> Result<serde_json:
     }
     let backup = clear_triton_caches()?;
     let check_argv = vec!["-c".to_string(), "import triton; print(triton.__version__)".to_string()];
-    let _ = crate::base::push_log(
-        &format!("{}\n", render_py_command(&py_s, &check_argv)),
-        "setup",
-    );
+    echo(&format!("{}\n", render_py_command(&py_s, &check_argv)));
     let imp = silent_command(&py_s)
         .args(&check_argv)
         .output();
@@ -902,13 +906,10 @@ pub fn troubleshoot_triton_repair(version: Option<String>) -> Result<serde_json:
         ),
         _ => None,
     };
-    let _ = crate::base::push_log(
-        &format!(
-            "[✓] Triton repaired: {spec}, cache cleared, import {}\n",
-            import_version.as_deref().unwrap_or("FAILED")
-        ),
-        "setup",
-    );
+    echo(&format!(
+        "[✓] Triton repaired: {spec}, cache cleared, import {}\n",
+        import_version.as_deref().unwrap_or("FAILED")
+    ));
     Ok(serde_json::json!({
         "ok": true, "success": true,
         "dist": dist, "version": want, "previous": detected,
