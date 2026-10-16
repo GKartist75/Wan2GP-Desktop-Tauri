@@ -2,8 +2,8 @@
 use crate::base::*;
 use crate::{
     hw::{
-        get_gpu_info_sync, kernel_profile_key, probe_command, wmi_all_gpus, wmi_gpu_fallback,
-        wmi_virtual_adapters,
+        get_gpu_info_sync, kernel_profile_key, probe_command, version_gt, wmi_all_gpus,
+        wmi_gpu_fallback, wmi_virtual_adapters,
     },
     status::{get_active_env, resolve_env_python},
 };
@@ -271,8 +271,7 @@ fn launch_in_terminal(
     for k in [
         "WGP_GGUF_LLAMACPP_CUDA",
         "WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE",
-        "WGP_GGUF_LLAMACPP_CUDA_STREAM_K",
-        "WGP_GGUF_LLAMACPP_CUDA_BF16_FP16",
+        "LLAMACPP_GGUF_SHORT_BATCH",
     ] {
         if let Ok(val) = std::env::var(k) {
             env_lines.push(format!("set {k}={val}"));
@@ -635,7 +634,12 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     if !claude_key.is_empty() {
         std::env::set_var("ANTHROPIC_API_KEY", &claude_key);
     }
-    // GGUF CUDA kernel knobs from Manage → GGUF CUDA Kernel (docs/INSTALLATION.md parity).
+    // GGUF CUDA kernel knobs from Settings → GGUF CUDA Kernel. Verified against
+    // the 1.0.25 wheel's llamacpp_gguf_cuda/__init__.py: it reads
+    // WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE (fast/mmq/packed/low_vram -> packed
+    // MMVQ/MMQ; materialized/dense/cublas -> cuBLAS on a dequant copy) and
+    // LLAMACPP_GGUF_SHORT_BATCH (auto/native/mma). The pre-1.0.25 Stream-K and
+    // BF16->FP16 env vars were removed upstream and are no longer set.
     // std::env persists in OUR process across launches, so always reconcile:
     // set what's configured, REMOVE stale leftovers.
     {
@@ -648,34 +652,37 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             std::env::set_var("WGP_GGUF_LLAMACPP_CUDA", "0");
         } else {
             std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA");
-            match g
+            let matmul = g
                 .get("matmulMode")
                 .and_then(|v| v.as_str())
-                .unwrap_or("auto")
-            {
-                "fast" | "low_vram" => std::env::set_var(
-                    "WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE",
-                    g["matmulMode"].as_str().unwrap(),
-                ),
+                .unwrap_or("auto");
+            match matmul {
+                "fast" | "low_vram" | "materialized" => {
+                    std::env::set_var("WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE", matmul)
+                }
                 _ => std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE"),
             }
-            if g.get("streamK").and_then(|v| v.as_bool()) == Some(false) {
-                std::env::set_var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K", "0");
-            } else {
-                std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K");
+            // Successor to the removed Stream-K knob (wheel 1.0.25): the
+            // Q4_K/PTQ1_0 tensor-core path for 2-8 row batches. "auto" (and
+            // anything unknown) leaves the wheel's own per-shape default.
+            let short = g
+                .get("shortBatch")
+                .and_then(|v| v.as_str())
+                .unwrap_or("auto");
+            match short {
+                "native" | "mma" => std::env::set_var("LLAMACPP_GGUF_SHORT_BATCH", short),
+                _ => std::env::remove_var("LLAMACPP_GGUF_SHORT_BATCH"),
             }
-            if g.get("bf16Fp16").and_then(|v| v.as_bool()) == Some(true) {
-                std::env::set_var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16", "1");
-            } else {
-                std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16");
-            }
+            // Retire the dead pre-1.0.25 knobs so a stale process env can't
+            // leak them into a launch that no longer honours them.
+            std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K");
+            std::env::remove_var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16");
         }
         emit(&format!(
-            "[i] GGUF env: CUDA={} MATMUL={} STREAM_K={} BF16_FP16={}\n",
+            "[i] GGUF env: CUDA={} MATMUL={} SHORT_BATCH={}\n",
             std::env::var("WGP_GGUF_LLAMACPP_CUDA").unwrap_or("1".into()),
             std::env::var("WGP_GGUF_LLAMACPP_CUDA_MATMUL_MODE").unwrap_or("auto".into()),
-            std::env::var("WGP_GGUF_LLAMACPP_CUDA_STREAM_K").unwrap_or("1".into()),
-            std::env::var("WGP_GGUF_LLAMACPP_CUDA_BF16_FP16").unwrap_or("0".into())
+            std::env::var("LLAMACPP_GGUF_SHORT_BATCH").unwrap_or("auto".into())
         ));
     }
     // AMD GPU profile env from setup_config.json (e.g. HSA_OVERRIDE_GFX_VERSION).
@@ -685,7 +692,10 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     // reconciles stale leftovers away (same pattern as the GGUF knobs
     // above). Values still come verbatim from upstream's file when present
     // on old checkouts — never invented here.
-    {
+    // `is_amd_launch` escapes the block: the vendor-independent JIT pins
+    // below (Triton cache dir, MSVC compiler) need it without a second
+    // WMI probe.
+    let is_amd_launch = {
         let gpu = get_gpu_info_sync();
         let profile = kernel_profile_key(
             gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
@@ -745,7 +755,8 @@ runpy.run_path(sys.argv[0], run_name='__main__')
                 std::env::remove_var(key);
             }
         }
-    }
+        profile.starts_with("AMD")
+    };
     /// ROCm SDK dir for the AMD launch env. Prefers the `rocm-sdk` CLI
     /// shipped inside the TheRock `rocm` dist (`rocm-sdk path --root` —
     /// the `rocm-sdk` binary on PATH first, then `<env python> -m rocm_sdk`,
@@ -895,6 +906,34 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             reconcile_non_amd_session_env(&emit);
         }
     }
+    // Triton JIT cache pin (see triton_cache_dir_for): set-if-absent so an
+    // explicit user override stays authoritative. The folder is created here
+    // (warn-only — creation failure leaves Triton's default location); the
+    // first launch after this change recompiles the old ~/.triton cache once.
+    if std::env::var("TRITON_CACHE_DIR").is_ok() {
+        emit("[i] TRITON_CACHE_DIR already set outside the launcher — leaving it untouched\n");
+    } else {
+        let dir = triton_cache_dir_for(&get_data_dir());
+        match std::fs::create_dir_all(&dir) {
+            Ok(()) => {
+                std::env::set_var("TRITON_CACHE_DIR", &dir);
+                emit(&format!(
+                    "[i] Triton JIT cache pinned to {} (one stable folder to add to your antivirus exclusions — Triton's compiled helpers there are false-positive targets)\n",
+                    dir.to_string_lossy()
+                ));
+            }
+            Err(e) => emit(&format!(
+                "[i] could not create the pinned Triton cache folder ({e}) — Triton keeps its default cache location\n"
+            )),
+        }
+    }
+    // MSVC compiler pin for Triton JIT (see MsvcPin): NVIDIA/Intel/CPU only.
+    // Without it every stub build goes through the wheel-bundled unsigned
+    // TinyCC (Bitdefender ATD blocked python.exe → tcc.exe mid-generation);
+    // a signed cl.exe dissolves the "unsigned spawns unsigned compiler"
+    // pattern. AMD launches instead remove our pin — TheRock's clang-cl
+    // must win there, and CC env would shadow it.
+    apply_msvc_cc_pin(is_amd_launch, &emit);
     std::env::set_var("PYTHONUNBUFFERED", "1");
     std::env::set_var("PYTHONUTF8", "1");
     std::env::set_var("PYTHONIOENCODING", "utf-8");
@@ -1888,6 +1927,496 @@ pub async fn popout_webview(
     Ok(res)
 }
 
+/// Pure path derivation for the launcher-pinned Triton JIT cache:
+/// `<data dir>\triton-cache` (e.g. `C:\Wan2GP\triton-cache`). Triton's
+/// compiled helpers (`cuda_utils`, `__triton_launcher`) are unsigned .pyd
+/// files with a fresh hash every build — heuristic antivirus engines
+/// (e.g. Bitdefender `Gen:Variant.Ulise`) block them mid-compile, which can
+/// kill generation at the first kernel launch. Pinning the cache dir gives
+/// every AV exclusion ONE known path instead of `%TEMP%` /
+/// `%USERPROFILE%\.triton` roulette. Pure + unit-tested.
+pub(crate) const TRITON_CACHE_SUBDIR: &str = "triton-cache";
+pub(crate) fn triton_cache_dir_for(data_dir: &Path) -> PathBuf {
+    data_dir.join(TRITON_CACHE_SUBDIR)
+}
+
+/// MSVC compiler pin for Triton JIT stub builds.
+///
+/// Background: the spawned server process carries no VsDevCmd env (no CC,
+/// no INCLUDE/LIB), so Triton's `get_cc()` falls through to the
+/// wheel-bundled unsigned TinyCC (`triton/runtime/tcc/tcc.exe`) — and
+/// Bitdefender's behavioral engine blocked `python.exe → tcc.exe`
+/// mid-generation ("unsigned spawns unsigned compiler"). Pointing CC at the
+/// installed MSVC toolchain (see apply_msvc_cc_pin) dissolves that pattern:
+/// a Microsoft-signed `cl.exe` building into the pinned cache dir.
+///
+/// NVIDIA-ONLY by design: Triton's `get_cc()` checks `CC` before TheRock's
+/// own `clang-cl`, so a CC pin on AMD would shadow the ROCm compiler that
+/// HIP headers require. AMD launches remove our pin instead (leaving a
+/// genuine user toolchain untouched); Intel/CPU launches pin harmlessly —
+/// they never JIT, and `cl.exe` is the native toolchain for any pip
+/// from-source build there too.
+/// Pure decision logic + hermetic discovery below; only the thin
+/// `*_live` wrappers touch the real Program Files. Pure + unit-tested.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MsvcPin {
+    pub cc: String,
+    pub include: String,
+    pub lib: String,
+}
+
+/// Current process values of the three pinned keys. All-None is the common
+/// fresh-process case.
+pub(crate) struct MsvcCurrent {
+    pub cc: Option<String>,
+    pub include: Option<String>,
+    pub lib: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MsvcDecision {
+    /// Set all three from fresh discovery.
+    Pin,
+    /// At least one key is user-owned (VsDevCmd shell, custom toolchain) —
+    /// a coherent set that must never be half-overridden.
+    KeepUser { keys: Vec<&'static str> },
+    /// AMD launch: remove exactly the keys still holding our recorded
+    /// values (a user override on any key survives).
+    Unpin { cc: bool, include: bool, lib: bool },
+}
+
+pub(crate) fn decide_msvc_pin(
+    is_amd: bool,
+    cur: &MsvcCurrent,
+    recorded: Option<&MsvcPin>,
+) -> MsvcDecision {
+    let matches_recorded = |cur_val: &Option<String>, rec_val: &str| -> bool {
+        cur_val.as_deref() == Some(rec_val)
+    };
+    if is_amd {
+        let (mut cc, mut include, mut lib) = (false, false, false);
+        if let Some(r) = recorded {
+            cc = matches_recorded(&cur.cc, &r.cc);
+            include = matches_recorded(&cur.include, &r.include);
+            lib = matches_recorded(&cur.lib, &r.lib);
+        }
+        return MsvcDecision::Unpin { cc, include, lib };
+    }
+    let user_owned = |cur_val: &Option<String>, rec_val: Option<&str>| -> bool {
+        match cur_val {
+            None => false,
+            Some(v) => Some(v.as_str()) != rec_val,
+        }
+    };
+    let mut keys = Vec::new();
+    if user_owned(&cur.cc, recorded.map(|p| p.cc.as_str())) {
+        keys.push("CC");
+    }
+    if user_owned(&cur.include, recorded.map(|p| p.include.as_str())) {
+        keys.push("INCLUDE");
+    }
+    if user_owned(&cur.lib, recorded.map(|p| p.lib.as_str())) {
+        keys.push("LIB");
+    }
+    if keys.is_empty() {
+        MsvcDecision::Pin
+    } else {
+        MsvcDecision::KeepUser { keys }
+    }
+}
+
+/// First non-empty line of `vswhere -property installationPath` output.
+/// Pure + unit-tested.
+pub(crate) fn parse_vswhere_root(out: &str) -> Option<PathBuf> {
+    out.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Newest dotted-version dir name (`14.44.35207` > `14.39.35128`,
+/// `10.0.22621.0` > `10.0.19041.0`) via the shared numeric compare.
+/// A non-version name only wins an otherwise-empty listing — and then the
+/// existence gate in `probe_toolchain_at` rejects it anyway (no cl.exe
+/// under a junk dir). Pure + unit-tested.
+pub(crate) fn pick_newest_versioned(names: &[String]) -> Option<String> {
+    let mut best: Option<&String> = None;
+    for n in names {
+        let better = match best {
+            None => true,
+            Some(b) => version_gt(n, b),
+        };
+        if better {
+            best = Some(n);
+        }
+    }
+    best.cloned()
+}
+
+/// (cl.exe, INCLUDE dirs, LIB dirs) for a VS root + toolset version +
+/// Windows Kits root + kit version. Pure path construction + unit-tested.
+pub(crate) fn msvc_toolchain_paths(
+    vs_root: &Path,
+    msvc_ver: &str,
+    kits_root: &Path,
+    kit_ver: &str,
+) -> (PathBuf, Vec<PathBuf>, Vec<PathBuf>) {
+    let msvc = vs_root
+        .join("VC")
+        .join("Tools")
+        .join("MSVC")
+        .join(msvc_ver);
+    let cc = msvc
+        .join("bin")
+        .join("Hostx64")
+        .join("x64")
+        .join("cl.exe");
+    let kit_inc = kits_root.join("Include").join(kit_ver);
+    let kit_lib = kits_root.join("Lib").join(kit_ver);
+    let includes = vec![
+        msvc.join("include"),
+        kit_inc.join("ucrt"),
+        kit_inc.join("um"),
+        kit_inc.join("shared"),
+    ];
+    let libs = vec![
+        msvc.join("lib").join("x64"),
+        kit_lib.join("ucrt").join("x64"),
+        kit_lib.join("um").join("x64"),
+    ];
+    (cc, includes, libs)
+}
+
+fn newest_subdir_name(dir: &Path) -> Option<String> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let names: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    pick_newest_versioned(&names)
+}
+
+fn probe_toolchain_at(vs_root: &Path, kits_root: &Path) -> Option<MsvcPin> {
+    let msvc_ver = newest_subdir_name(&vs_root.join("VC").join("Tools").join("MSVC"))?;
+    let kit_ver = newest_subdir_name(&kits_root.join("Include"))?;
+    let (cc, includes, libs) = msvc_toolchain_paths(vs_root, &msvc_ver, kits_root, &kit_ver);
+    // Existence gate: cl.exe plus every INCLUDE/LIB dir must be real —
+    // a half-installed toolchain (MSVC without the SDK) must fall through
+    // to the next candidate, never half-pin.
+    if !cc.is_file() {
+        return None;
+    }
+    if includes.iter().chain(libs.iter()).any(|d| !d.is_dir()) {
+        return None;
+    }
+    let join = |ds: &[PathBuf]| {
+        ds.iter()
+            .map(|d| d.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(";")
+    };
+    Some(MsvcPin {
+        cc: cc.to_string_lossy().into_owned(),
+        include: join(&includes),
+        lib: join(&libs),
+    })
+}
+
+/// Hermetic core of discovery: first (vs_root, kits_root) pair Wins.
+/// Tested against fake trees; the live wrapper below supplies real roots.
+pub(crate) fn discover_msvc_pin_in(
+    vs_roots: &[PathBuf],
+    kits_roots: &[PathBuf],
+) -> Option<MsvcPin> {
+    for vs in vs_roots {
+        for kits in kits_roots {
+            if let Some(pin) = probe_toolchain_at(vs, kits) {
+                return Some(pin);
+            }
+        }
+    }
+    None
+}
+
+fn vswhere_install_root() -> Option<PathBuf> {
+    let pf86 = std::env::var("ProgramFiles(x86)").ok()?;
+    let vswhere = PathBuf::from(pf86)
+        .join("Microsoft Visual Studio")
+        .join("Installer")
+        .join("vswhere.exe");
+    if !vswhere.is_file() {
+        return None;
+    }
+    let out = std::process::Command::new(&vswhere)
+        .args([
+            "-latest",
+            "-products",
+            "*",
+            "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property",
+            "installationPath",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_vswhere_root(&String::from_utf8_lossy(&out.stdout))
+}
+
+fn default_vs_roots() -> Vec<PathBuf> {
+    let mut bases = Vec::new();
+    for key in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Ok(pf) = std::env::var(key) {
+            bases.push(pf);
+        }
+    }
+    if bases.is_empty() {
+        bases.push(r"C:\Program Files".to_string());
+    }
+    let mut roots = Vec::new();
+    for pf in &bases {
+        for year in ["2022", "2019"] {
+            for ed in ["Enterprise", "Professional", "Community", "BuildTools"] {
+                roots.push(
+                    PathBuf::from(pf)
+                        .join("Microsoft Visual Studio")
+                        .join(year)
+                        .join(ed),
+                );
+            }
+        }
+    }
+    roots
+}
+
+fn default_kits_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
+        roots.push(
+            PathBuf::from(pf86)
+                .join("Windows Kits")
+                .join("10"),
+        );
+    }
+    let fallback = PathBuf::from(r"C:\Program Files (x86)\Windows Kits\10");
+    if !roots.contains(&fallback) {
+        roots.push(fallback);
+    }
+    roots
+}
+
+fn discover_msvc_pin_live() -> Option<MsvcPin> {
+    let mut vs = Vec::new();
+    if let Some(r) = vswhere_install_root() {
+        vs.push(r);
+    }
+    vs.extend(default_vs_roots());
+    discover_msvc_pin_in(&vs, &default_kits_roots())
+}
+
+/// Guidance logged when no MSVC toolchain exists on the box. Triton still
+/// works (bundled TinyCC fallback — same AV exposure as before, nothing
+/// breaks); the pin just can't apply. Points at the free fix. The text is
+/// a const so the pointer it gives is unit-tested, not left to rot.
+pub(crate) const NO_MSVC_TOOLCHAIN_HINT: &str = "[i] no MSVC toolchain found — Triton keeps its bundled TinyCC fallback for JIT stub builds (unsigned: more AV-prone). Install VS 2022 Build Tools with the C++ workload (free) and relaunch to get the signed-compiler pin — one-line command in the User Guide (Antivirus section).\n";
+
+static MSVC_PIN_RECORDED: std::sync::OnceLock<std::sync::Mutex<Option<MsvcPin>>> =
+    std::sync::OnceLock::new();
+
+fn recorded_pin() -> Option<MsvcPin> {
+    MSVC_PIN_RECORDED
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+}
+
+fn set_recorded_pin(pin: Option<MsvcPin>) {
+    if let Ok(mut g) = MSVC_PIN_RECORDED
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+    {
+        *g = pin;
+    }
+}
+
+/// Apply the MSVC decision for this launch, honoring the user's Triton
+/// compiler choice (Settings → Desktop, `tritonCompiler`):
+/// - TinyCC mode: upstream default, no pin ever — just scrub ours.
+/// - AMD launch: remove our pin so TheRock's clang-cl discovery (which `CC`
+///   would shadow) stays authoritative, whatever the mode.
+/// - Forced MSVC: pin, or warn loudly when no toolchain exists.
+/// - Auto (default): pin when no user toolchain is present.
+/// Warn-only throughout — discovery failure just keeps Triton's TinyCC
+/// fallback. Takes effect on the NEXT launch (launch-time env).
+pub(crate) fn apply_msvc_cc_pin(is_amd: bool, emit: impl Fn(&str)) {
+    let cur = MsvcCurrent {
+        cc: std::env::var("CC").ok(),
+        include: std::env::var("INCLUDE").ok(),
+        lib: std::env::var("LIB").ok(),
+    };
+    let recorded = recorded_pin();
+    let mode = triton_compiler_mode();
+    // Explicit TinyCC reuses the AMD cleanup: our MSVC values must not be
+    // in this env either.
+    if mode == TritonCompilerMode::TinyCc {
+        let removed = remove_recorded_pin(&cur, recorded.as_ref());
+        if removed.is_empty() {
+            emit("[i] Triton JIT compiler: TinyCC (upstream default) per user setting — no MSVC pin\n");
+        } else {
+            emit(&format!(
+                "[i] Triton JIT compiler: TinyCC per user setting — removed launcher-pinned {} (MSVC pin off)\n",
+                removed.join(", ")
+            ));
+        }
+        return;
+    }
+    if is_amd {
+        let removed = remove_recorded_pin(&cur, recorded.as_ref());
+        if !removed.is_empty() {
+            emit(&format!(
+                "[i] removed launcher-pinned MSVC compiler env ({}) for the AMD launch — TheRock clang-cl discovery stays authoritative\n",
+                removed.join(", ")
+            ));
+        }
+        return;
+    }
+    if mode == TritonCompilerMode::Msvc {
+        match discover_msvc_pin_live() {
+            Some(pin) => {
+                std::env::set_var("CC", &pin.cc);
+                std::env::set_var("INCLUDE", &pin.include);
+                std::env::set_var("LIB", &pin.lib);
+                set_recorded_pin(Some(pin.clone()));
+                emit(&format!(
+                    "[i] Triton JIT compiler pinned to signed MSVC ({}) — stub builds no longer use the bundled unsigned TinyCC\n",
+                    pin.cc
+                ));
+            }
+            None => emit(MSVC_FORCED_MISSING_HINT),
+        }
+        return;
+    }
+    match decide_msvc_pin(false, &cur, recorded.as_ref()) {
+        // Unpin is unreachable off-AMD (decide only unpins for AMD).
+        MsvcDecision::Unpin { .. } => {}
+        MsvcDecision::KeepUser { keys } => {
+            emit(&format!(
+                "[i] CC/INCLUDE/LIB already set outside the launcher ({}) — leaving the user toolchain untouched (Triton keeps its bundled TinyCC fallback)\n",
+                keys.join(", ")
+            ));
+        }
+        MsvcDecision::Pin => match discover_msvc_pin_live() {
+            Some(pin) => {
+                std::env::set_var("CC", &pin.cc);
+                std::env::set_var("INCLUDE", &pin.include);
+                std::env::set_var("LIB", &pin.lib);
+                set_recorded_pin(Some(pin.clone()));
+                emit(&format!(
+                    "[i] Triton JIT compiler pinned to signed MSVC ({}) — stub builds no longer use the bundled unsigned TinyCC\n",
+                    pin.cc
+                ));
+            }
+            None => emit(NO_MSVC_TOOLCHAIN_HINT),
+        },
+    }
+}
+
+/// Current MSVC `cl.exe` path via live discovery, if any. Thin accessor for
+/// the Troubleshooting status command — the discovery itself is unit-tested.
+pub(crate) fn msvc_toolchain_cc() -> Option<String> {
+    discover_msvc_pin_live().map(|p| p.cc)
+}
+
+/// User-facing Triton JIT compiler choice (Settings → Desktop →
+/// `tritonCompiler` in desktop-config.json). Out-of-box (unset) is pure
+/// upstream TinyCC — the MSVC pin is a workaround and stays opt-in via
+/// explicit "auto" (MSVC when installed) or "msvc" (forced).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TritonCompilerMode {
+    Auto,
+    Msvc,
+    TinyCc,
+}
+
+/// Normalize free-form input to a mode: "msvc" / "tinycc" (or "tcc") win,
+/// everything else (including "" and "auto") is Auto. Pure + unit-tested.
+pub(crate) fn triton_compiler_normalize(s: &str) -> TritonCompilerMode {
+    match s.trim().to_lowercase().as_str() {
+        "msvc" => TritonCompilerMode::Msvc,
+        "tinycc" | "tcc" => TritonCompilerMode::TinyCc,
+        _ => TritonCompilerMode::Auto,
+    }
+}
+
+/// Persisted choice. UNSET means pure upstream (TinyCC) — the cl.exe pin is
+/// a workaround and must be opt-in, never default-on. An explicit "auto"
+/// value (chosen in the menu) is the smart mode: MSVC when installed.
+pub(crate) fn triton_compiler_mode() -> TritonCompilerMode {
+    let cfg = load_config_value();
+    let s = cfg.get("tritonCompiler").and_then(|v| v.as_str());
+    match s {
+        None => TritonCompilerMode::TinyCc,
+        Some(v) => triton_compiler_normalize(v),
+    }
+}
+
+/// Persist the Triton JIT compiler choice. Takes effect on the NEXT launch
+/// (the pin is launch-time env) — unlike the window mode there is nothing
+/// live to apply. Mirrors set_window_mode's shape ({ok, mode}).
+#[tauri::command]
+pub fn set_triton_compiler(mode: String) -> serde_json::Value {
+    let s = match triton_compiler_normalize(&mode) {
+        TritonCompilerMode::Msvc => "msvc",
+        TritonCompilerMode::TinyCc => "tinycc",
+        TritonCompilerMode::Auto => "auto",
+    };
+    let mut full = load_config_value();
+    if let Some(m) = full.as_object_mut() {
+        m.insert("tritonCompiler".into(), serde_json::json!(s));
+    }
+    if let Err(e) = crate::config::config_save(full) {
+        return serde_json::json!({"ok": false, "error": e});
+    }
+    serde_json::json!({"ok": true, "mode": s})
+}
+
+/// Warned when tritonCompiler=msvc finds no toolchain: the fallback stays
+/// TinyCC, and the message must say so plus where the fix lives. Const so
+/// the pointer is unit-tested.
+pub(crate) const MSVC_FORCED_MISSING_HINT: &str = "[i] tritonCompiler=msvc but no MSVC toolchain found — TinyCC fallback active. Install Build Tools (Manage → Troubleshooting) or switch the Triton compiler back to Auto.\n";
+
+/// Remove exactly the keys still holding our recorded values. Shared by the
+/// AMD cleanup and the explicit-TinyCC mode — both mean "our MSVC values
+/// must not be in this env". Clears the recording when it removes anything.
+pub(crate) fn remove_recorded_pin(
+    cur: &MsvcCurrent,
+    recorded: Option<&MsvcPin>,
+) -> Vec<&'static str> {
+    let mut removed = Vec::new();
+    if let Some(r) = recorded {
+        if cur.cc.as_deref() == Some(r.cc.as_str()) {
+            std::env::remove_var("CC");
+            removed.push("CC");
+        }
+        if cur.include.as_deref() == Some(r.include.as_str()) {
+            std::env::remove_var("INCLUDE");
+            removed.push("INCLUDE");
+        }
+        if cur.lib.as_deref() == Some(r.lib.as_str()) {
+            std::env::remove_var("LIB");
+            removed.push("LIB");
+        }
+    }
+    if !removed.is_empty() {
+        set_recorded_pin(None);
+    }
+    removed
+}
+
 #[cfg(test)]
 mod launch_args_tests {
     use super::*;
@@ -1925,6 +2454,18 @@ mod launch_args_tests {
             "python.exe -m pip list",
             pre
         ));
+    }
+    #[test]
+    fn triton_cache_pin_targets_one_stable_folder() {
+        use super::triton_cache_dir_for;
+        let d = triton_cache_dir_for(Path::new(r"C:\Wan2GP"));
+        assert_eq!(d, Path::new(r"C:\Wan2GP\triton-cache"));
+        // Non-default data dir (D: pick) resolves inside it, never HOME.
+        let d2 = triton_cache_dir_for(Path::new(r"D:\Tools\Wan2GP"));
+        assert_eq!(d2, Path::new(r"D:\Tools\Wan2GP\triton-cache"));
+        assert!(!d2
+            .to_string_lossy()
+            .contains("AppData\\Local\\Temp"));
     }
     #[test]
     fn close_sweep_guard_skips_zero_and_self() {
@@ -2068,6 +2609,279 @@ cmd,
             None
         );
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod msvc_pin_tests {
+    use super::{
+        decide_msvc_pin, discover_msvc_pin_in, msvc_toolchain_paths, parse_vswhere_root,
+        pick_newest_versioned, remove_recorded_pin, triton_compiler_normalize,
+        MsvcCurrent, MsvcDecision, MsvcPin, TritonCompilerMode,
+        MSVC_FORCED_MISSING_HINT, NO_MSVC_TOOLCHAIN_HINT,
+    };
+
+    fn rec_pin() -> MsvcPin {
+        MsvcPin {
+            cc: r"C:\VS\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\cl.exe".to_string(),
+            include: r"C:\VS\inc".to_string(),
+            lib: r"C:\VS\lib".to_string(),
+        }
+    }
+
+    fn cur_of(r: &MsvcPin) -> MsvcCurrent {
+        MsvcCurrent {
+            cc: Some(r.cc.clone()),
+            include: Some(r.include.clone()),
+            lib: Some(r.lib.clone()),
+        }
+    }
+
+    #[test]
+    fn compiler_mode_normalizes_user_input() {
+        use TritonCompilerMode::*;
+        assert_eq!(triton_compiler_normalize("msvc"), Msvc);
+        assert_eq!(triton_compiler_normalize("MSVC"), Msvc);
+        assert_eq!(triton_compiler_normalize("tinycc"), TinyCc);
+        assert_eq!(triton_compiler_normalize(" tcc "), TinyCc);
+        for auto in ["", "auto", "AUTO", "clang", "gcc"] {
+            assert_eq!(triton_compiler_normalize(auto), Auto, "{auto}");
+        }
+    }
+
+    #[test]
+    fn forced_msvc_hint_names_the_way_out() {
+        assert!(MSVC_FORCED_MISSING_HINT.contains("TinyCC fallback"));
+        assert!(MSVC_FORCED_MISSING_HINT.contains("Troubleshooting"));
+    }
+
+    #[test]
+    fn recorded_pin_removal_spares_user_keys() {
+        // Our CC/INCLUDE go, a user LIB survives — then everything restored.
+        let saved: Vec<(String, Option<String>)> = ["CC", "INCLUDE", "LIB"]
+            .iter()
+            .map(|k| (k.to_string(), std::env::var(k).ok()))
+            .collect();
+        let r = rec_pin();
+        std::env::set_var("CC", &r.cc);
+        std::env::set_var("INCLUDE", &r.include);
+        std::env::set_var("LIB", r"C:\user\lib");
+        let cur = MsvcCurrent {
+            cc: std::env::var("CC").ok(),
+            include: std::env::var("INCLUDE").ok(),
+            lib: std::env::var("LIB").ok(),
+        };
+        let removed = remove_recorded_pin(&cur, Some(&r));
+        assert_eq!(removed, vec!["CC", "INCLUDE"]);
+        assert_eq!(std::env::var("LIB").as_deref(), Ok(r"C:\user\lib"));
+        for (k, v) in saved {
+            match v {
+                Some(val) => std::env::set_var(&k, val),
+                None => std::env::remove_var(&k),
+            }
+        }
+    }
+
+    #[test]
+    fn no_msvc_hint_points_at_the_free_fix() {        // The whole point of the None branch is telling a MSVC-less user how
+        // to get the pin: name the fallback truthfully and point at Build Tools.
+        assert!(NO_MSVC_TOOLCHAIN_HINT.contains("TinyCC fallback"));
+        assert!(NO_MSVC_TOOLCHAIN_HINT.contains("Build Tools"));
+        assert!(NO_MSVC_TOOLCHAIN_HINT.contains("User Guide"));
+    }
+
+    #[test]
+    fn vswhere_parse_takes_first_non_empty_line() {        assert_eq!(
+            parse_vswhere_root("C:\\VS\\2022\\Community\r\n"),
+            Some(std::path::PathBuf::from("C:\\VS\\2022\\Community"))
+        );
+        assert_eq!(
+            parse_vswhere_root("\n  \nC:\\VS\\2022\\BuildTools\nC:\\VS\\2019\\Community\n"),
+            Some(std::path::PathBuf::from("C:\\VS\\2022\\BuildTools"))
+        );
+        assert_eq!(parse_vswhere_root(""), None);
+        assert_eq!(parse_vswhere_root("   \n\t\n"), None);
+    }
+
+    #[test]
+    fn newest_version_picks_numeric_max() {
+        let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        // MSVC toolsets.
+        assert_eq!(
+            pick_newest_versioned(&v(&["14.39.35128", "14.44.35207"])),
+            Some("14.44.35207".to_string())
+        );
+        // Windows Kits.
+        assert_eq!(
+            pick_newest_versioned(&v(&["10.0.19041.0", "10.0.22621.0"])),
+            Some("10.0.22621.0".to_string())
+        );
+        // A non-version name never beats a real version (it parses as 0).
+        assert_eq!(
+            pick_newest_versioned(&v(&["Current", "10.0.19041.0"])),
+            Some("10.0.19041.0".to_string())
+        );
+        assert_eq!(pick_newest_versioned(&[]), None);
+    }
+
+    #[test]
+    fn toolchain_paths_point_at_hostx64_cl_and_sdk_layout() {
+        let (cc, inc, lib) = msvc_toolchain_paths(
+            std::path::Path::new(r"C:\VS"),
+            "14.44.35207",
+            std::path::Path::new(r"C:\Kits\10"),
+            "10.0.22621.0",
+        );
+        assert_eq!(
+            cc,
+            std::path::PathBuf::from(
+                r"C:\VS\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\cl.exe"
+            )
+        );
+        assert!(inc.iter().any(|d| d.ends_with(r"14.44.35207\include")));
+        assert!(inc.iter().any(|d| d.ends_with(r"10.0.22621.0\ucrt")));
+        assert!(inc.iter().any(|d| d.ends_with(r"10.0.22621.0\um")));
+        assert!(lib.iter().any(|d| d.ends_with(r"14.44.35207\lib\x64")));
+        assert!(lib.iter().any(|d| d.ends_with(r"10.0.22621.0\ucrt\x64")));
+    }
+
+    /// Build a fake (VS root, Kits root) pair under `base`.
+    fn fake_tree(
+        base: &std::path::Path,
+        msvc_vers: &[&str],
+        kit_vers: &[&str],
+        with_cl: bool,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let vs = base.join("VS");
+        for v in msvc_vers {
+            let m = vs
+                .join("VC")
+                .join("Tools")
+                .join("MSVC")
+                .join(v);
+            std::fs::create_dir_all(m.join("include")).unwrap();
+            std::fs::create_dir_all(m.join("lib").join("x64")).unwrap();
+            if with_cl {
+                let cldir = m.join("bin").join("Hostx64").join("x64");
+                std::fs::create_dir_all(&cldir).unwrap();
+                std::fs::File::create(cldir.join("cl.exe")).unwrap();
+            }
+        }
+        let kits = base.join("Kits");
+        for k in kit_vers {
+            for d in ["ucrt", "um", "shared"] {
+                std::fs::create_dir_all(kits.join("Include").join(k).join(d)).unwrap();
+            }
+            for d in ["ucrt", "um"] {
+                std::fs::create_dir_all(kits.join("Lib").join(k).join(d).join("x64")).unwrap();
+            }
+        }
+        (vs, kits)
+    }
+
+    #[test]
+    fn discovery_finds_newest_pair_in_fake_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (vs, kits) = fake_tree(
+            tmp.path(),
+            &["14.39.35128", "14.44.35207"],
+            &["10.0.19041.0", "10.0.22621.0"],
+            true,
+        );
+        let pin = discover_msvc_pin_in(std::slice::from_ref(&vs), std::slice::from_ref(&kits))
+            .expect("fake toolchain must be found");
+        assert!(pin.cc.contains("14.44.35207"), "{}", pin.cc);
+        assert!(pin.cc.ends_with("cl.exe"), "{}", pin.cc);
+        assert!(pin.include.contains("10.0.22621.0"), "{}", pin.include);
+        assert!(pin.lib.contains("10.0.22621.0"), "{}", pin.lib);
+    }
+
+    #[test]
+    fn discovery_rejects_half_installed_toolchains() {
+        let tmp = tempfile::tempdir().unwrap();
+        // MSVC without cl.exe → None.
+        let (vs_nocl, kits) =
+            fake_tree(&tmp.path().join("a"), &["14.44.35207"], &["10.0.22621.0"], false);
+        assert!(discover_msvc_pin_in(
+            std::slice::from_ref(&vs_nocl),
+            std::slice::from_ref(&kits)
+        )
+        .is_none());
+        // MSVC without any SDK → None (cl.exe alone can't compile Python.h).
+        let (vs, _) = fake_tree(&tmp.path().join("b"), &["14.44.35207"], &[], true);
+        let empty_kits = tmp.path().join("b-empty-kits");
+        std::fs::create_dir_all(&empty_kits).unwrap();
+        assert!(discover_msvc_pin_in(
+            std::slice::from_ref(&vs),
+            std::slice::from_ref(&empty_kits)
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn decision_pins_on_clean_env_and_repin_is_idempotent() {
+        let clean = MsvcCurrent { cc: None, include: None, lib: None };
+        assert_eq!(decide_msvc_pin(false, &clean, None), MsvcDecision::Pin);
+        // Second launch in the same process still holding our values → Pin
+        // again (harmless overwrite), never KeepUser against ourselves.
+        let r = rec_pin();
+        assert_eq!(
+            decide_msvc_pin(false, &cur_of(&r), Some(&r)),
+            MsvcDecision::Pin
+        );
+    }
+
+    #[test]
+    fn decision_never_half_overrides_a_user_toolchain() {
+        // VsDevCmd-style env, unknown to us → keep all of it.
+        let user = MsvcCurrent {
+            cc: Some(r"C:\Other\cl.exe".to_string()),
+            include: None,
+            lib: None,
+        };
+        assert_eq!(
+            decide_msvc_pin(false, &user, None),
+            MsvcDecision::KeepUser { keys: vec!["CC"] }
+        );
+        // User overrode CC after our pin, INCLUDE/LIB still ours → only CC
+        // is reported; nothing is touched.
+        let r = rec_pin();
+        let mixed = MsvcCurrent {
+            cc: Some(r"C:\Other\cl.exe".to_string()),
+            include: Some(r.include.clone()),
+            lib: Some(r.lib.clone()),
+        };
+        assert_eq!(
+            decide_msvc_pin(false, &mixed, Some(&r)),
+            MsvcDecision::KeepUser { keys: vec!["CC"] }
+        );
+    }
+
+    #[test]
+    fn decision_amd_unpins_recorded_keys_only() {
+        let r = rec_pin();
+        // Full match → remove all three so TheRock clang-cl discovery wins
+        // (CC env would shadow it in Triton's get_cc).
+        assert_eq!(
+            decide_msvc_pin(true, &cur_of(&r), Some(&r)),
+            MsvcDecision::Unpin { cc: true, include: true, lib: true }
+        );
+        // User CC override survives the AMD cleanup; ours still go.
+        let mixed = MsvcCurrent {
+            cc: Some(r"C:\Other\cl.exe".to_string()),
+            include: Some(r.include.clone()),
+            lib: Some(r.lib.clone()),
+        };
+        assert_eq!(
+            decide_msvc_pin(true, &mixed, Some(&r)),
+            MsvcDecision::Unpin { cc: false, include: true, lib: true }
+        );
+        // Nothing recorded → nothing to remove.
+        let clean = MsvcCurrent { cc: None, include: None, lib: None };
+        assert_eq!(
+            decide_msvc_pin(true, &clean, None),
+            MsvcDecision::Unpin { cc: false, include: false, lib: false }
+        );
     }
 }
 

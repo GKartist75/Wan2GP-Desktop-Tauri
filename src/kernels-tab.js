@@ -33,6 +33,32 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
       }
     }
   } catch {}
+  // Optional WGPKernels INT8 opt-in: NVIDIA RTX 30/40/50 (compute 8.0+) and
+  // AMD RDNA4 (gfx1200/gfx1201) via the rocm100 wheel, which installs in
+  // the installer's torch 2.13+rocm10 env — no separate env needed.
+  try {
+    const wgpkBtn = $("installWgpkernelsBtn");
+    if (wgpkBtn) {
+      const p = String(kernelProfile || "");
+      const ok = ["RTX_30", "RTX_40", "RTX_50", "AMD_GFX1200", "AMD_GFX1201"].includes(p);
+      wgpkBtn.style.display = ok ? "" : "none";
+      if (p === "AMD_GFX1200" || p === "AMD_GFX1201") {
+        wgpkBtn.title =
+          "Experimental AMD-only on RDNA4 (RX 9060/9070 series): the WGPKernels 1.1.2 " +
+          "rocm100 wheel installs directly in the installer's torch 2.13+rocm10 env.";
+      }
+    }
+  } catch {}
+  // AMD experimental-stack helper: shown for every AMD profile (the HIP
+  // GGUF wheel still needs its own torch 2.10 env) so the setup commands
+  // are always one click away.
+  try {
+    const amdBtn = $("installAmdSetupBtn");
+    if (amdBtn) {
+      const p = String(kernelProfile || "");
+      amdBtn.style.display = p.indexOf("AMD") === 0 ? "" : "none";
+    }
+  } catch {}
   const list = Array.isArray(wheels) ? wheels : [];
   if (!list.length) {    // Distinguish "no GPU profile" (genuinely nothing to show) from a data
     // error so the user isn't left staring at a blank section.

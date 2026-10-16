@@ -668,37 +668,87 @@ pub fn troubleshoot_triton_test() -> serde_json::Value {
     }
 }
 
-/// Upstream Sage diagnostic step 2: clear `%USERPROFILE%\.triton` (rename, not
-/// delete — locked files can't block a rename-away). Optional SDPA fallback
-/// merges `--attention sdpa` into launchArgs so the next boot works.
-#[tauri::command]
-pub fn troubleshoot_triton_clear(fallback_sdpa: Option<bool>) -> Result<serde_json::Value, String> {
-    let cache = home_dir().join(".triton");
-    let cleared;
-    let mut backup: Option<String> = None;
-    if cache.exists() {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let bak = home_dir().join(format!(".triton.bak-{stamp}"));
-        match std::fs::rename(&cache, &bak) {
+/// Upstream Sage diagnostic step 2: clear the Triton JIT cache (rename, not
+/// delete — locked files can't block a rename-away). Two homes are cleared:
+/// the historical default `%USERPROFILE%\.triton` AND the launcher-pinned
+/// `<data>\triton-cache` (`TRITON_CACHE_DIR`, whichever exists). Optional
+/// SDPA fallback merges `--attention sdpa` into launchArgs so the next boot
+/// works.
+/// Rename-or-remove both Triton JIT cache homes (legacy `~\.triton` first,
+/// then the launcher-pinned dir when present). Shared by Clear and Repair.
+/// Returns the legacy backup path (the panel's known field). Errors when
+/// files are locked — never partial success.
+fn clear_triton_caches() -> Result<Option<String>, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Rename-or-remove, shared by both cache homes. Ok(backup-path) on
+    // rename (the cache can be restored manually), Ok(None) when removed
+    // in place, Err when files are locked — never partial success.
+    let clear_dir = |dir: &std::path::Path| -> std::result::Result<Option<String>, ()> {
+        let name = dir
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("triton-cache");
+        let bak = dir
+            .parent()
+            .unwrap_or(&home_dir())
+            .join(format!("{name}.bak-{stamp}"));
+        match std::fs::rename(dir, &bak) {
             Ok(()) => {
-                cleared = true;
-                backup = Some(bak.to_string_lossy().to_string());
+                let p = bak.to_string_lossy().to_string();
+                Ok(Some(p))
             }
             Err(_) => {
-                // Rename failed (locked?) — best-effort remove instead.
-                if std::fs::remove_dir_all(&cache).is_ok() {
-                    cleared = true;
+                // Rename failed (locked by AV?) — best-effort remove instead.
+                if std::fs::remove_dir_all(dir).is_ok() {
+                    Ok(None)
                 } else {
-                    return Err("Could not clear .triton cache (files locked by a running Python?) — stop Wan2GP and retry".into());
+                    Err(())
                 }
             }
         }
-    } else {
-        cleared = true; // nothing there = nothing stale
+    };
+    // Target list: legacy default first (reported as `backup`, the panel's
+    // known field), then the pinned dir. Backups land beside each cache,
+    // never inside it.
+    let legacy = home_dir().join(".triton");
+    let pinned = crate::launch::triton_cache_dir_for(&get_data_dir());
+    let mut targets = vec![legacy.clone()];
+    if pinned.exists() {
+        targets.push(pinned);
     }
+    let mut backup: Option<String> = None;
+    for (i, dir) in targets.iter().enumerate() {
+        if !dir.is_dir() {
+            continue;
+        }
+        match clear_dir(dir) {
+            Ok(b) => {
+                if i == 0 {
+                    backup = b;
+                }
+                let _ = crate::base::push_log(
+                    &format!("[i] cleared Triton cache: {}\n", dir.to_string_lossy()),
+                    "setup",
+                );
+            }
+            Err(()) => {
+                return Err(
+                    "Could not clear the Triton cache (files locked by a running Python?) — stop Wan2GP and retry".into(),
+                );
+            }
+        }
+    }
+    Ok(backup)
+}
+
+#[tauri::command]
+pub fn troubleshoot_triton_clear(fallback_sdpa: Option<bool>) -> Result<serde_json::Value, String> {
+    // `cleared` is always true: clear_triton_caches errors instead of
+    // reporting partial success, and absent caches mean nothing stale.
+    let backup = clear_triton_caches()?;
     let mut launch_args: Option<String> = None;
     if fallback_sdpa == Some(true) {
         let mut dc = load_config_value();
@@ -718,8 +768,265 @@ pub fn troubleshoot_triton_clear(fallback_sdpa: Option<bool>) -> Result<serde_js
         launch_args = Some(merged);
     }
     Ok(
-        serde_json::json!({"ok": true, "success": true, "cleared": cleared, "backup": backup, "launchArgs": launch_args}),
+        serde_json::json!({"ok": true, "success": true, "cleared": true, "backup": backup, "launchArgs": launch_args}),
     )
+}
+
+/// Which installed Triton dist to repair, from `pip show` output: the
+/// `triton-windows` build when present, else plain `triton`. (dist, version).
+/// Floating to latest is deliberately NOT offered — a major drift would
+/// break upstream parity. Pure + unit-tested.
+pub(crate) fn parse_triton_pip_show(out: &str) -> Option<(String, String)> {
+    let mut found: Vec<(String, String)> = Vec::new();
+    let mut name: Option<String> = None;
+    for line in out.lines() {
+        let t = line.trim();
+        if let Some(n) = t.strip_prefix("Name:") {
+            name = Some(n.trim().to_string());
+        } else if let Some(v) = t.strip_prefix("Version:") {
+            if let Some(n) = name.take() {
+                found.push((n, v.trim().to_string()));
+            }
+        }
+    }
+    found
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case("triton-windows"))
+        .or_else(|| found.iter().find(|(n, _)| n.eq_ignore_ascii_case("triton")))
+        .cloned()
+}
+
+/// Exact reinstall spec for the detected dist (`triton-windows==3.6.0.post26`).
+/// `--force-reinstall --no-deps`: Triton's own files are replaced, torch and
+/// everything else stay untouched. Also builds rollback specs
+/// (`triton-windows==3.6.0.post24`). Pure + unit-tested.
+pub(crate) fn triton_reinstall_spec(dist: &str, version: &str) -> String {
+    format!("{dist}=={version}")
+}
+
+/// The exact argv the repair runs (minus the interpreter): pip show for
+/// detection. Pinned so the console echo and the spawn can never diverge.
+/// Pure + unit-tested.
+pub(crate) fn triton_pip_show_argv() -> Vec<&'static str> {
+    vec!["-m", "pip", "show", "triton-windows", "triton"]
+}
+
+/// The exact argv the repair runs (minus the interpreter): force-reinstall
+/// without touching anything else. Pinned so flags can't silently change.
+/// Pure + unit-tested.
+pub(crate) fn triton_pip_reinstall_argv(spec: &str) -> Vec<String> {
+    ["-m", "pip", "install", "--force-reinstall", "--no-deps", spec]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// Render the full command line for the console echo
+/// (`<python> -m pip install …`). Pure + unit-tested.
+pub(crate) fn render_py_command(py: &str, argv: &[String]) -> String {
+    format!("[>] {py} {}", argv.join(" "))
+}
+
+/// A repair version must be a single pip token — never empty, never
+/// whitespace (argv, not shell, so this is hygiene, not injection defense;
+/// pip itself rejects anything it can't resolve). Pure + unit-tested.
+pub(crate) fn valid_repair_version(v: &str) -> bool {
+    !v.is_empty() && v.split_whitespace().count() == 1
+}
+
+/// Repair a damaged Triton install: force-reinstall the EXACT installed
+/// build (or the requested older one — the Roll back button), clear both
+/// JIT cache homes, verify the import. For corrupted installs
+/// (quarantined or half-written files) — it does not change antivirus
+/// verdicts, which key on the (identical) rebuilt bytes. Rolling back does
+/// not pin: the next setup run floats forward again on upstream's `-U`
+/// range spec.
+#[tauri::command]
+pub fn troubleshoot_triton_repair(
+    app: tauri::AppHandle,
+    version: Option<String>,
+) -> Result<serde_json::Value, String> {
+    use tauri::Emitter;
+    // push_log alone only reaches history — the live console needs the event
+    // (that is why the first version of this echo never displayed).
+    let echo = |m: &str| {
+        crate::base::push_log(m, "setup");
+        let _ = app.emit("launch-log", m.to_string());
+    };
+    let Some(py) = active_python() else {
+        return Err("No Python environment installed — run Install first".into());
+    };
+    let py_s = py.to_string_lossy().to_string();
+    let show_argv: Vec<String> = triton_pip_show_argv()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let _ = echo(&format!("{}\n", render_py_command(&py_s, &show_argv)));
+    let show = silent_command(&py_s)
+        .args(&show_argv)
+        .output()
+        .map_err(|e| format!("pip show failed: {e}"))?;
+    let show_text = String::from_utf8_lossy(&show.stdout).to_string();
+    let Some((dist, detected)) = parse_triton_pip_show(&show_text) else {
+        return Err("No Triton distribution installed in the active env — run Install first".into());
+    };
+    // Explicit older build (Roll back button) or the detected one. Either
+    // way an exact == pin — never floating.
+    let want = version.unwrap_or_default();
+    let want = if want.trim().is_empty() {
+        detected.clone()
+    } else {
+        if !valid_repair_version(&want) {
+            return Err("Bad Triton version — single version token only (e.g. 3.6.0.post24)".into());
+        }
+        want.trim().to_string()
+    };
+    let spec = triton_reinstall_spec(&dist, &want);
+    let inst_argv = triton_pip_reinstall_argv(&spec);
+    echo(&format!("{}\n", render_py_command(&py_s, &inst_argv)));
+    let inst = silent_command(&py_s)
+        .args(&inst_argv)
+        .output()
+        .map_err(|e| format!("pip reinstall failed to start: {e}"))?;
+    if !inst.status.success() {
+        return Err(format!(
+            "pip reinstall failed: {}",
+            String::from_utf8_lossy(&inst.stderr).chars().take(500).collect::<String>()
+        ));
+    }
+    let backup = clear_triton_caches()?;
+    let check_argv = vec!["-c".to_string(), "import triton; print(triton.__version__)".to_string()];
+    echo(&format!("{}\n", render_py_command(&py_s, &check_argv)));
+    let imp = silent_command(&py_s)
+        .args(&check_argv)
+        .output();
+    let import_version = match imp {
+        Ok(o) if o.status.success() => Some(
+            String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        ),
+        _ => None,
+    };
+    echo(&format!(
+        "[✓] Triton repaired: {spec}, cache cleared, import {}\n",
+        import_version.as_deref().unwrap_or("FAILED")
+    ));
+    Ok(serde_json::json!({
+        "ok": true, "success": true,
+        "dist": dist, "version": want, "previous": detected,
+        "cleared": true, "backup": backup,
+        "importVersion": import_version,
+    }))
+}
+
+/// MSVC C++ toolchain status for the Triton JIT compiler pin (see
+/// launch.rs `MsvcPin`). `{ok, supported, installed, cc?}` — the panel
+/// shows the pin state on open and offers the installer when missing.
+#[tauri::command]
+pub fn troubleshoot_msvc_status() -> serde_json::Value {
+    if cfg!(not(windows)) {
+        return serde_json::json!({"ok": true, "supported": false});
+    }
+    match crate::launch::msvc_toolchain_cc() {
+        Some(cc) => {
+            serde_json::json!({"ok": true, "supported": true, "installed": true, "cc": cc})
+        }
+        None => serde_json::json!({"ok": true, "supported": true, "installed": false}),
+    }
+}
+
+/// Official Microsoft VS 2022 Build Tools bootstrapper (evergreen link) and
+/// the filename it is staged as under %TEMP%. Nothing compiler-shaped is
+/// bundled with the launcher — MSVC cannot be redistributed that way and any
+/// third-party compiler we shipped would be unsigned (the exact pattern the
+/// pin exists to escape) — so the offer is always download-at-click-time
+/// from Microsoft, correctly licensed and Microsoft-signed.
+pub(crate) const VS_BUILDTOOLS_URL: &str = "https://aka.ms/vs/17/release/vs_BuildTools.exe";
+pub(crate) const VS_BUILDTOOLS_EXE: &str = "wgp-vs_BuildTools.exe";
+
+/// Bootstrapper args: the C++ build-tools workload plus recommended (which
+/// pulls the Windows SDK our INCLUDE/LIB discovery requires). `--passive`
+/// shows progress without prompts.
+pub(crate) fn vs_buildtools_args() -> Vec<&'static str> {
+    vec![
+        "--passive",
+        "--add",
+        "Microsoft.VisualStudio.Workload.VCTools",
+        "--includeRecommended",
+    ]
+}
+
+/// PowerShell one-liner launching the staged bootstrapper elevated (UAC
+/// prompt). Fire-and-forget BY DESIGN: a C++ workload install runs 10+
+/// minutes and the installer has its own progress UI — awaiting it would
+/// wedge the invoke. powershell exits 0 once the elevated child starts (a
+/// UAC decline fails the command instead). Pure + unit-tested.
+pub(crate) fn vs_buildtools_ps_launch(exe: &str) -> String {
+    format!(
+        "Start-Process '{exe}' -ArgumentList '{args}' -Verb RunAs",
+        args = vs_buildtools_args().join(" ")
+    )
+}
+
+/// Opt-in MSVC Build Tools install behind the Troubleshooting button.
+/// Downloads Microsoft's official bootstrapper, stages it under %TEMP%,
+/// and launches it elevated. Returns as soon as the installer starts; the
+/// Microsoft installer runs its own UI, and the next app Launch
+/// auto-detects cl.exe (or the panel Recheck does). A failed download errors
+/// out before anything executes — never a partial state.
+#[tauri::command]
+pub async fn troubleshoot_msvc_install(
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    use tauri::Emitter;
+    if cfg!(not(windows)) {
+        return Err("Windows only".into());
+    }
+    if let Some(cc) = crate::launch::msvc_toolchain_cc() {
+        return Ok(serde_json::json!({"ok": true, "already": true, "cc": cc}));
+    }
+    let emit = |m: &str| {
+        crate::base::push_log(m, "setup");
+        let _ = app.emit("launch-log", m.to_string());
+    };
+    emit("[*] Downloading Microsoft VS 2022 Build Tools bootstrapper…\n");
+    let bytes = reqwest::Client::new()
+        .get(VS_BUILDTOOLS_URL)
+        .header("User-Agent", "wan2gp-tauri")
+        .send()
+        .await
+        .map_err(|e| format!("bootstrapper download failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("bootstrapper download failed: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| format!("bootstrapper download failed: {e}"))?;
+    // Captive-portal guard: the real bootstrapper is several MB; an HTML
+    // login page is kilobytes. Never execute a stub download.
+    if bytes.len() < 1_000_000 {
+        return Err(format!(
+            "bootstrapper download too small ({} bytes) — captive portal or blocked host? Use the manual winget command in the User Guide instead.",
+            bytes.len()
+        ));
+    }
+    let dest = std::env::temp_dir().join(VS_BUILDTOOLS_EXE);
+    std::fs::write(&dest, &bytes).map_err(|e| format!("could not stage bootstrapper: {e}"))?;
+    emit(&format!(
+        "[*] Bootstrapper staged ({} MB) — launching the Microsoft installer elevated (UAC prompt)…\n",
+        bytes.len() / 1_000_000
+    ));
+    // Blocking spawn is fine here: powershell returns once the elevated
+    // child starts (or the user declines UAC) — the 10-minute install itself
+    // runs detached in its own UI.
+    let ps = vs_buildtools_ps_launch(&dest.to_string_lossy());
+    let out = silent_command("powershell")
+        .args(["-NoProfile", "-Command", &ps])
+        .output()
+        .map_err(|e| format!("could not start the installer: {e}"))?;
+    if !out.status.success() {
+        return Err("The installer did not start (admin declined the UAC prompt, or elevation is blocked). Re-run and accept, or install manually via the User Guide command.".into());
+    }
+    emit("[*] Microsoft installer running elevated — complete it (C++ workload, a few GB), then press Recheck. The next Launch auto-detects cl.exe.\n");
+    Ok(serde_json::json!({"ok": true, "launched": true, "exe": dest.to_string_lossy()}))
 }
 
 /// Upstream's known-good recipe per GPU class (docs/TROUBLESHOOTING.md →
@@ -870,6 +1177,89 @@ pub fn troubleshoot_vram_diag(action: Option<String>) -> serde_json::Value {
 #[cfg(test)]
 mod troubleshoot_tests {
     use super::*;
+    #[test]
+    fn triton_repair_runs_pinned_commands_shown_in_console() {
+        // The console echo and the spawn share these builders, so what the
+        // user reads is exactly what runs — including the safety flags.
+        assert_eq!(
+            triton_pip_show_argv(),
+            vec!["-m", "pip", "show", "triton-windows", "triton"]
+        );
+        assert_eq!(
+            triton_pip_reinstall_argv("triton-windows==3.6.0.post24"),
+            vec!["-m", "pip", "install", "--force-reinstall", "--no-deps", "triton-windows==3.6.0.post24"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            render_py_command(r"C:\Wan2GP\env_uv\Scripts\python.exe", &triton_pip_reinstall_argv("triton-windows==3.6.0.post24")),
+            r"[>] C:\Wan2GP\env_uv\Scripts\python.exe -m pip install --force-reinstall --no-deps triton-windows==3.6.0.post24"
+        );
+    }
+
+    #[test]
+    fn triton_rollback_spec_and_version_gate() {
+        // Rollback builds the same exact-pin spec for the older build.
+        assert_eq!(
+            triton_reinstall_spec("triton-windows", "3.6.0.post24"),
+            "triton-windows==3.6.0.post24"
+        );
+        // Single tokens pass; empty/whitespace fail closed.
+        assert!(valid_repair_version("3.6.0.post24"));
+        assert!(!valid_repair_version(""));
+        assert!(!valid_repair_version("3.6.0 post24"));
+    }
+
+    #[test]
+    fn triton_repair_prefers_windows_dist_and_pins_exact() {        let both = "Name: triton-windows\nVersion: 3.6.0.post26\nSummary: Triton\n---\nName: triton\nVersion: 3.6.0\nSummary: Triton\n";
+        assert_eq!(
+            parse_triton_pip_show(both),
+            Some(("triton-windows".to_string(), "3.6.0.post26".to_string()))
+        );
+        // Plain triton alone still repairs (never None when Triton exists).
+        let plain = "Name: triton\nVersion: 3.6.0\nLocation: x\n";
+        assert_eq!(
+            parse_triton_pip_show(plain),
+            Some(("triton".to_string(), "3.6.0".to_string()))
+        );
+        // Nothing Triton-shaped → None (caller errors "not installed").
+        assert_eq!(parse_triton_pip_show("Name: torch\nVersion: 2.10.0\n"), None);
+        assert_eq!(parse_triton_pip_show(""), None);
+        // The spec pins the detected build exactly — floating to latest
+        // would break upstream parity.
+        assert_eq!(
+            triton_reinstall_spec("triton-windows", "3.6.0.post26"),
+            "triton-windows==3.6.0.post26"
+        );
+    }
+    #[test]
+    fn vs_buildtools_offer_is_official_and_complete() {
+        // Evergreen Microsoft short link, exact bootstrapper binary.
+        assert!(
+            VS_BUILDTOOLS_URL.starts_with("https://aka.ms/vs/"),
+            "{VS_BUILDTOOLS_URL}"
+        );
+        assert!(VS_BUILDTOOLS_URL.ends_with("vs_BuildTools.exe"));
+        let args = vs_buildtools_args();
+        assert!(args.contains(&"--passive"), "{args:?}");
+        assert!(args.contains(&"Microsoft.VisualStudio.Workload.VCTools"));
+        assert!(
+            args.contains(&"--includeRecommended"),
+            "without the SDK our INCLUDE/LIB discovery finds nothing: {args:?}"
+        );
+    }
+    #[test]
+    fn vs_buildtools_launch_is_elevated_fire_and_forget() {
+        let ps = vs_buildtools_ps_launch(r"C:\Temp\wgp-vs_BuildTools.exe");
+        assert!(ps.contains("-Verb RunAs"), "UAC elevation is the whole point");
+        assert!(ps.contains("Microsoft.VisualStudio.Workload.VCTools"));
+        assert!(ps.contains(r"C:\Temp\wgp-vs_BuildTools.exe"));
+        assert!(
+            !ps.contains("-Wait"),
+            "a 10-minute -Wait would wedge the invoke; the installer has its own UI"
+        );
+    }
     #[test]
     fn known_good_recipe_covers_every_nvidia_class() {
         // Attention + profile + compile, exactly as documented.

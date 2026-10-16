@@ -4,6 +4,69 @@
 // defined by app.js, and top-level statements here only register listeners,
 // so loading this file after app.js is safe.
 
+// ── Live INT8/FP8 backend chips (topbar, beside Running) ──
+// WanGP prints its selected kernel backends at boot (`[INT8] Backend: X
+// (setting: auto)`). This subscriber mirrors those lines into two pills
+// beside the Running LED. Visibility is value-gated: the pills exist only
+// while a backend is known (server booted and reported) — no server, no
+// pills, so there is never a "—" row to mistake for a forgotten setting.
+// Latest line wins; a server exit clears both (and hides the pills).
+function _paintBackendChips() {
+  try {
+    const pairs = [
+      ["ledInt8", "INT8", window._int8Backend],
+      ["ledFp8", "FP8", window._fp8Backend],
+    ];
+    for (const [id, label, val] of pairs) {
+      const el = $(id);
+      if (el) {
+        el.textContent = label + " · " + (val || "…");
+        el.title = val
+          ? label + " backend WanGP selected at boot: " + val
+          : label + " backend not reported yet";
+      }
+    }
+    const box = $("backendLeds");
+    if (box)
+      box.style.display =
+        window._int8Backend || window._fp8Backend ? "inline-flex" : "none";
+  } catch {}
+}
+try {
+  window.w2gp.onLaunchLog((t) => {
+    try {
+      const s = String(t == null ? "" : t);
+      let changed = false;
+      // One event may carry several lines; scan each for backend reports.
+      // parseBackendLine is the shared service (global via services/
+      // parse-backend.js); fall back to the inline pattern if it failed to
+      // load so a missing script never blinds the chips.
+      const parse =
+        typeof parseBackendLine === "function"
+          ? parseBackendLine
+          : (l) => {
+              const m = String(l).match(
+                /\[(INT8|FP8)\]\s*Backend:\s*([^()]+?)\s*\(setting:/,
+              );
+              if (!m || !m[2].trim()) return null;
+              return { kind: m[1], name: m[2].trim() };
+            };
+      for (const line of s.split("\n")) {
+        const hit = parse(line);
+        if (!hit) continue;
+        if (hit.kind === "INT8") window._int8Backend = hit.name;
+        else window._fp8Backend = hit.name;
+        changed = true;
+      }
+      if (changed) _paintBackendChips();
+    } catch {}
+  });
+} catch {}
+function _clearBackendChips() {
+  window._int8Backend = null;
+  window._fp8Backend = null;
+  _paintBackendChips();
+}
 // ── Reset UI when server exits (manual stop or crash) ──
 // Separate term-window wiring (native floating): X-close sync + dock routing.
 try {
@@ -37,6 +100,7 @@ window.w2gp.onWangpExit(async (c) => {
     c && typeof c === "object" ? (c.code ?? (c.stopped ? 0 : "?")) : c;
   const manualStop = _expectServerExit;
   _expectServerExit = false;
+  _clearBackendChips();
   if (_expectServerExitTimer) {
     clearTimeout(_expectServerExitTimer);
     _expectServerExitTimer = null;

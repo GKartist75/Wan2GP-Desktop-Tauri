@@ -52,7 +52,7 @@ $("installHipGgufBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   if (
     !confirm(
-      "Install experimental HIP GGUF 1.0.25 (torch210rocm714) for RX 9070/R9700?\n\nNeeds a SEPARATE torch 2.10.0+rocm7.14.0 env — the wheel rejects other builds at import and does not load in the installer's torch 2.13+rocm10 env. Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
+      "Install experimental HIP GGUF 1.0.25 (torch210rocm714) for RX 9070/R9700?\n\nNeeds a SEPARATE torch 2.10.0+rocm7.14.0 env — the wheel rejects other builds at import and does not load in the installer's torch 2.13+rocm10 env (use AMD setup (exp) to copy the env commands). Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
     )
   )
     return;
@@ -68,6 +68,71 @@ $("installHipGgufBtn")?.addEventListener("click", async function () {
     this.disabled = false;
     this.textContent = "HIP GGUF (exp)";
     setTimeout(refreshDashboard, 1500);
+  }
+});
+// Optional WGPKernels INT8 wheel (deepbeepmeep/WGPKernels v1.1.2, in
+// setup_config since upstream 17307e5 but still an explicit opt-in here).
+// The backend picks the wheel from the active env's torch build
+// (cu130/cu128, or rocm100 on an AMD ROCm 10 env) and refuses
+// GPUs below compute 8.0 / outside RDNA4.
+$("installWgpkernelsBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  if (
+    !confirm(
+      "Install the WGPKernels 1.1.2 wheel for INT8 fast kernels?\n\nOptional upstream wheel (also installed by Update GPU Wheels). It matches your torch build automatically: cu130/cu128 for NVIDIA RTX 30/40/50, or the experimental rocm100 build for AMD RDNA4 (RX 9060/9070 series). WanGP's int8_kernels = Auto will prefer it once present.",
+    )
+  )
+    return;
+  this.disabled = true;
+  this.textContent = "Installing…";
+  try {
+    const r = await window.w2gp.installWgpkernels();
+    if (r && r.success)
+      showToast("✓ WGPKernels " + (r.version || "") + " installed (" + (r.torchKind || "") + ")");
+    else showToast("✗ WGPKernels install failed: " + (r && r.error ? r.error : "unknown"));
+  } catch (e) {
+    showToast("✗ WGPKernels install failed: " + errText(e));
+  } finally {
+    this.disabled = false;
+    this.textContent = "WGPKernels (INT8)";
+    setTimeout(refreshDashboard, 1500);
+  }
+});
+// AMD experimental HIP setup helper. Only the HIP GGUF (torch210rocm714)
+// wheel still needs its own torch 2.10.0+rocm7.14.0 env — upstream:
+// "install into a separate AMD environment". WGPKernels 1.1.2 (rocm100)
+// installs directly in the installer's torch 2.13+rocm10 env. This just
+// surfaces the exact commands (one source of truth in the backend) and
+// copies them, so AMD users don't have to reverse-engineer the stack.
+$("installAmdSetupBtn")?.addEventListener("click", async function () {
+  try {
+    const r = await window.w2gp.amdHipRecipe();
+    const text = (r && r.text) || "";
+    if (!text) {
+      showToast("✗ Could not build the AMD setup recipe");
+      return;
+    }
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch {}
+    await window.w2gp.confirmDialog({
+      title: "AMD ROCm 7.14 setup (experimental)",
+      message: copied
+        ? "Setup commands copied to your clipboard."
+        : "Copy the setup commands below.",
+      detail:
+        "AMD RX 9070/R9700 (gfx1201) only. The HIP GGUF wheel needs " +
+        "PyTorch 2.10.0+rocm7.14.0 and does NOT load in the installer's " +
+        "torch 2.13+rocm10 environment — upstream requires a SEPARATE AMD " +
+        "environment. Create one (fresh venv/conda), run the commands there. " +
+        "WGPKernels needs no separate env anymore (rocm100 installs in " +
+        "place via the WGPKernels button or Update GPU Wheels).\n\n" +
+        text,
+    });
+  } catch (e) {
+    showToast("✗ " + errText(e));
   }
 });
 

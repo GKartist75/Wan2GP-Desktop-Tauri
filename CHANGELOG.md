@@ -4,6 +4,184 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+- **Repair/Roll back show their commands.** The Troubleshooting Triton actions echo the exact pip command lines (`[>] <python> -m pip …`) to the console before running them — built from the same pinned argv the spawn uses, so shown and run can never diverge.
+
+## [0.10.11] — 2026-10-17
+
+- **Roll back Triton to post24** (Manage → Troubleshooting): the Repair command takes an optional version; the new button pins `triton-windows==3.6.0.post24` (previous known-good 3.6.x) with the same reinstall-and-clear-and-verify flow. Warns that a later setup floats forward again on upstream's `-U` range spec.
+- **AV guidance: try post24 as a diagnostic.** Some engines react per-build, so a flagged post26 may get a different verdict than post24 on the same box — the User Guide now says so and asks affected users to report which build their AV accepts, with the detection name. Not a cure: identical patterns get identical verdicts.
+
+## [0.10.10] — 2026-10-16
+
+- **Repair Triton wheel** (Manage → Troubleshooting → Repair wheel): force-reinstalls the exact installed Triton build (`--force-reinstall --no-deps`, torch and everything else untouched — deliberately not floating to latest, which would break upstream parity), clears both JIT cache homes (renamed to backup), then verifies the import and reports the version. For damaged installs (quarantined or half-written files) — stated plainly in the UI, it fixes corrupt files, not antivirus verdicts.
+- **TCC vs MSVC, stated plainly.** Out-of-box stays pure upstream TinyCC. The signed-MSVC pin (Auto/MSVC choice, one-click Build Tools installer, stable cache dir) is a *temporary workaround* for antivirus blocks on Triton's unsigned JIT output — it retires when upstream removes the runtime-JIT need. Documented as temporary in the User Guide so nobody mistakes it for the permanent direction.
+
+## [0.10.9] — 2026-10-16
+
+- **Window mode setting** (issue #63, Settings → Desktop → Window mode): the
+  launcher had been hard-coded to open maximized since v0.2.0 and nothing
+  could change that — `windowed | maximized | fullscreen` is now a persisted
+  setting in `desktop-config.json` (`desktopWindowMode`, default maximized so
+  existing behavior is unchanged). Applies immediately on change and on every
+  launch: the main window now ships hidden and pre-maximized, setup applies
+  the saved mode invisibly then shows it — no maximized→windowed flash on
+  either path. Fullscreen is true OS fullscreen (Windows chrome hidden; the
+  top bar keeps Settings reachable for switching back).
+
+
+### Triton JIT hardening (Bitdefender python.exe-to-tcc.exe block)
+
+- **Pinned Triton JIT cache** at `<data folder>\triton-cache` (`TRITON_CACHE_DIR`,
+  set-if-absent): Triton's compiled helpers (`cuda_utils`, `__triton_launcher`)
+  are unsigned with a fresh hash per build, so heuristic AV quarantines them
+  mid-compile. One stable folder replaces `%TEMP%`/`~\.triton` roulette as the
+  single AV-exclusion path. **Manage → Troubleshooting → Clear Triton cache**
+  now clears both homes (rename-to-backup preserved).
+- **Pinned Triton JIT compiler to signed MSVC cl.exe** (NVIDIA/Intel/CPU
+  launches; AMD excluded so TheRock clang-cl stays authoritative): without a
+  VS shell in its environment Triton falls back to the wheel-bundled unsigned
+  TinyCC, whose execution Bitdefender's behavioral engine blocks outright,
+  failing every sage/sage2 generation. CC/INCLUDE/LIB come from the newest VS
+  plus Win10 SDK via vswhere, all-or-nothing against a user toolchain (a
+  VsDevCmd shell always wins), recorded per-process so AMD launches remove
+  exactly what was pinned. Warn-only throughout; the console names the pinned
+  compiler on every launch.
+- **No-MSVC boxes stay fully working** via the TinyCC fallback (same AV
+  exposure as before — the pin just can't apply). The console names the
+  missing piece and the User Guide carries the one-line Build Tools install;
+  the hint text itself is unit-tested so the pointer can't rot.
+- **One-click MSVC Build Tools offer** (Manage → Troubleshooting): status line
+  shows whether `cl.exe` is present; otherwise a guided button downloads
+  Microsoft's official bootstrapper at click-time (nothing compiler-shaped is
+  bundled — MSVC can't be redistributed that way, and any third-party compiler
+  we shipped would be unsigned anyway) and runs it elevated with the C++
+  workload. Returns as soon as the installer starts; Recheck/next Launch
+  picks up the pin. Windows-only row, confirm dialog states size/admin/time.
+- **Triton compiler choice** (Settings → Desktop, `tritonCompiler` in
+  desktop-config.json): out-of-box is pure upstream TinyCC (the MSVC pin is
+  a workaround and stays opt-in); explicit `auto` pins MSVC when installed,
+  `msvc` forces it (warns when missing), `tinycc` keeps upstream with the pin
+  scrubbed. Takes effect on next launch; AMD launches still remove the pin
+  whatever the mode.
+- **Performance Settings dropdowns reflect disk.** The panel seeded dropdowns
+  from saved settings only when one field was empty, so after any Detect run
+  keys Detect never recommends (RAM allocator above all) sat on "unset" while
+  `saved:` told the truth. Each still-unset dropdown now seeds per-field —
+  Detect results and user picks always win, `rec:` tags only ever come from
+  Detect. (The setting itself was never lost: `wgp_config.json` holds it and
+  WanGP boots with it.)
+- **INT8/FP8 live backends moved beside Running.** The Active Environment rows
+  sat on "—" whenever the server wasn't running, reading as a forgotten
+  setting. The live chips are now topbar pills shown only while a backend is
+  known — no server, no pills.
+
+## [0.10.8] — 2026-10-16
+
+### Upstream WGPKernels 1.1.2 (`17307e5`, 2026-10-16)
+
+WGPKernels left manual-install land: v1.1.2 is listed in `setup_config.json`
+(RTX 30/40/50 + AMD profiles), so **↻ Update GPU Wheels** installs it —
+re-run Sync after a WanGP update, since upstream's *Update* only refreshes
+code and requirements.
+
+- **v1.1.1 URLs are dead (404)** — the button, sync and overview now target
+  v1.1.2 (`cu130` / `cu128` / new `rocm100`).
+- **AMD needs no separate env for WGPKernels anymore.** The `rocm100` wheel
+  (ROCm 10, Win+Linux) loads in the installer's torch 2.13+rocm10 env and
+  covers RDNA4 gfx1200 (RX 9060/9060 XT) *and* gfx1201 — the retired
+  Windows-only `rocm714` wheel did gfx1201 only. Only HIP GGUF keeps its
+  torch-2.10 separate env (the **AMD setup (exp)** recipe is now HIP-only).
+- Sync mirrors `setup.py`'s per-stack remap (`wgpkernels` / `_cu128` /
+  `_rocm10`, RDNA4-gated) and resolves AMD sub-profiles through the unified
+  `AMD` key, with a no-re-download skip guard.
+- INT8 wording follows upstream's new labels: WGPKernels "recommended,
+  precise", Kitchen "fastest, least precise".
+
+## [0.10.7] — 2026-10-16
+
+### Upstream v18.11 parity (`5290e89` → `a827cf2`, 2026-10-15/16)
+
+WanGP v18.11 adds Flux 3 Klein and Fish Audio Drama 3, an mmgp CPU-expert
+rework, split WGPKernels releases and new kernel enums.
+
+- **WGPKernels is installable (optional).** Upstream's `int8_kernels = auto`
+  now ranks WGPKernels > Kitchen > Triton > PyTorch, but the wheel is manual
+  install only (absent from `requirements.txt` / `setup_config.json`). A new
+  **GPU Kernel Wheels → WGPKernels (INT8)** button installs v1.1.1 from its own
+  repo (`deepbeepmeep/WGPKernels`, moved in `a827cf2`), auto-picking the wheel
+  from the active env's torch build (`cu130` / `cu128`, or the experimental
+  `rocm714` build on RX 9070/R9700). Shown for RTX 30/40/50 (compute 8.0+) and
+  gfx1201; the installed version appears in Active Environment.
+- **`int8_kernels` gains `wgpkernels`;** new **`fp8_kernels`** control
+  (`auto` / `pytorch` / `triton` / `cuda`) for FP8 checkpoints. Auto-Tune
+  recommends `auto` for both and validates the full upstream enum.
+- **Audio profile default is P3 again.** Upstream made P3 "recommended for
+  audio" (P4 + Dynamic Preload) and reserved P3+ for RAM-starved cards, so
+  Auto-Tune now sends audio to P3 instead of P3.5 on video/image profiles
+  2/4/4.5. Profile labels explain the new P1 = P2+Dynamic and P3 = P4+Dynamic
+  semantics.
+- **GGUF controls match wheel 1.0.25.** Verified against the installed wheel's
+  `__init__.py`: the pre-1.0.25 Stream-K and BF16→FP16 env vars are gone, so
+  those switches are retired and a **Short-batch mode** control
+  (`LLAMACPP_GGUF_SHORT_BATCH`, auto/native/mma) takes their place. Matmul mode
+  now also offers `materialized` (cuBLAS dense).
+- **Guide covers the new models** — Flux 3 Klein 5.6B (image) and Fish Audio
+  Drama 3 (speech) display names, with a Flux 3 starter in the image goal.
+- **Text Encoder Quant** (`bf16` / `int8`) joins Performance Settings and
+  Auto-Tune — recommends `bf16` on high-RAM boxes (better quality) and `int8`
+  elsewhere (less RAM), matching Configuration → Text Encoder Quantization.
+- **AMD experimental kernels are explained, not a dead end.** The `rocm714`
+  WGPKernels wheel (and the `torch210rocm714` HIP GGUF wheel) require PyTorch
+  2.10.0+rocm7.14.0 and — per upstream — a *separate* AMD environment; they do
+  not load in the installer's torch 2.13+rocm10 env. A new **AMD setup (exp)**
+  button (RX 9070/9070 XT/R9700, gfx1201) copies the exact setup commands, and
+  the install paths now return that guidance instead of a generic failure.
+  9060 XT (gfx1200) and RDNA 1–3.5 remain unsupported for these wheels.
+- **AMD recipe gains `rocm-sdk init`.** Community guidance (DELUXA) recommends
+  initializing the ROCm SDK for Veda sparse attention; upstream's main-env doc
+  says it isn't needed there, so the copied recipe marks it as the optional
+  step 3 of the *separate* 7.14 env with a skip-if-unrecognized note.
+- **Active INT8/FP8 backend chips.** The dashboard's Active Environment card
+  gains live `INT8 backend` / `FP8 backend` rows fed by WanGP's boot lines
+  (`[INT8] Backend: …`), so the selected kernel is visible without digging the
+  console (Discord question); cleared on server exit, survives refreshes.
+- **Backend quality note.** Performance Settings + guide state that backends
+  differ slightly at identical seed and Auto means fastest *without quality
+  degradation* — garbage output calls for Triton/PyTorch explicitly.
+
+### Hardware-overview pins re-checked against upstream (2026-10-16)
+
+The installer's *Detected Hardware* matrix and the guides are generated from
+WanGP's own `setup_config.json` / `requirements.txt`; a parity pass found and
+corrected four stale entries.
+
+- **RTX 20 no longer claims FlashAttention.** Upstream's `RTX_20` profile
+  declares no flash wheel (Turing keeps only Triton `v33`), so the overview and
+  guides show `—` instead of `Flash Attn 2.8.3`.
+- **AMD shows FlashAttention 2.8.4 (ROCm/Triton).** Upstream's `AMD` profile
+  gained `flash: v284_rocm` (the prebuilt `flash_attn-2.8.4-py3-none-win_amd64`
+  wheel) — the installer already installed it, but the overview and guides said
+  `—`.
+- **Triton pins are stated, not "latest":** `3.2.x` (RTX 20), `3.6.x`
+  (RTX 30–50), `3.7.x` (AMD), matching upstream `components.triton` labels.
+- **bitsandbytes is an optional, manual wheel.** It is absent from upstream's
+  `requirements.txt`, `setup_config.json`, `setup.py` and plugin requirements,
+  but `docs/INSTALLATION.md` documents it as an optional component
+  (`bitsandbytes==0.49.2`). The guides keep that pin, now labelled optional, and
+  the dashboard's one-click **+** installs exactly `0.49.2` instead of whatever
+  pip resolves today.
+- **VAE control renamed to upstream's "VAE Tiling".** The Auto-Tune memory
+  dropdown mirrored `vae_config` but used the old "VAE Config" label; it now
+  matches `plugins/configuration/plugin.py` (0 auto / 16GB+ / 8GB+ / 6GB+
+  presets).
+- **Sparge Attn spec row shows a version, not a raw tag.** The dashboard read
+  `status.profile.sparge` straight from `setup_config.json`, printing `v010_cu13`
+  on RTX 30–50 — and, when a profile has no Sparge, the GPU profile name
+  (`RTX_40`). The tag is now mapped to its version (`0.1.0`) and the misleading
+  profile-name fallback is gone.
+- The installer's requirement chip now reads `100+ reqs` (upstream ships 104
+  active pins).
+
 ## [0.10.6] — 2026-10-12
 
 ### Stop no longer kills your own OpenCode/Zed on :4096

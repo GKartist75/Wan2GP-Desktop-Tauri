@@ -83,6 +83,7 @@ const GUIDE_GOALS = [
     label: 'General image',
     picks: [
       { model: 'z_image', why: 'Fast 6B iteration for posters, key art, i2v sources.', frames: 0, steps: 8, guidance: 1, tip: 'Turbo distilled; iterate fast, upscale later.' },
+      { model: 'flux3_klein', why: 'FLUX 3 Klein 5.6B distilled — 16-step text-to-image plus up to 10 ordered references for edits.', frames: 0, steps: 16, guidance: 1, tip: 'Distilled flow-map checkpoint: no CFG in the default profile. The Base variant is 50 steps with CFG when a prompt needs more.' },
       { model: 'krea2_turbo', why: 'Polished/aesthetic + world knowledge (people, landmarks).', frames: 0, steps: 12, guidance: 4, tip: 'RAW checkpoint for CFG control; Turbo for speed.' }
     ]
   },
@@ -184,7 +185,13 @@ const MODEL_NAMES = {
   minimax_h3_fl2va_veda: 'MiniMax H3 FL2VA Veda Sparse 33B',
   minimax_h3_fl2va_pruned_veda: 'MiniMax H3 FL2VA Pruned Veda Sparse 20B',
   minimax_h3_ref2va_veda: 'MiniMax H3 Ref2VA Veda Sparse 33B',
-  minimax_h3_ref2va_pruned_veda: 'MiniMax H3 Ref2VA Pruned Veda Sparse 20B'
+  minimax_h3_ref2va_pruned_veda: 'MiniMax H3 Ref2VA Pruned Veda Sparse 20B',
+  flux3_klein: 'Flux 3 Klein 5.6B',
+  flux3_klein_base: 'Flux 3 Klein Base 5.6B',
+  flux3_klein_nvfp4: 'Flux 3 Klein NVFP4 5.6B',
+  flux3_klein_base_nvfp4: 'Flux 3 Klein Base NVFP4 5.6B',
+  fish_drama3: 'TTS Fish Audio Drama 3',
+  fish_drama3_int4: 'TTS Fish Audio Drama 3 INT4 Experts'
 }
 
 /**

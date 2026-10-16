@@ -14,7 +14,9 @@ function memProfileCollect() {
   const co = $("memCoeff").value;
   const ve = $("memVae").value;
   const q = $("memQuant").value;
+  const teq = $("memTextEncoderQuant") ? $("memTextEncoderQuant").value : "";
   const i8k = $("memInt8Kernels") ? $("memInt8Kernels").value : "";
+  const f8k = $("memFp8Kernels") ? $("memFp8Kernels").value : "";
   const kp = $("memKernelPrecision") ? $("memKernelPrecision").value : "";
   const am = $("memAttentionMode") ? $("memAttentionMode").value : "";
   const cm = $("memCompileMode") ? $("memCompileMode").value : "";
@@ -35,6 +37,8 @@ function memProfileCollect() {
   const cc = $("memComputeCache") ? $("memComputeCache").value : "";
   const ccp = $("memComputeCachePath") ? $("memComputeCachePath").value.trim() : "";
   if (i8k) s.int8_kernels = i8k;
+  if (f8k) s.fp8_kernels = f8k;
+  if (teq) s.text_encoder_quantization = teq;
   if (kp) s.kernel_precision = kp;
   if (am) s.attention_mode = am;
   if (cm) s.compile = cm;
@@ -107,10 +111,20 @@ const MEM_FIELDS = {
     rec: "recQuant",
     saved: "savedQuant",
   },
+  text_encoder_quantization: {
+    sel: "memTextEncoderQuant",
+    rec: "recTextEncoderQuant",
+    saved: "savedTextEncoderQuant",
+  },
   int8_kernels: {
     sel: "memInt8Kernels",
     rec: "recInt8Kernels",
     saved: "savedInt8Kernels",
+  },
+  fp8_kernels: {
+    sel: "memFp8Kernels",
+    rec: "recFp8Kernels",
+    saved: "savedFp8Kernels",
   },
   kernel_precision: {
     sel: "memKernelPrecision",
@@ -194,9 +208,20 @@ const MEM_FIELDS = {
 };
 const INT8_KERNEL_LABELS = {
   auto: "Auto (default)",
+  wgpkernels: "WGPKernels",
   kitchen: "Comfy Kitchen",
   triton: "Triton",
   disabled: "Disabled (PyTorch)",
+};
+const FP8_KERNEL_LABELS = {
+  auto: "Auto (default)",
+  cuda: "CUDA FP8 tensor cores",
+  triton: "Triton",
+  pytorch: "PyTorch",
+};
+const TEXT_ENCODER_LABELS = {
+  int8: "int8 — 8-bit (less RAM)",
+  bf16: "bf16 — 16-bit (better quality)",
 };
 const KERNEL_PRECISION_LABELS = {
   fast: "Approximate (default)",
@@ -249,6 +274,10 @@ function fmtVal(key, v) {
   if (key === "vae_config") return v + (Number(v) === 0 ? " (AUTO)" : "");
   if (key === "int8_kernels")
     return INT8_KERNEL_LABELS[v] || String(v);
+  if (key === "fp8_kernels")
+    return FP8_KERNEL_LABELS[v] || String(v);
+  if (key === "text_encoder_quantization")
+    return TEXT_ENCODER_LABELS[v] || String(v);
   if (key === "kernel_precision")
     return KERNEL_PRECISION_LABELS[v] || String(v);
   if (key === "queue_color_scheme")
@@ -296,6 +325,18 @@ function memProfilePopulate(settings, opts = {}) {
       // Show what's currently written to disk (preferred/saved).
       const saved = $(f.saved);
       if (saved) setTag(saved, "saved: " + fmtVal(key, v));
+    } else if (opts.mode === "saved-seed") {
+      // Paint each still-unset dropdown from disk without touching rec: tags.
+      // Detect results and user picks already sitting in a dropdown always
+      // win; only genuinely empty controls are seeded. (The old approach
+      // gated the whole panel on memVideoProfile alone, so once any Detect
+      // ran, keys Detect never recommends — ram_allocator above all — stayed
+      // on "unset" forever even with a value on disk.)
+      const sel = $(f.sel);
+      if (sel && (sel.value == null || sel.value === "")) {
+        if (v != null && v !== "") sel.value = String(v);
+        else if (key === "vae_config") sel.value = "0"; // AUTO is upstream's default
+      }
     }
   }
 }
@@ -318,6 +359,8 @@ function memProfileFromRecommendation(rec) {
       int8_kernels:
         rec.int8_kernels ||
         (rec.enable_int8_kernels === 0 ? "disabled" : "auto"),
+      fp8_kernels: rec.fp8_kernels || "auto",
+      text_encoder_quantization: rec.text_encoder_quantization || "int8",
       kernel_precision: rec.kernel_precision || "fast",
         // v17.10 (ec9566a): "quite a few optimizations depends on" Sage2/2+, so the
         // attention mode is part of the recommendation. Absent on AMD/Intel
@@ -348,11 +391,9 @@ async function memProfileLoad() {
     if (res && res.ok) {
       // Show the currently-saved (preferred) values from disk.
       memProfilePopulate(res.settings, { mode: "saved" });
-      // If a detection already populated the dropdowns, leave them; otherwise
-      // seed the dropdowns from the saved config too so the panel isn't empty.
-      const first = $("memVideoProfile");
-      if (first && first.value === "")
-        memProfilePopulate(res.settings, { mode: "recommend" });
+      // Seed every still-unset dropdown from disk (per-field, never
+      // clobbering Detect results or user picks, never touching rec: tags).
+      memProfilePopulate(res.settings, { mode: "saved-seed" });
     } else
       setMemStatus(
         (res && res.error) || "Failed to read memory settings",
@@ -379,7 +420,7 @@ $("memProfileApplyBtn")?.addEventListener("click", async () => {
     if (res && res.ok) {
       // Re-read from disk so the `saved:` tags show what Apply just wrote.
       // Without this they keep whatever the panel was loaded with, and a value
-      // that genuinely changed (audio P4 → P3+) sits there showing `rec: 3.5`
+      // that genuinely changed (audio P4 → P3) sits there showing `rec: 3`
       // beside a stale `saved: 4` until the panel is reopened.
       await memProfileLoad();
       setMemStatus(

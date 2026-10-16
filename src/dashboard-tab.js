@@ -64,6 +64,7 @@ async function refreshDashboard() {
         "specTorch",
         "specCuda",
         "specTriton",
+        "specWgpk",
         "specSage",
         "specFlash",
         "specDiffusers",
@@ -97,6 +98,7 @@ async function refreshDashboard() {
         "dotTorch",
         "dotCuda",
         "dotTriton",
+        "dotWgpk",
         "dotSage",
         "dotFlash",
         "dotDiffusers",
@@ -162,6 +164,10 @@ async function refreshDashboard() {
         "spas_sage_attn",
         "flash-attn",
       ];
+      // Upstream INSTALLATION.md documents an exact optional pin for these;
+      // install that version instead of whatever pip resolves today. The AMD
+      // gate still sees the bare dist name (it strips the version pin).
+      var pkgPin = { bitsandbytes: "bitsandbytes==0.49.2" };
       function setSpec(specId, dotId, val, pkgName) {
         const el = $(specId);
         if (el) el.textContent = val || "—";
@@ -193,12 +199,13 @@ async function refreshDashboard() {
             var btn = document.createElement("button");
             btn.className = "pkg-install-btn";
             btn.textContent = "+";
-            btn.title = "Install " + pkgName;
+            var instSpec = pkgPin[pkgName] || pkgName;
+            btn.title = "Install " + instSpec;
             btn.addEventListener("click", async function (ev) {
               ev.stopPropagation();
               this.disabled = true;
               this.textContent = "...";
-              var res = await window.w2gp.installPackage(pkgName);
+              var res = await window.w2gp.installPackage(instSpec);
               if (res && res.success) {
                 this.textContent = "✓";
                 this.classList.add("done");
@@ -230,6 +237,7 @@ async function refreshDashboard() {
       const m = (status.versions?.torch || "").match(/cu(\d+)/);
       setSpec("specCuda", "dotCuda", m ? `CUDA ${m[1]}` : null);
       setSpec("specTriton", "dotTriton", status.versions?.triton, "triton");
+      setSpec("specWgpk", "dotWgpk", status.versions?.wgpkernels, "wgpkernels");
       setSpec(
         "specSage",
         "dotSage",
@@ -290,14 +298,20 @@ async function refreshDashboard() {
       // Sparge Attn comes from the expected GPU profile (not a detected version),
       // so it's surfaced here to avoid a separate duplicate "GPU Profile Overview".
       const spargeEl = $("specSparge");
-      // ponytail: show installed 0.1.0 if present, else expected v010_cu13 profile tag
+      // Installed version wins; otherwise the profile's expected value (the
+      // backend maps the raw setup_config tag, e.g. v010_cu13 → 0.1.0). Never
+      // fall back to the GPU profile name — that printed "RTX_40" in this row.
       if (spargeEl)
         spargeEl.textContent =
           status.versions?.spas_sage_attn ||
           status.versions?.sparge ||
           (status.profile && status.profile.sparge) ||
-          status.kernelProfile ||
           "—";
+      // Live INT8/FP8 backend chips are runtime state from the launch log, not
+      // version probes — repaint them so a refresh never blanks a live value.
+      try {
+        if (typeof _paintBackendChips === "function") _paintBackendChips();
+      } catch {}
     }
     // ponytail: batch DOM swap to avoid flicker — build fragment then single replace
     const list = $("envList");

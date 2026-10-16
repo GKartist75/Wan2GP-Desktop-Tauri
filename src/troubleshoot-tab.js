@@ -302,6 +302,149 @@ async function tsTritonClear(fallback) {
 }
 $("tsTritonClearBtn")?.addEventListener("click", () => tsTritonClear(false));
 $("tsTritonSdpaBtn")?.addEventListener("click", () => tsTritonClear(true));
+// Previous known-good 3.6.x for the Roll back button. UI default only —
+// the backend takes any single-token version, so when the line moves this
+// is the one place to update (button label + title + call below).
+const TRITON_ROLLBACK_VERSION = "3.6.0.post24";
+$("tsTritonRollbackBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  this.disabled = true;
+  try {
+    const choice = await window.w2gp.confirmDialog({
+      title: "Roll back Triton to 3.6.0.post24?",
+      message: "Reinstalls the previous known-good Triton build and clears the JIT cache.",
+      detail:
+        "Same reinstall-and-clear as Repair, pinned to triton-windows 3.6.0.post24 instead of the installed build (torch untouched, import verified after). A later setup run floats forward again on upstream's -U range spec — use Repair to preserve whatever is installed then. First generations recompile (possible one-off antivirus toast), then stay warm. Proceed?",
+    });
+    if (choice !== "ok" && choice !== 0) {
+      tsStatus("tsTritonStatus", "Cancelled.");
+      return;
+    }
+    tsStatus("tsTritonStatus", "Rolling back Triton…");
+    const r = await window.w2gp.tsTritonRepair(TRITON_ROLLBACK_VERSION);
+    if (r && r.importVersion) {
+      tsStatus(
+        "tsTritonStatus",
+        "✓ Rolled back " + r.dist + " " + (r.previous || "?") + " → " + r.version + " (import " + r.importVersion + ").",
+      );
+      appendLog("[✓] Triton rolled back: " + r.dist + " " + (r.previous || "?") + " → " + r.version);
+    } else {
+      tsStatus(
+        "tsTritonStatus",
+        "✓ Reinstalled " + ((r && r.dist) || "triton") + " but the import check failed — see console.",
+      );
+      appendLog("[!] Triton rollback installed but import failed — see console output");
+    }
+    showToast("Triton rollback finished — see status");
+  } catch (e) {
+    tsStatus("tsTritonStatus", "✗ " + errText(e));
+    showToast("✗ " + errText(e));
+  } finally {
+    this.disabled = false;
+  }
+});
+// Repair a damaged Triton install (quarantined/half-written files): exact
+// build force-reinstalled, both caches cleared, import verified. Repair, not
+// AV strategy — identical bytes mean identical verdicts.
+$("tsTritonRepairBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  this.disabled = true;
+  try {
+    const choice = await window.w2gp.confirmDialog({
+      title: "Repair Triton wheel?",
+      message: "Force-reinstalls the exact installed Triton build and clears the JIT cache.",
+      detail:
+        "Runs pip install --force-reinstall --no-deps on the installed triton build (torch and everything else untouched — only Triton's own files are replaced), clears both JIT cache homes (renamed to backup), then verifies the import. Takes a minute or two. Use when Triton itself is damaged; it does not change antivirus verdicts. Proceed?",
+    });
+    if (choice !== "ok" && choice !== 0) {
+      tsStatus("tsTritonStatus", "Cancelled.");
+      return;
+    }
+    tsStatus("tsTritonStatus", "Reinstalling Triton…");
+    const r = await window.w2gp.tsTritonRepair();
+    if (r && r.importVersion) {
+      tsStatus("tsTritonStatus", "✓ Repaired " + r.dist + " " + r.version + " (import " + r.importVersion + ").");
+      appendLog("[✓] Triton repaired: " + r.dist + " " + r.version);
+    } else {
+      tsStatus(
+        "tsTritonStatus",
+        "✓ Reinstalled " + ((r && r.dist) || "triton") + " but the import check failed — see console.",
+      );
+      appendLog("[!] Triton reinstalled but import failed — see console output");
+    }
+    showToast("Triton repair finished — see status");
+  } catch (e) {
+    tsStatus("tsTritonStatus", "✗ " + errText(e));
+    showToast("✗ " + errText(e));
+  } finally {
+    this.disabled = false;
+  }
+});
+
+// ── MSVC Build Tools (signed compiler for Triton JIT) ──
+// Status on open: found → pin applies on next launch; missing → TinyCC
+// fallback with the installer one click away. Off-Windows the row hides
+// (no MSVC there, and no TinyCC problem either).
+async function tsMsvcRefresh() {
+  try {
+    const r = await window.w2gp.tsMsvcStatus();
+    if (!r || !r.supported) return;
+    tsStatus(
+      "tsMsvcStatus",
+      r.installed
+        ? "✓ MSVC cl.exe present — the signed-compiler pin applies on next launch."
+        : "MSVC C++ toolchain not found — Triton builds through its bundled TinyCC fallback.",
+    );
+  } catch {}
+}
+$("tsMsvcRecheckBtn")?.addEventListener("click", () => tsMsvcRefresh());
+$("tsMsvcInstallBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  this.disabled = true;
+  try {
+    const st = await window.w2gp.tsMsvcStatus();
+    if (st && st.installed) {
+      tsStatus("tsMsvcStatus", "Already installed" + (st.cc ? " (" + st.cc + ")" : "."));
+      appendLog("[*] MSVC toolchain already present.");
+      return;
+    }
+    const choice = await window.w2gp.confirmDialog({
+      title: "Install MSVC Build Tools?",
+      message: "Downloads Microsoft's official VS 2022 Build Tools bootstrapper and runs it elevated.",
+      detail:
+        "One-time, a few GB downloaded by the Microsoft installer, needs admin approval (UAC prompt) and can take 10+ minutes — the installer shows its own progress. Afterwards the launcher pins Triton JIT builds to the signed MSVC compiler automatically (relaunch or Recheck to confirm). Without it, Triton builds through its bundled unsigned TinyCC, which antivirus behavioral engines may block mid-generation. Proceed?",
+    });
+    if (choice !== "ok" && choice !== 0) {
+      tsStatus("tsMsvcStatus", "Cancelled.");
+      return;
+    }
+    tsStatus("tsMsvcStatus", "Downloading bootstrapper…");
+    const r = await window.w2gp.tsMsvcInstall();
+    if (r && r.already) {
+      tsStatus("tsMsvcStatus", "Already installed.");
+      appendLog("[*] MSVC toolchain already present.");
+    } else {
+      tsStatus("tsMsvcStatus", "Installer running elevated — finish it, then press Recheck.");
+      appendLog(
+        "[*] MSVC Build Tools installer launched elevated — complete it, then Recheck (next Launch auto-detects cl.exe).",
+      );
+      showToast("Finish the Microsoft installer, then press Recheck");
+    }
+  } catch (e) {
+    tsStatus("tsMsvcStatus", "✗ " + errText(e));
+    showToast("✗ " + errText(e));
+  } finally {
+    this.disabled = false;
+  }
+});
+try {
+  if (window.w2gp.platform !== "win32") {
+    const row = $("tsMsvcRow");
+    if (row) row.style.display = "none";
+  } else {
+    tsMsvcRefresh();
+  }
+} catch {}
 
 // ── v17 RAM/VRAM (upstream TROUBLESHOOTING.md → Memory Issues, v17 additions) ──
 // Every write goes through memoryProfileApply: fail-closed gate + snapshot,

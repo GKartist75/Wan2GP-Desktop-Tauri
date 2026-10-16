@@ -412,6 +412,38 @@ function initSettingsToggles() {
       );
     else showToast("✗ " + (r && r.error ? r.error : "Failed"));
   });
+  $("windowModeSelect")?.addEventListener("change", async () => {
+    const el = $("windowModeSelect");
+    const r = await window.w2gp.setWindowMode(el.value);
+    if (r && r.ok) {
+      const labels = {
+        windowed: "Windowed",
+        maximized: "Maximized",
+        fullscreen: "Fullscreen",
+      };
+      showToast(
+        "Window mode: " + (labels[el.value] || el.value) +
+        " — applied now and on every launch",
+      );
+    } else showToast("✗ " + (r && r.error ? r.error : "Failed"));
+  });
+  $("tritonCompilerSelect")?.addEventListener("change", async () => {
+    const el = $("tritonCompilerSelect");
+    const r = await window.w2gp.setTritonCompiler(el.value);
+    if (r && r.ok) {
+      const labels = {
+        auto: "Auto (MSVC when installed)",
+        msvc: "MSVC cl.exe",
+        tinycc: "TinyCC",
+      };
+      const status = $("tritonCompilerStatus");
+      if (status) status.textContent = "Choice saved — applies on next WanGP launch.";
+      showToast(
+        "Triton compiler: " + (labels[r.mode] || r.mode) +
+        " — applies on next WanGP launch",
+      );
+    } else showToast("✗ " + (r && r.error ? r.error : "Failed"));
+  });
   $("followSystemThemeToggle")?.addEventListener("change", async () => {
     const el = $("followSystemThemeToggle");
     await window.w2gp.setThemeFollowSystem(el.checked);
@@ -637,6 +669,14 @@ function openSettings() {
     document.querySelectorAll('input[name="termDock"]').forEach((r) => {
       r.checked = r.value === td;
     });
+    // Desktop window mode (issue #63): reflect the persisted choice
+    // (windowed | maximized | fullscreen), default maximized.
+    const wm = $("windowModeSelect");
+    if (wm) wm.value = cfg.desktopWindowMode || "maximized";
+    // Triton JIT compiler choice (tinycc | auto | msvc), default tinycc
+    // (pure upstream out-of-box; the MSVC pin is opt-in).
+    const tc = $("tritonCompilerSelect");
+    if (tc) tc.value = cfg.tritonCompiler || "tinycc";
     // Sync toggle states from config (handlers already registered via initSettingsToggles)
     const autoStart = $("autoStartToggle");
     if (autoStart) autoStart.checked = cfg.autoStart === true;
@@ -661,13 +701,11 @@ function openSettings() {
     const g = cfg.ggufEnv || {
       enabled: true,
       matmulMode: "auto",
-      streamK: true,
-      bf16Fp16: false,
+      shortBatch: "auto",
     };
     if ($("ggufEnabled")) $("ggufEnabled").checked = g.enabled !== false;
     if ($("ggufMatmulMode")) $("ggufMatmulMode").value = g.matmulMode || "auto";
-    if ($("ggufStreamK")) $("ggufStreamK").checked = g.streamK !== false;
-    if ($("ggufBf16Fp16")) $("ggufBf16Fp16").checked = g.bf16Fp16 === true;
+    if ($("ggufShortBatch")) $("ggufShortBatch").value = g.shortBatch || "auto";
     // AMD ROCm controls (backend: amdEnv.miopenDisabled, default false)
     const a = cfg.amdEnv || { miopenDisabled: false };
     if ($("amdMiopenDisabled"))

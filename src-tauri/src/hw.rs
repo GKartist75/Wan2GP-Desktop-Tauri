@@ -857,6 +857,95 @@ pub(crate) fn apply_gguf_override_with(url: &str, floor: &str) -> String {
     }
 }
 
+/// WGPKernels: the INT8 (and general) fast-kernel family behind upstream's
+/// `int8_kernels = auto` ranking (wgpkernels > kitchen > triton > pytorch).
+/// Since upstream 17307e5 (v1.1.2) the wheels are listed in WanGP's
+/// `setup_config.json` (`components.kernels.wgpkernels*`, referenced by the
+/// RTX_30/40/50 + AMD profiles), so Sync installs them — the dashboard
+/// button stays as the explicit opt-in / reinstall path.
+///
+/// v1.1.1 assets were deleted upstream (404). `rocm100` (ROCm 10, RDNA4)
+/// replaces the retired Windows-only `rocm714` and ships win+linux.
+/// The wheel is `py3-none` (no CPython ABI tag), so one asset serves every
+/// Python — only the CUDA/ROCm tag has to match the env's torch build.
+/// Needs compute capability >= 8.0 (RTX 30/40/50) on NVIDIA; the
+/// `rocm100` build is the RDNA4 (gfx1200/gfx1201) experimental path and
+/// loads in the installer's torch 2.13+rocm10 env (no separate env).
+pub(crate) const WGPKERNELS_VERSION: &str = "1.1.2";
+pub(crate) const WGPKERNELS_BASE: &str =
+    "https://github.com/deepbeepmeep/WGPKernels/releases/download/v1.1.2";
+
+/// Resolve the WGPKernels wheel URL for a torch build tag and OS. `torch_kind`
+/// is `cu130` / `cu128` (NVIDIA) or `rocm100` (AMD RDNA4, win+linux);
+/// `os` is `win_amd64` / `linux_x86_64`. Anything else has no published wheel
+/// (MPS/CPU). Pure + unit-tested.
+pub(crate) fn wgpkernels_wheel_url(torch_kind: &str, os: &str) -> Option<String> {
+    let ok_os = matches!(os, "win_amd64" | "linux_x86_64");
+    let tag = match torch_kind {
+        "cu130" | "cu128" => torch_kind,
+        "rocm100" => "rocm100",
+        _ => return None,
+    };
+    if !ok_os {
+        return None;
+    }
+    Some(format!(
+        "{WGPKERNELS_BASE}/wgpkernels-{WGPKERNELS_VERSION}%2B{tag}-py3-none-{os}.whl"
+    ))
+}
+
+/// GPU profile keys that can run WGPKernels. NVIDIA RTX 30/40/50 are
+/// compute capability >= 8.0 (Ampere and later); RTX_20 (Turing, 7.5) and
+/// GTX_10 (Pascal, 6.1) are below the kernels' floor. AMD RDNA4
+/// (AMD_GFX1200 RX 9060/9060 XT + AMD_GFX1201 RX 9070/9070 XT/R9700) via the
+/// experimental `rocm100` wheel. Pure + unit-tested.
+pub(crate) fn wgpkernels_supported_profile(profile_key: &str) -> bool {
+    matches!(
+        profile_key,
+        "RTX_30" | "RTX_40" | "RTX_50" | "AMD_GFX1200" | "AMD_GFX1201"
+    )
+}
+
+#[cfg(test)]
+mod wgpkernels_tests {
+    use super::{wgpkernels_supported_profile, wgpkernels_wheel_url, WGPKERNELS_VERSION};
+    #[test]
+    fn cuda_and_rocm_urls_match_upstream() {
+        assert_eq!(
+            wgpkernels_wheel_url("cu130", "win_amd64").unwrap(),
+            format!("https://github.com/deepbeepmeep/WGPKernels/releases/download/v{WGPKERNELS_VERSION}/wgpkernels-{WGPKERNELS_VERSION}%2Bcu130-py3-none-win_amd64.whl")
+        );
+        assert_eq!(
+            wgpkernels_wheel_url("cu128", "linux_x86_64").unwrap(),
+            format!("https://github.com/deepbeepmeep/WGPKernels/releases/download/v{WGPKERNELS_VERSION}/wgpkernels-{WGPKERNELS_VERSION}%2Bcu128-py3-none-linux_x86_64.whl")
+        );
+        // rocm100 ships win+linux (unlike the retired rocm714).
+        assert_eq!(
+            wgpkernels_wheel_url("rocm100", "win_amd64").unwrap(),
+            format!("https://github.com/deepbeepmeep/WGPKernels/releases/download/v{WGPKERNELS_VERSION}/wgpkernels-{WGPKERNELS_VERSION}%2Brocm100-py3-none-win_amd64.whl")
+        );
+        assert!(wgpkernels_wheel_url("rocm100", "linux_x86_64").is_some());
+        // Retired tags (v1.1.1 assets deleted upstream) resolve to nothing.
+        for bad in ["rocm714", "rocm10"] {
+            assert!(wgpkernels_wheel_url(bad, "win_amd64").is_none(), "{bad}");
+        }
+        // No wheel for CPU/MPS or unknown tags.
+        for bad in ["cpu", "", "cu121", "mps"] {
+            assert!(wgpkernels_wheel_url(bad, "win_amd64").is_none(), "{bad}");
+        }
+        assert!(wgpkernels_wheel_url("cu130", "macosx").is_none());
+    }
+    #[test]
+    fn only_cc8_plus_and_rdna4_profiles_qualify() {
+        for good in ["RTX_30", "RTX_40", "RTX_50", "AMD_GFX1200", "AMD_GFX1201"] {
+            assert!(wgpkernels_supported_profile(good), "{good}");
+        }
+        for bad in ["RTX_20", "GTX_10", "AMD_GFX110X", "AMD_GFX103X", "CPU"] {
+            assert!(!wgpkernels_supported_profile(bad), "{bad}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod amd_profile_tests {
     use super::kernel_profile_key;
@@ -1429,16 +1518,60 @@ fn comp_label(code: &str) -> String {
         "rocm10" => "PyTorch 2.13 + ROCm 10 TheRock (HIP 7.14 opt-in)".into(),
         "rocm65" => "PyTorch 2.12 + ROCm 7.15 TheRock (HIP 7.14 opt-in)".into(),
         "mps" => "PyTorch (MPS)".into(),
-        "v33" => "Triton < 3.3".into(),
-        "v34" => "Triton < 3.4".into(),
+        // Triton / flash / sage / sparge labels mirror upstream
+        // setup_config.json `components.*.label` — the overview must not
+        // invent pins. Both the short display value and the raw upstream
+        // key are accepted (raw keys stay for forward compatibility).
+        "3.2.x" | "v33" => "Triton 3.2.x (RTX 20XX only)".into(),
+        "3.3.x" | "v34" => "Triton 3.3.x (Torch 2.7, RTX 30XX+)".into(),
+        "3.6.x" | "v37" => "Triton 3.6.x (Torch 2.10, RTX 30XX+)".into(),
+        "3.7.x" | "v38" => "Triton 3.7.x (Torch 2.13, AMD ROCm)".into(),
         "latest" => "Triton (latest)".into(),
-        "v1" => "Sage Attention 1.0.6".into(),
-        "v211" => "Sage Attention 2.1.1".into(),
-        "v220" | "v220_cu13" => "Sage Attention 2.2.0 (CUDA 13)".into(),
+        "1.0.6" | "v1" => "Sage Attention 1.0.6".into(),
+        "2.1.1" | "v211" => "Sage Attention 2.1.1".into(),
+        "2.2.0" | "v220" | "v220_cu13" => "Sage Attention 2.2.0 (CUDA 13)".into(),
+        "0.1.0" | "v010_cu13" => "Sparge Attention 0.1.0 (CUDA 13)".into(),
         "v010_cu128" => "Sparge 0.1.0 (CUDA 12.8)".into(),
-        "v010_cu13" => "Sparge 0.1.0 (CUDA 13)".into(),
-        "v210" => "Flash Attention 2.8.3".into(),
+        "2.8.3" | "v210" => "Flash Attention 2.8.3".into(),
+        "2.8.4 (ROCm)" | "v284_rocm" => "Flash Attention 2.8.4 (AMD ROCm / Triton)".into(),
         other => other.to_string(),
+    }
+}
+
+/// Short version for an upstream `setup_config.json` component tag
+/// (`v010_cu13` → `0.1.0`). Used where a panel shows the *expected* value next
+/// to an installed one — the raw tag would read as noise in a spec row.
+pub(crate) fn comp_short(code: &str) -> String {
+    match code {
+        "v1" => "1.0.6".into(),
+        "v211" => "2.1.1".into(),
+        "v220" | "v220_cu13" => "2.2.0".into(),
+        "v010_cu128" | "v010_cu13" => "0.1.0".into(),
+        "v210" => "2.8.3".into(),
+        "v284_rocm" => "2.8.4".into(),
+        "v33" => "3.2.x".into(),
+        "v34" => "3.3.x".into(),
+        "v37" => "3.6.x".into(),
+        "v38" => "3.7.x".into(),
+        other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod comp_short_tests {
+    use super::comp_short;
+    #[test]
+    fn upstream_component_tags_map_to_versions() {
+        // Raw setup_config.json tags must never leak into a panel.
+        assert_eq!(comp_short("v010_cu13"), "0.1.0");
+        assert_eq!(comp_short("v010_cu128"), "0.1.0");
+        assert_eq!(comp_short("v210"), "2.8.3");
+        assert_eq!(comp_short("v284_rocm"), "2.8.4");
+        assert_eq!(comp_short("v220_cu13"), "2.2.0");
+        assert_eq!(comp_short("v1"), "1.0.6");
+        assert_eq!(comp_short("v37"), "3.6.x");
+        // Unknown values pass through unchanged (no silent data loss).
+        assert_eq!(comp_short("sdpa"), "sdpa");
     }
 }
 
@@ -1451,6 +1584,9 @@ fn kernel_display(key: &str) -> (&str, &str) {
         "sageattention" => ("SageAttention", "sageattention"),
         "spas_sage_attn" => ("Sparge (Sage)", "spas_sage_attn"),
         "flash_attn" => ("FlashAttention", "flash_attn"),
+        "wgpkernels" | "wgpkernels_cu128" | "wgpkernels_rocm10" => {
+            ("WGPKernels (INT8)", "wgpkernels")
+        }
         "bitsandbytes" => ("bitsandbytes NF4", "bitsandbytes"),
         _ => (key, key),
     }
@@ -1568,10 +1704,12 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                triton: Some("latest"),
+                triton: Some("3.2.x"),
                 sage: Some("1.0.6"),
                 sparge: None,
-                flash: Some("2.8.3"),
+                // Upstream RTX_20 declares no flash attention (Turing has no
+                // prebuilt wheel in setup_config.json) — don't promise it.
+                flash: None,
                 kernels: &["nunchaku_cu13", "gguf"],
             },
         ),
@@ -1580,11 +1718,11 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                triton: Some("latest"),
+                triton: Some("3.6.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
-                kernels: &["nunchaku_cu13", "gguf"],
+                kernels: &["wgpkernels", "nunchaku_cu13", "gguf"],
             },
         ),
         "RTX_40" => (
@@ -1592,11 +1730,11 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                triton: Some("latest"),
+                triton: Some("3.6.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
-                kernels: &["nunchaku_cu13", "gguf"],
+                kernels: &["wgpkernels", "nunchaku_cu13", "gguf"],
             },
         ),
         "RTX_50" => (
@@ -1604,11 +1742,11 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                triton: Some("latest"),
+                triton: Some("3.6.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
-                kernels: &["nunchaku_cu13", "light2xv", "gguf"],
+                kernels: &["wgpkernels", "nunchaku_cu13", "light2xv", "gguf"],
             },
         ),
         "MPS" => (
@@ -1628,11 +1766,13 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.12.10",
                 torch: "ROCm 10 (HIP 7.14 opt-in)",
-                triton: Some("3.7"),
+                triton: Some("3.7.x"),
                 sage: Some("1.0.6"),
                 sparge: None,
-                flash: None,
-                kernels: &[],
+                // ROCm has a prebuilt Triton-based flash wheel (upstream
+                // `flash: v284_rocm`) — surface it instead of a dash.
+                flash: Some("2.8.4 (ROCm)"),
+                kernels: &["wgpkernels"],
             },
         ),
         // Intel → CPU torch, no kernels: XPU acceleration is not possible
@@ -1654,11 +1794,11 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                triton: Some("latest"),
+                triton: Some("3.6.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
-                kernels: &["nunchaku_cu13", "gguf"],
+                kernels: &["wgpkernels", "nunchaku_cu13", "gguf"],
             },
         ),
     };
@@ -1678,7 +1818,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
     if let Some(f) = prof.flash {
         packages.push(format!("💥 Flash Attn {f}"));
     }
-    packages.push("📋 50+ reqs (diffusers, gradio, opencv, moviepy…)".into());
+    packages.push("📋 100+ reqs (diffusers, transformers, gradio, torchcodec…)".into());
     let kernel_labels: Vec<String> = prof
         .kernels
         .iter()
@@ -2133,6 +2273,64 @@ mod overview_pid_tests {
         assert_eq!(pnum("NVIDIA", "X", 24.0 * 1024.0, None), 4);
         assert_eq!(pnum("AMD", "AMD Radeon RX 9060 XT", 16.0 * 1024.0, None), 4);
         assert_eq!(pnum("AMD", "X", 8.0 * 1024.0, None), 5);
+    }
+    #[test]
+    fn overview_pins_match_upstream_setup_config() {
+        // Sources of truth: setup_config.json gpu_profiles + components.*.label.
+        // RTX_20 pins triton v33 (3.2.x) and declares no flash attention.
+        let rtx20 = hardware_profile_detail_with_ram(
+            "NVIDIA",
+            "NVIDIA GeForce RTX 2080 Ti",
+            11.0 * 1024.0,
+            Some(32.0),
+        );
+        assert!(
+            rtx20["detail"]["triton"].as_str().unwrap().contains("3.2.x"),
+            "RTX_20 triton: {}",
+            rtx20["detail"]["triton"]
+        );
+        assert_eq!(rtx20["detail"]["flash"], serde_json::json!("—"));
+        // RTX 30–50 pin triton v37 (3.6.x) and flash 2.8.3.
+        let rtx40 = hardware_profile_detail_with_ram(
+            "NVIDIA",
+            "NVIDIA GeForce RTX 4090",
+            24.0 * 1024.0,
+            Some(64.0),
+        );
+        assert!(rtx40["detail"]["triton"].as_str().unwrap().contains("3.6.x"));
+        assert!(rtx40["detail"]["flash"].as_str().unwrap().contains("2.8.3"));
+        // AMD pins triton v38 (3.7.x) and ships the ROCm flash wheel.
+        let amd = hardware_profile_detail_with_ram(
+            "AMD",
+            "AMD Radeon RX 9070 XT",
+            16.0 * 1024.0,
+            Some(32.0),
+        );
+        assert!(amd["detail"]["triton"].as_str().unwrap().contains("3.7.x"));
+        assert_eq!(
+            amd["detail"]["flash"],
+            serde_json::json!("Flash Attention 2.8.4 (AMD ROCm / Triton)")
+        );
+        // WGPKernels 1.1.2 is in setup_config profiles (RTX + AMD RDNA4).
+        let labels = |d: serde_json::Value| {
+            d["kernels"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|k| k.get("label"))
+                .filter_map(|l| l.as_str())
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert!(labels(rtx40).contains(&"WGPKernels (INT8)".to_string()));
+        assert!(labels(amd).contains(&"WGPKernels (INT8)".to_string()));
+        let rtx20 = hardware_profile_detail_with_ram(
+            "NVIDIA",
+            "NVIDIA GeForce RTX 2080 Ti",
+            11.0 * 1024.0,
+            Some(32.0),
+        );
+        assert!(!labels(rtx20).contains(&"WGPKernels (INT8)".to_string()));
     }
 }
 #[cfg(test)]

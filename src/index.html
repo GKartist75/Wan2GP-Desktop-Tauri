@@ -141,6 +141,24 @@
           <h3>Desktop</h3>
           <label class="toggle-row"><input type="checkbox" id="autoStartToggle"> <span>Auto-start with Windows</span></label>
           <p class="token-hint">Launch Wan2GP Desktop automatically when you log in.</p>
+          <div class="appear-slider" style="margin-top:8px">
+            <label class="token-hint" for="windowModeSelect" style="min-width:88px">Window mode</label>
+            <select id="windowModeSelect" class="input" style="max-width:230px" title="How the launcher window appears — applies now and on every launch. Maximized covers the screen with the normal Windows titlebar; Fullscreen hides all Windows chrome (restore here, or set Windowed). Settings stay reachable in fullscreen via the top bar.">
+              <option value="windowed">Windowed (resizable, ~1280×800)</option>
+              <option value="maximized">Maximized (default)</option>
+              <option value="fullscreen">Fullscreen (hides Windows chrome)</option>
+            </select>
+            <span class="appear-val" id="windowModeStatus"></span>
+            <div class="appear-slider" style="margin-top:8px">
+              <label class="token-hint" for="tritonCompilerSelect" style="min-width:88px">Triton compiler</label>
+              <select id="tritonCompilerSelect" class="input" style="max-width:230px" title="Which C compiler Triton uses for its JIT stubs. TinyCC is the upstream default (no pin). Auto pins signed MSVC when installed, else TinyCC. MSVC always pins MSVC (warns if missing). Applies on next WanGP launch.">
+                <option value="tinycc">TinyCC (upstream default)</option>
+                <option value="auto">Auto (MSVC when installed)</option>
+                <option value="msvc">MSVC cl.exe (signed workaround)</option>
+              </select>
+              <span class="appear-val" id="tritonCompilerStatus"></span>
+            </div>
+          </div>
           <label class="toggle-row" style="margin-top:8px"><input type="checkbox" id="followSystemThemeToggle"> <span>Follow system theme</span></label>
           <p class="token-hint">Automatically switch between dark and light themes based on your Windows setting. While on, the theme button switches back to manual control.</p>
           <label class="toggle-row" style="margin-top:8px"><input type="checkbox" id="notificationsToggle" checked> <span>Desktop notifications</span></label>
@@ -303,18 +321,25 @@
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>GGUF CUDA Kernel</h3>
-            <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the FP16/BF16 multiply policy; <em>Stream-K</em> (default on) enables CUDA-graph-safe Stream-K; <em>BF16→FP16</em> restores the legacy path; <em>Disable</em> turns the GGUF CUDA kernels off entirely.</p>
+            <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the weight-multiply policy: <code>fast</code>/<code>low_vram</code> use the packed MMVQ/MMQ kernels, <code>materialized</code> dequantizes and uses cuBLAS. <em>Short-batch mode</em> drives the Q4_K/PTQ1_0 tensor-core path for 2–8 row batches (auto = per-shape). These are the knobs wheel <strong>1.0.25</strong> actually reads — the older Stream-K and BF16→FP16 switches were dropped upstream.</p>
             <label class="toggle-row"><input type="checkbox" id="ggufEnabled"> <span>Enable GGUF CUDA kernels</span></label>
             <div class="token-field" style="margin-top:8px">
               <label class="token-hint" style="display:block;margin-bottom:4px">Matmul mode</label>
               <select id="ggufMatmulMode" class="input">
                 <option value="auto">auto (wheel default)</option>
                 <option value="fast">fast</option>
+                <option value="materialized">materialized (cuBLAS dense)</option>
                 <option value="low_vram">low_vram</option>
               </select>
             </div>
-            <label class="toggle-row" style="margin-top:8px"><input type="checkbox" id="ggufStreamK"> <span>Enable Stream-K (CUDA graphs)</span></label>
-            <label class="toggle-row"><input type="checkbox" id="ggufBf16Fp16"> <span>BF16 → FP16 (legacy cuBLAS path)</span></label>
+            <div class="token-field" style="margin-top:8px">
+              <label class="token-hint" style="display:block;margin-bottom:4px">Short-batch mode</label>
+              <select id="ggufShortBatch" class="input">
+                <option value="auto">auto (per-shape)</option>
+                <option value="native">native</option>
+                <option value="mma">mma (tensor cores)</option>
+              </select>
+            </div>
             <button class="btn btn-primary small" id="ggufSaveBtn" style="margin-top:8px" title="Save GGUF kernel settings (applies on next launch)">Save GGUF settings</button>
           </div>
           <div class="settings-section" style="margin-top:12px">
@@ -510,12 +535,19 @@
         </div>
         <div class="settings-section" style="margin-top:12px">
           <h3>Triton / SageAttention</h3>
-          <p class="token-hint">Upstream Sage diagnostic: test the Triton import, clear a stale <code>%USERPROFILE%\.triton</code> cache (renamed to backup, never deleted blind), optionally fall back to <code>--attention sdpa</code>.</p>
+          <p class="token-hint">Upstream Sage diagnostic: test the Triton import, clear a stale Triton cache (<code>%USERPROFILE%\.triton</code> and the launcher's pinned <code>&lt;data&gt;\triton-cache</code> — renamed to backup, never deleted blind), optionally fall back to <code>--attention sdpa</code>.</p>
           <div class="token-field" style="margin-top:8px">
             <button class="btn btn-ghost small" id="tsTritonTestBtn" title="Test importing Triton in the active environment">Test Triton import</button>
+            <button class="btn btn-ghost small" id="tsTritonRepairBtn" title="Repair a damaged Triton install: force-reinstall the exact installed build (torch untouched), clear the JIT cache, verify the import">Repair wheel</button>
+            <button class="btn btn-ghost small" id="tsTritonRollbackBtn" title="Roll back to triton-windows 3.6.0.post24 (previous known-good 3.6.x): same reinstall-and-clear as Repair, pinned to the older build. A later setup run floats forward again on upstream's range spec.">Roll back to post24</button>
             <button class="btn btn-ghost small" id="tsTritonClearBtn" title="Back up and clear the Triton cache">Clear cache</button>
             <button class="btn btn-primary small" id="tsTritonSdpaBtn" title="Clear the Triton cache and fall back to SDPA attention">Clear + fall back to SDPA</button>
             <span class="token-hint" id="tsTritonStatus" style="margin-left:8px"></span>
+          </div>
+          <div class="token-field" style="margin-top:8px" id="tsMsvcRow">
+            <button class="btn btn-ghost small" id="tsMsvcInstallBtn" title="MSVC C++ toolchain for Triton JIT: downloads Microsoft's official VS 2022 Build Tools bootstrapper and runs it elevated with the C++ workload (a few GB, one-time). Without it Triton builds through its bundled unsigned TinyCC, which antivirus behavioral engines may block.">Install MSVC Build Tools</button>
+            <button class="btn btn-ghost small" id="tsMsvcRecheckBtn" title="Re-check for an installed MSVC toolchain">Recheck</button>
+            <span class="token-hint" id="tsMsvcStatus" style="margin-left:8px"></span>
           </div>
         </div>
         <div class="settings-section" style="margin-top:12px">
@@ -679,7 +711,7 @@
             <button class="btn btn-primary small" id="memProfileApplyBtn" style="margin-left:auto" title="Write these performance settings to wgp_config.json">Apply Overrides</button>
           </div>
           <p class="token-hint" style="padding:4px 12px 0">Detect scans your hardware and calibrates these mmgp knobs in <code>wgp_config.json</code>. Each dropdown defaults to the <strong>recommended</strong> value — change any to override. <span class="tag-rec">rec</span> = recommended, <span class="tag-saved">saved</span> = currently written to disk. Values changed inside WanGP show up here as <span class="tag-saved">saved</span> — Detect only proposes, <strong>Apply Overrides</strong> is what writes.</p>
-            <p class="token-hint" style="padding:4px 12px 0;margin:0"><strong>v17 RAM/VRAM controls:</strong> the allocator needs a restart · Smart Memory Pinning reloads the model · Head Split only engages on long sequences (8192+ tokens) and its output is not bit-identical to Off — details, sometimes motion, can differ · Dynamic preload needs the MMGP allocator and only runs on Profiles 2, 4 and 5 — Profiles 1, 3 and 3+ load whole models and have nothing to preload · most of the v17 gain assumes Sage2/2+ attention · all of them are NVIDIA-only (upstream skips them on AMD/Intel), so Detect leaves them unset on those cards.</p>
+            <p class="token-hint" style="padding:4px 12px 0;margin:0"><strong>v17 RAM/VRAM controls:</strong> the allocator needs a restart · Smart Memory Pinning reloads the model · Head Split only engages on long sequences (8192+ tokens) and its output is not bit-identical to Off — details, sometimes motion, can differ · Dynamic preload needs the MMGP allocator: it is built into Profiles 1 and 3 (they are P2/P4 + Dynamic Preload) and selectable on Profiles 2, 4 and 5 · most of the v17 gain assumes Sage2/2+ attention · all of them are NVIDIA-only (upstream skips them on AMD/Intel), so Detect leaves them unset on those cards.</p>
           <label style="display:flex;align-items:center;gap:8px;padding:8px 12px 0;font-size:0.75rem;color:var(--text-secondary);cursor:pointer"
                  title="Force the P5 minimum-compatibility profile — slower, but maximizes the chance generation works (e.g. a 10GB card that still crashes on P4+). Check and press Detect to re-seed these fields with P5 values.">
             <input type="checkbox" id="autotuneFailsafeChk" style="accent-color:var(--signal-yellow)">
@@ -690,10 +722,10 @@
               <label class="token-hint">Video Profile</label>
               <select id="memVideoProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="1">P1 — whole models in VRAM, all in Reserved RAM (fastest; most RAM &amp; VRAM)</option>
+                <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM (fastest; most RAM &amp; VRAM)</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part (needs a lot of RAM)</option>
-                  <option value="3">P3 — whole models in VRAM, main models in Reserved RAM</option>
-                <option value="3.5">P3+ — P3 with no Reserved RAM (recommended for audio)</option>
+                  <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM (recommended for audio)</option>
+                <option value="3.5">P3+ — P3 without Reserved RAM; Dynamic Preload keeps what fits in VRAM (slower loads)</option>
                 <option value="4">P4 — main models in Reserved RAM, sent part by part (recommended)</option>
                 <option value="4.5">P4+ — P4 one part at a time, ~1 GB less VRAM, slightly slower</option>
                 <option value="5">P5 — almost no Reserved RAM (fail safe; slow on short steps)</option>
@@ -704,10 +736,10 @@
               <label class="token-hint">Image Profile</label>
               <select id="memImageProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="1">P1 — whole models in VRAM, all in Reserved RAM (fastest; most RAM &amp; VRAM)</option>
+                <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM (fastest; most RAM &amp; VRAM)</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part (needs a lot of RAM)</option>
-                  <option value="3">P3 — whole models in VRAM, main models in Reserved RAM</option>
-                <option value="3.5">P3+ — P3 with no Reserved RAM</option>
+                  <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM</option>
+                <option value="3.5">P3+ — P3 without Reserved RAM; Dynamic Preload keeps what fits in VRAM (slower loads)</option>
                 <option value="4">P4 — main models in Reserved RAM, sent part by part (recommended)</option>
                 <option value="4.5">P4+ — P4 one part at a time, ~1 GB less VRAM, slightly slower</option>
                 <option value="5">P5 — almost no Reserved RAM (fail safe; slow on short steps)</option>
@@ -718,10 +750,10 @@
               <label class="token-hint">Audio Profile</label>
               <select id="memAudioProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="1">P1 — whole models in VRAM, all in Reserved RAM</option>
+                <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part</option>
-                  <option value="3">P3 — whole models in VRAM, main models in Reserved RAM</option>
-                <option value="3.5">P3+ — P3 with no Reserved RAM (recommended for audio)</option>
+                  <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM (recommended for audio)</option>
+                <option value="3.5">P3+ — P3 without Reserved RAM; Dynamic Preload keeps what fits in VRAM</option>
                 <option value="4">P4 — main models in Reserved RAM, sent part by part</option>
                 <option value="4.5">P4+ — P4 one part at a time, ~1 GB less VRAM, slightly slower</option>
                 <option value="5">P5 — almost no Reserved RAM (fail safe)</option>
@@ -734,11 +766,11 @@
               <div class="mem-hint"><span id="recCoeff" class="tag-rec">rec: —</span><span id="savedCoeff" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
-              <label class="token-hint">VAE Config</label>
+              <label class="token-hint">VAE Tiling</label>
               <select id="memVae" class="input">
                 <option value="">— unset —</option>
-                <option value="0">0 — auto</option><option value="1">1 — 16GB+</option>
-                <option value="2">2 — 8GB+</option><option value="3">3 — 6GB+</option>
+                <option value="0">0 — auto</option><option value="1">1 — 16GB+ preset</option>
+                <option value="2">2 — 8GB+ preset</option><option value="3">3 — 6GB+ preset</option>
               </select>
               <div class="mem-hint"><span id="recVae" class="tag-rec">rec: —</span><span id="savedVae" class="tag-saved">saved: —</span></div>
             </div>
@@ -752,15 +784,37 @@
               <div class="mem-hint"><span id="recQuant" class="tag-rec">rec: —</span><span id="savedQuant" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
+              <label class="token-hint" title="Text encoder (prompt) quantization — Configuration → Text Encoder Quantization. bf16 = 16-bit (more RAM, better quality); int8 = 8-bit (less RAM, slightly lower quality).">Text Encoder Quant</label>
+              <select id="memTextEncoderQuant" class="input">
+                <option value="">— unset —</option>
+                <option value="int8">int8 — 8-bit (less RAM, default)</option>
+                <option value="bf16">bf16 — 16-bit (more RAM, better quality)</option>
+              </select>
+              <div class="mem-hint"><span id="recTextEncoderQuant" class="tag-rec">rec: —</span><span id="savedTextEncoderQuant" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
               <label class="token-hint">INT8 Math Kernels (INT8 linear layers)</label>
               <select id="memInt8Kernels" class="input">
                 <option value="">— unset —</option>
-                <option value="auto">Auto — Kitchen CUDA/HIP, then Triton, then PyTorch (default)</option>
+                <option value="auto">Auto — WGPKernels, then Kitchen, then Triton, then PyTorch (default)</option>
+                <option value="wgpkernels">WGPKernels (needs the wheel from GPU Kernel Wheels)</option>
                 <option value="kitchen">Comfy Kitchen kernels (needs R580+ driver)</option>
                 <option value="triton">Triton (needs Triton installed)</option>
                 <option value="disabled">Disabled — PyTorch/Quanto path</option>
               </select>
               <div class="mem-hint"><span id="recInt8Kernels" class="tag-rec">rec: —</span><span id="savedInt8Kernels" class="tag-saved">saved: —</span></div>
+              <div class="mem-hint">Backends differ slightly at identical seed — Auto prefers WGPKernels (upstream "recommended, precise"); Kitchen is fastest but least precise, so garbage output means trying Triton or Disabled explicitly.</div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="Math kernels for FP8 checkpoints (Quanto qfloat8 / scaled_fp8). auto = fastest available (CUDA, then Triton, then PyTorch). CUDA FP8 tensor cores need RTX 40xx or later.">FP8 Math Kernels</label>
+              <select id="memFp8Kernels" class="input">
+                <option value="">— unset —</option>
+                <option value="auto">Auto — fastest available (default)</option>
+                <option value="cuda">CUDA FP8 tensor cores (RTX 40xx+, fastest, lower precision)</option>
+                <option value="triton">Triton (fast, precise)</option>
+                <option value="pytorch">PyTorch (slowest, precise)</option>
+              </select>
+              <div class="mem-hint"><span id="recFp8Kernels" class="tag-rec">rec: —</span><span id="savedFp8Kernels" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
               <label class="token-hint">Optimized Ops Precision (H3 VAE fusions)</label>
@@ -988,6 +1042,10 @@
           <span class="led-dot" id="ledDot"></span>
           <span class="led-text" id="ledText">Running</span>
         </span>
+        <span id="backendLeds" class="backend-leds" style="display:none" title="Live kernel backends WanGP selected at boot (from the server log) — shown only while known">
+          <span class="backend-chip" id="ledInt8">INT8 · …</span>
+          <span class="backend-chip" id="ledFp8">FP8 · …</span>
+        </span>
         <span id="deepyWebLed" class="running-led" style="display:none" title="Deepy Web process status">
           <span class="led-dot" id="deepyWebLedDot"></span>
           <span class="led-text" id="deepyWebLedText">Deepy Web</span>
@@ -1110,6 +1168,8 @@
             <button class="btn btn-ghost small hide-on-collapse" id="restoreKernelsBtn" title="Reinstall setup_config wheels exactly as published — drops launcher overrides (GGUF floor; sage swap only if setup_config ever lags to post4). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
                 <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.25 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
                 <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only: install GGUF 1.0.25 torch210rocm714 HIP wheel for RX 9070/R9700 gfx1201. Needs torch 2.10.0+rocm7.14.0; replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="installWgpkernelsBtn" title="Optional INT8 fast path (WGPKernels 1.1.2, in setup_config since upstream 17307e5). Installs the wheel matching your torch build (cu130/cu128) for RTX 30/40/50 (compute 8.0+), or the rocm100 build for AMD RDNA4 (gfx1200/gfx1201) right in the installer's torch 2.13+rocm10 env." style="margin-left:8px;display:none">WGPKernels (INT8)</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="installAmdSetupBtn" title="AMD RX 9070/R9700 (gfx1201) only: the experimental HIP GGUF (torch210rocm714) wheel needs its OWN PyTorch 2.10.0+rocm7.14.0 environment — it does not load in the installer's torch 2.13+rocm10 env. WGPKernels needs no separate env (rocm100 installs in place). Click to show and copy the exact setup commands." style="margin-left:8px;display:none">AMD setup (exp)</button>
           </div>
           <div class="env-subsection" id="kernelWheelsSubsection" style="margin-top:0;border-top:none;padding-top:0">
             <div class="env-specs" id="kernelWheels">
@@ -1139,6 +1199,7 @@
               <div class="spec-row"><span class="spec-label">Torch</span><span class="spec-dot" id="dotTorch"></span><span class="spec-value" id="specTorch">—</span></div>
               <div class="spec-row"><span class="spec-label">CUDA</span><span class="spec-dot" id="dotCuda"></span><span class="spec-value" id="specCuda">—</span></div>
               <div class="spec-row"><span class="spec-label">Triton</span><span class="spec-dot" id="dotTriton"></span><span class="spec-value" id="specTriton">—</span></div>
+              <div class="spec-row"><span class="spec-label">WGPKernels</span><span class="spec-dot" id="dotWgpk"></span><span class="spec-value" id="specWgpk">—</span></div>
               <div class="spec-row"><span class="spec-label">Sage Attn</span><span class="spec-dot" id="dotSage"></span><span class="spec-value" id="specSage">—</span></div>
               <div class="spec-row"><span class="spec-label">Flash Attn</span><span class="spec-dot" id="dotFlash"></span><span class="spec-value" id="specFlash">—</span></div>
               <div class="spec-row"><span class="spec-label">Sparge Attn</span><span class="spec-value" id="specSparge">—</span></div>
@@ -2152,6 +2213,7 @@
   <script src="launch-builder.js" defer></script>
   <script src="library-tab.js" defer></script>
   <script src="services/net-validate.js" defer></script>
+  <script src="services/parse-backend.js" defer></script>
   <script src="safety-tab.js" defer></script>
   <script src="deepy-checks.js" defer></script>
 </body>

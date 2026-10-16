@@ -77,12 +77,27 @@ From `INSTALLATION.md` — the launcher automates all of this; listed so you kno
 | Python | 3.11.14 | 3.10.9 | 3.12.10 | — |
 | PyTorch | 2.10.0 + CUDA 13.0/13.1 (cu130, needs R580+ driver) | 2.7.1 + CUDA 12.8 (no R580 needed) | 2.13.0 ROCm 10 TheRock (stable whl-next, per-box device-gfx targets) | CPU / MPS (SDPA only) |
 | Triton | `triton-windows>=3.6,<3.7` (torch 2.10); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | `triton-windows>=3.7,<3.8` (torch 2.13) | — |
-| Attention | Sage 2.2.0 (RTX 30+, Ampere+) / Sage 1.0.6 (RTX 20) / Flash 2.8.3 / Sparge 0.1.0 | SDPA | SDPA (default) / Sage 1.0.6 | SDPA |
-| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.25, LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2, Comfy Kitchen via requirements | bitsandbytes | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back) | — |
+| Attention | Sage 2.2.0 (RTX 30+, Ampere+) / Sage 1.0.6 (RTX 20) / Flash 2.8.3 / Sparge 0.1.0 | SDPA | SDPA (default, AOTriton on RDNA3+) / Sage 1.0.6 / Flash 2.8.4 (ROCm/Triton) | SDPA |
+| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.25, LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2 (optional, manual), Comfy Kitchen via requirements, WGPKernels 1.1.2 (in setup_config: RTX 30+/RDNA4, recommended) | — | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back) | — |
 
 Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
-`int8_kernels`: Auto tries Kitchen CUDA/HIP → Triton → PyTorch; `kernel_precision`
-fast/strict controls H3 VAE fusions. Pinokio installs are detected and left
+`int8_kernels`: Auto tries WGPKernels → Kitchen CUDA/HIP → Triton → PyTorch
+(upstream calls WGPKernels "recommended, second fastest, precise" and Kitchen
+"fastest, least precise" — backends differ slightly at identical seed, so
+garbage output means trying Triton/PyTorch explicitly);
+`fp8_kernels` (Auto / CUDA / Triton / PyTorch) picks the same kind of kernel for
+FP8 checkpoints; `kernel_precision` fast/strict controls H3 VAE fusions.
+WGPKernels 1.1.2 is in `setup_config.json` (RTX 30/40/50 + AMD profiles) —
+install/update it from **GPU Kernel Wheels → WGPKernels (INT8)** or
+**↻ Update GPU Wheels** (after a WanGP update, re-run Sync: upstream's
+*Update* only refreshes code and requirements, new pinned wheels arrive via
+Sync); Auto prefers it once present.
+On AMD, RDNA4 (RX 9060/9060 XT gfx1200 + RX 9070/9070 XT/R9700 gfx1201) uses
+the experimental `rocm100` build, which loads in the installer's torch
+2.13+rocm10 env — no separate env. Only the HIP GGUF wheel still needs a
+**separate** PyTorch 2.10+rocm7.14 env. The **AMD setup (exp)** button copies
+the commands to build it. RDNA 1–3.5 cards have no WGPKernels/HIP wheel.
+Pinokio installs are detected and left
 untouched — the launcher can reuse their model library instead of re-downloading.
 
 ```mermaid
@@ -206,9 +221,9 @@ WanGP owns **model, prompt, generation, LoRA pick, control, post**.
 
 ---
 
-## Models reference — complete inventory (232 `defaults/*.json`)
+## Models reference — complete inventory (238 `defaults/*.json`)
 
-Audited from live `C:\Wan2GP\defaults\` (232 files + ReadMe). Every id below is
+Audited from live `C:\Wan2GP\defaults\` (238 files + ReadMe). Every id below is
 a selectable `model_type`. Starred = guided-path starter; rest = same workflows,
 different speed/memory/quality trade (distilled/Turbo/Lightning/PDD/NVFP4/GGUF/
 Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar search.
@@ -262,6 +277,7 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 | --- | --- |
 | `flux`, `flux_schnell`, `flux_chroma`, `flux_chroma_radiance`, `flux_krea`, `flux_srpo`, `flux_srpo_uso`, `flux_dev_kontext` ★, `flux_dev_kontext_dreamomni2`, `flux_dev_umo`, `flux_dev_uso` | Schnell/Dev/Kontext (instruction edit)/Krea/Chroma/SRPO/USO |
 | `flux2_dev`, `flux2_dev_nvfp4`, `flux2_klein_4b`, `flux2_klein_9b`, `flux2_klein_base_4b`, `flux2_klein_base_9b`, `pi_flux2`, `pi_flux2_nvfp4` | Flux 2 + Klein 4B/9B (+base), Pi VAE variants |
+| `flux3_klein` ★, `flux3_klein_base`, `flux3_klein_nvfp4`, `flux3_klein_base_nvfp4` | ★ Flux 3 Klein 5.6B distilled (16 steps, no CFG) + Base (50 steps, CFG); up to 10 ordered references; NVFP4 variants |
 | `qwen_image_20B` ★, `qwen_image_21_7B` ★, `qwen_image_2512_20B`, `qwen_image_edit_20B`, `qwen_image_edit_plus_20B` ★, `qwen_image_edit_plus2_20B`, `qwen_image_edit_plus_20B_nunchaku_r128_fp4/int4`, `qwen_image_layered_20B` | ★ base/edit-plus (multi-subject, long text); 2.1 new; layered; Nunchaku quant |
 | `z_image` ★, `z_image_base`, `z_image_control`, `z_image_control2`, `z_image_control2_1`, `z_image_control2_1_8s`, `z_image_twinflow_turbo`, `z_image_nunchaku_r128_fp4/r256_int4` | ★ Turbo 6B fast; Control/Control2.x edit; TwinFlow; Nunchaku |
 | `krea2_raw` ★, `krea2_turbo` ★, `krea2_raw_edit`, `krea2_turbo_edit` | ★ RAW (CFG) / Turbo (distilled); Identity Edit (2 refs + LanPaint inpaint/outpaint, NAG negatives) |
@@ -276,6 +292,7 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 | --- | --- |
 | `qwen3_tts_base` ★, `qwen3_tts_customvoice`, `qwen3_tts_voicedesign` | ★ Base (clone + 2-speaker, low VRAM); Custom Voice; Voice Design |
 | `index_tts2` ★, `index_tts25` | ★ expressive clone, tagged/auto emotion, long dialogue |
+| `fish_drama3` ★, `fish_drama3_int4` | ★ Fish Audio Drama 3 expressive speech/dialogue (optional voice ref + exact transcript); INT4 Experts halves RAM/VRAM |
 | `chatterbox` | Multilingual speech (Write Speech) |
 | `kugelaudio_0_open` | Cloned dialogue |
 | `omnivoice` | Multilingual + design + clone |
@@ -301,9 +318,10 @@ Essentials (names as in `SETTINGS.md` / Export Settings JSON):
 > default, P5 failsafe. `vae_config` is `0=auto, 1=16GB+, 2=8GB+, 3=6GB+` — Auto
 > defers tiling to runtime (Wan vs Qwen 2.1 tile presets + 16000/8000 MiB
 > thresholds), so a fixed tier wastes VRAM or adds banding. `transformer_quantization`
-> is `none/int8/fp8/nvfp4`; int8 is the recommended balance. `int8_kernels`
-> (`auto/disabled/triton/kitchen`) + `kernel_precision` (`fast/strict`) are the
-> v13.13 kernel settings. There is NO reserved-memory key in `wgp_config.json` —
+> is `none/int8/fp8/nvfp4`; int8 is the recommended balance. `text_encoder_quantization`
+> is `bf16` (16-bit, better quality, more RAM) or `int8` (8-bit, less RAM). `int8_kernels`
+> (`auto/disabled/wgpkernels/triton/kitchen`) + `fp8_kernels` (`auto/pytorch/triton/cuda`)
+> + `kernel_precision` (`fast/strict`) are the kernel settings (v18.11). There is NO reserved-memory key in `wgp_config.json` —
 > that is the CLI `--perc-reserved-mem-max`. Safety: `0.80` for >=12 GB VRAM,
 > `0.70` below; failsafe forces P5 + `0.60`. Upstream default when unset is
 > `LowRAM_LowVRAM` (`wgp.py:_normalize_profile_defaults`), audio `3.5`.
@@ -671,7 +689,7 @@ flowchart TD
 | OOM load | Smaller model, quant on, profile 4/5, `--preload 0` |
 | OOM gen | Fewer frames, lower res, clear cache between gens |
 | Slow | `--compile` (needs Triton), `sage2` (30/40/50), `--teacache 2.0`, profile 3 |
-| Sage fail | `import triton` version, wipe `~/.triton`, fallback `--attention sdpa` |
+| Sage fail | `import triton` version, wipe Triton cache (`~/.triton` + pinned `triton-cache` — Manage → Troubleshooting), fallback `--attention sdpa` |
 | LoRA missing/incompat | Right family folder, Refresh, `--check-loras`, 1.3B vs 14B, t2v vs i2v |
 | VACE poor | Skip Layer Guidance (CFG only), longer prompt, 30+ steps, mask check |
 | Port busy | `--server-port 7861` or kill `:7860` holder |

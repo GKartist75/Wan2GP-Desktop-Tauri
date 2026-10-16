@@ -84,6 +84,11 @@ pub fn get_status() -> serde_json::Value {
                                     "light2xv" | "lightx2v_kernel" => {
                                         ("LightX2V", "lightx2v_kernel")
                                     }
+                                    "wgpkernels"
+                                    | "wgpkernels_cu128"
+                                    | "wgpkernels_rocm10" => {
+                                        ("WGPKernels", "wgpkernels")
+                                    }
                                     _ => (key, key),
                                 };
                                 // configured version from setup_config.json components.kernels[key].cmd[win]
@@ -148,7 +153,7 @@ pub fn get_status() -> serde_json::Value {
             let code = r"import sys, importlib.metadata
 try:
     aliases={'triton':'triton-windows','spas_sage_attn':'spas-sage-attn','huggingface_hub':'huggingface-hub'}
-    pkgs=['python','torch','triton','sageattention','spas_sage_attn','flash_attn','nunchaku','llamacpp_gguf_cuda','lightx2v_kernel','diffusers','transformers','gradio','accelerate','onnxruntime','onnxruntime-gpu','xformers','mmgp','moviepy','opencv-python','insightface','peft','timm','vector_quantize_pytorch','torchcodec','torchaudio','huggingface_hub','bitsandbytes','numpy','sentencepiece','open_clip_torch','imageio','einops','librosa','soundfile','tokenizers','av','claude-agent-sdk','xatlas','fast-simplification','scikit-image','resvg-py','chumpy','smplfitter']
+    pkgs=['python','torch','triton','wgpkernels','sageattention','spas_sage_attn','flash_attn','nunchaku','llamacpp_gguf_cuda','lightx2v_kernel','diffusers','transformers','gradio','accelerate','onnxruntime','onnxruntime-gpu','xformers','mmgp','moviepy','opencv-python','insightface','peft','timm','vector_quantize_pytorch','torchcodec','torchaudio','huggingface_hub','bitsandbytes','numpy','sentencepiece','open_clip_torch','imageio','einops','librosa','soundfile','tokenizers','av','claude-agent-sdk','xatlas','fast-simplification','scikit-image','resvg-py','chumpy','smplfitter','comfy-kitchen']
     r=[]
     for p in pkgs:
         try:
@@ -212,13 +217,24 @@ except Exception as e:
         serde_json::Value::Array(final_wheels)
     };
     // profile object for frontend specSparge (was only kernelProfile string → showed —)
-    let profile_obj = cfg_path
+    let mut profile_obj = cfg_path
         .exists()
         .then(|| std::fs::read_to_string(&cfg_path).ok())
         .flatten()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|c| c.get("gpu_profiles").and_then(|p| p.get(&profile)).cloned())
         .unwrap_or(serde_json::json!({"sparge": null}));
+    // Panels print the *expected* version beside the installed one; map the raw
+    // upstream tags (v010_cu13, v210 …) to plain versions so no row ever reads
+    // "v010_cu13". `status.profile` is only consumed for the Sparge Attn row.
+    if let Some(o) = profile_obj.as_object_mut() {
+        for key in ["sparge", "flash", "triton", "sage"] {
+            if let Some(tag) = o.get(key).and_then(|v| v.as_str()) {
+                let short = crate::hw::comp_short(tag);
+                o.insert(key.to_string(), serde_json::json!(short));
+            }
+        }
+    }
     let out = serde_json::json!({"env": env, "versions": serde_json::Value::Object(versions), "kernelWheels": out_wheels, "kernelProfile": profile, "profile": profile_obj, "spike": false});
     // cache for 5s (mtime-keyed: pip changes invalidate instantly)
     if let Ok(mut g) = LAST_STATUS.get_or_init(|| Mutex::new(None)).lock() {

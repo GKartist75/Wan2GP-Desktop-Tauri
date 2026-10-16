@@ -85,8 +85,7 @@ $("ggufSaveBtn")?.addEventListener("click", async () => {
   cfg.ggufEnv = {
     enabled: $("ggufEnabled")?.checked !== false,
     matmulMode: $("ggufMatmulMode")?.value || "auto",
-    streamK: $("ggufStreamK")?.checked !== false,
-    bf16Fp16: $("ggufBf16Fp16")?.checked === true,
+    shortBatch: $("ggufShortBatch")?.value || "auto",
   };
   await window.w2gp.configSave(cfg);
   showToast("GGUF CUDA kernel settings saved — applies on next launch");

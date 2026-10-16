@@ -80,6 +80,24 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .setup(|app| {
+            // Desktop window mode (issue #63): config ships the main window
+            // hidden and pre-maximized (the 0.2.0 default), setup re-applies
+            // the saved desktopWindowMode invisibly, then shows the window —
+            // no maximized→windowed flash on launch, whatever the mode is.
+            let mode = crate::base::load_config_value()
+                .get("desktopWindowMode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("maximized")
+                .to_string();
+            let mode = crate::features::window_mode_normalize(&mode);
+            if let Some(w) = app.get_webview_window("main") {
+                crate::features::apply_window_mode(&w, &mode);
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+            Ok(())
+        })
         .on_window_event(|window, event| {
             // Ordered close: sessions (running AND old/orphaned) die FIRST,
             // the app exits SECOND. Fast kills fire synchronously (ms),
@@ -193,6 +211,8 @@ pub fn run() {
             install::sync_kernels,
             install::restore_kernels,
             install::install_hip_gguf_wheel,
+            install::install_wgpkernels_wheel,
+            install::amd_hip_recipe,
             install::update,
             install::dep_check,
             install::dlss5_status,
@@ -262,6 +282,7 @@ pub fn run() {
             plugins::plugin_refresh_catalog,
             features::set_theme_follow_system,
             features::set_notifications_enabled,
+            features::set_window_mode,
             updates::check_update,
             updates::download_update,
             updates::install_update,
@@ -305,6 +326,10 @@ pub fn run() {
             troubleshoot::troubleshoot_debug_bundle,
             troubleshoot::troubleshoot_triton_test,
             troubleshoot::troubleshoot_triton_clear,
+            troubleshoot::troubleshoot_msvc_status,
+            troubleshoot::troubleshoot_msvc_install,
+            troubleshoot::troubleshoot_triton_repair,
+            launch::set_triton_compiler,
             troubleshoot::troubleshoot_gpu_compute,
             troubleshoot::troubleshoot_known_good,
             troubleshoot::troubleshoot_oom_remedy,

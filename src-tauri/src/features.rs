@@ -42,6 +42,9 @@ pub(crate) fn managed_pin_source(dist: &str, installed: &str) -> Option<&'static
         || name == "nunchaku"
         || name == "llamacpp-gguf-cuda"
         || name == "lightx2v-kernel"
+        // Optional WGPKernels wheel (GitHub release, not on PyPI) — refuse a
+        // PyPI-style upgrade like the rest of the manual kernel wheels.
+        || name == "wgpkernels"
     {
         return Some("kernel-wheel");
     }
@@ -624,7 +627,7 @@ pub fn auto_tune_recommend(
     if !failsafe && cuda_off && !amd_usable {
         return serde_json::json!({
             "video_profile": 4.5, "image_profile": 4.5, "audio_profile": 4.5,
-            "vram_safety_coefficient": 0.70, "vae_config": 0, "transformer_quantization": "int8", "int8_kernels": "auto", "kernel_precision": "fast",
+            "vram_safety_coefficient": 0.70, "vae_config": 0, "transformer_quantization": "int8", "text_encoder_quantization": "int8", "int8_kernels": "auto", "fp8_kernels": "auto", "kernel_precision": "fast",
             "_recommendation_label": "Auto-tune unavailable on this hardware",
             "_recommendation_reason": "No CUDA-capable GPU detected. Conservative profile applied — generation may be limited.",
             "packages": ["torch","triton","sageattention"],
@@ -656,33 +659,38 @@ pub fn auto_tune_recommend(
         };
         (p, c)
     };
-    // Fast-LM-decoder rule: ≥12GB VRAM needs int-profile 1/3 for audio, else inherit.
-    // Upstream v17: "Profile 3+ is recommended for audio models (their default)" —
-// audio models fit whole in VRAM, where the language model many of them
-// include runs much faster and can use the CUDA Graph or vLLM engines.
-//
-// Do NOT gate this on VRAM the way the video/image tiers are gated: those are
-// calibrated against 14B video models, and audio models are an order of
-// magnitude smaller, so a card that earns P4 for video comfortably holds one
-// whole. Gating on vram_gb (>= 12) therefore sent a 10 GB RTX 3080 — where
-// upstream's own default applies — to P4 for audio and cost it the fast path.
-// The real safety valve is the failsafe switch and a genuinely tiny card: when
-// video itself is already at P5 there is nothing left to spare, so audio
-// follows it down. P1 and P3 are left alone — they already load whole and
-// keep Reserved RAM. (Was 3.0, gated on vram_gb >= 12.)
-let audio = if [2.0, 4.0, 4.5].contains(&profile) {
-    3.5
-} else {
-    profile
-};
+    // Fast-LM-decoder rule: audio rides upstream's own audio default, else inherit.
+    // Upstream v18.11: "Profile 3 is recommended for audio models (their default)" —
+    // audio models fit whole in VRAM, where the language model many of them
+    // include runs much faster and can use the CUDA Graph or vLLM engines.
+    // The recommendation moved from P3+ (3.5) to P3 (3): v18.11 made P3 =
+    // P4 + Dynamic Preload and reserved P3.5 for RAM-starved cards, so P3 is
+    // now the plain audio profile again.
+    //
+    // Do NOT gate this on VRAM the way the video/image tiers are gated: those are
+    // calibrated against 14B video models, and audio models are an order of
+    // magnitude smaller, so a card that earns P4 for video comfortably holds one
+    // whole. Gating on vram_gb (>= 12) therefore sent a 10 GB RTX 3080 — where
+    // upstream's own default applies — to P4 for audio and cost it the fast path.
+    // The real safety valve is the failsafe switch and a genuinely tiny card: when
+    // video itself is already at P5 there is nothing left to spare, so audio
+    // follows it down. Profiles 1 and 3 already ride the fast audio defaults
+    // upstream (P1 = P2 + Dynamic Preload, P3 = P4 + Dynamic Preload) and P3.5 is
+    // P3 without Reserved RAM, so none of them is lowered here.
+    // (Was 3.5 in v18.10 and 3.0 before that.)
+    let audio = if [2.0, 4.0, 4.5].contains(&profile) {
+        3.0
+    } else {
+        profile
+    };
     let label = if failsafe {
         "Failsafe · P5 (maximum compatibility)".to_string()
     } else {
         match profile.to_string().as_str() {
             "1" => "HighRAM · HighVRAM",
             "2" => "HighRAM · LowVRAM",
-            "3" => "LowRAM · HighVRAM",
-            "3.5" => "VeryLowRAM · HighVRAM (upstream: recommended for audio)",
+            "3" => "LowRAM · HighVRAM (upstream: recommended for audio)",
+            "3.5" => "VeryLowRAM · HighVRAM",
             "4" => "LowRAM · LowVRAM (upstream: recommended)",
             "4.5" => "LowRAM · LowVRAM+",
             _ => "VerylowRAM · LowVRAM",
@@ -762,7 +770,7 @@ let audio = if [2.0, 4.0, 4.5].contains(&profile) {
     }
     let mut out = serde_json::json!({
         "video_profile": profile, "image_profile": profile, "audio_profile": audio,
-        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8", "int8_kernels": "auto", "kernel_precision": "fast",
+        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8", "text_encoder_quantization": if ram_tier == "high" { "bf16" } else { "int8" }, "int8_kernels": "auto", "fp8_kernels": "auto", "kernel_precision": "fast",
         "_recommendation_label": label,
         "_recommendation_reason": "Auto-tuned for your hardware",
         "packages": ["torch","triton","sageattention"],
@@ -1029,6 +1037,7 @@ mod managed_pin_source_tests {
             ("nunchaku", "kernel-wheel"),
             ("llamacpp_gguf_cuda", "kernel-wheel"),
             ("lightx2v_kernel", "kernel-wheel"),
+            ("wgpkernels", "kernel-wheel"),
         ] {
             assert_eq!(managed_pin_source(dist, "1.0"), Some(src), "{dist}");
         }
@@ -2100,7 +2109,15 @@ pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool 
     let s = val.as_str().unwrap_or("");
     match key {
         // shared/kernels/int8_backend.py CHOICES
-        "int8_kernels" => ["auto", "disabled", "triton", "kitchen"].contains(&s),
+        // (v18.11 adds "wgpkernels": the WGPKernels INT8 fast path, manual-install
+        // only upstream — the "auto" ranking is wgpkernels > kitchen > triton > pytorch).
+        "int8_kernels" => ["auto", "disabled", "wgpkernels", "triton", "kitchen"].contains(&s),
+        // shared/kernels/fp8_backend.py CHOICES (v18.11): FP8 math kernels for
+        // Quanto qfloat8 / scaled_fp8 weights. "cuda" needs RTX 40xx+.
+        "fp8_kernels" => ["auto", "pytorch", "triton", "cuda"].contains(&s),
+        // Configuration → Text Encoder Quantization (plugins/configuration/plugin.py):
+        // bf16 = 16-bit (more RAM, better quality), int8 = 8-bit (less RAM).
+        "text_encoder_quantization" => ["bf16", "int8"].contains(&s),
         // shared/kernels/kernel_policy.py CHOICES ("strict"/"fast")
         "kernel_precision" => ["fast", "strict"].contains(&s),
         // shared/cuda_memory.py VRAM_ALLOCATOR_CHOICES
@@ -2150,7 +2167,9 @@ pub(crate) const MEMORY_OVERRIDE_KEYS: &[&str] = &[
     "vram_safety_coefficient",
     "vae_config",
     "transformer_quantization",
+    "text_encoder_quantization",
     "int8_kernels",
+    "fp8_kernels",
     "kernel_precision",
     "queue_color_scheme",
     // v17 (MMGP v4) RAM/VRAM controls.
@@ -2610,6 +2629,57 @@ pub fn set_notifications_enabled(enabled: bool) -> serde_json::Value {
     serde_json::json!({"ok": true})
 }
 
+// ── Desktop window mode (issue #63) ────────────────────────────────────
+// The launcher opened maximized since v0.2.0 (`maximized: true` in the
+// window config) and nothing could change that — users saw "fullscreen
+// only". One setting fixes all three: `desktopWindowMode` in
+// desktop-config.json — "windowed" | "maximized" | "fullscreen", default
+// "maximized" to keep the 0.2.0 behavior for every existing user.
+// set_window_mode persists + applies live; lib.rs setup() re-applies the
+// saved mode on launch while the config window (shipped `visible: false`)
+// is still invisible, so the mode settles before the first paint.
+pub(crate) fn window_mode_normalize(mode: &str) -> String {
+    match mode {
+        "windowed" | "fullscreen" => mode.to_string(),
+        _ => "maximized".to_string(),
+    }
+}
+
+/// Apply a normalized mode to the main window. Shared by the live command
+/// and the startup hook in lib.rs so both paths behave identically.
+pub(crate) fn apply_window_mode(window: &tauri::WebviewWindow, mode: &str) {
+    // Fullscreen flips first: on Windows leaving fullscreen must happen
+    // before maximize/unmaximize, or the old fullscreen state lingers.
+    let _ = window.set_fullscreen(mode == "fullscreen");
+    match mode {
+        "windowed" => {
+            let _ = window.unmaximize();
+        }
+        // Config already builds the window maximized; this only does work on
+        // live switches back from fullscreen/windowed.
+        // Unknown values fall to maximized — never leave a launch windowed.
+        _ => {
+            if !window.is_maximized().unwrap_or(true) {
+                let _ = window.maximize();
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub fn set_window_mode(window: tauri::WebviewWindow, mode: String) -> serde_json::Value {
+    let mode = window_mode_normalize(&mode);
+    let mut full = load_config_value();
+    if let Some(m) = full.as_object_mut() {
+        m.insert("desktopWindowMode".into(), serde_json::json!(mode));
+    }
+    if let Err(e) = crate::config::config_save(full) {
+        return serde_json::json!({"ok": false, "error": e});
+    }
+    apply_window_mode(&window, &mode);
+    serde_json::json!({"ok": true, "mode": mode})
+}
+
 #[cfg(test)]
 mod deepy_roundtrip_tests {
     use super::*;
@@ -2864,17 +2934,17 @@ mod autotune_matrix_tests {
         let cases = [
             (("high", "high"), (1.0, 1.0)),
             (("high", "low"), (3.0, 3.0)),
-            (("high", "very_low"), (3.5, 3.5)), // P3+ is the audio default upstream
-            (("low", "high"), (2.0, 3.5)),
-            (("low", "low"), (4.0, 3.5)),
+            (("high", "very_low"), (3.5, 3.5)), // P1/P3/P3.5 already give audio its fast path
+            (("low", "high"), (2.0, 3.0)), // v18.11: P3 (not P3+) is the audio default
+            (("low", "low"), (4.0, 3.0)),
             // Video already at P5 → nothing left to spare; audio follows down.
             (("low", "very_low"), (5.0, 5.0)),
-            (("tight", "high"), (4.0, 3.5)),
+            (("tight", "high"), (4.0, 3.0)),
             // v17 + MMGP v4: the tight tier rides P4 with the levers on, and
-            // audio still gets P3+ — audio models fit whole where a 14B video
+            // audio still gets P3 — audio models fit whole where a 14B video
             // model would not.
-            (("tight", "low"), (4.0, 3.5)),
-            (("tight", "very_low"), (4.0, 3.5)),
+            (("tight", "low"), (4.0, 3.0)),
+            (("tight", "very_low"), (4.0, 3.0)),
         ];
         for ((vt, rt), (v, a)) in cases {
             let r = rec(vt, rt, if vt == "tight" { 8.0 } else { 16.0 }, false);
@@ -2882,8 +2952,17 @@ mod autotune_matrix_tests {
             assert_eq!(r["audio_profile"].as_f64().unwrap(), a, "{vt}/{rt} audio");
             assert_eq!(r["vae_config"], 0);
             assert_eq!(r["transformer_quantization"], "int8");
+            // Text encoder quant (Configuration → Text Encoder Quantization):
+            // bf16 (more RAM, better quality) on high-RAM boxes, int8 otherwise.
+            assert_eq!(
+                r["text_encoder_quantization"],
+                if rt == "high" { "bf16" } else { "int8" },
+                "{vt}/{rt} text encoder"
+            );
             // Upstream v13.13 kernel settings (legacy enable_int8_kernels is gone).
             assert_eq!(r["int8_kernels"], "auto");
+            // v18.11: FP8 math kernels follow the same Auto policy.
+            assert_eq!(r["fp8_kernels"], "auto");
             assert_eq!(r["kernel_precision"], "fast");
             assert!(r.get("enable_int8_kernels").is_none());
         }
@@ -3135,14 +3214,14 @@ mod kernel_setting_tests {
     }
     #[test]
     fn int8_backends_match_upstream_choices() {
-        // shared/kernels/int8_backend.py CHOICES.
-        for good in ["auto", "disabled", "triton", "kitchen"] {
+        // shared/kernels/int8_backend.py CHOICES (v18.11 adds "wgpkernels").
+        for good in ["auto", "disabled", "wgpkernels", "triton", "kitchen"] {
             assert!(
                 valid_memory_override("int8_kernels", &serde_json::json!(good)),
                 "{good}"
             );
         }
-        for bad in ["", "enabled", "1", "pytorch", "AUTO"] {
+        for bad in ["", "enabled", "1", "pytorch", "AUTO", "WGPKernels"] {
             assert!(
                 !valid_memory_override("int8_kernels", &serde_json::json!(bad)),
                 "{bad}"
@@ -3150,6 +3229,43 @@ mod kernel_setting_tests {
         }
         // Legacy numeric key must not validate as the new enum.
         assert!(!valid_memory_override("int8_kernels", &serde_json::json!(1)));
+    }
+    #[test]
+    fn fp8_kernels_match_upstream_choices() {
+        // shared/kernels/fp8_backend.py CHOICES (v18.11).
+        for good in ["auto", "pytorch", "triton", "cuda"] {
+            assert!(
+                valid_memory_override("fp8_kernels", &serde_json::json!(good)),
+                "{good}"
+            );
+        }
+        for bad in ["", "disabled", "enabled", "AUTO", "fp8", "Cuda"] {
+            assert!(
+                !valid_memory_override("fp8_kernels", &serde_json::json!(bad)),
+                "{bad}"
+            );
+        }
+        assert!(!valid_memory_override("fp8_kernels", &serde_json::json!(1)));
+    }
+    #[test]
+    fn text_encoder_quantization_match_upstream_choices() {
+        // plugins/configuration/plugin.py: bf16 ("16-bit") / int8 ("8-bit").
+        for good in ["bf16", "int8"] {
+            assert!(
+                valid_memory_override("text_encoder_quantization", &serde_json::json!(good)),
+                "{good}"
+            );
+        }
+        for bad in ["", "fp8", "none", "nvfp4", "16-bit", "BF16", "Int8", "auto"] {
+            assert!(
+                !valid_memory_override("text_encoder_quantization", &serde_json::json!(bad)),
+                "{bad}"
+            );
+        }
+        assert!(!valid_memory_override(
+            "text_encoder_quantization",
+            &serde_json::json!(1)
+        ));
     }
     #[test]
     fn kernel_precision_match_upstream_choices() {

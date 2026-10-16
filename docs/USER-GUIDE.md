@@ -68,6 +68,13 @@ The home screen. Top to bottom:
 
 **GPU Kernel Wheels card** — per-GPU wheels (torch, triton, sage/flash attention, nunchaku/GGUF) with installed versions. *↻ Update GPU Wheels* installs upstream's wanted set plus launcher fixes (sage safe build, GGUF floor that follows `setup_config.json` forward), *Restore GPU Wheels* reinstalls deepbeepmeep's pure upstream set. Sync follows your local checkout — if it is behind `origin/main`, the console warns you to update Wan2GP first, otherwise you install stale wheels. After every Wan2GP update the launcher also runs a compat check (setup_config shape + GGUF pins) and says so in the Console — re-run Sync when it reports new wheels.
 
+**AMD and the experimental kernels (RX 9060 / 9070 series — gfx1200/gfx1201).** WGPKernels 1.1.2 ships a `rocm100` wheel that installs in place; only HIP GGUF still needs a separate env:
+
+- **WGPKernels (INT8)** — the INT8 fast path. One-click on NVIDIA RTX 30/40/50 (the launcher picks `cu130`/`cu128` from your torch build) and on AMD RDNA4 (the `rocm100` build installs right in the installer's TheRock torch 2.13+rocm10 env — no separate env). *↻ Update GPU Wheels* also installs it now that upstream profiles list it.
+- **HIP GGUF (exp)** — the AMD build of the GGUF CUDA wheel, still on the `torch210rocm714` build, which needs **PyTorch 2.10.0+rocm7.14.0** — *not* the installer's env — so it refuses there.
+
+Only the HIP GGUF wheel must live in a **separate environment** (upstream: *"install into a separate AMD environment"*). Click **AMD setup (exp)** in the GPU Kernel Wheels card to copy the exact commands (torch 2.10 + rocm7.14, then the wheel). RDNA 1–3.5 cards have **no** WGPKernels/HIP wheel.
+
 **Active Environment card** — the selected Python env (`uv`, `venv` or `conda`):
 
 | Button | What it does |
@@ -272,8 +279,10 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **GPU Device** — `auto` or a pinned `cuda:N` for generation.
 - **Launcher GPU** — which GPU the launcher UI itself prefers.
 - **SageAttention wheel** — which Sage build to use.
-- **GGUF CUDA Kernel** — llama.cpp CUDA offload switch (matmul mode,
-  Stream-K, BF16→FP16 legacy path, or disable). Applies on next launch.
+- **GGUF CUDA Kernel** — llama.cpp CUDA offload switch (matmul mode —
+  packed MMVQ/MMQ or cuBLAS dense — short-batch mode for the Q4_K/PTQ1_0
+  tensor-core path, or disable). Applies on next launch. Verified against wheel
+  1.0.25: the older Stream-K and BF16→FP16 switches were dropped upstream.
 - **AMD ROCm** (AMD only, applies on next launch) — *Disable MIOpen* leaves
   `MIOPEN_FIND_MODE` fully unset (the upstream guide's `cudnn.enabled = False`
   alternative). Try it if generation crashes with MIOpen/HIP errors while the
@@ -313,7 +322,7 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   `setup_config.json` picks automatically) — Sync never downgrades a newer
   working Triton except on RTX 20/GTX 10 where upstream genuinely needs old builds.
 - **SageAttention 3** — deliberately not installed by ↻ Update GPU Wheels and not offered: it needs
-  a Blackwell GPU *and* Python ≥ 3.12 (launcher envs are 3.10/3.11), and it refuses
+  a Blackwell GPU *and* Python ≥ 3.12 (NVIDIA/GTX envs are 3.10/3.11; 3.12 is AMD-only), and it refuses
   older cards at runtime even when imported. Verify reports a stray `sageattn3`
   install as inert-but-harmless instead of failing. Sage 2.2.0 stays the synced wheel —
   and 2.2.0 already contains the SageAttention2++ kernels as its default `sageattn`
@@ -330,14 +339,17 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 | --- | --- | --- | --- |
 | **Python** | `3.11.14` | `3.12.10` | venv interpreter |
 | **PyTorch** | `2.10.0` + CUDA 13.x | `2.13.0` + ROCm 10 | tensor + GPU runtime |
-| **Triton** | per-GPU pin from `setup_config.json` | `>=3.7,<3.8` | JIT for custom CUDA/attention kernels |
+| **Triton** | `3.2.x` (RTX 20) / `3.6.x` (RTX 30–50) | `>=3.7,<3.8` | JIT for custom CUDA/attention kernels |
 | **SageAttention** | `1.0.6` (RTX 20) / `2.2.0` post6 (RTX 30–50) | `1.0.6`, SDPA default | fused attention — the big speed-up |
 | **SpargeAttn** | RTX 30+ | — | sparsity-aware speed-up alongside Sage |
-| **FlashAttention** | RTX 30+ (Ampere+) | — | memory-efficient exact attention |
+| **FlashAttention** | `2.8.3` (RTX 30+, Ampere+) | `2.8.4` (ROCm/Triton, prebuilt wheel) | memory-efficient exact attention |
 | **Nunchaku** | `1.2.1` | — | SVD-quantized (NF4/SVDQ) runtime |
 | **GGUF llama.cpp** | CUDA build (`cu130` or `cu128` per env) | HIP build, experimental | 4-bit GGUF kernels |
 | **LightX2V** | RTX 50xx only | — | FP4 kernels (sm120+) |
-| **bitsandbytes** | `0.49.2` | — | 8-bit / NF4 dequant |
+| **bitsandbytes NF4** | `0.49.2` (optional — *not* installed by the default set) | — | 8-bit / NF4 dequant (one-click install from the dashboard, pinned) |
+
+Only RTX 20–50 / AMD rows are shown above; GTX 10xx/16xx stay on Python `3.10.9`
++ torch `2.7.1`/CUDA 12.8 with no Triton/Sage/Flash wheels.
 
 **Version pins follow `setup_config.json`.** The in-app GPU Kernel Wheels card is always authoritative — a future upstream bump installs with no launcher update.
 
@@ -349,6 +361,17 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 
 > ⚠️ **AMD note from the maintainer:** the AMD path is built from upstream docs + community recipes and covered by a simulated-hardware test — not a real Radeon run. If something misbehaves on your card, open an issue with the install-log `[hw]` line, `torch.cuda.is_available()` + device name, and `Get-CimInstance Win32_VideoController | Select Name,DriverVersion` output.
 > 🛡️ **Antivirus:** ROCm nightly DLLs get flagged heuristically. If your AV quarantines files in the install folder, add an exclusion, restore, then run **Verify GPU compute** before generating.
+>
+> 🛡️ **Triton JIT files + antivirus (Bitdefender "Gen:Variant.Ulise"-style reports).** Triton — the compiler behind sage/sage2 attention, FP8 kernels and the VAE fusions — compiles small helper extensions (`cuda_utils`, `__triton_launcher`) on your machine when a generation first needs them: unsigned, freshly built each time, one unique hash per build. Antivirus heuristics distrust exactly that pattern and sometimes quarantine the file *mid-compile*, which can break the next generation with a `PermissionError` or a silent sage→SDPA fallback. The launcher pins Triton's compiled-output cache to **`<data folder>\triton-cache`** (e.g. `C:\Wan2GP\triton-cache`) — add that single folder to your AV's exclusions instead of `%TEMP%`-wide rules. A one-off detection inside a `%TEMP%\tmpXXXX` folder is the transient build step; after whitelisting, it won't recur. **Manage → Troubleshooting → Clear Triton cache** clears both the pinned folder and the legacy `~\.triton` (renamed to backup) if a compile ever left something half-written. **Repair wheel** (same panel) force-reinstalls the exact installed Triton build when Triton itself is damaged — it fixes corrupt files, not antivirus verdicts. **Roll back to post24** (same panel) is the same reinstall-and-clear pinned to triton-windows 3.6.0.post24; a later setup run floats forward again on upstream's range spec.
+> If your antivirus blocks fresh Triton builds: rolling back is worth trying as a diagnostic — some engines react per-build, so post24 may get a different verdict than post26 on your box. If the verdict changes, report which build your AV accepts (with the detection name): per-build evidence is what gets false-positive reports fixed for everyone. This is not a cure — identical patterns get identical verdicts, and first compiles after any switch may toast once before going warm.
+>
+> The JIT compiler matters too, not just its output. Without a VS shell in its environment, Triton builds its stubs with the wheel-bundled unsigned TinyCC, and behavioral AV engines can block an unsigned interpreter spawning an unsigned compiler outright (Bitdefender stopped python.exe from running tcc.exe mid-generation) — which fails every sage/sage2 generation, not just one hash. On NVIDIA/Intel/CPU launches the launcher now points Triton at the installed signed MSVC cl.exe instead (CC plus INCLUDE and LIB from the newest VS 2022/2019 plus Windows 10 SDK found via vswhere; set only when you have not set your own toolchain, so a VsDevCmd shell always wins). AMD launches are excluded on purpose: TheRock's own clang-cl must stay authoritative there. The console logs which compiler was pinned on every launch. Temporary by design: the whole MSVC pin exists only because Triton JIT-compiles unsigned helpers at runtime. If upstream removes that need (prebuilt or signed JIT output), the pin retires and TinyCC-first becomes the only path again — until then this is the workaround, documented as such, with upstream TinyCC kept as the out-of-box default. No MSVC on the box? Everything still works exactly as before (bundled TinyCC fallback, with the same AV exposure as before — nothing breaks, the pin just can't apply); the console says so and points here. To get the pin, install the free VS 2022 Build Tools with the C++ workload, then relaunch:
+
+`winget install -e --id Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --passive"`
+
+Or press **Install MSVC Build Tools** in Manage → Troubleshooting (same Microsoft installer, guided, with a Recheck button).
+
+**Triton compiler choice (Settings → Desktop).** Out-of-box is pure upstream TinyCC (no pin — the cl.exe pin is a workaround and stays opt-in). `Auto` pins signed MSVC when installed, else TinyCC; `MSVC cl.exe` forces the pin (warns when missing). Takes effect on the next WanGP launch (it is launch-time environment, unlike the window mode which applies live).
 
 
 ## Manage → Auto-Tune
@@ -385,7 +408,7 @@ Two caveats if you override video to `dynamic`: it **only engages with the MMGP 
 
 ### Settings written by older Auto-Tune tiers
 
-`video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `int8_kernels` (Auto / Comfy Kitchen / Triton / Disabled — upstream v13.13 replacement for the old numeric toggle), `kernel_precision` (fast approximate / strict), `vae_config` (always Auto: 16GB+ / 8GB+ / 6GB+ presets), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** forces P5 for hardware where the recommendation still crashes.
+`video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `text_encoder_quantization` (bf16 / int8), `int8_kernels` (Auto / WGPKernels / Comfy Kitchen / Triton / Disabled), `fp8_kernels` (Auto / CUDA / Triton / PyTorch), `kernel_precision` (fast approximate / strict), `vae_config` (always Auto: 16GB+ / 8GB+ / 6GB+ presets), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** forces P5 for hardware where the recommendation still crashes. Audio models now default to **P3** (upstream's "recommended for audio": P4 + Dynamic Preload), not P3+.
 
 
 ## Manage → Plugins
