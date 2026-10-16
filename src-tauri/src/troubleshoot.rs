@@ -668,36 +668,76 @@ pub fn troubleshoot_triton_test() -> serde_json::Value {
     }
 }
 
-/// Upstream Sage diagnostic step 2: clear `%USERPROFILE%\.triton` (rename, not
-/// delete — locked files can't block a rename-away). Optional SDPA fallback
-/// merges `--attention sdpa` into launchArgs so the next boot works.
+/// Upstream Sage diagnostic step 2: clear the Triton JIT cache (rename, not
+/// delete — locked files can't block a rename-away). Two homes are cleared:
+/// the historical default `%USERPROFILE%\.triton` AND the launcher-pinned
+/// `<data>\triton-cache` (`TRITON_CACHE_DIR`, whichever exists). Optional
+/// SDPA fallback merges `--attention sdpa` into launchArgs so the next boot
+/// works.
 #[tauri::command]
 pub fn troubleshoot_triton_clear(fallback_sdpa: Option<bool>) -> Result<serde_json::Value, String> {
-    let cache = home_dir().join(".triton");
-    let cleared;
-    let mut backup: Option<String> = None;
-    if cache.exists() {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let bak = home_dir().join(format!(".triton.bak-{stamp}"));
-        match std::fs::rename(&cache, &bak) {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Rename-or-remove, shared by both cache homes. Ok(backup-path) on
+    // rename (the cache can be restored manually), Ok(None) when removed
+    // in place, Err when files are locked — never partial success.
+    let clear_dir = |dir: &std::path::Path| -> std::result::Result<Option<String>, ()> {
+        let name = dir
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("triton-cache");
+        let bak = dir
+            .parent()
+            .unwrap_or(&home_dir())
+            .join(format!("{name}.bak-{stamp}"));
+        match std::fs::rename(dir, &bak) {
             Ok(()) => {
-                cleared = true;
-                backup = Some(bak.to_string_lossy().to_string());
+                let p = bak.to_string_lossy().to_string();
+                Ok(Some(p))
             }
             Err(_) => {
-                // Rename failed (locked?) — best-effort remove instead.
-                if std::fs::remove_dir_all(&cache).is_ok() {
-                    cleared = true;
+                // Rename failed (locked by AV?) — best-effort remove instead.
+                if std::fs::remove_dir_all(dir).is_ok() {
+                    Ok(None)
                 } else {
-                    return Err("Could not clear .triton cache (files locked by a running Python?) — stop Wan2GP and retry".into());
+                    Err(())
                 }
             }
         }
-    } else {
-        cleared = true; // nothing there = nothing stale
+    };
+    // Target list: legacy default first (reported as `backup`, the panel's
+    // known field), then the pinned dir. Backups land beside each cache,
+    // never inside it.
+    let legacy = home_dir().join(".triton");
+    let pinned = crate::launch::triton_cache_dir_for(&get_data_dir());
+    let mut targets = vec![legacy.clone()];
+    if pinned.exists() {
+        targets.push(pinned);
+    }
+    let mut cleared = true; // nothing present anywhere = nothing stale
+    let mut backup: Option<String> = None;
+    for (i, dir) in targets.iter().enumerate() {
+        if !dir.is_dir() {
+            continue;
+        }
+        match clear_dir(dir) {
+            Ok(b) => {
+                if i == 0 {
+                    backup = b;
+                }
+                let _ = crate::base::push_log(
+                    &format!("[i] cleared Triton cache: {}\n", dir.to_string_lossy()),
+                    "setup",
+                );
+            }
+            Err(()) => {
+                return Err(
+                    "Could not clear the Triton cache (files locked by a running Python?) — stop Wan2GP and retry".into(),
+                );
+            }
+        }
     }
     let mut launch_args: Option<String> = None;
     if fallback_sdpa == Some(true) {

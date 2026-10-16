@@ -902,6 +902,27 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             reconcile_non_amd_session_env(&emit);
         }
     }
+    // Triton JIT cache pin (see triton_cache_dir_for): set-if-absent so an
+    // explicit user override stays authoritative. The folder is created here
+    // (warn-only — creation failure leaves Triton's default location); the
+    // first launch after this change recompiles the old ~/.triton cache once.
+    if std::env::var("TRITON_CACHE_DIR").is_ok() {
+        emit("[i] TRITON_CACHE_DIR already set outside the launcher — leaving it untouched\n");
+    } else {
+        let dir = triton_cache_dir_for(&get_data_dir());
+        match std::fs::create_dir_all(&dir) {
+            Ok(()) => {
+                std::env::set_var("TRITON_CACHE_DIR", &dir);
+                emit(&format!(
+                    "[i] Triton JIT cache pinned to {} (one stable folder to add to your antivirus exclusions — Triton's compiled helpers there are false-positive targets)\n",
+                    dir.to_string_lossy()
+                ));
+            }
+            Err(e) => emit(&format!(
+                "[i] could not create the pinned Triton cache folder ({e}) — Triton keeps its default cache location\n"
+            )),
+        }
+    }
     std::env::set_var("PYTHONUNBUFFERED", "1");
     std::env::set_var("PYTHONUTF8", "1");
     std::env::set_var("PYTHONIOENCODING", "utf-8");
@@ -1895,6 +1916,19 @@ pub async fn popout_webview(
     Ok(res)
 }
 
+/// Pure path derivation for the launcher-pinned Triton JIT cache:
+/// `<data dir>\triton-cache` (e.g. `C:\Wan2GP\triton-cache`). Triton's
+/// compiled helpers (`cuda_utils`, `__triton_launcher`) are unsigned .pyd
+/// files with a fresh hash every build — heuristic antivirus engines
+/// (e.g. Bitdefender `Gen:Variant.Ulise`) block them mid-compile, which can
+/// kill generation at the first kernel launch. Pinning the cache dir gives
+/// every AV exclusion ONE known path instead of `%TEMP%` /
+/// `%USERPROFILE%\.triton` roulette. Pure + unit-tested.
+pub(crate) const TRITON_CACHE_SUBDIR: &str = "triton-cache";
+pub(crate) fn triton_cache_dir_for(data_dir: &Path) -> PathBuf {
+    data_dir.join(TRITON_CACHE_SUBDIR)
+}
+
 #[cfg(test)]
 mod launch_args_tests {
     use super::*;
@@ -1932,6 +1966,18 @@ mod launch_args_tests {
             "python.exe -m pip list",
             pre
         ));
+    }
+    #[test]
+    fn triton_cache_pin_targets_one_stable_folder() {
+        use super::triton_cache_dir_for;
+        let d = triton_cache_dir_for(Path::new(r"C:\Wan2GP"));
+        assert_eq!(d, Path::new(r"C:\Wan2GP\triton-cache"));
+        // Non-default data dir (D: pick) resolves inside it, never HOME.
+        let d2 = triton_cache_dir_for(Path::new(r"D:\Tools\Wan2GP"));
+        assert_eq!(d2, Path::new(r"D:\Tools\Wan2GP\triton-cache"));
+        assert!(!d2
+            .to_string_lossy()
+            .contains("AppData\\Local\\Temp"));
     }
     #[test]
     fn close_sweep_guard_skips_zero_and_self() {

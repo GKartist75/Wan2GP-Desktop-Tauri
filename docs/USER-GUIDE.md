@@ -361,6 +361,8 @@ Only RTX 20–50 / AMD rows are shown above; GTX 10xx/16xx stay on Python `3.10.
 
 > ⚠️ **AMD note from the maintainer:** the AMD path is built from upstream docs + community recipes and covered by a simulated-hardware test — not a real Radeon run. If something misbehaves on your card, open an issue with the install-log `[hw]` line, `torch.cuda.is_available()` + device name, and `Get-CimInstance Win32_VideoController | Select Name,DriverVersion` output.
 > 🛡️ **Antivirus:** ROCm nightly DLLs get flagged heuristically. If your AV quarantines files in the install folder, add an exclusion, restore, then run **Verify GPU compute** before generating.
+>
+> 🛡️ **Triton JIT files + antivirus (Bitdefender "Gen:Variant.Ulise"-style reports).** Triton — the compiler behind sage/sage2 attention, FP8 kernels and the VAE fusions — compiles small helper extensions (`cuda_utils`, `__triton_launcher`) on your machine when a generation first needs them: unsigned, freshly built each time, one unique hash per build. Antivirus heuristics distrust exactly that pattern and sometimes quarantine the file *mid-compile*, which can break the next generation with a `PermissionError` or a silent sage→SDPA fallback. The launcher pins Triton's compiled-output cache to **`<data folder>\triton-cache`** (e.g. `C:\Wan2GP\triton-cache`) — add that single folder to your AV's exclusions instead of `%TEMP%`-wide rules. A one-off detection inside a `%TEMP%\tmpXXXX` folder is the transient build step; after whitelisting, it won't recur. **Manage → Troubleshooting → Clear Triton cache** clears both the pinned folder and the legacy `~\.triton` (renamed to backup) if a compile ever left something half-written.
 
 
 ## Manage → Auto-Tune

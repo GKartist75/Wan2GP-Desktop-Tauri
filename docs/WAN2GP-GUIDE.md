@@ -689,7 +689,7 @@ flowchart TD
 | OOM load | Smaller model, quant on, profile 4/5, `--preload 0` |
 | OOM gen | Fewer frames, lower res, clear cache between gens |
 | Slow | `--compile` (needs Triton), `sage2` (30/40/50), `--teacache 2.0`, profile 3 |
-| Sage fail | `import triton` version, wipe `~/.triton`, fallback `--attention sdpa` |
+| Sage fail | `import triton` version, wipe Triton cache (`~/.triton` + pinned `triton-cache` — Manage → Troubleshooting), fallback `--attention sdpa` |
 | LoRA missing/incompat | Right family folder, Refresh, `--check-loras`, 1.3B vs 14B, t2v vs i2v |
 | VACE poor | Skip Layer Guidance (CFG only), longer prompt, 30+ steps, mask check |
 | Port busy | `--server-port 7861` or kill `:7860` holder |
