@@ -2332,8 +2332,9 @@ pub(crate) fn msvc_toolchain_cc() -> Option<String> {
 }
 
 /// User-facing Triton JIT compiler choice (Settings → Desktop →
-/// `tritonCompiler` in desktop-config.json). Auto is the default: signed
-/// MSVC when installed, else the upstream TinyCC fallback.
+/// `tritonCompiler` in desktop-config.json). Out-of-box (unset) is pure
+/// upstream TinyCC — the MSVC pin is a workaround and stays opt-in via
+/// explicit "auto" (MSVC when installed) or "msvc" (forced).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TritonCompilerMode {
     Auto,
@@ -2351,14 +2352,16 @@ pub(crate) fn triton_compiler_normalize(s: &str) -> TritonCompilerMode {
     }
 }
 
-/// Persisted choice, Auto when unset. Read at each launch (cheap JSON read).
+/// Persisted choice. UNSET means pure upstream (TinyCC) — the cl.exe pin is
+/// a workaround and must be opt-in, never default-on. An explicit "auto"
+/// value (chosen in the menu) is the smart mode: MSVC when installed.
 pub(crate) fn triton_compiler_mode() -> TritonCompilerMode {
     let cfg = load_config_value();
-    let s = cfg
-        .get("tritonCompiler")
-        .and_then(|v| v.as_str())
-        .unwrap_or("auto");
-    triton_compiler_normalize(s)
+    let s = cfg.get("tritonCompiler").and_then(|v| v.as_str());
+    match s {
+        None => TritonCompilerMode::TinyCc,
+        Some(v) => triton_compiler_normalize(v),
+    }
 }
 
 /// Persist the Triton JIT compiler choice. Takes effect on the NEXT launch

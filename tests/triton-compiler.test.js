@@ -32,5 +32,5 @@ test('the tab persists the pick and reflects it on open', () => {
   assert.match(tab, /\$\("tritonCompilerSelect"\)\?\.addEventListener\("change"/)
   assert.match(tab, /setTritonCompiler\(el\.value\)/)
   assert.match(tab, /applies on next WanGP launch/i, 'the toast must not promise live apply')
-  assert.match(tab, /cfg\.tritonCompiler \|\| "auto"/, 'unset means auto')
+  assert.match(tab, /cfg\.tritonCompiler \|\| "tinycc"/, 'unset means pure upstream')
 })
