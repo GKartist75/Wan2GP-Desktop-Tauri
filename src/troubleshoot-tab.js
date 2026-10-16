@@ -302,6 +302,43 @@ async function tsTritonClear(fallback) {
 }
 $("tsTritonClearBtn")?.addEventListener("click", () => tsTritonClear(false));
 $("tsTritonSdpaBtn")?.addEventListener("click", () => tsTritonClear(true));
+// Repair a damaged Triton install (quarantined/half-written files): exact
+// build force-reinstalled, both caches cleared, import verified. Repair, not
+// AV strategy — identical bytes mean identical verdicts.
+$("tsTritonRepairBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  this.disabled = true;
+  try {
+    const choice = await window.w2gp.confirmDialog({
+      title: "Repair Triton wheel?",
+      message: "Force-reinstalls the exact installed Triton build and clears the JIT cache.",
+      detail:
+        "Runs pip install --force-reinstall --no-deps on the installed triton build (torch and everything else untouched — only Triton's own files are replaced), clears both JIT cache homes (renamed to backup), then verifies the import. Takes a minute or two. Use when Triton itself is damaged; it does not change antivirus verdicts. Proceed?",
+    });
+    if (choice !== "ok" && choice !== 0) {
+      tsStatus("tsTritonStatus", "Cancelled.");
+      return;
+    }
+    tsStatus("tsTritonStatus", "Reinstalling Triton…");
+    const r = await window.w2gp.tsTritonRepair();
+    if (r && r.importVersion) {
+      tsStatus("tsTritonStatus", "✓ Repaired " + r.dist + " " + r.version + " (import " + r.importVersion + ").");
+      appendLog("[✓] Triton repaired: " + r.dist + " " + r.version);
+    } else {
+      tsStatus(
+        "tsTritonStatus",
+        "✓ Reinstalled " + ((r && r.dist) || "triton") + " but the import check failed — see console.",
+      );
+      appendLog("[!] Triton reinstalled but import failed — see console output");
+    }
+    showToast("Triton repair finished — see status");
+  } catch (e) {
+    tsStatus("tsTritonStatus", "✗ " + errText(e));
+    showToast("✗ " + errText(e));
+  } finally {
+    this.disabled = false;
+  }
+});
 
 // ── MSVC Build Tools (signed compiler for Triton JIT) ──
 // Status on open: found → pin applies on next launch; missing → TinyCC

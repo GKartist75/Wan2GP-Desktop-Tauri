@@ -674,8 +674,11 @@ pub fn troubleshoot_triton_test() -> serde_json::Value {
 /// `<data>\triton-cache` (`TRITON_CACHE_DIR`, whichever exists). Optional
 /// SDPA fallback merges `--attention sdpa` into launchArgs so the next boot
 /// works.
-#[tauri::command]
-pub fn troubleshoot_triton_clear(fallback_sdpa: Option<bool>) -> Result<serde_json::Value, String> {
+/// Rename-or-remove both Triton JIT cache homes (legacy `~\.triton` first,
+/// then the launcher-pinned dir when present). Shared by Clear and Repair.
+/// Returns the legacy backup path (the panel's known field). Errors when
+/// files are locked — never partial success.
+fn clear_triton_caches() -> Result<Option<String>, String> {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -716,7 +719,6 @@ pub fn troubleshoot_triton_clear(fallback_sdpa: Option<bool>) -> Result<serde_js
     if pinned.exists() {
         targets.push(pinned);
     }
-    let mut cleared = true; // nothing present anywhere = nothing stale
     let mut backup: Option<String> = None;
     for (i, dir) in targets.iter().enumerate() {
         if !dir.is_dir() {
@@ -739,6 +741,14 @@ pub fn troubleshoot_triton_clear(fallback_sdpa: Option<bool>) -> Result<serde_js
             }
         }
     }
+    Ok(backup)
+}
+
+#[tauri::command]
+pub fn troubleshoot_triton_clear(fallback_sdpa: Option<bool>) -> Result<serde_json::Value, String> {
+    // `cleared` is always true: clear_triton_caches errors instead of
+    // reporting partial success, and absent caches mean nothing stale.
+    let backup = clear_triton_caches()?;
     let mut launch_args: Option<String> = None;
     if fallback_sdpa == Some(true) {
         let mut dc = load_config_value();
@@ -758,8 +768,104 @@ pub fn troubleshoot_triton_clear(fallback_sdpa: Option<bool>) -> Result<serde_js
         launch_args = Some(merged);
     }
     Ok(
-        serde_json::json!({"ok": true, "success": true, "cleared": cleared, "backup": backup, "launchArgs": launch_args}),
+        serde_json::json!({"ok": true, "success": true, "cleared": true, "backup": backup, "launchArgs": launch_args}),
     )
+}
+
+/// Which installed Triton dist to repair, from `pip show` output: the
+/// `triton-windows` build when present, else plain `triton`. (dist, version).
+/// Floating to latest is deliberately NOT offered — a major drift would
+/// break upstream parity. Pure + unit-tested.
+pub(crate) fn parse_triton_pip_show(out: &str) -> Option<(String, String)> {
+    let mut found: Vec<(String, String)> = Vec::new();
+    let mut name: Option<String> = None;
+    for line in out.lines() {
+        let t = line.trim();
+        if let Some(n) = t.strip_prefix("Name:") {
+            name = Some(n.trim().to_string());
+        } else if let Some(v) = t.strip_prefix("Version:") {
+            if let Some(n) = name.take() {
+                found.push((n, v.trim().to_string()));
+            }
+        }
+    }
+    found
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case("triton-windows"))
+        .or_else(|| found.iter().find(|(n, _)| n.eq_ignore_ascii_case("triton")))
+        .cloned()
+}
+
+/// Exact reinstall spec for the detected dist (`triton-windows==3.6.0.post26`).
+/// `--force-reinstall --no-deps`: Triton's own files are replaced, torch and
+/// everything else stay untouched. Pure + unit-tested.
+pub(crate) fn triton_reinstall_spec(dist: &str, version: &str) -> String {
+    format!("{dist}=={version}")
+}
+
+/// Repair a damaged Triton install: force-reinstall the EXACT installed
+/// build, clear both JIT cache homes, verify the import. For corrupted
+/// installs (quarantined or half-written files) — it does not change
+/// antivirus verdicts, which key on the (identical) rebuilt bytes.
+#[tauri::command]
+pub fn troubleshoot_triton_repair() -> Result<serde_json::Value, String> {
+    let Some(py) = active_python() else {
+        return Err("No Python environment installed — run Install first".into());
+    };
+    let py_s = py.to_string_lossy().to_string();
+    let show = silent_command(&py_s)
+        .args(["-m", "pip", "show", "triton-windows", "triton"])
+        .output()
+        .map_err(|e| format!("pip show failed: {e}"))?;
+    let show_text = String::from_utf8_lossy(&show.stdout).to_string();
+    let Some((dist, version)) = parse_triton_pip_show(&show_text) else {
+        return Err("No Triton distribution installed in the active env — run Install first".into());
+    };
+    let spec = triton_reinstall_spec(&dist, &version);
+    let _ = crate::base::push_log(
+        &format!("[*] Repairing Triton: pip install --force-reinstall --no-deps {spec}…\n"),
+        "setup",
+    );
+    let inst = silent_command(&py_s)
+        .args([
+            "-m",
+            "pip",
+            "install",
+            "--force-reinstall",
+            "--no-deps",
+            &spec,
+        ])
+        .output()
+        .map_err(|e| format!("pip reinstall failed to start: {e}"))?;
+    if !inst.status.success() {
+        return Err(format!(
+            "pip reinstall failed: {}",
+            String::from_utf8_lossy(&inst.stderr).chars().take(500).collect::<String>()
+        ));
+    }
+    let backup = clear_triton_caches()?;
+    let imp = silent_command(&py_s)
+        .args(["-c", "import triton; print(triton.__version__)"])
+        .output();
+    let import_version = match imp {
+        Ok(o) if o.status.success() => Some(
+            String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        ),
+        _ => None,
+    };
+    let _ = crate::base::push_log(
+        &format!(
+            "[✓] Triton repaired: {spec}, cache cleared, import {}\n",
+            import_version.as_deref().unwrap_or("FAILED")
+        ),
+        "setup",
+    );
+    Ok(serde_json::json!({
+        "ok": true, "success": true,
+        "dist": dist, "version": version,
+        "cleared": true, "backup": backup,
+        "importVersion": import_version,
+    }))
 }
 
 /// MSVC C++ toolchain status for the Triton JIT compiler pin (see
@@ -1021,6 +1127,29 @@ pub fn troubleshoot_vram_diag(action: Option<String>) -> serde_json::Value {
 #[cfg(test)]
 mod troubleshoot_tests {
     use super::*;
+    #[test]
+    fn triton_repair_prefers_windows_dist_and_pins_exact() {
+        let both = "Name: triton-windows\nVersion: 3.6.0.post26\nSummary: Triton\n---\nName: triton\nVersion: 3.6.0\nSummary: Triton\n";
+        assert_eq!(
+            parse_triton_pip_show(both),
+            Some(("triton-windows".to_string(), "3.6.0.post26".to_string()))
+        );
+        // Plain triton alone still repairs (never None when Triton exists).
+        let plain = "Name: triton\nVersion: 3.6.0\nLocation: x\n";
+        assert_eq!(
+            parse_triton_pip_show(plain),
+            Some(("triton".to_string(), "3.6.0".to_string()))
+        );
+        // Nothing Triton-shaped → None (caller errors "not installed").
+        assert_eq!(parse_triton_pip_show("Name: torch\nVersion: 2.10.0\n"), None);
+        assert_eq!(parse_triton_pip_show(""), None);
+        // The spec pins the detected build exactly — floating to latest
+        // would break upstream parity.
+        assert_eq!(
+            triton_reinstall_spec("triton-windows", "3.6.0.post26"),
+            "triton-windows==3.6.0.post26"
+        );
+    }
     #[test]
     fn vs_buildtools_offer_is_official_and_complete() {
         // Evergreen Microsoft short link, exact bootstrapper binary.
