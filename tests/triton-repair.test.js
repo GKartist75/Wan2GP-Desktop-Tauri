@@ -20,10 +20,16 @@ test('the Triton section carries the repair button', () => {
   assert.match(html, /Repair wheel/)
 })
 
-test('the w2gp bridge maps the repair command', () => {
-  assert.match(bridge, /tsTritonRepair:\s*\(\)\s*=>\s*call\("troubleshoot_triton_repair"\)/)
+test('the w2gp bridge maps the repair command with optional version', () => {
+  assert.match(bridge, /tsTritonRepair:\s*\(v\)\s*=>\s*call\("troubleshoot_triton_repair", \{ version: v \?\? null \}\)/)
 })
 
+test('the rollback button pins the previous known-good build', () => {
+  assert.match(html, /id="tsTritonRollbackBtn"/)
+  assert.match(tab, /TRITON_ROLLBACK_VERSION = "3\.6\.0\.post24"/, 'one UI default to update when the line moves')
+  assert.match(tab, /tsTritonRepair\(TRITON_ROLLBACK_VERSION\)/)
+  assert.match(tab, /floats forward again/, 'must warn the rollback does not pin')
+})
 test('the tab confirms, invokes, and reports import state', () => {
   assert.match(tab, /\$\("tsTritonRepairBtn"\)\?\.addEventListener\("click"/)
   assert.match(tab, /confirmDialog\(\{/, 'a minute-long env reinstall needs an explicit confirm')

@@ -798,17 +798,28 @@ pub(crate) fn parse_triton_pip_show(out: &str) -> Option<(String, String)> {
 
 /// Exact reinstall spec for the detected dist (`triton-windows==3.6.0.post26`).
 /// `--force-reinstall --no-deps`: Triton's own files are replaced, torch and
-/// everything else stay untouched. Pure + unit-tested.
+/// everything else stay untouched. Also builds rollback specs
+/// (`triton-windows==3.6.0.post24`). Pure + unit-tested.
 pub(crate) fn triton_reinstall_spec(dist: &str, version: &str) -> String {
     format!("{dist}=={version}")
 }
 
+/// A repair version must be a single pip token — never empty, never
+/// whitespace (argv, not shell, so this is hygiene, not injection defense;
+/// pip itself rejects anything it can't resolve). Pure + unit-tested.
+pub(crate) fn valid_repair_version(v: &str) -> bool {
+    !v.is_empty() && v.split_whitespace().count() == 1
+}
+
 /// Repair a damaged Triton install: force-reinstall the EXACT installed
-/// build, clear both JIT cache homes, verify the import. For corrupted
-/// installs (quarantined or half-written files) — it does not change
-/// antivirus verdicts, which key on the (identical) rebuilt bytes.
+/// build (or the requested older one — the Roll back button), clear both
+/// JIT cache homes, verify the import. For corrupted installs
+/// (quarantined or half-written files) — it does not change antivirus
+/// verdicts, which key on the (identical) rebuilt bytes. Rolling back does
+/// not pin: the next setup run floats forward again on upstream's `-U`
+/// range spec.
 #[tauri::command]
-pub fn troubleshoot_triton_repair() -> Result<serde_json::Value, String> {
+pub fn troubleshoot_triton_repair(version: Option<String>) -> Result<serde_json::Value, String> {
     let Some(py) = active_python() else {
         return Err("No Python environment installed — run Install first".into());
     };
@@ -818,10 +829,21 @@ pub fn troubleshoot_triton_repair() -> Result<serde_json::Value, String> {
         .output()
         .map_err(|e| format!("pip show failed: {e}"))?;
     let show_text = String::from_utf8_lossy(&show.stdout).to_string();
-    let Some((dist, version)) = parse_triton_pip_show(&show_text) else {
+    let Some((dist, detected)) = parse_triton_pip_show(&show_text) else {
         return Err("No Triton distribution installed in the active env — run Install first".into());
     };
-    let spec = triton_reinstall_spec(&dist, &version);
+    // Explicit older build (Roll back button) or the detected one. Either
+    // way an exact == pin — never floating.
+    let want = version.unwrap_or_default();
+    let want = if want.trim().is_empty() {
+        detected.clone()
+    } else {
+        if !valid_repair_version(&want) {
+            return Err("Bad Triton version — single version token only (e.g. 3.6.0.post24)".into());
+        }
+        want.trim().to_string()
+    };
+    let spec = triton_reinstall_spec(&dist, &want);
     let _ = crate::base::push_log(
         &format!("[*] Repairing Triton: pip install --force-reinstall --no-deps {spec}…\n"),
         "setup",
@@ -862,7 +884,7 @@ pub fn troubleshoot_triton_repair() -> Result<serde_json::Value, String> {
     );
     Ok(serde_json::json!({
         "ok": true, "success": true,
-        "dist": dist, "version": version,
+        "dist": dist, "version": want, "previous": detected,
         "cleared": true, "backup": backup,
         "importVersion": import_version,
     }))
@@ -1128,8 +1150,20 @@ pub fn troubleshoot_vram_diag(action: Option<String>) -> serde_json::Value {
 mod troubleshoot_tests {
     use super::*;
     #[test]
-    fn triton_repair_prefers_windows_dist_and_pins_exact() {
-        let both = "Name: triton-windows\nVersion: 3.6.0.post26\nSummary: Triton\n---\nName: triton\nVersion: 3.6.0\nSummary: Triton\n";
+    fn triton_rollback_spec_and_version_gate() {
+        // Rollback builds the same exact-pin spec for the older build.
+        assert_eq!(
+            triton_reinstall_spec("triton-windows", "3.6.0.post24"),
+            "triton-windows==3.6.0.post24"
+        );
+        // Single tokens pass; empty/whitespace fail closed.
+        assert!(valid_repair_version("3.6.0.post24"));
+        assert!(!valid_repair_version(""));
+        assert!(!valid_repair_version("3.6.0 post24"));
+    }
+
+    #[test]
+    fn triton_repair_prefers_windows_dist_and_pins_exact() {        let both = "Name: triton-windows\nVersion: 3.6.0.post26\nSummary: Triton\n---\nName: triton\nVersion: 3.6.0\nSummary: Triton\n";
         assert_eq!(
             parse_triton_pip_show(both),
             Some(("triton-windows".to_string(), "3.6.0.post26".to_string()))

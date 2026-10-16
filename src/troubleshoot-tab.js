@@ -302,6 +302,47 @@ async function tsTritonClear(fallback) {
 }
 $("tsTritonClearBtn")?.addEventListener("click", () => tsTritonClear(false));
 $("tsTritonSdpaBtn")?.addEventListener("click", () => tsTritonClear(true));
+// Previous known-good 3.6.x for the Roll back button. UI default only —
+// the backend takes any single-token version, so when the line moves this
+// is the one place to update (button label + title + call below).
+const TRITON_ROLLBACK_VERSION = "3.6.0.post24";
+$("tsTritonRollbackBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  this.disabled = true;
+  try {
+    const choice = await window.w2gp.confirmDialog({
+      title: "Roll back Triton to 3.6.0.post24?",
+      message: "Reinstalls the previous known-good Triton build and clears the JIT cache.",
+      detail:
+        "Same reinstall-and-clear as Repair, pinned to triton-windows 3.6.0.post24 instead of the installed build (torch untouched, import verified after). A later setup run floats forward again on upstream's -U range spec — use Repair to preserve whatever is installed then. First generations recompile (possible one-off antivirus toast), then stay warm. Proceed?",
+    });
+    if (choice !== "ok" && choice !== 0) {
+      tsStatus("tsTritonStatus", "Cancelled.");
+      return;
+    }
+    tsStatus("tsTritonStatus", "Rolling back Triton…");
+    const r = await window.w2gp.tsTritonRepair(TRITON_ROLLBACK_VERSION);
+    if (r && r.importVersion) {
+      tsStatus(
+        "tsTritonStatus",
+        "✓ Rolled back " + r.dist + " " + (r.previous || "?") + " → " + r.version + " (import " + r.importVersion + ").",
+      );
+      appendLog("[✓] Triton rolled back: " + r.dist + " " + (r.previous || "?") + " → " + r.version);
+    } else {
+      tsStatus(
+        "tsTritonStatus",
+        "✓ Reinstalled " + ((r && r.dist) || "triton") + " but the import check failed — see console.",
+      );
+      appendLog("[!] Triton rollback installed but import failed — see console output");
+    }
+    showToast("Triton rollback finished — see status");
+  } catch (e) {
+    tsStatus("tsTritonStatus", "✗ " + errText(e));
+    showToast("✗ " + errText(e));
+  } finally {
+    this.disabled = false;
+  }
+});
 // Repair a damaged Triton install (quarantined/half-written files): exact
 // build force-reinstalled, both caches cleared, import verified. Repair, not
 // AV strategy — identical bytes mean identical verdicts.
