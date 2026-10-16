@@ -58,10 +58,16 @@ corrected four stale entries.
   `—`.
 - **Triton pins are stated, not "latest":** `3.2.x` (RTX 20), `3.6.x`
   (RTX 30–50), `3.7.x` (AMD), matching upstream `components.triton` labels.
-- **bitsandbytes is optional.** It is absent from upstream's `requirements.txt`,
-  `setup_config.json`, `setup.py` and plugin requirements (WanGP falls back to a
-  dequantized path when it is missing), so the guides no longer promise an
-  installed `0.49.2`.
+- **bitsandbytes is an optional, manual wheel.** It is absent from upstream's
+  `requirements.txt`, `setup_config.json`, `setup.py` and plugin requirements,
+  but `docs/INSTALLATION.md` documents it as an optional component
+  (`bitsandbytes==0.49.2`). The guides keep that pin, now labelled optional, and
+  the dashboard's one-click **+** installs exactly `0.49.2` instead of whatever
+  pip resolves today.
+- **VAE control renamed to upstream's "VAE Tiling".** The Auto-Tune memory
+  dropdown mirrored `vae_config` but used the old "VAE Config" label; it now
+  matches `plugins/configuration/plugin.py` (0 auto / 16GB+ / 8GB+ / 6GB+
+  presets).
 - **Sparge Attn spec row shows a version, not a raw tag.** The dashboard read
   `status.profile.sparge` straight from `setup_config.json`, printing `v010_cu13`
   on RTX 30–50 — and, when a profile has no Sparge, the GPU profile name

@@ -346,7 +346,7 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 | **Nunchaku** | `1.2.1` | — | SVD-quantized (NF4/SVDQ) runtime |
 | **GGUF llama.cpp** | CUDA build (`cu130` or `cu128` per env) | HIP build, experimental | 4-bit GGUF kernels |
 | **LightX2V** | RTX 50xx only | — | FP4 kernels (sm120+) |
-| **bitsandbytes** | optional — *not* in WanGP's default set | — | 8-bit / NF4 dequant (WanGP falls back when absent) |
+| **bitsandbytes NF4** | `0.49.2` (optional — *not* installed by the default set) | — | 8-bit / NF4 dequant (one-click install from the dashboard, pinned) |
 
 Only RTX 20–50 / AMD rows are shown above; GTX 10xx/16xx stay on Python `3.10.9`
 + torch `2.7.1`/CUDA 12.8 with no Triton/Sage/Flash wheels.

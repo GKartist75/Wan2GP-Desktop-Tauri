@@ -164,6 +164,10 @@ async function refreshDashboard() {
         "spas_sage_attn",
         "flash-attn",
       ];
+      // Upstream INSTALLATION.md documents an exact optional pin for these;
+      // install that version instead of whatever pip resolves today. The AMD
+      // gate still sees the bare dist name (it strips the version pin).
+      var pkgPin = { bitsandbytes: "bitsandbytes==0.49.2" };
       function setSpec(specId, dotId, val, pkgName) {
         const el = $(specId);
         if (el) el.textContent = val || "—";
@@ -195,12 +199,13 @@ async function refreshDashboard() {
             var btn = document.createElement("button");
             btn.className = "pkg-install-btn";
             btn.textContent = "+";
-            btn.title = "Install " + pkgName;
+            var instSpec = pkgPin[pkgName] || pkgName;
+            btn.title = "Install " + instSpec;
             btn.addEventListener("click", async function (ev) {
               ev.stopPropagation();
               this.disabled = true;
               this.textContent = "...";
-              var res = await window.w2gp.installPackage(pkgName);
+              var res = await window.w2gp.installPackage(instSpec);
               if (res && res.success) {
                 this.textContent = "✓";
                 this.classList.add("done");
