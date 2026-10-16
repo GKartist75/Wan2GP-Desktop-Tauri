@@ -328,6 +328,7 @@ pub fn run() {
             troubleshoot::troubleshoot_triton_clear,
             troubleshoot::troubleshoot_msvc_status,
             troubleshoot::troubleshoot_msvc_install,
+            troubleshoot::troubleshoot_triton_repair,
             launch::set_triton_compiler,
             troubleshoot::troubleshoot_gpu_compute,
             troubleshoot::troubleshoot_known_good,

@@ -538,6 +538,7 @@
           <p class="token-hint">Upstream Sage diagnostic: test the Triton import, clear a stale Triton cache (<code>%USERPROFILE%\.triton</code> and the launcher's pinned <code>&lt;data&gt;\triton-cache</code> — renamed to backup, never deleted blind), optionally fall back to <code>--attention sdpa</code>.</p>
           <div class="token-field" style="margin-top:8px">
             <button class="btn btn-ghost small" id="tsTritonTestBtn" title="Test importing Triton in the active environment">Test Triton import</button>
+            <button class="btn btn-ghost small" id="tsTritonRepairBtn" title="Repair a damaged Triton install: force-reinstall the exact installed build (torch untouched), clear the JIT cache, verify the import">Repair wheel</button>
             <button class="btn btn-ghost small" id="tsTritonClearBtn" title="Back up and clear the Triton cache">Clear cache</button>
             <button class="btn btn-primary small" id="tsTritonSdpaBtn" title="Clear the Triton cache and fall back to SDPA attention">Clear + fall back to SDPA</button>
             <span class="token-hint" id="tsTritonStatus" style="margin-left:8px"></span>

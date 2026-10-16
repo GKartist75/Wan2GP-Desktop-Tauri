@@ -664,6 +664,7 @@ if (!window.__TAURI__) {
         tsLongPathsEnable: () => call("troubleshoot_long_paths_enable"),
         tsDebugBundle: () => call("troubleshoot_debug_bundle"),
         tsTritonTest: () => call("troubleshoot_triton_test"),
+        tsTritonRepair: () => call("troubleshoot_triton_repair"),
         setTritonCompiler: (m) => call("set_triton_compiler", { mode: m }),
         tsMsvcStatus: () => call("troubleshoot_msvc_status"),
         tsMsvcInstall: () => call("troubleshoot_msvc_install"),
