@@ -1527,6 +1527,43 @@ fn comp_label(code: &str) -> String {
     }
 }
 
+/// Short version for an upstream `setup_config.json` component tag
+/// (`v010_cu13` → `0.1.0`). Used where a panel shows the *expected* value next
+/// to an installed one — the raw tag would read as noise in a spec row.
+pub(crate) fn comp_short(code: &str) -> String {
+    match code {
+        "v1" => "1.0.6".into(),
+        "v211" => "2.1.1".into(),
+        "v220" | "v220_cu13" => "2.2.0".into(),
+        "v010_cu128" | "v010_cu13" => "0.1.0".into(),
+        "v210" => "2.8.3".into(),
+        "v284_rocm" => "2.8.4".into(),
+        "v33" => "3.2.x".into(),
+        "v34" => "3.3.x".into(),
+        "v37" => "3.6.x".into(),
+        "v38" => "3.7.x".into(),
+        other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod comp_short_tests {
+    use super::comp_short;
+    #[test]
+    fn upstream_component_tags_map_to_versions() {
+        // Raw setup_config.json tags must never leak into a panel.
+        assert_eq!(comp_short("v010_cu13"), "0.1.0");
+        assert_eq!(comp_short("v010_cu128"), "0.1.0");
+        assert_eq!(comp_short("v210"), "2.8.3");
+        assert_eq!(comp_short("v284_rocm"), "2.8.4");
+        assert_eq!(comp_short("v220_cu13"), "2.2.0");
+        assert_eq!(comp_short("v1"), "1.0.6");
+        assert_eq!(comp_short("v37"), "3.6.x");
+        // Unknown values pass through unchanged (no silent data loss).
+        assert_eq!(comp_short("sdpa"), "sdpa");
+    }
+}
+
 /// Kernel display names (mirrors Electron KERNEL_DISPLAY).
 fn kernel_display(key: &str) -> (&str, &str) {
     match key {

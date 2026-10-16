@@ -293,13 +293,14 @@ async function refreshDashboard() {
       // Sparge Attn comes from the expected GPU profile (not a detected version),
       // so it's surfaced here to avoid a separate duplicate "GPU Profile Overview".
       const spargeEl = $("specSparge");
-      // ponytail: show installed 0.1.0 if present, else expected v010_cu13 profile tag
+      // Installed version wins; otherwise the profile's expected value (the
+      // backend maps the raw setup_config tag, e.g. v010_cu13 → 0.1.0). Never
+      // fall back to the GPU profile name — that printed "RTX_40" in this row.
       if (spargeEl)
         spargeEl.textContent =
           status.versions?.spas_sage_attn ||
           status.versions?.sparge ||
           (status.profile && status.profile.sparge) ||
-          status.kernelProfile ||
           "—";
     }
     // ponytail: batch DOM swap to avoid flicker — build fragment then single replace

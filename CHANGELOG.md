@@ -62,6 +62,11 @@ corrected four stale entries.
   `setup_config.json`, `setup.py` and plugin requirements (WanGP falls back to a
   dequantized path when it is missing), so the guides no longer promise an
   installed `0.49.2`.
+- **Sparge Attn spec row shows a version, not a raw tag.** The dashboard read
+  `status.profile.sparge` straight from `setup_config.json`, printing `v010_cu13`
+  on RTX 30–50 — and, when a profile has no Sparge, the GPU profile name
+  (`RTX_40`). The tag is now mapped to its version (`0.1.0`) and the misleading
+  profile-name fallback is gone.
 - The installer's requirement chip now reads `100+ reqs` (upstream ships 104
   active pins).
 

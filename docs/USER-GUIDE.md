@@ -322,7 +322,7 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   `setup_config.json` picks automatically) — Sync never downgrades a newer
   working Triton except on RTX 20/GTX 10 where upstream genuinely needs old builds.
 - **SageAttention 3** — deliberately not installed by ↻ Update GPU Wheels and not offered: it needs
-  a Blackwell GPU *and* Python ≥ 3.12 (launcher envs are 3.10/3.11), and it refuses
+  a Blackwell GPU *and* Python ≥ 3.12 (NVIDIA/GTX envs are 3.10/3.11; 3.12 is AMD-only), and it refuses
   older cards at runtime even when imported. Verify reports a stray `sageattn3`
   install as inert-but-harmless instead of failing. Sage 2.2.0 stays the synced wheel —
   and 2.2.0 already contains the SageAttention2++ kernels as its default `sageattn`

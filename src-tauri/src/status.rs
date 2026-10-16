@@ -212,13 +212,24 @@ except Exception as e:
         serde_json::Value::Array(final_wheels)
     };
     // profile object for frontend specSparge (was only kernelProfile string → showed —)
-    let profile_obj = cfg_path
+    let mut profile_obj = cfg_path
         .exists()
         .then(|| std::fs::read_to_string(&cfg_path).ok())
         .flatten()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|c| c.get("gpu_profiles").and_then(|p| p.get(&profile)).cloned())
         .unwrap_or(serde_json::json!({"sparge": null}));
+    // Panels print the *expected* version beside the installed one; map the raw
+    // upstream tags (v010_cu13, v210 …) to plain versions so no row ever reads
+    // "v010_cu13". `status.profile` is only consumed for the Sparge Attn row.
+    if let Some(o) = profile_obj.as_object_mut() {
+        for key in ["sparge", "flash", "triton", "sage"] {
+            if let Some(tag) = o.get(key).and_then(|v| v.as_str()) {
+                let short = crate::hw::comp_short(tag);
+                o.insert(key.to_string(), serde_json::json!(short));
+            }
+        }
+    }
     let out = serde_json::json!({"env": env, "versions": serde_json::Value::Object(versions), "kernelWheels": out_wheels, "kernelProfile": profile, "profile": profile_obj, "spike": false});
     // cache for 5s (mtime-keyed: pip changes invalidate instantly)
     if let Ok(mut g) = LAST_STATUS.get_or_init(|| Mutex::new(None)).lock() {
