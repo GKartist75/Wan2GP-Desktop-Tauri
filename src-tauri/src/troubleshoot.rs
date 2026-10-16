@@ -804,6 +804,29 @@ pub(crate) fn triton_reinstall_spec(dist: &str, version: &str) -> String {
     format!("{dist}=={version}")
 }
 
+/// The exact argv the repair runs (minus the interpreter): pip show for
+/// detection. Pinned so the console echo and the spawn can never diverge.
+/// Pure + unit-tested.
+pub(crate) fn triton_pip_show_argv() -> Vec<&'static str> {
+    vec!["-m", "pip", "show", "triton-windows", "triton"]
+}
+
+/// The exact argv the repair runs (minus the interpreter): force-reinstall
+/// without touching anything else. Pinned so flags can't silently change.
+/// Pure + unit-tested.
+pub(crate) fn triton_pip_reinstall_argv(spec: &str) -> Vec<String> {
+    ["-m", "pip", "install", "--force-reinstall", "--no-deps", spec]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// Render the full command line for the console echo
+/// (`<python> -m pip install …`). Pure + unit-tested.
+pub(crate) fn render_py_command(py: &str, argv: &[String]) -> String {
+    format!("[>] {py} {}", argv.join(" "))
+}
+
 /// A repair version must be a single pip token — never empty, never
 /// whitespace (argv, not shell, so this is hygiene, not injection defense;
 /// pip itself rejects anything it can't resolve). Pure + unit-tested.
@@ -824,8 +847,13 @@ pub fn troubleshoot_triton_repair(version: Option<String>) -> Result<serde_json:
         return Err("No Python environment installed — run Install first".into());
     };
     let py_s = py.to_string_lossy().to_string();
+    let show_argv: Vec<String> = triton_pip_show_argv()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let _ = crate::base::push_log(&format!("{}\n", render_py_command(&py_s, &show_argv)), "setup");
     let show = silent_command(&py_s)
-        .args(["-m", "pip", "show", "triton-windows", "triton"])
+        .args(&show_argv)
         .output()
         .map_err(|e| format!("pip show failed: {e}"))?;
     let show_text = String::from_utf8_lossy(&show.stdout).to_string();
@@ -844,19 +872,13 @@ pub fn troubleshoot_triton_repair(version: Option<String>) -> Result<serde_json:
         want.trim().to_string()
     };
     let spec = triton_reinstall_spec(&dist, &want);
+    let inst_argv = triton_pip_reinstall_argv(&spec);
     let _ = crate::base::push_log(
-        &format!("[*] Repairing Triton: pip install --force-reinstall --no-deps {spec}…\n"),
+        &format!("{}\n", render_py_command(&py_s, &inst_argv)),
         "setup",
     );
     let inst = silent_command(&py_s)
-        .args([
-            "-m",
-            "pip",
-            "install",
-            "--force-reinstall",
-            "--no-deps",
-            &spec,
-        ])
+        .args(&inst_argv)
         .output()
         .map_err(|e| format!("pip reinstall failed to start: {e}"))?;
     if !inst.status.success() {
@@ -866,8 +888,13 @@ pub fn troubleshoot_triton_repair(version: Option<String>) -> Result<serde_json:
         ));
     }
     let backup = clear_triton_caches()?;
+    let check_argv = vec!["-c".to_string(), "import triton; print(triton.__version__)".to_string()];
+    let _ = crate::base::push_log(
+        &format!("{}\n", render_py_command(&py_s, &check_argv)),
+        "setup",
+    );
     let imp = silent_command(&py_s)
-        .args(["-c", "import triton; print(triton.__version__)"])
+        .args(&check_argv)
         .output();
     let import_version = match imp {
         Ok(o) if o.status.success() => Some(
@@ -1149,6 +1176,27 @@ pub fn troubleshoot_vram_diag(action: Option<String>) -> serde_json::Value {
 #[cfg(test)]
 mod troubleshoot_tests {
     use super::*;
+    #[test]
+    fn triton_repair_runs_pinned_commands_shown_in_console() {
+        // The console echo and the spawn share these builders, so what the
+        // user reads is exactly what runs — including the safety flags.
+        assert_eq!(
+            triton_pip_show_argv(),
+            vec!["-m", "pip", "show", "triton-windows", "triton"]
+        );
+        assert_eq!(
+            triton_pip_reinstall_argv("triton-windows==3.6.0.post24"),
+            vec!["-m", "pip", "install", "--force-reinstall", "--no-deps", "triton-windows==3.6.0.post24"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            render_py_command(r"C:\Wan2GP\env_uv\Scripts\python.exe", &triton_pip_reinstall_argv("triton-windows==3.6.0.post24")),
+            r"[>] C:\Wan2GP\env_uv\Scripts\python.exe -m pip install --force-reinstall --no-deps triton-windows==3.6.0.post24"
+        );
+    }
+
     #[test]
     fn triton_rollback_spec_and_version_gate() {
         // Rollback builds the same exact-pin spec for the older build.
