@@ -5080,7 +5080,7 @@ dependencies = [
 
 [[package]]
 name = "wan2gp-desktop-launcher-tauri"
-version = "0.10.10"
+version = "0.10.11"
 dependencies = [
  "base64 0.23.1",
  "chrono",

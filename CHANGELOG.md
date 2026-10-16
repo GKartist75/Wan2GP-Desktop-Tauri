@@ -4,7 +4,10 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+## [0.10.11] — 2026-10-17
+
 - **Roll back Triton to post24** (Manage → Troubleshooting): the Repair command takes an optional version; the new button pins `triton-windows==3.6.0.post24` (previous known-good 3.6.x) with the same reinstall-and-clear-and-verify flow. Warns that a later setup floats forward again on upstream's `-U` range spec.
+- **AV guidance: try post24 as a diagnostic.** Some engines react per-build, so a flagged post26 may get a different verdict than post24 on the same box — the User Guide now says so and asks affected users to report which build their AV accepts, with the detection name. Not a cure: identical patterns get identical verdicts.
 
 ## [0.10.10] — 2026-10-16
 
