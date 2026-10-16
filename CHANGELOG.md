@@ -42,6 +42,10 @@ rework, split WGPKernels releases and new kernel enums.
   button (RX 9070/9070 XT/R9700, gfx1201) copies the exact setup commands, and
   the install paths now return that guidance instead of a generic failure.
   9060 XT (gfx1200) and RDNA 1–3.5 remain unsupported for these wheels.
+- **AMD recipe gains `rocm-sdk init`.** Community guidance (DELUXA) recommends
+  initializing the ROCm SDK for Veda sparse attention; upstream's main-env doc
+  says it isn't needed there, so the copied recipe marks it as the optional
+  step 3 of the *separate* 7.14 env with a skip-if-unrecognized note.
 
 ### Hardware-overview pins re-checked against upstream (2026-10-16)
 

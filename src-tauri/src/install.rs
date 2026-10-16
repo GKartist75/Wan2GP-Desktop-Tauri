@@ -3873,7 +3873,11 @@ pub fn amd_rocm714_recipe() -> serde_json::Value {
          {torch_cmd}\n\
          # 2) Experimental kernels (optional, from the same env)\n\
          {wgpk_cmd}\n\
-         {hip_cmd}\n"
+         {hip_cmd}\n\
+         # 3) ROCm SDK init (community recommendation for Veda sparse attention;\n\
+         #    upstream's main-env doc says it isn't needed there, but this is a\n\
+         #    separate 7.14 env — skip if 'rocm-sdk' isn't recognized after step 1)\n\
+         rocm-sdk init\n"
     );
     serde_json::json!({
         "ok": true,
@@ -7762,6 +7766,8 @@ mod amd_recipe_tests {
             .unwrap()
             .contains("torch210rocm714py311"));
         assert!(r["text"].as_str().unwrap().contains("torch[device-gfx1201]"));
+        // rocm-sdk init is recommended for Veda sparse attention on AMD.
+        assert!(r["text"].as_str().unwrap().contains("rocm-sdk init"));
     }
 }
 
