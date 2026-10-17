@@ -392,6 +392,19 @@ body.wb-origin .wb-origin-frame {
   display: block; position: fixed; inset: 0; width: 100%; height: 100%;
   border: 0; z-index: 50; background: var(--canvas);
 }
+/* Escape affordance for real08: the mock shell hides completely in Original
+   mode (that's the point of the view), but a mock-only floating chip keeps
+   the layout switcher reachable. z-index above the iframe (50). */
+#wbOriginEscape {
+  display: none; position: fixed; top: 10px; right: 12px; z-index: 60;
+  font-size: .72rem; padding: 5px 12px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .35); cursor: pointer;
+}
+body.wb-origin #wbOriginEscape { display: block; }
+/* Floating chip is only the fallback: when the mock successfully mounts the
+   in-topbar chip into the real app's own topbar, the floaters retire. */
+body.wb-origin.wb-chip-injected #wbOriginEscape { display: none; }
 
 /* — visual themes: real accents (Sky/Classic/Emerald/Amethyst/Rose) ship in style.css. */
 /* Famous themes below are MOCK-ONLY token overrides — if adopted, they belong in style.css. */
@@ -1438,6 +1451,7 @@ button .wb-svg { pointer-events: none; }
 
 <!-- ═══ REAL CURRENT-RELEASE ORIGINAL LAYOUT (loaded on demand from ../src/index.html) ═══ -->
 <iframe id="wbOriginFrame" class="wb-origin-frame wb-new" title="Original (current app) launcher layout — the real app files, read-only demo" data-src="../src/index.html"></iframe>
+<button class="btn btn-ghost small wb-new" id="wbOriginEscape" title="mock-only: switch back to the mock shell. Original replaces the whole launcher UI (like the real config-driven layout would) — the mock chrome is hidden, so this chip is the way back">← Layout switcher</button>
 
 <script>
 // ── mock-only logic (no Tauri, no w2gp bridge) ─────────────────────
@@ -1484,12 +1498,41 @@ function hideModal(id) { $(id).classList.add("hidden"); }
 // ═══ Layout theme (mock of the real layoutTheme setting in desktop-config.json) ═══
 // real: shell picks which markup mounts; both shells reuse the same ids + tab handlers
 const LAYOUT_KEY = "w2gp.layoutThemeDemo";
+// Mount the mock-only layout chip inside the real app's own topbar
+// (.topbar-right) when Original view is active — styled by the real app css.
+// Idempotent via id; retries on iframe load since documents load lazily.
+function wbInjectOriginChip() {
+  const f = $("wbOriginFrame");
+  const d = f && f.contentDocument;
+  if (!d || !d.querySelector) return;
+  const bar = d.querySelector(".topbar-right");
+  if (!bar) return;
+  if (d.getElementById("wbOriginChip")) {
+    document.body.classList.add("wb-chip-injected");
+    return;
+  }
+  const chip = d.createElement("button");
+  chip.id = "wbOriginChip";
+  chip.className = "btn btn-ghost small";
+  chip.textContent = "← Layout (mock)";
+  chip.title = "mock-only: back to the mock shell (this demo view replaces the whole launcher UI)";
+  chip.style.marginLeft = "8px";
+  chip.addEventListener("click", () => {
+    localStorage.setItem(LAYOUT_KEY, "workbench");
+    applyLayout("workbench");
+    toast("layout → workbench — chip mounted inside the real app topbar (mock-only)");
+  });
+  bar.appendChild(chip);
+  document.body.classList.add("wb-chip-injected");
+}
 function applyLayout(theme) {
+  document.body.classList.remove("wb-chip-injected");
   document.body.classList.toggle("wb-classic", theme === "classic");
   document.body.classList.toggle("wb-deck", theme === "deck");
   document.body.classList.toggle("wb-origin", theme === "real08");
   if (theme === "real08") { // lazy-load the real app files only when first selected
     const f = $("wbOriginFrame"); if (!f.src) f.src = f.dataset.src;
+    wbInjectOriginChip(); // already loaded on repeat switches
   }
   // section headings for stacked classic mode come from the existing titles table
   document.querySelectorAll(".wb-view").forEach(v => {
@@ -1513,6 +1556,19 @@ $("layoutThemeQuick").addEventListener("change", (e) => {
   localStorage.setItem(LAYOUT_KEY, e.target.value);
   applyLayout(e.target.value);
   toast("layout → '" + e.target.value + "' (saved for next launch)");
+});
+// Original (real08) hides the whole mock shell — including both layout
+// selects — so the floating chip is the only visible way back. It restores
+// the saved shell choice and re-shells live, like switching in Settings.
+$("wbOriginFrame").addEventListener("load", () => {
+  // mount the in-topbar chip on the first lazy load (retry logic is in
+  // wbInjectOriginChip; the floating chip retires automatically)
+  if (document.body.classList.contains("wb-origin")) wbInjectOriginChip();
+});
+$("wbOriginEscape").addEventListener("click", () => {
+  localStorage.setItem(LAYOUT_KEY, "workbench");
+  applyLayout("workbench");
+  toast("layout → workbench — mock-only chip: Original hides the mock shell");
 });
 localStorage.setItem(LAYOUT_KEY, localStorage.getItem(LAYOUT_KEY) || "workbench");
 $("layoutThemeSelect").value = localStorage.getItem(LAYOUT_KEY);
