@@ -86,15 +86,19 @@
         </div>
         <div class="settings-section">
           <h3>Appearance</h3>
-          <p class="token-hint">5 themes, Mono is the default. Click a dot to apply — double-click any dot to edit its 3 colors. The full palette derives automatically.</p>
+          <p class="token-hint">9 themes — Mono is the default. The 5 base dots are editable: click to apply, double-click to edit the 3 base colors (palette derives automatically). The last 4 are shipped signature palettes with a fixed look.</p>
           <div class="accent-row" id="themeRow" role="radiogroup" aria-label="Themes">
             <button class="accent-dot" data-dot="mono" title="Mono — click to apply, double-click to edit" role="radio" aria-label="Mono"></button>
             <button class="accent-dot" data-dot="sky" title="Blue Sky — click to apply, double-click to edit" role="radio" aria-label="Blue Sky"></button>
             <button class="accent-dot" data-dot="orca" title="Orca — click to apply, double-click to edit" role="radio" aria-label="Orca"></button>
             <button class="accent-dot" data-dot="cyber" title="Cyber — click to apply, double-click to edit" role="radio" aria-label="Cyber"></button>
             <button class="accent-dot" data-dot="matrix" title="Matrix — click to apply, double-click to edit" role="radio" aria-label="Matrix"></button>
+            <button class="accent-dot" data-dot="noir" title="Cyberpunk (neon noir, dark) — click to apply" role="radio" aria-label="Cyberpunk"></button>
+            <button class="accent-dot" data-dot="phosphor" title="Phosphor (terminal green, dark) — click to apply" role="radio" aria-label="Phosphor"></button>
+            <button class="accent-dot" data-dot="parchment" title="Parchment (fantasy bronze) — click to apply" role="radio" aria-label="Parchment"></button>
+            <button class="accent-dot" data-dot="retina" title="Retina Sunset (vaporwave, dark) — click to apply" role="radio" aria-label="Retina Sunset"></button>
           </div>
-          <p class="token-hint" id="customThemeHint" style="margin-top:4px">Every theme is editable and persists. Reset restores shipped colors.</p>
+          <p class="token-hint" id="customThemeHint" style="margin-top:4px">Base themes are editable and persist; Reset restores shipped colors. Cyberpunk / Phosphor / Retina Sunset are dark-only — picking one while in light mode switches the shell to dark. Parchment works in both.</p>
           <div id="customEditor" style="display:none;margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-secondary)">
             <div class="appear-slider">
               <label class="token-hint" for="customAccentInput" style="min-width:88px">Accent</label>

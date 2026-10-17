@@ -84,6 +84,25 @@ const APPEAR_LABELS = {
   cyber: "Cyber",
   matrix: "Matrix",
 };
+
+// ── Signature themes (shipped fixed palettes) ──
+// unlike the 5 editable slots above, these render from stylesheet blocks in
+// style.css (data-accent attr, same path Sky used before its editor) and are
+// not editable: a fixed art-directed palette can't be rebuilt from 3 colors.
+// noir/phosphor/retina are dark-only — applying them while light is active
+// switches the shell to dark; parchment works in both modes.
+const FAME_THEMES = ["noir", "phosphor", "parchment", "retina"];
+const FAME_DARK_ONLY = ["noir", "phosphor", "retina"];
+const FAME_DOT = {
+  noir: "#ff2bd6",
+  phosphor: "#22ff66",
+  parchment: "#8a5a1e",
+  retina: "#ff71ce",
+};
+APPEAR_LABELS.noir = "Cyberpunk";
+APPEAR_LABELS.phosphor = "Phosphor";
+APPEAR_LABELS.parchment = "Parchment";
+APPEAR_LABELS.retina = "Retina Sunset";
 const _appearMem = { accent: "mono", ui: 100, term: 100, custom: {} };
 function _themeDef(name) {
   const over = (_appearMem.custom || {})[name];
@@ -234,12 +253,18 @@ function _paintThemeDots() {
     const n = d.dataset.dot;
     const def = _themeDef(n);
     const over = (_appearMem.custom || {})[n];
-    d.style.background =
-      def && _hexRgb(def.accent) ? def.accent : "transparent";
+    const fame = FAME_THEMES.includes(n);
+    d.style.background = fame
+      ? FAME_DOT[n]
+      : def && _hexRgb(def.accent)
+        ? def.accent
+        : "transparent";
     d.title =
       _displayName(n) +
       (over ? " (edited)" : "") +
-      " — click to apply, double-click to edit";
+      (fame
+        ? " — click to apply (shipped palette)"
+        : " — click to apply, double-click to edit");
     const on = n === _appearMem.accent;
     d.classList.toggle("active", on);
     d.setAttribute("aria-checked", on ? "true" : "false");
@@ -262,27 +287,54 @@ function _displayName(name) {
   return APPEAR_LABELS[name] || name;
 }
 function applyAccent(accent) {
-  const a = APPEAR_ACCENTS.includes(accent) ? accent : "mono";
+  const fame = FAME_THEMES.includes(accent) ? accent : null;
+  const a =
+    fame || (APPEAR_ACCENTS.includes(accent) ? accent : "mono");
   _appearMem.accent = a;
   const html = document.documentElement;
-  const def = _themeDef(a);
+  const def = fame ? null : _themeDef(a);
   html.removeAttribute("data-accent");
   _clearCustomVars();
-  // Mono renders from the base CSS; every other theme applies its derived
-  // palette (factory base or user override — _themeDef resolves both).
-  if (a !== "mono" && _validCustomDef(def))
+  // Mono renders from the base CSS; editable slots apply their derived
+  // palette (factory base or user override — _themeDef resolves both);
+  // signature themes render from their stylesheet block via data-accent.
+  if (fame) {
+    html.setAttribute("data-accent", fame);
+  } else if (a !== "mono" && _validCustomDef(def))
     _applyCustomVars(_deriveCustomPalette(def));
   // Sky keeps its legacy stylesheet fallback only while unedited; an
   // edited Sky runs on derived vars like every other theme.
   if (a === "sky" && !(_appearMem.custom || {})[a])
     html.setAttribute("data-accent", "sky");
+  // Dark-only signature picked while light is active: the shipped palette
+  // has no light variant, so switch the shell to dark (persisted, like a
+  // manual toggle) instead of silently showing the plain light theme.
+  // Startup re-runs this after restoring a saved famous accent (init-tab
+  // applies the theme before loadAppear) — the branch is a no-op then.
+  if (fame && FAME_DARK_ONLY.includes(fame) && html.getAttribute("data-theme") !== "dark") {
+    applyTheme("dark");
+    (async () => {
+      try {
+        const cfg = await window.w2gp.configLoad();
+        if (resolveTheme(cfg, systemPrefersDark()) !== "dark") {
+          cfg.theme = "dark";
+          cfg.themeFollowSystem = false;
+          await window.w2gp.configSave(cfg);
+          const fs = $("followSystemThemeToggle");
+          if (fs) fs.checked = false;
+        }
+      } catch {}
+    })();
+    showToast(_displayName(fame) + " is a dark palette — switched to dark mode");
+  }
   _paintThemeDots();
   const pal = $("appearPaletteBtn");
+  const order = [...APPEAR_THEMES, ...FAME_THEMES];
   if (pal)
     pal.title =
       "Theme: " +
       _displayName(a) +
-      " (click for next: Mono → Sky → Orca → Cyber → Matrix)";
+      " (click for next: " + order.map(_displayName).join(" → ") + ")";
   _appearStore();
 }
 function applyUiScale(pct) {
@@ -348,7 +400,7 @@ function loadAppear(cfg) {
     if (_validCustomDef(merged[t])) kept[t] = merged[t];
   _appearMem.custom = kept;
   let acc = c.themeAccent || (mem && mem.accent) || "mono";
-  if (!APPEAR_ACCENTS.includes(acc)) acc = "mono";
+  if (![...APPEAR_ACCENTS, ...FAME_THEMES].includes(acc)) acc = "mono";
   _paintThemeDots();
   applyAccent(acc);
   applyUiScale(c.uiScale || (mem && mem.ui) || 100);
@@ -475,8 +527,9 @@ function initAppearControls() {
   });
   $("appearPaletteBtn")?.addEventListener("click", () => {
     if ($("customEditor")) $("customEditor").style.display = "none";
-    const i = APPEAR_THEMES.indexOf(_appearMem.accent);
-    applyAccent(APPEAR_THEMES[(i + 1) % APPEAR_THEMES.length]);
+    const order = [...APPEAR_THEMES, ...FAME_THEMES];
+    const i = order.indexOf(_appearMem.accent);
+    applyAccent(order[(i + 1) % order.length]);
     persistAppear();
     showToast("Theme: " + _displayName(_appearMem.accent));
   });

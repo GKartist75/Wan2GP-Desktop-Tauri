@@ -230,6 +230,107 @@ html[data-theme="dark"][data-accent="rose"],
  --bg-tertiary: #271820;
 }
 
+/* Signature themes (shipped, fixed palettes — not editable 3-color slots):
+   noir/phosphor/retina are dark-only (scoped under [data-theme="dark"] — in
+   light mode they fall back to the standard light palette; applyAccent
+   switches the shell to dark on first pick). parchment works in both modes. */
+:root[data-theme="dark"][data-accent="noir"] {
+ /* Cyberpunk — neon noir */
+ --canvas: #0d0a14;
+ --surface: #151022;
+ --surface-hover: #1d1631;
+ --border: #2f2248;
+ --border-hover: #573f8a;
+ --text-primary: #f2ecff;
+ --text-secondary: #b9a8e6;
+ --text-tertiary: #6f5c9e;
+ --accent: #ff2bd6;
+ --accent-hover: #ff5ce0;
+ --accent-dim: #38184a;
+ --bg-secondary: #1a142c;
+ --bg-tertiary: #120d1f;
+ --signal-green: #3ef29b;
+ --signal-green-bg: #0f2e23;
+ --signal-blue: #00d1ff;
+ --signal-blue-bg: #06222e;
+ --signal-red: #ff2e5b;
+ --signal-red-bg: #2e0b16;
+ --signal-yellow: #ffe14d;
+ --signal-yellow-bg: #2e2610;
+}
+:root[data-theme="dark"][data-accent="phosphor"] {
+ /* Phosphor — matrix terminal */
+ --canvas: #000000;
+ --surface: #060a06;
+ --surface-hover: #0b150b;
+ --border: #17411d;
+ --border-hover: #2f8f3e;
+ --text-primary: #c8ffc8;
+ --text-secondary: #58b35c;
+ --text-tertiary: #2d6b30;
+ --accent: #22ff66;
+ --accent-hover: #55ff99;
+ --accent-dim: #0a3014;
+ --bg-secondary: #081008;
+ --bg-tertiary: #050b05;
+ --signal-green: #31ff5e;
+ --signal-green-bg: #07290f;
+ --signal-blue: #00e5a8;
+ --signal-blue-bg: #06251d;
+ --signal-red: #ff4444;
+ --signal-red-bg: #2b0a0a;
+ --signal-yellow: #eaff00;
+ --signal-yellow-bg: #262a05;
+}
+:root[data-accent="parchment"] {
+ /* Parchment — fantasy, bronze & leather (works dark or light) */
+ --canvas: #f4ead6;
+ --surface: #fbf3e4;
+ --surface-hover: #f2e6cd;
+ --border: #dcc9a4;
+ --border-hover: #b99b66;
+ --text-primary: #382c18;
+ --text-secondary: #7a6544;
+ --text-tertiary: #b39b71;
+ --accent: #8a5a1e;
+ --accent-hover: #6f4818;
+ --accent-dim: #e7d6b8;
+ --bg-secondary: #efe2c8;
+ --bg-tertiary: #e6d5b3;
+ --signal-green: #3f6b2e;
+ --signal-green-bg: #e4eed9;
+ --signal-blue: #35558a;
+ --signal-blue-bg: #e2e9f5;
+ --signal-red: #8a2f22;
+ --signal-red-bg: #f5e0d8;
+ --signal-yellow: #8a6a1a;
+ --signal-yellow-bg: #f3ead0;
+}
+:root[data-theme="dark"][data-accent="retina"] {
+ /* Retina Sunset — vaporwave */
+ --canvas: #120b24;
+ --surface: #1a1133;
+ --surface-hover: #221743;
+ --border: #332460;
+ --border-hover: #5a41a0;
+ --text-primary: #f4e9ff;
+ --text-secondary: #c3a9ec;
+ --text-tertiary: #8168c0;
+ --accent: #ff71ce;
+ --accent-hover: #ff9ade;
+ --accent-dim: #2f1c55;
+ --bg-secondary: #201540;
+ --bg-tertiary: #170e2e;
+ --signal-green: #05ffa1;
+ --signal-green-bg: #06302a;
+ --signal-blue: #01cdfe;
+ --signal-blue-bg: #06293a;
+ --signal-red: #ff4d6d;
+ --signal-red-bg: #33091a;
+ --signal-yellow: #f9f871;
+ --signal-yellow-bg: #2e2d16;
+}
+
 /* Accent-dot picker + top-bar controls. */
 .accent-row {
  display: flex;
