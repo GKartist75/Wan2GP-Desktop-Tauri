@@ -1615,13 +1615,13 @@ mod comp_short_tests {
 /// through the profile. Raw tags pass through for forward compatibility.
 fn triton_label(profile_str: &str, code: &str) -> String {
     match code {
-        "v37" => "Triton 3.7 Windows / 3.6 Linux (Torch 2.10, RTX 30XX+)".into(),
+        "v37" => "Triton 3.7 Windows / 3.6 Linux (Torch 2.10, RTX 30XX+, Recommended)".into(),
         "v38" => "Triton 3.7.x (Torch 2.13, AMD ROCm)".into(),
         "3.7.x" => {
             if profile_str == "AMD" {
                 "Triton 3.7.x (Torch 2.13, AMD ROCm)".into()
             } else {
-                "Triton 3.7 Windows / 3.6 Linux (Torch 2.10, RTX 30XX+)".into()
+                "Triton 3.7 Windows / 3.6 Linux (Torch 2.10, RTX 30XX+, Recommended)".into()
             }
         }
         other => comp_label(other),

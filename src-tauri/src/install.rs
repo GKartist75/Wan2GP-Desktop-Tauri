@@ -3910,6 +3910,49 @@ pub(crate) fn pip_install_argv(cmd: &str) -> Vec<String> {
     cmd.split_whitespace().map(|s| s.to_string()).collect()
 }
 
+/// Triton component spec for a profile: `gpu_profiles[profile].triton` tags
+/// into `components.triton[tag].cmd.win` — deliberately NOT under
+/// `components.kernels`, which is why the shared kernel lookup never found it
+/// and Sync never upgraded an existing Triton (fresh installs went through the
+/// install phases instead). Upstream v18.17 (fde3c7e) renamed the tags —
+/// `v37` = the recommended 3.7 Windows range (`>=3.7.0.post26,<=3.7.1.post27`,
+/// ships WanGP's prebuilt CUDA helper), `v36` = the legacy 3.6 line, `v38` =
+/// AMD. Upstream's specs carry their own `-U` flag and shell quotes
+/// (`-U "triton-windows>=…"`) — both are stripped so the shared argv builder
+/// (`pip_install_argv`, plain whitespace split) yields one clean requirement
+/// token; the loop re-adds `--upgrade` itself. Profiles without a tag (GTX_10,
+/// MPS/CPU) resolve to None and stay out of the sync list. Pure + unit-tested.
+pub(crate) fn triton_component_spec(cfg: &serde_json::Value, profile: &str) -> Option<String> {
+    let tag = cfg
+        .get("gpu_profiles")
+        .and_then(|p| p.get(profile))
+        .and_then(|pr| pr.get("triton"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    if tag.is_empty() {
+        return None;
+    }
+    let raw = cfg
+        .get("components")
+        .and_then(|c| c.get("triton"))
+        .and_then(|m| m.get(tag))
+        .and_then(|e| e.get("cmd"))
+        .and_then(|c| c.get("win"))
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let spec = raw.strip_prefix("-U").unwrap_or(raw).trim_start();
+    let spec = spec.trim_matches('"').trim();
+    if spec.is_empty() {
+        None
+    } else {
+        Some(spec.to_string())
+    }
+}
+
 pub(crate) const SAGE_SAFE_WIN_URL: &str = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl";
 const SAGE_UPSTREAM_TAG: &str = "sageattention-2.2.0+cu130torch2.9.0andhigher.post4";
 
@@ -4260,6 +4303,19 @@ async fn sync_kernels_inner(
             all_kernels.push(serde_json::json!("sage"));
         }
     }
+    // Triton sync (v18.17-parity): upstream profiles tag triton outside
+    // kernels[] (`gpu_profiles[profile].triton` -> `components.triton[tag]`),
+    // so the wheels list above never carried it and Sync left an installed
+    // Triton 3.6 at 3.6 forever — including on the new prebuilt-helper 3.7
+    // range the AV fix depends on. Append it whenever the profile has a tag
+    // (RTX_20/30/40/50, AMD); the #2264 no-downgrade guard in the loop keeps
+    // newer working builds untouched, and pip re-resolves a satisfied range
+    // without downloading.
+    if triton_component_spec(&cfg, cfg_profile).is_some()
+        && !all_kernels.iter().any(|k| k.as_str() == Some("triton"))
+    {
+        all_kernels.push(serde_json::json!("triton"));
+    }
     let mut failed: Vec<String> = Vec::new();
     let mut synced = 0usize;
     let mut current = 0usize;
@@ -4340,6 +4396,13 @@ async fn sync_kernels_inner(
                     } else {
                         base_url
                     }
+                } else if name == "triton" {
+                    // components.triton[tag] (v18.17 key rename honored):
+                    // tagged per profile, outside kernels[]. Resolved through
+                    // cfg_profile so AMD_GFX* sub-profiles land on the shared
+                    // `AMD` tag (`v38`). Absent tag → empty → the loud skip
+                    // below, same as an unknown component.
+                    triton_component_spec(&cfg, cfg_profile).unwrap_or_default()
                 } else {
                     cfg.get("components")
                         .and_then(|c| c.get("kernels"))
@@ -6002,6 +6065,76 @@ mod pip_argv_tests {
         assert_eq!(
             pip_install_argv("sageattention==1.0.6"),
             vec!["sageattention==1.0.6".to_string()]
+        );
+    }
+}
+
+#[cfg(test)]
+mod triton_component_tests {
+    use super::{pip_install_argv, triton_component_spec};
+
+    fn cfg_shape() -> serde_json::Value {
+        serde_json::json!({
+            "gpu_profiles": {
+                "RTX_30": { "triton": "v37", "kernels": ["wgpkernels"] },
+                "AMD": { "triton": "v38" },
+                "GTX_10": { "kernels": [] },
+                "RTX_20": { "triton": "v33" }
+            },
+            "components": { "triton": {
+                "v33": { "cmd": { "win": "-U \"triton-windows>=3.2,<3.3\"" } },
+                "v36": { "cmd": { "win": "-U \"triton-windows>=3.6,<3.7\"" } },
+                "v37": { "cmd": { "win": "-U \"triton-windows>=3.7.0.post26,<=3.7.1.post27\"" } },
+                "v38": { "cmd": { "win": "-U \"triton-windows>=3.7.0.post26,<=3.7.1.post27\"" } }
+            } }
+        })
+    }
+
+    #[test]
+    fn spec_resolves_and_cleans_shell_quoting() {
+        // v18.17 key rename: v37 is the recommended 3.7 Windows range
+        // (prebuilt CUDA helper builds); the -U flag and shell quotes are
+        // stripped so pip_install_argv yields one clean requirement token.
+        assert_eq!(
+            triton_component_spec(&cfg_shape(), "RTX_30").as_deref(),
+            Some("triton-windows>=3.7.0.post26,<=3.7.1.post27")
+        );
+        // AMD_GFX* sub-profiles resolve through setup_config's shared AMD tag.
+        assert_eq!(
+            triton_component_spec(&cfg_shape(), "AMD").as_deref(),
+            Some("triton-windows>=3.7.0.post26,<=3.7.1.post27")
+        );
+        // Legacy 3.6 (v36) and RTX_20's pinned 3.2 (v33) survive the path.
+        assert_eq!(
+            triton_component_spec(&cfg_shape(), "RTX_20").as_deref(),
+            Some("triton-windows>=3.2,<3.3")
+        );
+    }
+
+    #[test]
+    fn untagged_profiles_stay_out() {
+        // GTX_10/CPU/MPS have no triton tag — no sync entry, no invented pins.
+        assert_eq!(triton_component_spec(&cfg_shape(), "GTX_10"), None);
+        let mut broken = cfg_shape();
+        broken["gpu_profiles"]["RTX_30"]["triton"] = serde_json::json!("");
+        assert_eq!(triton_component_spec(&broken, "RTX_30"), None);
+        // Missing component entry also resolves None (loud skip in the loop).
+        let mut broken2 = cfg_shape();
+        broken2["components"]["triton"]["v37"]["cmd"]["win"] = serde_json::json!("");
+        assert_eq!(triton_component_spec(&broken2, "RTX_30"), None);
+    }
+
+    #[test]
+    fn cleaned_spec_is_one_pip_token() {
+        // The shared builder re-adds --upgrade after the loop; the spec must
+        // arrive as a single argument, shell quotes gone.
+        let spec = triton_component_spec(&cfg_shape(), "RTX_30").unwrap();
+        assert_eq!(
+            pip_install_argv(&spec)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["triton-windows>=3.7.0.post26,<=3.7.1.post27"]
         );
     }
 }
