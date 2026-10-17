@@ -7128,9 +7128,13 @@ pub fn triton_runtime_status() -> serde_json::Value {
         verdicts.push(RowVerdict { missing: true, modified: false });
     }
     let (state, summary) = helper_state(&verdicts);
-    let (state, summary): (&'static str, String) = match (state, !engager_present) {
-        ("missing", true) => ("missing", format!("{summary} (engager missing)")),
-        other => (other.0, other.1.to_string()),
+    // The engager (shared/triton_runtime/__init__.py) is what actually wires
+    // the helper in — its absence disables the helper even with both pyds
+    // intact, so the wording says so.
+    let summary = if !engager_present {
+        format!("{summary} (engager missing)")
+    } else {
+        summary.to_string()
     };
     let long_hint = match state {
         "intact" => "Checksums verified against each manifest's own binary_sha256 — safe from AV quarantine at last check.",
@@ -7194,6 +7198,34 @@ mod triton_helper_tests {
         let (s, m) = helper_state(&[RowVerdict { missing: true, modified: false }, RowVerdict { missing: false, modified: true }]);
         assert_eq!(s, "missing");
         assert_eq!(m, "missing/modified — reinstall Wan2GP");
+    }
+
+    /// Live integration on a dev/test machine that has the default install:
+    /// run the EXACT dashboard command against the real repo and snapshot the
+    /// payload the frontend renders (rerun with `-- --nocapture` to see it).
+    /// Guards the "Prebuilt Helper prints raw false" bug: `summary` must be
+    /// a string, and `rows` must never carry non-string labels.
+    #[test]
+    fn live_repo_reports_intact_when_helper_ships() {
+        // Serialize on the shared test mutex — this redirects the
+        // process-global data dir like TestDataDir does.
+        let _lock = crate::base::TestDataDir::new();
+        if !std::path::Path::new("C:\\Wan2GP").join("wgp.py").is_file() {
+            return; // no live install on this machine — nothing to verify
+        }
+        std::env::set_var("WAN2GP_DATA_DIR", "C:\\Wan2GP");
+        crate::base::reset_dir_caches();
+        let s = super::triton_runtime_status();
+        println!("triton_runtime_status = {s}");
+        let st = s["state"].as_str().unwrap_or("");
+        assert!(st == "intact" || st == "absent", "unexpected live state: {st} in {s}");
+        if st == "intact" {
+            assert_eq!(s["summary"].as_str(), Some("intact"));
+            for r in s["rows"].as_array().unwrap() {
+                assert!(r["label"].is_string(), "row label not a string: {r}");
+                assert!(r["binary"].is_string(), "row binary not a string: {r}");
+            }
+        }
     }
 }
 
