@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Adult pack — installer mockup</title>
+<style>
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  :root {
+    --canvas:#fbfbfa; --surface:#ffffff; --surface-hover:#f7f6f3;
+    --border:#eaeaea; --border-hover:#d4d4d2;
+    --text-primary:#111111; --text-secondary:#787774; --text-tertiary:#b8b8b6;
+    --accent:#1a1a1a; --accent-dim:#d4d4d2;
+    --signal-green:#346538; --signal-green-bg:#edf3ec;
+    --signal-blue:#1f6c9f; --signal-blue-bg:#e1f3fe;
+    --signal-red:#9f2f2d; --signal-red-bg:#fdebec;
+    --signal-yellow:#956400; --signal-yellow-bg:#fbf3db;
+    --radius-sm:6px; --radius-md:8px; --radius-lg:12px;
+  }
+  html.dark {
+    --canvas:#111112; --surface:#1a1a1b; --surface-hover:#222224;
+    --border:#2c2c2e; --border-hover:#3d3d40;
+    --text-primary:#f3f3f2; --text-secondary:#a5a5a3; --text-tertiary:#6e6e6c;
+    --accent:#f3f3f2; --accent-dim:#3d3d40;
+    --signal-green-bg:#1d2a1e; --signal-blue-bg:#132833;
+    --signal-red-bg:#331b1c; --signal-yellow-bg:#332b12;
+  }
+  body {
+    font-family:"Geist","SF Pro Display",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    background:var(--canvas); color:var(--text-primary);
+    height:100vh; overflow-y:auto; padding:32px; -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:760px; margin:0 auto; }
+  .note { font-size:11px; color:var(--text-tertiary); text-align:center; margin-bottom:20px; letter-spacing:.02em; }
+  h2.screen-title { font-size:15px; font-weight:600; margin-bottom:4px; }
+  .screen-sub { font-size:12px; color:var(--text-secondary); margin-bottom:20px; }
+
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); padding:18px; margin-bottom:14px; }
+  .row { display:flex; align-items:center; gap:10px; }
+  .muted { color:var(--text-secondary); }
+  .tiny  { font-size:11px; color:var(--text-tertiary); }
+
+  /* collapsible head */
+  .acc-head { display:flex; align-items:center; justify-content:space-between; cursor:pointer; user-select:none; }
+  .acc-head .chev { color:var(--text-tertiary); font-size:12px; }
+  .badge { font-size:10.5px; padding:2px 8px; border-radius:99px; background:var(--signal-green-bg); color:var(--signal-green); font-weight:600; }
+  .badge.gray { background:var(--surface-hover); color:var(--text-secondary); }
+
+  /* sub items */
+  .subcard { border:1px solid var(--border); border-radius:var(--radius-md); padding:12px 14px; margin-top:12px; background:var(--surface-hover); }
+  .grp-title { font-size:11px; font-weight:700; letter-spacing:.06em; color:var(--text-secondary); margin:16px 2px 8px; }
+  .grp-title.first { margin-top:2px; }
+
+  .item { display:flex; align-items:center; gap:10px; padding:7px 8px; border-radius:var(--radius-sm); }
+  .item:hover { background:var(--surface); }
+  .item .nm { flex:1; font-size:12.5px; }
+  .item .sz { font-size:11px; color:var(--text-tertiary); font-variant-numeric:tabular-nums; }
+  .tag { font-size:9.5px; font-weight:700; letter-spacing:.04em; padding:1.5px 6px; border-radius:4px; }
+  .tag.hi  { background:var(--signal-blue-bg); color:var(--signal-blue); }
+  .tag.lo  { background:var(--surface-hover); color:var(--text-secondary); border:1px solid var(--border); }
+  .tag.tok { background:var(--signal-yellow-bg); color:var(--signal-yellow); }
+
+  input[type=checkbox] { accent-color:var(--accent); width:15px; height:15px; cursor:pointer; }
+  .prefetch { display:flex; align-items:center; gap:5px; font-size:10.5px; color:var(--text-secondary); cursor:pointer; white-space:nowrap; }
+  .prefetch input { width:12.5px; height:12.5px; }
+
+  .tokenrow { display:flex; gap:8px; margin-top:8px; }
+  .tokenrow input { flex:1; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); color:var(--text-primary); }
+  .btn { font-size:12px; font-weight:600; padding:7px 14px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--surface); color:var(--text-primary); cursor:pointer; }
+  .btn.primary { background:var(--accent); color:var(--canvas); border-color:var(--accent); }
+  .btn.ghost { border-color:transparent; color:var(--text-secondary); }
+
+  .totalrow { display:flex; align-items:center; justify-content:space-between; margin-top:14px; padding-top:12px; border-top:1px solid var(--border); }
+  .bar { width:150px; height:5px; border-radius:99px; background:var(--border); overflow:hidden; }
+  .bar i { display:block; height:100%; width:38%; background:var(--signal-green); }
+
+  .legal { font-size:10.5px; color:var(--text-tertiary); line-height:1.5; margin-top:10px; }
+
+  /* install progress mock */
+  .task { display:flex; gap:10px; font-size:12px; padding:5px 2px; align-items:center; }
+  .task .ic { width:16px; text-align:center; }
+  .task.done .st { color:var(--signal-green); }
+  .task.run  .st { color:var(--text-secondary); }
+  .task .nm { flex:1; }
+  .task .st { font-size:11px; font-variant-numeric:tabular-nums; }
+
+  .row-twocol { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .dialog { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); padding:18px; max-width:520px; margin:26px auto; box-shadow:0 10px 30px rgba(0,0,0,.08); }
+  .dialog .ttl { font-weight:700; font-size:13.5px; margin-bottom:8px; }
+  .dialog .line { font-size:12px; color:var(--text-secondary); padding:2.5px 0; }
+  .dialog .brow { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+  a.dl { color:var(--signal-blue); text-decoration:none; cursor:pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="note">MOCKUP · prototypes/adult-pack.html — not wired to the app · <a class="dl" id="toggle">toggle dark mode</a></div>
+
+  <h2 class="screen-title">Install Wan2GP</h2>
+  <div class="screen-sub">Select environment type, then click Install · Location: D:\Wan2GP</div>
+
+  <div class="card">
+    <div class="row"><b style="font-size:12.5px">Model paths</b>
+      <span class="tiny">Checkpoints D:\Models\ckpts · LoRAs D:\Models\loras · Output D:\Models\outputs</span></div>
+  </div>
+
+  <div class="card" id="accCard">
+    <div class="acc-head" id="accChev">
+      <div class="row">
+        <label class="row"><input type="checkbox" id="parentCb"> <b style="font-size:12.5px">Adult (NSFW) model pack</b>
+        <span class="badge gray" id="packBadge">off</span></label>
+      </div>
+      <span class="chev" id="chev">▾</span>
+    </div>
+
+    <div id="accBody" style="display:none">
+      <label class="row" style="margin-top:12px; padding:7px 8px; border:1px dashed var(--border-hover); border-radius:var(--radius-sm)">
+        <input type="checkbox" id="ageCb"> <span style="font-size:12px">I confirm I am 18 or older and adult content is legal where I live.</span>
+      </label>
+
+      <div class="grp-title first">LORA PACKS&nbsp;&nbsp;<span class="tiny">downloaded during install · land in loras\<family></span></div>
+      <div class="subcard">
+        <div class="item"><input type="checkbox" checked> <span class="nm">Wan 2.2 NSFW set <span class="tiny">&nbsp;13 HIGH/LOW pairs — iGoon, Blowjob/Cowgirl series, Pornmaster, PENISLORA, General helper</span></span> <span class="sz">7.5 GB</span></div>
+        <div class="item"><input type="checkbox" checked> <span class="nm">MiniMax H3 suite <span class="tiny">&nbsp;HMNSFW AIO · anatomy set · Mystic XXX v4 · turbo lora</span></span> <span class="sz">3.4 GB</span></div>
+        <div class="item"><input type="checkbox"> <span class="nm">LTX 2.3 loras <span class="tiny">&nbsp;DR34ML4Y LT3X + XXX · motion helper</span></span> <span class="sz">4.6 GB</span></div>
+        <div class="item"><input type="checkbox" checked> <span class="nm">Image loras <span class="tiny">&nbsp;Qwen Edit MCNL · Z-Image NSFW MASTER · Krea 2 V4</span></span> <span class="sz">1.8 GB</span></div>
+      </div>
+
+      <div class="grp-title">CHECKPOINT FINETUNES&nbsp;&nbsp;<span class="tiny">JSON added now — big files download on first use (or tick prefetch)</span></div>
+      <div class="subcard">
+        <div class="item"><input type="checkbox" checked> <span class="nm">DaSiWa MiniMax H3 — Hybrid v4 int8</span> <span class="sz">19.5 GB</span> <label class="prefetch"><input type="checkbox" checked> prefetch</label></div>
+        <div class="item"><input type="checkbox"> <span class="nm">DaSiWa MiniMax H3 — Hybrid Turbo v3</span> <span class="sz">~19 GB</span> <label class="prefetch"><input type="checkbox"> prefetch</label></div>
+        <div class="item"><input type="checkbox"> <span class="nm">H3 Singularity — ref2va w4a8</span> <span class="sz">11 GB</span> <label class="prefetch"><input type="checkbox"> prefetch</label></div>
+        <div class="item"><input type="checkbox"> <span class="nm">H3 fused turbo — int8 ConvRot</span> <span class="sz">~19 GB</span> <label class="prefetch"><input type="checkbox"> prefetch</label></div>
+        <div class="item"><input type="checkbox" checked> <span class="nm">Wan 2.2 Rapid AllInOne — NSFW Q4_K_M</span> <span class="sz">10.1 GB</span> <label class="prefetch"><input type="checkbox" checked> prefetch</label></div>
+        <div class="item"><input type="checkbox"> <span class="nm">PinkCherry — LTX 2.5 NSFW</span> <span class="sz">~17 GB</span> <label class="prefetch"><input type="checkbox"> prefetch</label></div>
+        <div class="item"><input type="checkbox"> <span class="nm">Sulphur-2 — LTX discussed distilled</span> <span class="sz">21 GB</span> <label class="prefetch"><input type="checkbox"> prefetch</label></div>
+        <div class="item"><input type="checkbox"> <span class="nm">Krea 2 NSFW uncensored complete</span> <span class="sz">~20 GB</span> <label class="prefetch"><input type="checkbox"> prefetch</label></div>
+      </div>
+
+      <div class="grp-title">VIA CIVITAI ACCOUNT&nbsp;&nbsp;<span class="tiny">author-exclusive releases — current versions only on CivitAI</span></div>
+      <div class="subcard">
+        <label class="row" style="opacity:.85"><input type="checkbox" disabled> <span class="nm" style="color:var(--text-tertiary)">DaSiWa TastySin v8 — WAN 2.2 I2V Q8 (HIGH+LOW)</span> <span class="sz">~31 GB</span> <span class="tag tok">🔒 token</span></label>
+        <label class="row" style="opacity:.85"><input type="checkbox" disabled> <span class="nm" style="color:var(--text-tertiary)">Wan 2.2 Enhanced NSFW — Lightning Edition</span> <span class="sz">~40 GB</span> <span class="tag tok">🔒 token</span></label>
+        <div class="tokenrow">
+          <input type="password" placeholder="CivitAI API token (optional) — settings.civitai.com, tab API keys">
+          <button class="btn" title="1 free HEAD request per item, no download" disabled>Verify</button>
+        </div>
+      </div>
+
+      <div class="totalrow">
+        <span style="font-size:12px">Adult pack total <b class="muted">45.3 GB</b> · fetch <b>15 GB</b> now, rest on first use</span>
+        <span class="row"><span class="tiny">D:\ free 47 GB after install&nbsp;</span><span class="bar"><i></i></span></span>
+      </div>
+      <div class="legal">
+        ⚖ MiniMax-derived checkpoints: H3 Community License — availability excludes EU/UK/USA/KR; you remain responsible for your own use.
+        DaSiWa files are fetched from the author's/verified mirror pages, never re-hosted by the launcher. You are responsible for outputs.
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <label class="row muted"><span class="tiny">Environment: uv · Install downloads several GB, 5–20 minutes (adult pack adds its shown sizes)</span></label>
+      <button class="btn primary" style="padding:9px 26px; font-size:13px">Install</button>
+    </div>
+  </div>
+
+  <div class="note" style="margin-top:30px">INSTALL IN PROGRESS — console + task list</div>
+  <div class="card">
+    <div class="task done"><span class="ic">✓</span><span class="nm">Clone Wan2GP repository</span><span class="st">done</span></div>
+    <div class="task done"><span class="ic">✓</span><span class="nm">Create environment (uv) + PyTorch cu130</span><span class="st">done</span></div>
+    <div class="task done"><span class="ic">✓</span><span class="nm">Adult pack — LoRAs (45 files, 12.7 GB)</span><span class="st">12.7 GB</span></div>
+    <div class="task run"><span class="ic">⇣</span><span class="nm">Adult pack — prefetch DaSiWa H3 v4 int8</span><span class="st">8.2 / 19.5 GB · resume 46%</span></div>
+    <div class="task" style="color:var(--text-tertiary)"><span class="ic">·</span><span class="nm">Adult pack — prefetch Wan Rapid AIO Q4</span><span class="st">queued</span></div>
+    <div class="task" style="color:var(--text-tertiary)"><span class="ic">·</span><span class="nm">Write finetune JSONs (5 files → finetunes\)</span><span class="st">after downloads</span></div>
+  </div>
+
+  <div class="note">THE CONFIRM DIALOG</div>
+  <div class="dialog">
+    <div class="ttl">Start the Wan2GP install now?</div>
+    <div class="line">Choice: Fresh install</div>
+    <div class="line">Environment: uv</div>
+    <div class="line">Location: D:\Wan2GP</div>
+    <div class="line" style="color:var(--text-primary)">Adult pack: yes — 11 items, 45.3 GB total (15 GB during install)</div>
+    <div class="line">This downloads several GB and takes 5–20 minutes (45–90 min with prefetch).</div>
+    <div class="brow"><button class="btn ghost">Cancel</button><button class="btn primary">Install</button></div>
+  </div>
+
+  <div class="note" style="margin:30px 0 10px">AFTER INSTALL — Manage (re-run, removal)</div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <b style="font-size:12.5px">Adult pack</b>
+      <span class="badge">✓ installed · manifest v1</span>
+    </div>
+    <div class="row" style="margin-top:10px; font-size:12px; color:var(--text-secondary)">
+      45 loras in loras\ · 5 finetunes in finetunes\ · 2 checkpoints on disk (34.1 GB)
+    </div>
+    <div class="row" style="margin-top:12px; gap:8px">
+      <button class="btn">Re-verify files (SHA)</button>
+      <button class="btn">Missing → fetch / Prefetch rest</button>
+      <button class="btn" style="color:var(--signal-red)">Remove…</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  // 18+ gate: parent enables the sub-body
+  const gate = () => {
+    const on = $("parentCb").checked;
+    $("accBody").style.display = on ? "" : "none";
+    $("chev").textContent = on ? "▾" : "▸";
+    const ok = $("ageCb").checked;
+    $("packBadge").textContent = ok ? "18+ confirmed" : (on ? "unconfirmed" : "off");
+    $("packBadge").className = "badge" + (ok ? "" : " gray");
+  };
+  $("parentCb").onchange = gate;
+  $("ageCb").onchange = gate;
+  $("accChev").onclick = () => { if (!$("accChev").closest?.$) {} };
+  $("chev").onclick = () => {};
+  // simple: clicking chev when parent checked toggles body independent of checkbox state
+  document.querySelector("#accChev .chev").addEventListener("click", e => {
+    e.stopPropagation();
+    if (!$("ageCb").checked) return;
+    const b = $("accBody");
+    b.style.display = b.style.display === "none" ? "" : "none";
+  });
+  $("toggle").onclick = () => document.documentElement.classList.toggle("dark");
+</script>
+</body>
+</html>
