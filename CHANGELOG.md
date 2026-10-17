@@ -4,8 +4,9 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
-- **4 signature themes ship in the real app** (Settings → Appearance): **Cyberpunk** (`noir` — neon magenta on deep violet), **Phosphor** (`phosphor` — terminal green on true black), **Parchment** (`parchment` — fantasy bronze & leather, works in light and dark) and **Retina Sunset** (`retina` — vaporwave pink/purple). New dots in the theme row after Matrix; they render from four full token blocks in `style.css` (`--canvas`/`--surface`/text/accent + all four signal colors), not from the editable 3-color slots. Cyberpunk/Phosphor/Retina are dark-only — picking one while light is active switches the shell to dark (persisted); Parchment keeps its look in both modes. The accent cycle button and the top-bar theme picker include them; the settings key is the same `themeAccent` string, so custom profiles that never touched them upgrade clean.
+## [0.10.12] — 2026-10-17
 
+- **4 signature themes ship in the real app** (Settings → Appearance): **Cyberpunk** (`noir` — neon magenta on deep violet), **Phosphor** (`phosphor` — terminal green on true black), **Parchment** (`parchment` — fantasy bronze & leather, works in light and dark) and **Retina Sunset** (`retina` — vaporwave pink/purple). New dots in the theme row after Matrix; they render from four full token blocks in `style.css` (`--canvas`/`--surface`/text/accent + all four signal colors), not from the editable 3-color slots. Cyberpunk/Phosphor/Retina are dark-only — picking one while light is active switches the shell to dark (persisted); Parchment keeps its look in both modes. The accent cycle button and the top-bar theme picker include them; the settings key is the same `themeAccent` string, so custom profiles that never touched them upgrade clean.
 - **Repair/Roll back show their commands.** The Troubleshooting Triton actions echo the exact pip command lines (`[>] <python> -m pip …`) to the console before running them — built from the same pinned argv the spawn uses, so shown and run can never diverge.
 
 ## [0.10.11] — 2026-10-17

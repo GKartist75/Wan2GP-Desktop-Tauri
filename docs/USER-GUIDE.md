@@ -46,7 +46,7 @@ The home screen. Top to bottom:
 | ⏹ Stop All | Stops Wan2GP + OpenCode servers (also kills the port listener) |
 | Task Manager | Opens Windows Task Manager |
 | ☀/☾ | Toggles dark / light theme |
-| 🎨 (palette) | Cycles the 5 Appearance themes (Mono → Sky → Orca → Cyber → Matrix) |
+| 🎨 (palette) | Cycles all 9 Appearance themes (Mono → Sky → Orca → Cyber → Matrix → Cyberpunk → Phosphor → Parchment → Retina Sunset) |
 | ⚙ (gear) | Opens the Manage panel |
 
 **Banners** (appear only when relevant):
@@ -250,10 +250,14 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **Claude / Anthropic API Key** — for Deepy/Claude paths.
 - **Default Browser** — which browser Browser-mode opens.
 - **Floating Terminal Default** — where the console docks (bottom/left/top/right/minimised).
-- **Appearance** — 5 themes (Mono default, Blue Sky, Orca, Cyber, Matrix):
-  click to apply, double-click to edit 3 colors (accent/background/text) with
-  live preview, Save theme / Set as default / Reset to shipped colors. Text size
-  (85–130%) + Terminal size (85–150%) sliders; console window follows.
+- **Appearance** — 9 themes: Mono default, the 5 editable slots Blue Sky / Orca /
+  Cyber / Matrix (click to apply, double-click to edit 3 colors — accent/background/
+  text — with live preview, Save theme / Set as default / Reset to shipped colors) plus
+  4 shipped signature palettes: **Cyberpunk** (neon noir), **Phosphor** (terminal green),
+  **Parchment** (fantasy bronze, works light or dark) and **Retina Sunset** (vaporwave).
+  Cyberpunk/Phosphor/Retina are dark-only: picking one while light is active switches
+  the shell to dark (persisted). Text size (85–130%) + Terminal size (85–150%) sliders;
+  console window follows.
 - **Desktop** — desktop shortcut + start options.
 - **Queue Notifier** — now sets up Wan2GP's **native** notifications
   (`wgp_config.json`, upstream `shared/notifications`): space-separated
