@@ -534,7 +534,11 @@ pub(crate) fn attention_for_profile(profile_key: &str) -> Option<&'static str> {
     }
 }
 
-/// Docs-prescribed GGUF kernel floor: 1.0.25 adds INT8-verified speculative
+/// Docs-prescribed GGUF kernel floor: 1.0.26 (v18.17, fde3c7e) adds packed
+/// rows crossing quantization blocks for Q2_K through Q6_K, Q4_0/Q4_1,
+/// Q5_0/Q5_1 and Q8_0 — fixing MiniMax H3 image-reference projections with
+/// no dense-weight materialization. 1.0.25 already added INT8-verified
+/// speculative
 /// decoding for Q4_K / Bonsai PTQ1_0 (9% faster Qwen3.8 Q4 vs 1.0.23, 15% faster
 /// Bonsai vs 1.0.24 on RTX 5090) and retains the precompiled RTX50xx (SM120)
 /// async-copy kernels for Q8 prefill and decode/verification
@@ -542,10 +546,10 @@ pub(crate) fn attention_for_profile(profile_key: &str) -> Option<&'static str> {
 /// Prime Bonsai PTQ1 at ~10GB VRAM. Older builds silently fall back to
 /// slow PyTorch SDPA on Deepy decode (6 tok/s vs 37: #2274, #2193), hit the
 /// Q2_K fallback assert (#2235), or 404 outright on stale URLs (#2249).
-/// Anything older resolves to the known-good 1.0.25 wheel; the floor,
+/// Anything older resolves to the known-good 1.0.26 wheel; the floor,
 /// newer builds, and unparseable URLs pass through, so the day upstream
 /// flips setup_config forward we follow it with no code change.
-pub(crate) const GGUF_FLOOR: &str = "1.0.25";
+pub(crate) const GGUF_FLOOR: &str = "1.0.26";
 
 /// Numeric dotted-version compare: true when a > b ("1.0.21" > "1.0.2",
 /// "3.8.0" > "3.3", "3.3.1" > "3.3"). Non-numeric tails ignored,
@@ -740,37 +744,48 @@ pub(crate) fn parse_pip_show_versions(text: &str) -> Option<String> {
 
 /// GGUF wheel URLs shipped by upstream (docs/INSTALLATION.md#gguf-llamacpp-cuda-kernels).
 /// Upstream splits the component: `gguf` (cu130/py311) + `gguf_cu128`
-/// (cu128/py310), both at 1.0.25 (v13.1315/1.0.25 wave). Profiles still list
+/// (cu128/py310), both at 1.0.26 (v18.17/fde3c7e wave). Profiles still list
 /// `gguf`; setup.py remaps via (torch_k, py_k) — the launcher mirrors that by
 /// picking the URL matching the stale link's py tag (py310 → cu128 build,
 /// else cu130 build).
 /// Both carry upstream's `--no-deps` prefix verbatim (setup.py installs
 /// `pip {cmd}` = `pip --no-deps <wheel>` — preserves the torch env);
 /// install.rs splits the cmd into separate pip argv items.
-const GGUF_1025_WIN_PY311: &str = "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
-const GGUF_1025_WIN_PY310: &str = "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch271cu128py310-cp310-cp310-win_amd64.whl";
-/// Back-compat aliases: older call sites/tests reference the 1022/1023 names.
+const GGUF_1026_WIN_PY311: &str = "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.26/llamacpp_gguf_cuda-1.0.26%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+const GGUF_1026_WIN_PY310: &str = "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.26/llamacpp_gguf_cuda-1.0.26%2Btorch271cu128py310-cp310-cp310-win_amd64.whl";
+/// Back-compat aliases: older call sites/tests reference the 1022/1023/1025 names.
+/// 1.0.25 → 1.0.26 is a code->wheel move (packed rows crossing quant blocks,
+/// MiniMax H3 image-reference projections fixed); the HIP wheel is version-only.
 #[allow(dead_code)]
-const GGUF_1023_WIN_PY311: &str = GGUF_1025_WIN_PY311;
+const GGUF_1025_WIN_PY311: &str = GGUF_1026_WIN_PY311;
 #[allow(dead_code)]
-const GGUF_1023_WIN_PY310: &str = GGUF_1025_WIN_PY310;
+const GGUF_1025_WIN_PY310: &str = GGUF_1026_WIN_PY310;
 #[allow(dead_code)]
-const GGUF_1022_WIN_PY311: &str = GGUF_1025_WIN_PY311;
+const GGUF_1023_WIN_PY311: &str = GGUF_1026_WIN_PY311;
 #[allow(dead_code)]
-const GGUF_1022_WIN_PY310: &str = GGUF_1025_WIN_PY310;
-/// Experimental AMD HIP wheel (docs/INSTALLATION.md, Sep 2026): RX 9070
+const GGUF_1023_WIN_PY310: &str = GGUF_1026_WIN_PY310;
+#[allow(dead_code)]
+const GGUF_1022_WIN_PY311: &str = GGUF_1026_WIN_PY311;
+#[allow(dead_code)]
+const GGUF_1022_WIN_PY310: &str = GGUF_1026_WIN_PY310;
+/// Experimental AMD HIP wheel (docs/INSTALLATION.md): RX 9070
 /// gfx1201 on torch 2.10.0+rocm7.14.0. Same dist name as the CUDA wheel —
 /// pick by backend, never mix. Sync-kernels-only opt-in via
 /// install_hip_gguf_wheel; the GGUF floor below must never swap HIP->CUDA.
-/// NOTE: upstream v13.1315 bumped the HIP wheel to 1.0.25.
-pub(crate) const GGUF_1025_WIN_PY311_HIP: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210rocm714py311-cp311-cp311-win_amd64.whl";
+/// NOTE: upstream fde3c7e bumped the HIP wheel to 1.0.26 — a version-only
+/// update (code, binaries and torch/ROCm requirements identical to 1.0.25;
+/// the new CUDA packed-row kernels are NOT in it).
+pub(crate) const GGUF_1026_WIN_PY311_HIP: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.26/llamacpp_gguf_cuda-1.0.26%2Btorch210rocm714py311-cp311-cp311-win_amd64.whl";
 #[allow(dead_code)]
-pub(crate) const GGUF_1022_WIN_PY311_HIP: &str = GGUF_1025_WIN_PY311_HIP;
-/// GGUF floor toward the documented 1.0.25 build (INT8-verified speculative
-/// decoding for Q4_K / Bonsai PTQ1_0 + RTX50 SM120 kernels, 50-100% Deepy
-/// decode speedup, Deepy Prime Bonsai PTQ1 support).
-/// setup_config.json lags (1.0.14 and older in the wild, verified Sep 2026),
-/// so anything below the floor swaps to 1.0.25 — but the
+pub(crate) const GGUF_1025_WIN_PY311_HIP: &str = GGUF_1026_WIN_PY311_HIP;
+#[allow(dead_code)]
+pub(crate) const GGUF_1022_WIN_PY311_HIP: &str = GGUF_1026_WIN_PY311_HIP;
+/// GGUF floor toward the documented 1.0.26 build (packed rows crossing
+/// quantization blocks for Q2_K..Q6_K / Q4_0…Q8_0 — fixes MiniMax H3
+/// image-reference projections; 1.0.25 carried INT8-verified speculative
+/// decoding for Q4_K / Bonsai PTQ1_0 + RTX50 SM120 kernels).
+/// setup_config.json lags in old checkouts, so anything below the floor
+/// swaps to 1.0.26 — but the
 /// floor, anything newer, and non-GGUF URLs pass through untouched, so the
 /// day upstream flips setup_config we follow it verbatim with no code
 /// change (same shape as the Sage post4/post6 swap in sync_kernels).
@@ -828,9 +843,9 @@ pub(crate) fn gguf_swap_target(cfg: &serde_json::Value, url: &str) -> String {
         }
     }
     if url.contains("py310") {
-        GGUF_1025_WIN_PY310.into()
+        GGUF_1026_WIN_PY310.into()
     } else {
-        GGUF_1025_WIN_PY311.into()
+        GGUF_1026_WIN_PY311.into()
     }
 }
 /// Floor-parameterized GGUF override (pure floor compare + hardcoded docs
@@ -851,9 +866,9 @@ pub(crate) fn apply_gguf_override_with(url: &str, floor: &str) -> String {
         return url.to_string();
     }
     if url.contains("py310") {
-        GGUF_1025_WIN_PY310.into()
+        GGUF_1026_WIN_PY310.into()
     } else {
-        GGUF_1025_WIN_PY311.into()
+        GGUF_1026_WIN_PY311.into()
     }
 }
 
@@ -1139,11 +1154,11 @@ mod known_vram_tests {
 mod gguf_override_tests {
     use super::apply_gguf_override;
     #[test]
-    fn swaps_stale_for_1025() {
+    fn swaps_stale_for_1026() {
         let old_win = "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.14+torch210cu130py311-cp311-cp311-win_amd64.whl";
         let new = apply_gguf_override(old_win);
         assert!(
-            new.contains("gguf-v1.0.25") && new.contains("1.0.25"),
+            new.contains("gguf-v1.0.26") && new.contains("1.0.26"),
             "got {new}"
         );
         assert!(!new.contains("1.0.14"));
@@ -1151,33 +1166,34 @@ mod gguf_override_tests {
             .replace("py311", "py310")
             .replace("torch210cu130py311", "torch271cu128py310");
         assert!(apply_gguf_override(&old_310).contains("torch271cu128py310"));
-        // 1.0.21 through 1.0.24 are now below the floor (docs prescribe 1.0.25).
-        for v in ["1.0.21", "1.0.22", "1.0.23", "1.0.24"] {
+        // 1.0.21 through 1.0.25 are now below the floor (docs prescribe 1.0.26).
+        for v in ["1.0.21", "1.0.22", "1.0.23", "1.0.24", "1.0.25"] {
             let old = old_win.replace("1.0.14", v);
             let swapped = apply_gguf_override(&old);
             assert!(
-                swapped.contains("gguf-v1.0.25") && swapped.contains("1.0.25"),
+                swapped.contains("gguf-v1.0.26") && swapped.contains("1.0.26"),
                 "got {swapped}"
             );
         }
     }
     #[test]
     fn passes_other_urls_through() {
+        // At the floor and newer both follow upstream with no swap.
         for u in [
-            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25+torch210cu130py311-cp311-cp311-win_amd64.whl",
-            // Newer than the floor follows upstream with no swap.
-            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.26/llamacpp_gguf_cuda-1.0.26+torch210cu130py311-cp311-cp311-win_amd64.whl",            "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl",
+            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.26/llamacpp_gguf_cuda-1.0.26+torch210cu130py311-cp311-cp311-win_amd64.whl",
+            "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.27/llamacpp_gguf_cuda-1.0.27+torch210cu130py311-cp311-cp311-win_amd64.whl",
+            "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl",
         ] { assert_eq!(apply_gguf_override(u), u); }
     }
     #[test]
     fn floor_catches_all_stale_builds() {
         // #2274 (1.0.2 silent SDPA fallback), #2235, #2249 (1.0.13 404):
-        // anything below 1.0.25 resolves to the known-good wheel.
-        for v in ["1.0.2", "1.0.7", "1.0.12", "1.0.13", "1.0.14", "1.0.21", "1.0.22", "1.0.23", "1.0.24"] {
+        // anything below 1.0.26 resolves to the known-good wheel.
+        for v in ["1.0.2", "1.0.7", "1.0.12", "1.0.13", "1.0.14", "1.0.21", "1.0.22", "1.0.23", "1.0.24", "1.0.25"] {
             let u = format!("https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-{v}+torch210cu130py311-cp311-cp311-win_amd64.whl");
             let out = apply_gguf_override(&u);
             assert!(
-                out.contains("gguf-v1.0.25") && out.contains("1.0.25") && out.contains("cp311"),
+                out.contains("gguf-v1.0.26") && out.contains("1.0.26") && out.contains("cp311"),
                 "{v} got {out}"
             );
         }
@@ -1185,37 +1201,37 @@ mod gguf_override_tests {
         let old310 = "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.12+torch271cu128py310-cp310-cp310-win_amd64.whl";
         let out310 = apply_gguf_override(old310);
         assert!(
-            out310.contains("torch271cu128py310") && out310.contains("1.0.25"),
+            out310.contains("torch271cu128py310") && out310.contains("1.0.26"),
             "got {out310}"
         );
     }
     #[test]
     fn effective_floor_follows_setup_config_forward() {
         use super::{apply_gguf_override_cfg, effective_gguf_floor, setup_config_gguf_version};
-        // Current upstream shape: both components at 1.0.25 → floor stays.
+        // Current upstream shape (fde3c7e): both components at 1.0.26 → floor stays.
         let cfg = serde_json::json!({
             "components": { "kernels": {
-                "gguf": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl" } },
-                "gguf_cu128": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch271cu128py310-cp310-cp310-win_amd64.whl" } }
+                "gguf": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.26/llamacpp_gguf_cuda-1.0.26%2Btorch210cu130py311-cp311-cp311-win_amd64.whl" } },
+                "gguf_cu128": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.26/llamacpp_gguf_cuda-1.0.26%2Btorch271cu128py310-cp310-cp310-win_amd64.whl" } }
             } }
         });
-        assert_eq!(setup_config_gguf_version(&cfg).as_deref(), Some("1.0.25"));
-        assert_eq!(effective_gguf_floor(&cfg), "1.0.25");
-        // Upstream ships 1.0.26 tomorrow: floor follows with no code change,
-        // and 1.0.25 installs now flag stale.
-        let cfg26 = serde_json::json!({
+        assert_eq!(setup_config_gguf_version(&cfg).as_deref(), Some("1.0.26"));
+        assert_eq!(effective_gguf_floor(&cfg), "1.0.26");
+        // Upstream ships 1.0.27 tomorrow: floor follows with no code change,
+        // and 1.0.26 installs now flag stale.
+        let cfg27 = serde_json::json!({
             "components": { "kernels": {
-                "gguf": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.26/llamacpp_gguf_cuda-1.0.26%2Btorch210cu130py311-cp311-cp311-win_amd64.whl" } }
+                "gguf": { "cmd": { "win": "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.27/llamacpp_gguf_cuda-1.0.27%2Btorch210cu130py311-cp311-cp311-win_amd64.whl" } }
             } }
         });
-        assert_eq!(effective_gguf_floor(&cfg26), "1.0.26");
-        let u25 = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
-        let swapped = apply_gguf_override_cfg(u25, &cfg26);
-        assert!(swapped.contains("1.0.26"), "got {swapped}");
+        assert_eq!(effective_gguf_floor(&cfg27), "1.0.27");
+        let u26 = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.26/llamacpp_gguf_cuda-1.0.26%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+        let swapped = apply_gguf_override_cfg(u26, &cfg27);
+        assert!(swapped.contains("1.0.27"), "got {swapped}");
         // Stale checkout (1.0.14 pins, no cu128): hardcoded floor still applies.
         let stale = serde_json::json!({
             "components": { "kernels": {
-                "gguf": { "cmd": { "win": "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.14+torch210cu130py311-cp311-cp311-win_amd64.whl" } }
+                "gguf": { "cmd": { "win": "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.14+torch210cu130py311-cp311-cp311-win_amd64.whl" } } 
             } }
         });
         assert_eq!(effective_gguf_floor(&stale), super::GGUF_FLOOR);
@@ -1315,6 +1331,13 @@ mod version_cmp_tests {
         assert_eq!(
             wanted_triton_pin("triton-windows>=3.3,<4").as_deref(),
             Some("3.3")
+        );
+        // v18.17 v37/v38 shape: `>=floor,<=ceiling` two-bound spec — the
+        // floor bound is the wanted pin (min binding parsed; post tags stop
+        // the version scan cleanly at "post").
+        assert_eq!(
+            wanted_triton_pin("-U \"triton-windows>=3.7.0.post26,<=3.7.1.post27\"").as_deref(),
+            Some("3.7.0")
         );
         assert_eq!(wanted_triton_pin("triton-windows"), None);
         assert_eq!(
@@ -1522,9 +1545,14 @@ fn comp_label(code: &str) -> String {
         // setup_config.json `components.*.label` — the overview must not
         // invent pins. Both the short display value and the raw upstream
         // key are accepted (raw keys stay for forward compatibility).
+        // Triton: upstream WF18.17 (fde3c7e) renamed the raw keys — the old
+        // `v37` (3.6 spec) is now `v36`, and `v37` itself became the
+        // recommended Triton 3.7 line (`>=3.7.0.post26,<=3.7.1.post27`,
+        // Windows) that ships WanGP's prebuilt CUDA helper. `v38` (AMD) pins
+        // the same range. See triton_label for the context-dependent labels.
         "3.2.x" | "v33" => "Triton 3.2.x (RTX 20XX only)".into(),
         "3.3.x" | "v34" => "Triton 3.3.x (Torch 2.7, RTX 30XX+)".into(),
-        "3.6.x" | "v37" => "Triton 3.6.x (Torch 2.10, RTX 30XX+)".into(),
+        "3.6.x" | "v36" => "Triton 3.6.x (Torch 2.10, RTX 30XX+)".into(),
         "3.7.x" | "v38" => "Triton 3.7.x (Torch 2.13, AMD ROCm)".into(),
         "latest" => "Triton (latest)".into(),
         "1.0.6" | "v1" => "Sage Attention 1.0.6".into(),
@@ -1551,7 +1579,10 @@ pub(crate) fn comp_short(code: &str) -> String {
         "v284_rocm" => "2.8.4".into(),
         "v33" => "3.2.x".into(),
         "v34" => "3.3.x".into(),
-        "v37" => "3.6.x".into(),
+        // v18.17 renamed the triton keys: v36 = Triton 3.6.x, v37 = the
+        // recommended Triton 3.7 Windows line (prebuilt helper builds).
+        "v36" => "3.6.x".into(),
+        "v37" => "3.7.x".into(),
         "v38" => "3.7.x".into(),
         other => other.to_string(),
     }
@@ -1569,9 +1600,31 @@ mod comp_short_tests {
         assert_eq!(comp_short("v284_rocm"), "2.8.4");
         assert_eq!(comp_short("v220_cu13"), "2.2.0");
         assert_eq!(comp_short("v1"), "1.0.6");
-        assert_eq!(comp_short("v37"), "3.6.x");
+        // v18.17 key rename: v37 is the Triton 3.7 line now, v36 is 3.6.
+        assert_eq!(comp_short("v36"), "3.6.x");
+        assert_eq!(comp_short("v37"), "3.7.x");
+        assert_eq!(comp_short("v38"), "3.7.x");
         // Unknown values pass through unchanged (no silent data loss).
         assert_eq!(comp_short("sdpa"), "sdpa");
+    }
+}
+
+/// Triton detail-row label. The 3.7 line exists on two stacks with different
+/// upstream keys (`v37` = Torch 2.10 RTX 30XX+ Windows, `v38` = Torch 2.13 AMD
+/// ROCm), so the context-free comp_label can't tell them apart — resolve
+/// through the profile. Raw tags pass through for forward compatibility.
+fn triton_label(profile_str: &str, code: &str) -> String {
+    match code {
+        "v37" => "Triton 3.7 Windows / 3.6 Linux (Torch 2.10, RTX 30XX+)".into(),
+        "v38" => "Triton 3.7.x (Torch 2.13, AMD ROCm)".into(),
+        "3.7.x" => {
+            if profile_str == "AMD" {
+                "Triton 3.7.x (Torch 2.13, AMD ROCm)".into()
+            } else {
+                "Triton 3.7 Windows / 3.6 Linux (Torch 2.10, RTX 30XX+)".into()
+            }
+        }
+        other => comp_label(other),
     }
 }
 
@@ -1718,7 +1771,10 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                triton: Some("3.6.x"),
+                // v18.17 (fde3c7e): recommended line is Triton 3.7 Windows
+                // (`>=3.7.0.post26,<=3.7.1.post27`) — carries WanGP's prebuilt
+                // CUDA helper, so the JIT-AV exposure is gone on these stacks.
+                triton: Some("3.7.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
@@ -1730,7 +1786,8 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                triton: Some("3.6.x"),
+                // v18.17: Triton 3.7 Windows line (see RTX_30).
+                triton: Some("3.7.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
@@ -1742,7 +1799,8 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                triton: Some("3.6.x"),
+                // v18.17: Triton 3.7 Windows line (see RTX_30).
+                triton: Some("3.7.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
@@ -1766,6 +1824,10 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.12.10",
                 torch: "ROCm 10 (HIP 7.14 opt-in)",
+                // v18.17: AMD's triton-windows pins the same 3.7 line as
+                // NVIDIA (`>=3.7.0.post26,<=3.7.1.post27`); the prebuilt HIP
+                // helper engages automatically on Python 3.12 + torch 2.13
+                // rocm envs (experimental pending AV validation).
                 triton: Some("3.7.x"),
                 sage: Some("1.0.6"),
                 sparge: None,
@@ -1794,7 +1856,8 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                triton: Some("3.6.x"),
+                // v18.17: Triton 3.7 Windows line (see RTX_30).
+                triton: Some("3.7.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
                 flash: Some("2.8.3"),
@@ -1828,7 +1891,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
         "profile": profile_str,
         "python": prof.python,
         "torch": prof.torch,
-        "triton": prof.triton.map(comp_label).unwrap_or("—".into()),
+        "triton": prof.triton.map(|t| triton_label(profile_str, t)).unwrap_or("—".into()),
         "sage": prof.sage.map(comp_label).unwrap_or("—".into()),
         "sparge": prof.sparge.map(comp_label).unwrap_or("—".into()),
         "flash": prof.flash.map(comp_label).unwrap_or("—".into()),
@@ -2290,23 +2353,27 @@ mod overview_pid_tests {
             rtx20["detail"]["triton"]
         );
         assert_eq!(rtx20["detail"]["flash"], serde_json::json!("—"));
-        // RTX 30–50 pin triton v37 (3.6.x) and flash 2.8.3.
+        // RTX 30–50 pin the recommended Triton 3.7 Windows line (v18.17
+        // fde3c7e — prebuilt helper builds) and flash 2.8.3.
         let rtx40 = hardware_profile_detail_with_ram(
             "NVIDIA",
             "NVIDIA GeForce RTX 4090",
             24.0 * 1024.0,
             Some(64.0),
         );
-        assert!(rtx40["detail"]["triton"].as_str().unwrap().contains("3.6.x"));
+        assert!(rtx40["detail"]["triton"].as_str().unwrap().contains("3.7"), "RTX_40 triton: {}", rtx40["detail"]["triton"]);
         assert!(rtx40["detail"]["flash"].as_str().unwrap().contains("2.8.3"));
-        // AMD pins triton v38 (3.7.x) and ships the ROCm flash wheel.
+        // AMD pins triton v38 (3.7.x, Rocm line) and ships the ROCm flash wheel.
         let amd = hardware_profile_detail_with_ram(
             "AMD",
             "AMD Radeon RX 9070 XT",
             16.0 * 1024.0,
             Some(32.0),
         );
-        assert!(amd["detail"]["triton"].as_str().unwrap().contains("3.7.x"));
+        assert_eq!(
+            amd["detail"]["triton"],
+            serde_json::json!("Triton 3.7.x (Torch 2.13, AMD ROCm)")
+        );
         assert_eq!(
             amd["detail"]["flash"],
             serde_json::json!("Flash Attention 2.8.4 (AMD ROCm / Triton)")

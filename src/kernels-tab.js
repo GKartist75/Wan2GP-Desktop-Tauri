@@ -24,12 +24,12 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
       hipBtn.style.display = p.indexOf("AMD") === 0 ? "" : "none";
       if (p.indexOf("AMD") === 0 && p !== "AMD_GFX1201") {
         hipBtn.title =
-          "Experimental AMD-only: GGUF 1.0.25 torch210rocm714 HIP wheel (upstream targets gfx1201 RX 9070/R9700 — installing on " +
+          "Experimental AMD-only: GGUF 1.0.26 torch210rocm714 HIP wheel (upstream targets gfx1201 RX 9070/R9700 - installing on " +
           p +
           " is unvalidated). Needs a separate torch 2.10.0+rocm7.14.0 env — it does not load in the installer's torch 2.13+rocm10 env.";
       } else if (hipBtn.title && hipBtn.title.indexOf("does not load") === -1) {
         hipBtn.title =
-          "Experimental AMD-only: GGUF 1.0.25 torch210rocm714 HIP wheel (gfx1201 RX 9070/R9700). Needs a separate torch 2.10.0+rocm7.14.0 env — it does not load in the installer's torch 2.13+rocm10 env.";
+          "Experimental AMD-only: GGUF 1.0.26 torch210rocm714 HIP wheel (gfx1201 RX 9070/R9700). Needs a separate torch 2.10.0+rocm7.14.0 env - it does not load in the installer's torch 2.13+rocm10 env.";
       }
     }
   } catch {}

@@ -1364,17 +1364,21 @@ pub(crate) fn apply_attention_mode_sdpa(cfg: &mut serde_json::Value) -> bool {
 }
 
 /// Pure helper: pip arg sequence installing triton-windows from the official
-/// PyPI wheel on AMD (`<env python> -m pip install -U "triton-windows>=3.7,<3.8"`).
-/// Pinned to the 3.7.x line matching torch 2.13 (upstream setup_config `v38`);
-/// a floating latest could pull a triton major that no longer matches the
-/// ROCm torch. Official wheel only — no build flags, no git URLs, no
+/// PyPI wheel on AMD (`<env python> -m pip install -U "triton-windows>=3.7.0.post26,<=3.7.1.post27"`).
+/// Loaded to follow upstream setup_config `v38` command. Official wheel only — no build flags, no git URLs, no
 /// cmake/ninja/setup.py anywhere. If a vanilla `triton` dist is
 /// installed it must be uninstalled first: both own the `triton` import
 /// namespace and overwrite each other (documented upstream conflict).
 /// AMD-gated by the caller; Intel/NVIDIA/CPU flows never call it.
 /// Pure + unit-tested.
 pub(crate) fn triton_windows_pip_args() -> Vec<&'static str> {
-    vec!["-m", "pip", "install", "-U", "triton-windows>=3.7,<3.8"]
+    vec![
+        "-m",
+        "pip",
+        "install",
+        "-U",
+        "triton-windows>=3.7.0.post26,<=3.7.1.post27",
+    ]
 }
 
 /// After a successful AMD setup, ensure `<repo>/wgp_config.json` carries
@@ -3660,16 +3664,18 @@ pub async fn restore_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,
     sync_kernels_inner(app, true).await
 }
 
-/// Experimental AMD HIP GGUF wheel (upstream docs/INSTALLATION.md, Sep 2026):
-/// `llamacpp_gguf_cuda-1.0.25+torch210rocm714py311` for RX 9070-series
-/// (gfx1201) on PyTorch 2.10.0+rocm7.14.0. Sync-kernels-only opt-in: the main
+/// Experimental AMD HIP GGUF wheel (upstream docs/INSTALLATION.md):
+/// `llamacpp_gguf_cuda-1.0.26+torch210rocm714py311` for RX 9070-series
+/// (gfx1201) on PyTorch 2.10.0+rocm7.14.0. The 1.0.26 bump is version-only
+/// (code, binaries and torch/ROCm requirements identical to 1.0.25; the new
+/// CUDA packed-row kernels are not in it). Sync-kernels-only opt-in: the main
 /// install stays on the TheRock 7.15 stack, this swaps just the GGUF dist
 /// (same package name as the CUDA wheel, so --force-reinstall). --no-deps
 /// preserves the installed torch — the HIP wheel rejects other builds at
 /// import. AMD-gated; non-AMD profiles refused. Non-gfx1201 AMD allowed with
 /// a warning (upstream targets gfx1201, validation pending). URL lives in
 /// hw.rs alongside the CUDA wheels (single source of truth).
-use crate::hw::GGUF_1025_WIN_PY311_HIP as HIP_GGUF_WHEEL_URL;
+use crate::hw::GGUF_1026_WIN_PY311_HIP as HIP_GGUF_WHEEL_URL;
 
 #[tauri::command]
 pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
@@ -3695,7 +3701,7 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
     if profile != "AMD_GFX1201" {
         emit_log(&format!("[!] {profile} is not the upstream gfx1201 target (RX 9070/R9700) — installing anyway, validation pending.\n"));
     }
-    emit_log("[*] Installing experimental HIP GGUF wheel 1.0.25+torch210rocm714 (needs torch 2.10.0+rocm7.14.0; validation pending)…\n");
+    emit_log("[*] Installing experimental HIP GGUF wheel 1.0.26+torch210rocm714 (needs torch 2.10.0+rocm7.14.0; validation pending)…\n");
     let repo = get_repo_dir();
     let env = get_active_env();
     let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
@@ -6017,7 +6023,7 @@ mod override_wheels_tests {
     fn flags_stale_gguf_and_post4() {
         let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "RTX_30", true);
         let gguf = w.gguf.expect("stale gguf must swap");
-        assert!(gguf.contains("1.0.25"), "got {gguf}");
+        assert!(gguf.contains("1.0.26"), "got {gguf}");
         let sage = w.sage.expect("post4 must swap when safe");
         assert!(sage.contains("post6"), "got {sage}");
     }
@@ -6025,20 +6031,20 @@ mod override_wheels_tests {
     fn quiet_when_already_current_or_opted_out() {
         // Current GGUF + safe sage → nothing to do.
         let cur = cfg_with(
-            &GGUF_1014.replace("1.0.14", "1.0.25"),
+            &GGUF_1014.replace("1.0.14", "1.0.26"),
             "v220_cu13",
             super::SAGE_SAFE_WIN_URL,
         );
         let w = post_install_override_urls(&cur, "RTX_30", true);
         assert!(w.gguf.is_none() && w.sage.is_none());
-        // 1.0.24 is now stale too (floor 1.0.25).
+        // 1.0.24 is now stale too (floor 1.0.26).
         let old24 = cfg_with(
             &GGUF_1014.replace("1.0.14", "1.0.24"),
             "v220_cu13",
             super::SAGE_SAFE_WIN_URL,
         );
         let w24 = post_install_override_urls(&old24, "RTX_30", true);
-        assert!(w24.gguf.is_some(), "1.0.24 must swap to 1.0.25");
+        assert!(w24.gguf.is_some(), "1.0.24 must swap to 1.0.26");
         // User chose upstream sage → sage untouched, gguf still swaps.
         let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "RTX_30", false);
         assert!(w.gguf.is_some() && w.sage.is_none());
@@ -6049,7 +6055,7 @@ mod override_wheels_tests {
     #[test]
     fn swaps_stale_gguf_cu128_split() {
         // Upstream splits `gguf_cu128` (cu128/py310) at 1.0.25. A stale
-        // cu128 pin must swap to its matching 1.0.25 cu128 build.
+        // cu128 pin must swap to its matching 1.0.26 cu128 build.
         let stale_cu128 = GGUF_1014
             .replace("torch210cu130py311", "torch271cu128py310")
             .replace("py311", "py310");
@@ -6067,7 +6073,7 @@ mod override_wheels_tests {
         let w = post_install_override_urls(&cfg, "RTX_30", true);
         let gguf = w.gguf.expect("stale gguf_cu128 must swap");
         assert!(
-            gguf.contains("1.0.25") && gguf.contains("torch271cu128py310"),
+            gguf.contains("1.0.26") && gguf.contains("torch271cu128py310"),
             "got {gguf}"
         );
     }
@@ -7854,11 +7860,12 @@ mod pipeline_separation_tests {
     #[test]
     fn triton_windows_args_are_wheels_only() {
         // OFFICIAL WHEELS ONLY: the arg sequence is a plain PyPI install —
-        // pinned to the 3.7.x line matching torch 2.13 (upstream v38) — no
-        // build-from-source surface of any kind.
+        // pinned to upstream v18.17's exact v38 range (helper builds
+        // 3.7.0.post26..3.7.1.post27) — no build-from-source surface of any
+        // kind.
         assert_eq!(
             triton_windows_pip_args(),
-            vec!["-m", "pip", "install", "-U", "triton-windows>=3.7,<3.8"]
+            vec!["-m", "pip", "install", "-U", "triton-windows>=3.7.0.post26,<=3.7.1.post27"]
         );
         let joined = triton_windows_pip_args().join(" ");
         for banned in [
