@@ -335,57 +335,10 @@ body.wb-rail-mini .wb-rail-foot { border-top: none; }
   flex: 0 0 20px; }
 .modal-box { border-radius: 14px; box-shadow: 0 30px 80px -30px rgba(0,0,0,.55); }
 
-/* — layout theme: classic demo (real: classic = current index.html untouched) — */
-body.wb-classic .wb-rail, body.wb-classic .wb-tb-sep, body.wb-classic .wb-subtitle { display: none; }
-body.wb-classic .wb-topbar { padding: 10px 22px; }
-body.wb-classic .wb-title { font-weight: 750; }
-body.wb-classic .wb-view { display: block; }
-body.wb-classic .wb-view:not(.wb-show) { display: none; }
-body.wb-classic .wb-view { padding: 22px 30px 34px; scroll-margin-top: 56px; }
-body.wb-classic .wb-view[data-heading]::before {
-  content: attr(data-heading); display: block;
-  font-size: .68rem; font-weight: 750; letter-spacing: .13em; text-transform: uppercase;
-  color: var(--text-tertiary); margin: 0 0 12px;
-}
-body.wb-classic .wb-hero { border-radius: 15px; }
-body.wb-classic .wb-view.wb-show { animation: none; }
-
-/* — layout theme: deck demo (Command Deck / option B) — */
-body.wb-deck { flex-direction: column; }
-body.wb-deck .wb-rail {
-  width: 100%; flex: 0 0 auto; flex-direction: row; align-items: center;
-  padding: 7px 16px; gap: 4px; border-bottom: 1px solid var(--border);
-  background: var(--surface); overflow-x: auto; overflow-y: visible;
-}
-body.wb-deck .wb-brand { display: flex; align-items: center; gap: 9px;
-  padding: 0 12px 0 4px; margin-right: 6px; border-right: 1px solid var(--border); }
-body.wb-deck .wb-brand-sub { display: none; }
-body.wb-deck .wb-brand-name { font-size: .88rem; }
-body.wb-deck .wb-group { display: none; }
-body.wb-deck .wb-item { padding: 7px 13px; border-radius: 9px; white-space: nowrap; }
-body.wb-deck .wb-item.wb-active::before { display: none; }
-body.wb-deck .wb-item.wb-active { background: var(--accent-dim);
-  box-shadow: inset 0 0 0 1px var(--border-hover); }
-body.wb-deck .wb-rail-foot { display: none; }
-body.wb-deck .wb-view { padding: 16px 24px 44px; }
-.wb-deck-strip { display: none; }
-body.wb-deck .wb-deck-strip {
-  display: flex; gap: 10px; align-self: stretch; flex-wrap: wrap;
-  max-width: 1240px; margin: 2px auto 0; padding: 10px 24px 0; width: 100%;
-}
-.wb-deck-tile { display: grid; gap: 1px; padding: 8px 14px; border-radius: 10px;
-  border: 1px solid var(--border); background: var(--surface); min-width: 110px;
-  box-shadow: 0 1px 2px rgba(0,0,0,.05); }
-.wb-deck-tile small { font-size: .58rem; font-weight: 700; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--text-tertiary); }
-.wb-deck-tile b { font-size: .78rem; font-weight: 650; font-variant-numeric: tabular-nums; }
-.wb-deck-tile.ok b { color: var(--signal-green); }
-.wb-deck-tile.warn b { color: var(--signal-yellow); }
-
 /* — layout theme: real current-release original (iframe of actual app files) — */
 .wb-origin-frame { display: none; }
 body.wb-origin { background: var(--canvas); }
-body.wb-origin .wb-rail, body.wb-origin .wb-topbar, body.wb-origin .wb-deck-strip,
+body.wb-origin .wb-rail, body.wb-origin .wb-topbar,
 body.wb-origin .wb-view, body.wb-origin .wb-console { display: none !important; }
 body.wb-origin .wb-toast { z-index: 90; }
 body.wb-origin .wb-origin-frame {
@@ -586,24 +539,12 @@ button .wb-svg { pointer-events: none; }
         <select class="input" id="layoutThemeQuick" style="width:auto;font-size:.66rem" title="Layout theme: switch the launcher shell layout (mock — real: layoutTheme in desktop-config.json)">
           <option value="workbench">◫ Workbench</option>
           <option value="real08">◉ Original (current app)</option>
-          <option value="classic">▤ Classic</option>
-          <option value="deck">▣ Deck</option>
         </select>
         <button class="btn btn-ghost small" id="guideBtn" title="Open the Guide: what to make, which model and settings to pick">Guide</button>
         <button class="btn btn-ghost small" id="settingsBtn" title="Open settings: tokens, launch, system, auto-tune, plugins">Settings</button>
         <span class="wb-mock-badge" title="Static mockup — all data is fake. Not part of the app.">MOCKUP</span>
       </span>
     </div>
-  </div>
-
-  <!-- ═══ DECK STAT STRIP (deck layout only, mock-only) ═══ -->
-  <div class="wb-deck-strip wb-new" aria-hidden="true">
-    <span class="wb-deck-tile"><small>GPU</small><b>RTX 4090 · 76°</b></span>
-    <span class="wb-deck-tile"><small>VRAM</small><b>4.1 / 24 GB</b></span>
-    <span class="wb-deck-tile"><small>RAM</small><b>31 / 64 GB</b></span>
-    <span class="wb-deck-tile"><small>Torch</small><b>2.13 · P4</b></span>
-    <span class="wb-deck-tile ok"><small>Launcher</small><b>running · :7860</b></span>
-    <span class="wb-deck-tile warn"><small>Attention</small><b>2 (kernels · HAGS)</b></span>
   </div>
 
 <!-- ═══════════ HOME ═══════════ -->
@@ -1230,10 +1171,8 @@ button .wb-svg { pointer-events: none; }
       <div style="padding:6px 14px 14px">
         <div class="wb-row wb-new"><span class="wb-row-label">Layout theme</span>
           <select class="input" style="width:300px" id="layoutThemeSelect" title="Choose the launcher shell layout. Real: saved as layoutTheme in desktop-config.json, applied live and on launch">
-            <option value="classic">Classic — simplified demo of the stacked layout</option>
             <option value="real08">Original (current app) — the real current app layout</option>
             <option value="workbench">Workbench — October 2026 mockup</option>
-            <option value="deck">Command Deck — option B (horizontal strip)</option>
             <option value="duo" disabled>Duo — option C (planned)</option>
           </select>
           <span class="wb-row-val" id="layoutThemeStatus">workbench · saved</span>
@@ -1464,13 +1403,6 @@ const wbToast = toast;
 function go(view) {
   // real-original mode: the mock shell is hidden behind the real app iframe
   if (document.body.classList.contains("wb-origin")) return;
-  // classic layout demo: rail is hidden, all sections stack — so "go" scrolls instead of showing
-  if (document.body.classList.contains("wb-classic")) {
-    const sec = document.querySelector('.wb-view[data-view="' + view + '"]');
-    if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
-    $("wbTitle").textContent = titles[view][0];
-    return;
-  }
   document.querySelectorAll(".wb-view").forEach(v => v.classList.toggle("wb-show", v.dataset.view === view));
   document.querySelectorAll(".wb-item").forEach(i => i.classList.toggle("wb-active", i.dataset.view === view));
   $("wbTitle").textContent = titles[view][0];
@@ -1514,21 +1446,15 @@ function wbInjectOriginChip() {
 }
 function applyLayout(theme) {
   document.body.classList.remove("wb-chip-injected");
-  document.body.classList.toggle("wb-classic", theme === "classic");
-  document.body.classList.toggle("wb-deck", theme === "deck");
   document.body.classList.toggle("wb-origin", theme === "real08");
   if (theme === "real08") { // lazy-load the real app files only when first selected
     const f = $("wbOriginFrame"); if (!f.src) f.src = f.dataset.src;
     wbInjectOriginChip(); // already loaded on repeat switches
   }
-  // section headings for stacked classic mode come from the existing titles table
-  document.querySelectorAll(".wb-view").forEach(v => {
-    const t = titles[v.dataset.view]; if (t) v.setAttribute("data-heading", t[0]);
-  });
   $("layoutThemeStatus").textContent = theme + " · saved (mock)";
   $("layoutThemeQuick").value = theme;
   $("layoutThemeSelect").value = theme;
-  if (theme !== "classic" && !document.querySelector(".wb-view.wb-show")) go("home");
+  if (!document.querySelector(".wb-view.wb-show")) go("home");
 }
 $("layoutThemeSelect").addEventListener("change", (e) => {
   localStorage.setItem(LAYOUT_KEY, e.target.value);
@@ -1557,7 +1483,10 @@ $("wbOriginEscape").addEventListener("click", () => {
   applyLayout("workbench");
   toast("layout → workbench — mock-only chip: Original hides the mock shell");
 });
-localStorage.setItem(LAYOUT_KEY, localStorage.getItem(LAYOUT_KEY) || "workbench");
+// only two layout shells remain (classic and deck were retired from the mock)
+const SAVED_LAYOUT = localStorage.getItem(LAYOUT_KEY);
+if (SAVED_LAYOUT !== "workbench" && SAVED_LAYOUT !== "real08")
+  localStorage.setItem(LAYOUT_KEY, "workbench");
 $("layoutThemeSelect").value = localStorage.getItem(LAYOUT_KEY);
 applyLayout($("layoutThemeSelect").value);
 
