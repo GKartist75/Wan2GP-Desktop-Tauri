@@ -2,7 +2,7 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
-## Unreleased
+## [0.10.12] — 2026-10-17
 
 - **Upstream v18.18 parity (fde3c7e + wave) — the Bitdefender/Triton fix.** Upstream ships a **prebuilt CUDA helper** in-repo for `triton-windows 3.7.0.post26`–`3.7.1.post27`, checksum-verified and already compiled (CUDA: Windows/Python 3.11; HIP: Python 3.12 + rocm-sdk 7.14, experimental) — no JIT helper compile, no TinyCC/MSVC step, no antivirus exclusion needed on those stacks. The launcher mirrors it:
   - **Triton pins** – the recommended line is now Triton 3.7 Windows (`>=3.7.0.post26,<=3.7.1.post27`) for RTX 30–50 (hardware overview, dashboard spec rows, User Guide; the raw key rename is honored — `v37` = 3.7, old `v37` 3.6 spec lives on as `v36`), and the AMD installer pins `v38`'s exact range instead of floating `>=3.7,<3.8`. Triton 3.6 stays supported for existing installs (the cache pin, Repair, Roll back to post24 and the opt-in MSVC pin remain as fallbacks for un-helpered builds — the User Guide says exactly where each still applies).
