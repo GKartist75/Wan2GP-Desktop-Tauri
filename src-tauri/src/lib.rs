@@ -216,6 +216,7 @@ pub fn run() {
             install::update,
             install::dep_check,
             install::dlss5_status,
+    install::triton_runtime_status,
             install::install_dlss5,
             install::dlss5_check,
             install::dlss5_apply_workstation_fix,

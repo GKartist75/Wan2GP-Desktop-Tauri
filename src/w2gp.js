@@ -683,6 +683,7 @@ if (!window.__TAURI__) {
         notifierNativeSave: (c) => call("notifier_native_save", { cfg: c }),
         notifierNativeTest: (c) => call("notifier_native_test", { cfg: c }),
         dlss5Status: () => call("dlss5_status"),
+  tritonRuntimeStatus: () => call("triton_runtime_status"),
         dlss5Check: () => call("dlss5_check"),
         dlss5ApplyWorkstationFix: () => call("dlss5_apply_workstation_fix"),
         dlss5RevertWorkstationFix: () => call("dlss5_revert_workstation_fix"),

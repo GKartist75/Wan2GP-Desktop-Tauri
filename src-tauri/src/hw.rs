@@ -534,7 +534,7 @@ pub(crate) fn attention_for_profile(profile_key: &str) -> Option<&'static str> {
     }
 }
 
-/// Docs-prescribed GGUF kernel floor: 1.0.26 (v18.17, fde3c7e) adds packed
+/// Docs-prescribed GGUF kernel floor: 1.0.26 (v18.18, fde3c7e) adds packed
 /// rows crossing quantization blocks for Q2_K through Q6_K, Q4_0/Q4_1,
 /// Q5_0/Q5_1 and Q8_0 — fixing MiniMax H3 image-reference projections with
 /// no dense-weight materialization. 1.0.25 already added INT8-verified
@@ -744,7 +744,7 @@ pub(crate) fn parse_pip_show_versions(text: &str) -> Option<String> {
 
 /// GGUF wheel URLs shipped by upstream (docs/INSTALLATION.md#gguf-llamacpp-cuda-kernels).
 /// Upstream splits the component: `gguf` (cu130/py311) + `gguf_cu128`
-/// (cu128/py310), both at 1.0.26 (v18.17/fde3c7e wave). Profiles still list
+/// (cu128/py310), both at 1.0.26 (v18.18/fde3c7e wave). Profiles still list
 /// `gguf`; setup.py remaps via (torch_k, py_k) — the launcher mirrors that by
 /// picking the URL matching the stale link's py tag (py310 → cu128 build,
 /// else cu130 build).
@@ -1332,7 +1332,7 @@ mod version_cmp_tests {
             wanted_triton_pin("triton-windows>=3.3,<4").as_deref(),
             Some("3.3")
         );
-        // v18.17 v37/v38 shape: `>=floor,<=ceiling` two-bound spec — the
+        // v18.18 v37/v38 shape: `>=floor,<=ceiling` two-bound spec — the
         // floor bound is the wanted pin (min binding parsed; post tags stop
         // the version scan cleanly at "post").
         assert_eq!(
@@ -1545,7 +1545,7 @@ fn comp_label(code: &str) -> String {
         // setup_config.json `components.*.label` — the overview must not
         // invent pins. Both the short display value and the raw upstream
         // key are accepted (raw keys stay for forward compatibility).
-        // Triton: upstream WF18.17 (fde3c7e) renamed the raw keys — the old
+        // Triton: upstream WF18.18 (fde3c7e) renamed the raw keys — the old
         // `v37` (3.6 spec) is now `v36`, and `v37` itself became the
         // recommended Triton 3.7 line (`>=3.7.0.post26,<=3.7.1.post27`,
         // Windows) that ships WanGP's prebuilt CUDA helper. `v38` (AMD) pins
@@ -1579,7 +1579,7 @@ pub(crate) fn comp_short(code: &str) -> String {
         "v284_rocm" => "2.8.4".into(),
         "v33" => "3.2.x".into(),
         "v34" => "3.3.x".into(),
-        // v18.17 renamed the triton keys: v36 = Triton 3.6.x, v37 = the
+        // v18.18 renamed the triton keys: v36 = Triton 3.6.x, v37 = the
         // recommended Triton 3.7 Windows line (prebuilt helper builds).
         "v36" => "3.6.x".into(),
         "v37" => "3.7.x".into(),
@@ -1600,7 +1600,7 @@ mod comp_short_tests {
         assert_eq!(comp_short("v284_rocm"), "2.8.4");
         assert_eq!(comp_short("v220_cu13"), "2.2.0");
         assert_eq!(comp_short("v1"), "1.0.6");
-        // v18.17 key rename: v37 is the Triton 3.7 line now, v36 is 3.6.
+        // v18.18 key rename: v37 is the Triton 3.7 line now, v36 is 3.6.
         assert_eq!(comp_short("v36"), "3.6.x");
         assert_eq!(comp_short("v37"), "3.7.x");
         assert_eq!(comp_short("v38"), "3.7.x");
@@ -1771,7 +1771,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                // v18.17 (fde3c7e): recommended line is Triton 3.7 Windows
+                // v18.18 (fde3c7e): recommended line is Triton 3.7 Windows
                 // (`>=3.7.0.post26,<=3.7.1.post27`) — carries WanGP's prebuilt
                 // CUDA helper, so the JIT-AV exposure is gone on these stacks.
                 triton: Some("3.7.x"),
@@ -1786,7 +1786,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                // v18.17: Triton 3.7 Windows line (see RTX_30).
+                // v18.18: Triton 3.7 Windows line (see RTX_30).
                 triton: Some("3.7.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
@@ -1799,7 +1799,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                // v18.17: Triton 3.7 Windows line (see RTX_30).
+                // v18.18: Triton 3.7 Windows line (see RTX_30).
                 triton: Some("3.7.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
@@ -1824,7 +1824,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.12.10",
                 torch: "ROCm 10 (HIP 7.14 opt-in)",
-                // v18.17: AMD's triton-windows pins the same 3.7 line as
+                // v18.18: AMD's triton-windows pins the same 3.7 line as
                 // NVIDIA (`>=3.7.0.post26,<=3.7.1.post27`); the prebuilt HIP
                 // helper engages automatically on Python 3.12 + torch 2.13
                 // rocm envs (experimental pending AV validation).
@@ -1856,7 +1856,7 @@ pub(crate) fn hardware_profile_detail_with_ram(
             Prof {
                 python: "3.11.14",
                 torch: "2.10.0 CU13",
-                // v18.17: Triton 3.7 Windows line (see RTX_30).
+                // v18.18: Triton 3.7 Windows line (see RTX_30).
                 triton: Some("3.7.x"),
                 sage: Some("2.2.0"),
                 sparge: Some("0.1.0"),
@@ -2353,7 +2353,7 @@ mod overview_pid_tests {
             rtx20["detail"]["triton"]
         );
         assert_eq!(rtx20["detail"]["flash"], serde_json::json!("—"));
-        // RTX 30–50 pin the recommended Triton 3.7 Windows line (v18.17
+        // RTX 30–50 pin the recommended Triton 3.7 Windows line (v18.18
         // fde3c7e — prebuilt helper builds) and flash 2.8.3.
         let rtx40 = hardware_profile_detail_with_ram(
             "NVIDIA",

@@ -98,6 +98,7 @@ async function refreshDashboard() {
         "dotTorch",
         "dotCuda",
         "dotTriton",
+        "dotTritonHelper",
         "dotWgpk",
         "dotSage",
         "dotFlash",
@@ -377,6 +378,8 @@ async function refreshDashboard() {
     refreshDeepyWeb().catch(() => {});
     // Refresh the DLSS5 optional-runtime status.
     refreshDlss5().catch(() => {});
+    // Refresh the prebuilt Triton helper integrity (AV quarantine guard).
+    setTritonHelper().catch(() => {});
     // Enable/disable no-GPU button based on Chrome availability. A single
     // negative is never trusted for failure UI: a cold first spawn (AV hooks,
     // process-creation stalls) can fail once and would flash "not installed"
@@ -430,4 +433,48 @@ async function refreshDashboard() {
       setTimeout(refreshDashboard, 80);
     }
   }
+}
+
+// ── Prebuilt Triton helper integrity (v18.18 / fde3c7e) ──
+// Upstream ships checksum-verified helper binaries in-repo
+// (shared/triton_runtime/) as the Bitdefender workaround; unsigned `.pyd`
+// binaries are prime AV-quarantine targets, and a stripped helper silently
+// falls back to the JIT compile path. Verified on every dashboard refresh
+// alongside the other environment facts — green only when presence AND
+// manifests' own binary_sha256 both check out.
+async function setTritonHelper() {
+  const el = $("specTritonHelper"),
+    dot = $("dotTritonHelper");
+  if (!el) return;
+  let s = null;
+  try {
+    s = await window.w2gp.tritonRuntimeStatus();
+  } catch {}
+  if (!s || s.ok === false) {
+    el.textContent = "—";
+    el.title = "";
+    if (dot) dot.classList.remove("installed", "error", "has-update");
+    return;
+  }
+  el.textContent = s.summary || s.state || "—";
+  if (dot) {
+    dot.classList.remove("installed", "error", "has-update");
+    if (s.state === "intact") dot.classList.add("installed");
+    else if (s.state === "missing" || s.state === "modified")
+      dot.classList.add("error");
+    // "absent" (pre-fde3c7e repo) stays dotless until they update.
+  }
+  const rows = Array.isArray(s.rows) ? s.rows : [];
+  const parts = rows.map(
+    (r) =>
+      r.label +
+      ": " +
+      (r.missing
+        ? "missing"
+        : r.modified
+          ? "modified — hash mismatch"
+          : "intact" + (r.builtFrom && r.builtFrom !== "?" ? " (" + r.builtFrom + ")" : "")),
+  );
+  if (s.engager === false) parts.push("Engager (__init__.py): missing");
+  el.title = (s.hint ? s.hint + "\n\n" : "") + parts.join("\n");
 }

@@ -353,6 +353,15 @@ fn uv_command() -> String {
     "uv".into()
 }
 
+/// Self-update applies only to receipted standalone installs (`.launcher-uv`
+/// marker); a plain file copy refuses loudly with "Self-update is only
+/// available for uv binaries installed via the standalone installation
+/// scripts…" (seen live before every reinstall of a copy-fallback box).
+/// Kept pure for the test documenting the decision. Pure + unit-tested.
+pub(crate) fn uv_self_update_applicable(receipted_install: bool) -> bool {
+    receipted_install
+}
+
 /// Well-known install locations per tool (pure tables — unit-tested).
 /// These make prerequisite installs usable INSTANTLY: no PATH refresh, no
 /// launcher restart. `home` = %USERPROFILE%. Only directly-spawnable images
@@ -465,10 +474,22 @@ async fn ensure_uv_python(
     emit(&format!(
         "[*] Ensuring Python {wanted} via {uv_bin} (setup.py needs this exact version)…\n"
     ));
-    // Best-effort self-update first: an old uv doesn't know new patches exist
-    // (3.11.14) and fails with the same "No interpreter found" error.
-    // Harmless when offline or already current — failures are ignored.
-    let _ = run_capture(app, &emit, uv_bin.as_str(), &["self", "update"]).await;
+    // Self-update ONLY on a receipted standalone install: a plain file copy
+    // refuses with "Self-update is only available for uv binaries installed
+    // via the standalone installation scripts…" (seen live on the copy
+    // fallback) — pure noise before every reinstall. The marker proves the
+    // receipt; an outdated no-receipt copy still has a recovery path (step
+    // 3b runs the official installer into our tools dir and retries). A
+    // foreign PATH uv is never self-updated either — it belongs to another
+    // app and can vanish under us (0.5.3 report).
+    if uv_self_update_applicable(owned_uv().is_some()) {
+        let _ = run_capture(app, &emit, uv_bin.as_str(), &["self", "update"]).await;
+    } else {
+        crate::base::push_log(
+            "[*] uv has no standalone-install receipt — skipping self-update (not applicable to plain copies).",
+            "setup",
+        );
+    }
     // Resolve + verify the EXACT pin actually executes (a neighbouring patch
     // or a corrupted copy won't satisfy setup.py — report it, don't use it).
     let verify_exact = |p: &str| -> Option<String> {
@@ -3914,7 +3935,7 @@ pub(crate) fn pip_install_argv(cmd: &str) -> Vec<String> {
 /// into `components.triton[tag].cmd.win` — deliberately NOT under
 /// `components.kernels`, which is why the shared kernel lookup never found it
 /// and Sync never upgraded an existing Triton (fresh installs went through the
-/// install phases instead). Upstream v18.17 (fde3c7e) renamed the tags —
+/// install phases instead). Upstream v18.18 (fde3c7e) renamed the tags —
 /// `v37` = the recommended 3.7 Windows range (`>=3.7.0.post26,<=3.7.1.post27`,
 /// ships WanGP's prebuilt CUDA helper), `v36` = the legacy 3.6 line, `v38` =
 /// AMD. Upstream's specs carry their own `-U` flag and shell quotes
@@ -4303,7 +4324,7 @@ async fn sync_kernels_inner(
             all_kernels.push(serde_json::json!("sage"));
         }
     }
-    // Triton sync (v18.17-parity): upstream profiles tag triton outside
+    // Triton sync (v18.18-parity): upstream profiles tag triton outside
     // kernels[] (`gpu_profiles[profile].triton` -> `components.triton[tag]`),
     // so the wheels list above never carried it and Sync left an installed
     // Triton 3.6 at 3.6 forever — including on the new prebuilt-helper 3.7
@@ -4397,7 +4418,7 @@ async fn sync_kernels_inner(
                         base_url
                     }
                 } else if name == "triton" {
-                    // components.triton[tag] (v18.17 key rename honored):
+                    // components.triton[tag] (v18.18 key rename honored):
                     // tagged per profile, outside kernels[]. Resolved through
                     // cfg_profile so AMD_GFX* sub-profiles land on the shared
                     // `AMD` tag (`v38`). Absent tag → empty → the loud skip
@@ -6092,7 +6113,7 @@ mod triton_component_tests {
 
     #[test]
     fn spec_resolves_and_cleans_shell_quoting() {
-        // v18.17 key rename: v37 is the recommended 3.7 Windows range
+        // v18.18 key rename: v37 is the recommended 3.7 Windows range
         // (prebuilt CUDA helper builds); the -U flag and shell quotes are
         // stripped so pip_install_argv yields one clean requirement token.
         assert_eq!(
@@ -6974,6 +6995,206 @@ pub fn dlss5_status() -> serde_json::Value {
         .filter(|f| f["installed"].as_bool().unwrap_or(false))
         .count();
     serde_json::json!({"ok": true, "installed": present > 0, "complete": present == files.len(), "present": present, "total": files.len(), "files": files})
+}
+
+// ===========================================================================
+// Prebuilt Triton helper integrity (v18.18 / fde3c7e)
+//
+// Upstream's Bitdefender workaround ships prebuilt, checksum-verified helper
+// binaries in-repo under `shared/triton_runtime/` (CUDA: Python 3.11 +
+// triton-windows 3.7.0.post26/3.7.1.post27; HIP: Python 3.12, experimental).
+// These are exactly the class of unsigned `.pyd` binaries antivirus loves to
+// quarantine — same threat model as the DLSS5 binaries above — and a stripped
+// helper silently falls back to the JIT path (TinyCC/MSVC compile + AV cache
+// exclusion territory). The dashboard therefore verifies presence AND hash
+// early. Zero-drift anchor: each manifest carries its own `binary_sha256`
+// (upstream updates both together), so we hash against the repo's own
+// manifest rather than pinning anything launcher-side.
+//
+// The `binary` filename is also derived from the parsed manifest (upstream
+// probes `manifest.json` at runtime), never hardcoded here.
+// ===========================================================================
+
+/// Backend-independent helper rows: (manifest file, human label). The HIP row
+/// is experimental upstream but shipped to every install — hardened equally.
+const TRITON_HELPER_MANIFESTS: &[(&str, &str)] = &[
+    ("manifest.json", "CUDA helper (Python 3.11 · NVIDIA)"),
+    ("manifest_hip.json", "HIP helper (Python 3.12 · AMD ROCm, experimental)"),
+];
+
+/// SHA-256 of a file as lowercase hex. None when unreadable (missing/quarantined).
+pub(crate) fn file_sha256_hex(path: &std::path::Path) -> Option<String> {
+    use sha2::Digest;
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut hasher = sha2::Sha256::new();
+    std::io::copy(&mut file, &mut hasher).ok()?;
+    Some(format!("{:x}", hasher.finalize()))
+}
+
+/// Extract a helper manifest's contract: (binary filename, expected sha256,
+/// upstream build stamp). Broken/opaque JSON → None. Pure — unit-tested with
+/// upstream's real shapes.
+pub(crate) fn parse_helper_manifest(bytes: &[u8]) -> Option<(String, String, String)> {
+    let m: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let binary = m.get("binary")?.as_str()?.to_string();
+    let sha = m.get("binary_sha256")?.as_str()?.to_string();
+    let built = m
+        .get("built_from")
+        .and_then(|s| s.as_str())
+        .unwrap_or("?")
+        .to_string();
+    Some((binary, sha, built))
+}
+
+/// One dashboard verdict — pure input to `helper_state`.
+pub(crate) struct RowVerdict {
+    pub missing: bool,
+    pub modified: bool,
+}
+
+/// Summarize per-row verdicts into the dashboard (state, short wording).
+/// Pure + unit-tested.
+pub(crate) fn helper_state(rows: &[RowVerdict]) -> (&'static str, &'static str) {
+    let any_missing = rows.iter().any(|r| r.missing);
+    let any_modified = rows.iter().any(|r| r.modified);
+    match (any_missing, any_modified) {
+        (false, false) => ("intact", "intact"),
+        (true, false) => ("missing", "missing — AV quarantine suspected"),
+        (false, true) => ("modified", "modified — reinstall Wan2GP"),
+        (true, true) => ("missing", "missing/modified — reinstall Wan2GP"),
+    }
+}
+
+/// Build one row's verdict from the on-disk facts around `dir`. Manifest
+/// missing/unreadable or the binary absent → missing; a present binary whose
+/// hash diverges from its manifest → modified. Returns
+/// (verdict, binary filename, build stamp) for the JSON row.
+fn helper_row_verdict(
+    dir: &std::path::Path,
+    manifest_bytes: Option<&[u8]>,
+) -> (RowVerdict, String, String) {
+    let (bin, sha, built) = match manifest_bytes.and_then(parse_helper_manifest) {
+        Some(t) => t,
+        None => {
+            // Manifest missing or opaque — the row cannot be verified.
+            return (RowVerdict { missing: true, modified: false }, String::new(), String::new());
+        }
+    };
+    let bin_path = dir.join(bin.trim());
+    if !bin_path.is_file() {
+        return (RowVerdict { missing: true, modified: false }, bin, built);
+    }
+    match file_sha256_hex(&bin_path) {
+        Some(got) if got.eq_ignore_ascii_case(sha.trim()) => {
+            (RowVerdict { missing: false, modified: false }, bin, built)
+        }
+        _ => (RowVerdict { missing: false, modified: true }, bin, built),
+    }
+}
+
+#[tauri::command]
+pub fn triton_runtime_status() -> serde_json::Value {
+    let repo = get_repo_dir();
+    if !repo.join("wgp.py").exists() {
+        return serde_json::json!({"ok": false, "error": "Wan2GP not installed"});
+    }
+    let dir = repo.join("shared").join("triton_runtime");
+    if !dir.exists() {
+        return serde_json::json!({"ok": true, "state": "absent",
+            "summary": "not in this Wan2GP build — Update Wan2GP",
+            "hint": "The prebuilt helper arrived upstream with the v18.18 Bitdefender fix (fde3c7e).",
+            "present": 0, "total": 0, "rows": []});
+    }
+    // The engager itself: shared/triton_runtime/__init__.py wires the helper
+    // in when the pinned Triton versions load. Its absence disables the
+    // helper even with both pyds intact — verdict included.
+    let engager_present = dir.join("__init__.py").is_file();
+    let mut rows = Vec::new();
+    let mut verdicts = Vec::new();
+    for (manifest, label) in TRITON_HELPER_MANIFESTS {
+        let bytes = std::fs::read(dir.join(manifest)).ok();
+        let (verdict, bin_name, built_from) = helper_row_verdict(&dir, bytes.as_deref());
+        let (missing, modified) = (verdict.missing, verdict.modified);
+        verdicts.push(verdict);
+        rows.push(serde_json::json!({
+            "id": manifest, "label": label, "binary": bin_name,
+            "builtFrom": built_from, "missing": missing, "modified": modified
+        }));
+    }
+    if !engager_present {
+        // The engager wiring `shared/triton_runtime/__init__.py` is what
+        // actually activates the helper — without it nothing engages even
+        // with both pyds intact.
+        verdicts.push(RowVerdict { missing: true, modified: false });
+    }
+    let (state, summary) = helper_state(&verdicts);
+    let (state, summary): (&'static str, String) = match (state, !engager_present) {
+        ("missing", true) => ("missing", format!("{summary} (engager missing)")),
+        other => (other.0, other.1.to_string()),
+    };
+    let long_hint = match state {
+        "intact" => "Checksums verified against each manifest's own binary_sha256 — safe from AV quarantine at last check.",
+        "missing" => "A helper file is missing. Antivirus quarantine is the usual cause — restore it (reinstall/update Wan2GP) or add an exclusion for C:\\Wan2GP before the next JIT-free generation.",
+        "modified" => "A helper file on disk no longer matches its manifest sha256 (tampered/corrupt). Reinstall Wan2GP (or Update with repair) to restore the pinned build.",
+        _ => "",
+    };
+    serde_json::json!({"ok": true, "state": state, "summary": summary, "hint": long_hint,
+        "engager": engager_present, "present": rows.iter().filter(|r| !r["missing"].as_bool().unwrap()).count(),
+        "total": rows.len(), "rows": rows})
+}
+
+#[cfg(test)]
+mod triton_helper_tests {
+    use super::{file_sha256_hex, helper_state, parse_helper_manifest, RowVerdict};
+
+    /// Upstream manifest.json shape (v18.18 / fde3c7e, fields trimmed).
+    const CUDA_MANIFEST: &str = r#"{"format":1,"binary":"cuda_utils.cp311-win_amd64.pyd","binary_sha256":"6b07c1ff54bccd57b8eda216ef5fab8b41a3f93701e1c491147d2ad44f85f7f3","platform":"win_amd64","python_abi":"cp311","built_from":"3.7.1.post27"}"#;
+    const HIP_MANIFEST: &str = r#"{"format":1,"binary":"hip_utils.cp312-win_amd64.pyd","binary_sha256":"0a40dbb899f60d6f6a756fdcf44b2a7a1ae3fe0fe1dcc1ed000c1f4b265f5601","python_abi":"cp312","built_from":"3.7.1.post27"}"#;
+
+    #[test]
+    fn parses_both_upstream_shapes() {
+        let (bin, sha, built) = parse_helper_manifest(CUDA_MANIFEST.as_bytes()).unwrap();
+        assert_eq!(bin, "cuda_utils.cp311-win_amd64.pyd");
+        assert_eq!(sha, "6b07c1ff54bccd57b8eda216ef5fab8b41a3f93701e1c491147d2ad44f85f7f3");
+        assert_eq!(built, "3.7.1.post27");
+        let (bin2, _, built2) = parse_helper_manifest(HIP_MANIFEST.as_bytes()).unwrap();
+        assert_eq!(bin2, "hip_utils.cp312-win_amd64.pyd");
+        assert_eq!(built2, "3.7.1.post27");
+        // Opaque/broken manifest → None (row treated as missing).
+        assert_eq!(parse_helper_manifest(b"corrupted by antivirus?"), None);
+        assert_eq!(parse_helper_manifest(br#"{"binary":3}"#), None);
+    }
+
+    #[test]
+    fn hashes_are_lowercase_digests() {
+        // Known SHA-256 of the empty file.
+        let p = std::env::temp_dir().join("w2gp_sha_test_empty");
+        std::fs::write(&p, b"").unwrap();
+        assert_eq!(
+            file_sha256_hex(&p).as_deref(),
+            Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        );
+        // Unreadable path → None (quarantined/missing file).
+        assert_eq!(file_sha256_hex(std::path::Path::new("Z:/definitely/not/here.pyd")), None);
+    }
+
+    #[test]
+    fn state_summary_matrix() {
+        let ok = [RowVerdict { missing: false, modified: false }];
+        let (s, m) = helper_state(&ok);
+        assert_eq!(s, "intact");
+        assert_eq!(m, "intact");
+        let (s, m) = helper_state(&[RowVerdict { missing: true, modified: false }]);
+        assert_eq!(s, "missing");
+        assert_eq!(m, "missing — AV quarantine suspected");
+        let (s, m) = helper_state(&[RowVerdict { missing: false, modified: true }]);
+        assert_eq!(s, "modified");
+        assert_eq!(m, "modified — reinstall Wan2GP");
+        // Mixed: missing wins the short wording, reinstall is the action.
+        let (s, m) = helper_state(&[RowVerdict { missing: true, modified: false }, RowVerdict { missing: false, modified: true }]);
+        assert_eq!(s, "missing");
+        assert_eq!(m, "missing/modified — reinstall Wan2GP");
+    }
 }
 
 // Optional DLSS5 runtime (docs/DLSS5.md): runs Wan2GP's own Install-DLSS5.ps1.
@@ -7993,7 +8214,7 @@ mod pipeline_separation_tests {
     #[test]
     fn triton_windows_args_are_wheels_only() {
         // OFFICIAL WHEELS ONLY: the arg sequence is a plain PyPI install —
-        // pinned to upstream v18.17's exact v38 range (helper builds
+        // pinned to upstream v18.18's exact v38 range (helper builds
         // 3.7.0.post26..3.7.1.post27) — no build-from-source surface of any
         // kind.
         assert_eq!(
@@ -8349,7 +8570,7 @@ mod long_paths_tests {
 
 #[cfg(test)]
 mod owned_uv_tests {
-    use super::{copy_owned_uv_in, owned_uv_in, path_uv_exe, UV_EXE, UV_MARKER};
+    use super::{copy_owned_uv_in, owned_uv_in, path_uv_exe, uv_self_update_applicable, UV_EXE, UV_MARKER};
     fn tmp_data(tag: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("wgp-owned-uv-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -8361,6 +8582,14 @@ mod owned_uv_tests {
         let data = tmp_data("empty");
         assert!(owned_uv_in(&data).is_none());
         let _ = std::fs::remove_dir_all(&data);
+    }
+    #[test]
+    fn self_update_only_on_receipted_installs() {
+        // The no-receipt copy fallback (and any bare PATH uv) always refuses
+        // `uv self update` with a confusing standalone-installer error — it
+        // must not run there. Only the markered .tools install qualifies.
+        assert!(uv_self_update_applicable(true));
+        assert!(!uv_self_update_applicable(false));
     }
     #[test]
     fn dead_copy_is_not_adopted() {

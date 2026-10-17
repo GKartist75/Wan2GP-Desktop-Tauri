@@ -76,7 +76,7 @@ From `INSTALLATION.md` — the launcher automates all of this; listed so you kno
 | --- | --- | --- | --- | --- |
 | Python | 3.11.14 | 3.10.9 | 3.12.10 | — |
 | PyTorch | 2.10.0 + CUDA 13.0/13.1 (cu130, needs R580+ driver) | 2.7.1 + CUDA 12.8 (no R580 needed) | 2.13.0 ROCm 10 TheRock (stable whl-next, per-box device-gfx targets) | CPU / MPS (SDPA only) |
-| Triton | `triton-windows>=3.7.0.post26,<=3.7.1.post27` (torch 2.10, recommended since v18.17 — ships WanGP's prebuilt CUDA helper, no JIT helper compile, no antivirus exclusion needed on these builds); `>=3.6,<3.7` legacy (torch 2.10, launcher Repair/roll-back target); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | `triton-windows>=3.7.0.post26,<=3.7.1.post27` (torch 2.13; prebuilt HIP helper, experimental) | — |
+| Triton | `triton-windows>=3.7.0.post26,<=3.7.1.post27` (torch 2.10, recommended since v18.18 — ships WanGP's prebuilt CUDA helper, no JIT helper compile, no antivirus exclusion needed on these builds); `>=3.6,<3.7` legacy (torch 2.10, launcher Repair/roll-back target); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | `triton-windows>=3.7.0.post26,<=3.7.1.post27` (torch 2.13; prebuilt HIP helper, experimental) | — |
 | Attention | Sage 2.2.0 (RTX 30+, Ampere+) / Sage 1.0.6 (RTX 20) / Flash 2.8.3 / Sparge 0.1.0 | SDPA | SDPA (default, AOTriton on RDNA3+) / Sage 1.0.6 / Flash 2.8.4 (ROCm/Triton) | SDPA |
 | Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.26 (packed rows crossing quant blocks — fixes MiniMax H3 image-reference projections), LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2 (optional, manual), Comfy Kitchen via requirements, WGPKernels 1.1.2 (in setup_config: RTX 30+/RDNA4, recommended) | — | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back); HIP GGUF 1.0.26 wheel (gfx1201 opt-in, version-only bump) | — |
 
@@ -223,7 +223,7 @@ WanGP owns **model, prompt, generation, LoRA pick, control, post**.
 
 ## Models reference — complete inventory (270 `defaults/*.json`)
 
-Reconciled live against upstream `defaults/` (270 files + ReadMe, WanGP v18.17 /
+Reconciled live against upstream `defaults/` (270 files + ReadMe, WanGP v18.18 /
 fde3c7e — adds the 3D-gen wave, Kandinsky 6, Wan 2.2 Prism, camera control,
 H3 Veda, MOSS Image, Ming Image and the v2 Krea edit presets). Every id below is
 a selectable `model_type`. Starred = guided-path starter; rest = same workflows,
