@@ -406,54 +406,30 @@ body.wb-origin #wbOriginEscape { display: block; }
    in-topbar chip into the real app's own topbar, the floaters retire. */
 body.wb-origin.wb-chip-injected #wbOriginEscape { display: none; }
 
-/* — visual themes: real accents (Sky/Classic/Emerald/Amethyst/Rose) ship in style.css. */
-/* Famous themes below are MOCK-ONLY token overrides — if adopted, they belong in style.css. */
-html[data-theme="dark"][data-accent="cyberpunk"],
-:root[data-accent="cyberpunk"] { /* neon noir */
-  --canvas: #0d0a14; --surface: #151022; --surface-hover: #1d1631;
-  --border: #2f2248; --border-hover: #573f8a;
-  --text-primary: #f2ecff; --text-secondary: #b9a8e6; --text-tertiary: #6f5c9e;
-  --accent: #ff2bd6; --accent-hover: #ff5ce0; --accent-dim: #38184a;
-  --bg-secondary: #1a142c; --bg-tertiary: #120d1f;
-  --signal-green: #3ef29b; --signal-green-bg: #0f2e23;
-  --signal-blue: #00d1ff; --signal-blue-bg: #06222e;
-  --signal-red: #ff2e5b; --signal-red-bg: #2e0b16;
-  --signal-yellow: #ffe14d; --signal-yellow-bg: #2e2610;
+/* — visual themes: editable slots (Mono default + Sky/Orca/Cyber/Matrix) render
+   here as static snapshots of the real derived palettes (theme-tab.js computes
+   them at runtime); the 4 signature themes (noir/phosphor/parchment/retina)
+   need no blocks here — they come straight from the linked real style.css. */
+:root[data-theme="dark"][data-accent="orca"] { /* real Orca derived palette */
+  --canvas: #070c15; --surface: #0b1220; --surface-hover: #243c50;
+  --border: #365b74; --border-hover: #7dd3fc;
+  --text-primary: #e2e8f0; --text-secondary: #a2a8b2; --text-tertiary: #6c727e;
+  --accent: #7dd3fc; --accent-hover: #6ebade; --accent-dim: #4a7c99;
+  --bg-secondary: #203548; --bg-tertiary: #080d16;
 }
-html[data-theme="dark"][data-accent="matrix"],
-:root[data-accent="matrix"] { /* phosphor terminal */
-  --canvas: #000000; --surface: #060a06; --surface-hover: #0b150b;
-  --border: #17411d; --border-hover: #2f8f3e;
-  --text-primary: #c8ffc8; --text-secondary: #58b35c; --text-tertiary: #2d6b30;
-  --accent: #22ff66; --accent-hover: #55ff99; --accent-dim: #0a3014;
-  --bg-secondary: #081008; --bg-tertiary: #050b05;
-  --signal-green: #31ff5e; --signal-green-bg: #07290f;
-  --signal-blue: #00e5a8; --signal-blue-bg: #06251d;
-  --signal-red: #ff4444; --signal-red-bg: #2b0a0a;
-  --signal-yellow: #eaff00; --signal-yellow-bg: #262a05;
+:root[data-theme="dark"][data-accent="cyber"] { /* real Cyber derived palette */
+  --canvas: #07070d; --surface: #0a0a14; --surface-hover: #0f3644;
+  --border: #135667; --border-hover: #22d3ee;
+  --text-primary: #fef08a; --text-secondary: #b5ab67; --text-tertiary: #787149;
+  --accent: #22d3ee; --accent-hover: #1ebad1; --accent-dim: #17798c;
+  --bg-secondary: #0e2e3b; --bg-tertiary: #07070e;
 }
-html[data-accent="fantasy"] { /* parchment & bronze (works dark or light) */
-  --canvas: #f4ead6; --surface: #fbf3e4; --surface-hover: #f2e6cd;
-  --border: #dcc9a4; --border-hover: #b99b66;
-  --text-primary: #382c18; --text-secondary: #7a6544; --text-tertiary: #b39b71;
-  --accent: #8a5a1e; --accent-hover: #6f4818; --accent-dim: #e7d6b8;
-  --bg-secondary: #efe2c8; --bg-tertiary: #e6d5b3;
-  --signal-green: #3f6b2e; --signal-green-bg: #e4eed9;
-  --signal-blue: #35558a; --signal-blue-bg: #e2e9f5;
-  --signal-red: #8a2f22; --signal-red-bg: #f5e0d8;
-  --signal-yellow: #8a6a1a; --signal-yellow-bg: #f3ead0;
-}
-html[data-theme="dark"][data-accent="vaporwave"],
-:root[data-accent="vaporwave"] { /* retina sunset */
-  --canvas: #120b24; --surface: #1a1133; --surface-hover: #221743;
-  --border: #332460; --border-hover: #5a41a0;
-  --text-primary: #f4e9ff; --text-secondary: #c3a9ec; --text-tertiary: #8168c0;
-  --accent: #ff71ce; --accent-hover: #ff9ade; --accent-dim: #2f1c55;
-  --bg-secondary: #201540; --bg-tertiary: #170e2e;
-  --signal-green: #05ffa1; --signal-green-bg: #06302a;
-  --signal-blue: #01cdfe; --signal-blue-bg: #06293a;
-  --signal-red: #ff4d6d; --signal-red-bg: #33091a;
-  --signal-yellow: #f9f871; --signal-yellow-bg: #2e2d16;
+:root[data-theme="dark"][data-accent="matrix"] { /* real Matrix derived palette */
+  --canvas: #020f07; --surface: #03170b; --surface-hover: #134325;
+  --border: #1e6337; --border-hover: #4ade80;
+  --text-primary: #bbf7d0; --text-secondary: #84b495; --text-tertiary: #567c64;
+  --accent: #4ade80; --accent-hover: #41c371; --accent-dim: #2a844b;
+  --bg-secondary: #103b20; --bg-tertiary: #021008;
 }
 
 /* — DLSS 5 big panel — */
@@ -591,18 +567,17 @@ button .wb-svg { pointer-events: none; }
       <span class="wb-tb-group">
         <button class="btn btn-icon" id="taskMgrBtn" title="Open Windows Task Manager"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-tasks"/></svg></button>
         <button class="btn btn-icon theme-toggle" id="themeToggleBtn" title="Toggle dark/light mode"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><use href="#i-theme"/></svg></button>
-        <button class="btn btn-icon" id="appearPaletteBtn" title="Cycle visual theme (Dark, accents, Cyberpunk, Matrix, Fantasy, Vaporwave)"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-palette"/></svg></button>
-        <select class="input" id="themeQuickSelect" style="width:auto;font-size:.66rem" title="Visual theme (mock — real: theme-tab.js data-accent tokens; the 4 famous themes are mock-only overrides)">
+        <button class="btn btn-icon" id="appearPaletteBtn" title="Cycle visual theme (Mono, Sky, Orca, Cyber, Matrix, Cyberpunk, Phosphor, Parchment, Retina Sunset, Light)"><svg class="wb-svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-palette"/></svg></button>
+        <select class="input" id="themeQuickSelect" style="width:auto;font-size:.66rem" title="Visual theme (mock — same 9-theme suite as the real Settings → Appearance dot row; signature themes render from the real style.css)">
           <option value="dark">Dark · Mono</option>
           <option value="sky">Sky</option>
-          <option value="emerald">Emerald</option>
-          <option value="classic">Classic</option>
-          <option value="amethyst">Amethyst</option>
-          <option value="rose">Rose</option>
-          <option value="cyberpunk">Cyberpunk</option>
+          <option value="orca">Orca</option>
+          <option value="cyber">Cyber</option>
           <option value="matrix">Matrix</option>
-          <option value="fantasy">Fantasy</option>
-          <option value="vaporwave">Vaporwave</option>
+          <option value="noir">Cyberpunk</option>
+          <option value="phosphor">Phosphor</option>
+          <option value="parchment">Parchment</option>
+          <option value="retina">Retina Sunset</option>
           <option value="light">Light</option>
         </select>
       </span>
@@ -1263,6 +1238,18 @@ button .wb-svg { pointer-events: none; }
           </select>
           <span class="wb-row-val" id="layoutThemeStatus">workbench · saved</span>
           <button class="btn btn-ghost small" id="layoutThemeApplyBtn" title="Re-apply the selected shell right now (real: class-based shells swap without restart)">Apply now</button></div>
+        <div class="wb-row"><span class="wb-row-label">Themes</span>
+          <div id="themeRow" role="radiogroup" aria-label="Themes" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <button class="accent-dot" data-dot="mono" title="Mono — click to apply, double-click to edit" role="radio" aria-label="Mono"></button>
+            <button class="accent-dot" data-dot="sky" title="Blue Sky — click to apply, double-click to edit" role="radio" aria-label="Blue Sky"></button>
+            <button class="accent-dot" data-dot="orca" title="Orca — click to apply, double-click to edit" role="radio" aria-label="Orca"></button>
+            <button class="accent-dot" data-dot="cyber" title="Cyber — click to apply, double-click to edit" role="radio" aria-label="Cyber"></button>
+            <button class="accent-dot" data-dot="matrix" title="Matrix — click to apply, double-click to edit" role="radio" aria-label="Matrix"></button>
+            <button class="accent-dot" data-dot="noir" title="Cyberpunk (neon noir, dark) — click to apply" role="radio" aria-label="Cyberpunk"></button>
+            <button class="accent-dot" data-dot="phosphor" title="Phosphor (terminal green, dark) — click to apply" role="radio" aria-label="Phosphor"></button>
+            <button class="accent-dot" data-dot="parchment" title="Parchment (fantasy bronze) — click to apply" role="radio" aria-label="Parchment"></button>
+            <button class="accent-dot" data-dot="retina" title="Retina Sunset (vaporwave, dark) — click to apply" role="radio" aria-label="Retina Sunset"></button>
+          </div></div>
         <div class="wb-row"><span class="wb-row-label">UI scale</span><input type="range" id="uiScaleInput" min="85" max="130" step="5" value="100" style="width:180px"><span class="wb-row-val" style="flex:0 0 auto">100%</span>
           <span class="wb-row-label" style="min-width:110px">Terminal scale</span><input type="range" id="termScaleInput" min="85" max="150" step="5" value="100" style="width:180px"><span class="wb-row-val" style="flex:0 0 auto">100%</span></div>
         <div class="wb-row"><span class="wb-row-label">Zoom</span><input type="range" id="zoomSlider" min="60" max="140" value="100" style="width:180px">
@@ -1581,16 +1568,41 @@ $("wbFold").addEventListener("click", () => {
   $("wbFold").querySelector(".wb-label").textContent = b.classList.contains("wb-rail-mini") ? "Expand rail" : "Collapse rail";
 });
 document.documentElement.setAttribute("data-theme", document.documentElement.getAttribute("data-theme") || "");
-// ═══ Visual theme system (mock): real accents + mock-only famous themes ═══
-// real mapping: theme-tab.js writes data-theme="dark" + data-accent; famous themes here
-// are token override blocks in this file only — real adoption = move them into style.css.
+// ═══ Visual theme system (mock) — the same 9-theme suite as the real app ═══
+// Real architecture (theme-tab.js): 5 editable slots — mono + Sky/Orca/Cyber/
+// Matrix derived from 3 base colors — plus 4 signature themes rendering from
+// token blocks in style.css. The mock snaps the three derived palettes that
+// style.css doesn't ship (orca/cyber/matrix) and links the real css directly
+// for everything else, so mock and exe render identically.
 const THEME_KEY = "w2gp.visualThemeDemo";
 const SAVED_DARK_KEY = "w2gp.visualThemeLastDark";
-const VISUAL_ORDER = ["dark","sky","emerald","classic","amethyst","rose","cyberpunk","matrix","fantasy","vaporwave","light"];
+const VISUAL_ORDER = ["dark","sky","orca","cyber","matrix","noir","phosphor","parchment","retina","light"];
+// saved demo states from before the keys were unified → nearest real theme
+const VISUAL_ALIAS = { cyberpunk:"noir", matrix:"phosphor", fantasy:"parchment",
+  vaporwave:"retina", emerald:"matrix", classic:"dark", amethyst:"noir", rose:"retina" };
+// dot wiring: data-dot key → visual name; editable dots use their factory
+// accent colors (real _themeDef(accent)), signature dots the shipped ones.
+const DOT_THEME = { mono:"dark", sky:"sky", orca:"orca", cyber:"cyber", matrix:"matrix",
+  noir:"noir", phosphor:"phosphor", parchment:"parchment", retina:"retina" };
+const DOT_COLOR = { mono:"#666666", sky:"#357fc4", orca:"#7dd3fc", cyber:"#22d3ee",
+  matrix:"#4ade80", noir:"#ff2bd6", phosphor:"#22ff66", parchment:"#8a5a1e", retina:"#ff71ce" };
+function _paintMockDots(active) {
+  document.querySelectorAll("#themeRow .accent-dot").forEach(d => {
+    d.style.background = DOT_COLOR[d.dataset.dot] || "transparent";
+    const on = DOT_THEME[d.dataset.dot] === active;
+    d.classList.toggle("active", on);
+    d.setAttribute("aria-checked", on ? "true" : "false");
+  });
+}
 function applyVisualTheme(name) {
   const h = document.documentElement;
   if (name === "light") {
     h.removeAttribute("data-theme"); h.removeAttribute("data-accent");
+  } else if (name === "parchment") {
+    // mode-agnostic like the real app: parchment keeps whatever light/dark
+    // state is active — its standalone token block paints either way
+    h.removeAttribute("data-theme");
+    h.setAttribute("data-accent", name);
   } else {
     h.setAttribute("data-theme", "dark");
     if (VISUAL_ORDER.includes(name) && name !== "dark") h.setAttribute("data-accent", name);
@@ -1603,9 +1615,13 @@ function setVisualTheme(name, viaPalette) {
   $("themeQuickSelect").value = name;
   localStorage.setItem(THEME_KEY, name);
   if (name !== "light") localStorage.setItem(SAVED_DARK_KEY, name);
-  if (!viaPalette) toast("theme → '" + name + "' (real: theme-tab.js + style.css tokens; famous themes are mock-only)");
+  _paintMockDots(name);
+  if (!viaPalette) toast("theme → '" + name + "' (real: theme-tab.js — same key names; signature blocks in style.css)");
 }
 $("themeQuickSelect").addEventListener("change", (e) => setVisualTheme(e.target.value));
+// theme dots — the real app's picker (Settings → Appearance), mirrored
+document.querySelectorAll("#themeRow .accent-dot").forEach(d =>
+  d.addEventListener("click", () => setVisualTheme(DOT_THEME[d.dataset.dot])));
 // real theme toggle (data-theme switch supplied by style.css)
 $("themeToggleBtn").addEventListener("click", () => {
   setVisualTheme($("themeQuickSelect").value === "light"
@@ -1616,8 +1632,12 @@ $("appearPaletteBtn").addEventListener("click", () => {
   const cur = VISUAL_ORDER.indexOf($("themeQuickSelect").value);
   setVisualTheme(VISUAL_ORDER[(cur + 1) % VISUAL_ORDER.length], true);
 });
-localStorage.setItem(THEME_KEY, localStorage.getItem(THEME_KEY) || "dark");
-setVisualTheme(localStorage.getItem(THEME_KEY) || "dark", true);
+(function () { // migrate demo states saved under old mock-only key names
+  const saved = localStorage.getItem(THEME_KEY);
+  const migrated = VISUAL_ALIAS[saved] || saved || "dark";
+  if (migrated !== saved) localStorage.setItem(THEME_KEY, migrated);
+  setVisualTheme(migrated, true);
+})();
 $("settingsBtn").addEventListener("click", () => go("setup"));
 $("guideBtn").addEventListener("click", () => go("guide"));
 $("taskMgrBtn").addEventListener("click", () => toast("open_task_manager — real command"));
