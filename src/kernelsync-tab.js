@@ -52,7 +52,7 @@ $("installHipGgufBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   if (
     !confirm(
-      "Install experimental HIP GGUF 1.0.25 (torch210rocm714) for RX 9070/R9700?\n\nNeeds a SEPARATE torch 2.10.0+rocm7.14.0 env — the wheel rejects other builds at import and does not load in the installer's torch 2.13+rocm10 env (use AMD setup (exp) to copy the env commands). Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
+      "Install experimental HIP GGUF 1.0.26 (torch210rocm714) for RX 9070/R9700?\n\nNeeds a SEPARATE torch 2.10.0+rocm7.14.0 env - the wheel rejects other builds at import and does not load in the installer's torch 2.13+rocm10 env (use AMD setup (exp) to copy the env commands). Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
     )
   )
     return;

@@ -156,7 +156,7 @@ const DEEPY_QUANT_CHOICES = {
     { id: "gguf", label: "GGUF Q4 (default, highest quality)" },
     { id: "gguf_q3", label: "GGUF IQ3_S (middle, 16 GB VRAM)" },
     { id: "gguf_q2", label: "GGUF Q2 (lowest memory)" },
-    { id: "gguf_ptq1", label: "Bonsai PTQ1 (~10 GB VRAM, needs kernels 1.0.25+)" },
+    { id: "gguf_ptq1", label: "Bonsai PTQ1 (~10 GB VRAM, needs kernels 1.0.26+)" },
   ],
   6: [
     { id: "gguf", label: "GGUF Q4 (~6.5 GB VRAM, default)" },

@@ -76,9 +76,9 @@ From `INSTALLATION.md` — the launcher automates all of this; listed so you kno
 | --- | --- | --- | --- | --- |
 | Python | 3.11.14 | 3.10.9 | 3.12.10 | — |
 | PyTorch | 2.10.0 + CUDA 13.0/13.1 (cu130, needs R580+ driver) | 2.7.1 + CUDA 12.8 (no R580 needed) | 2.13.0 ROCm 10 TheRock (stable whl-next, per-box device-gfx targets) | CPU / MPS (SDPA only) |
-| Triton | `triton-windows>=3.6,<3.7` (torch 2.10); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | `triton-windows>=3.7,<3.8` (torch 2.13) | — |
+| Triton | `triton-windows>=3.7.0.post26,<=3.7.1.post27` (torch 2.10, recommended since v18.18 — ships WanGP's prebuilt CUDA helper, no JIT helper compile, no antivirus exclusion needed on these builds); `>=3.6,<3.7` legacy (torch 2.10, launcher Repair/roll-back target); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | `triton-windows>=3.7.0.post26,<=3.7.1.post27` (torch 2.13; prebuilt HIP helper, experimental) | — |
 | Attention | Sage 2.2.0 (RTX 30+, Ampere+) / Sage 1.0.6 (RTX 20) / Flash 2.8.3 / Sparge 0.1.0 | SDPA | SDPA (default, AOTriton on RDNA3+) / Sage 1.0.6 / Flash 2.8.4 (ROCm/Triton) | SDPA |
-| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.25, LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2 (optional, manual), Comfy Kitchen via requirements, WGPKernels 1.1.2 (in setup_config: RTX 30+/RDNA4, recommended) | — | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back) | — |
+| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.26 (packed rows crossing quant blocks — fixes MiniMax H3 image-reference projections), LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2 (optional, manual), Comfy Kitchen via requirements, WGPKernels 1.1.2 (in setup_config: RTX 30+/RDNA4, recommended) | — | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back); HIP GGUF 1.0.26 wheel (gfx1201 opt-in, version-only bump) | — |
 
 Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
 `int8_kernels`: Auto tries WGPKernels → Kitchen CUDA/HIP → Triton → PyTorch
@@ -221,9 +221,11 @@ WanGP owns **model, prompt, generation, LoRA pick, control, post**.
 
 ---
 
-## Models reference — complete inventory (238 `defaults/*.json`)
+## Models reference — complete inventory (270 `defaults/*.json`)
 
-Audited from live `C:\Wan2GP\defaults\` (238 files + ReadMe). Every id below is
+Reconciled live against upstream `defaults/` (270 files + ReadMe, WanGP v18.18 /
+fde3c7e — adds the 3D-gen wave, Kandinsky 6, Wan 2.2 Prism, camera control,
+H3 Veda, MOSS Image, Ming Image and the v2 Krea edit presets). Every id below is
 a selectable `model_type`. Starred = guided-path starter; rest = same workflows,
 different speed/memory/quality trade (distilled/Turbo/Lightning/PDD/NVFP4/GGUF/
 Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar search.
@@ -235,8 +237,10 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 | `t2v`, `t2v_1.3B`, `t2v_1.3B_nvfp4`, `t2v_sf`, `t2v_fusionix`, `t2v_nexus_1.3B` | ★ `t2v` (Wan 2.1 14B T2V), 1.3B fast/low-VRAM, NVFP4, Self-Forcing, FusioniX, Nexus |
 | `i2v`, `i2v_720p`, `i2v_nvfp4`, `i2v_fusionix` | ★ `i2v` (Wan 2.1 I2V 480p/720p), NVFP4, FusioniX |
 | `fun_inp`, `fun_inp_1.3B` | Fun InP 1.3B (fast animate) / 14B |
+| `fun_camera_1.3B`, `uni3c` | Wan 2.1 Camera Control: animates a start image while the camera follows a chosen 3D path — Fun Control-Camera (preset moves or custom path), Uni3C 14B (image lifted to a point cloud, rendered along the path) |
+| `prism` | Wan 2.2 Prism Alpha 14B: image-to-video with jointly generated audio (MOVA two video experts + audio transformer), natively up to 2K |
 | `t2v_2_2` ★, `ti2v_2_2`, `ti2v_2_2_fastwan` | ★ `t2v_2_2` (Wan 2.2 14B general), TI2V 5B unified, FastWan |
-| `i2v_2_2` ★, `i2v_2_2_Enhanced_Lightning_v2`, `..._svi2pro`, `i2v_2_2_multitalk`, `i2v_2_2_svi2pro` | ★ `i2v_2_2`, Lightning v2 (timeline prompts), svi2pro, multitalk |
+| `i2v_2_2` ★, `i2v_2_2_Enhanced_Lightning_v2`, `..._svi2pro`, `i2v_2_2_Enhanced_Lightning_v2_svi2pro`, `i2v_2_2_multitalk`, `i2v_2_2_svi2pro` | ★ `i2v_2_2`, Lightning v2 (timeline prompts), svi2pro (better prompt comprehension + camera handling), multitalk |
 | `flf2v_720p` | First/last-frame bridge (storyboard: Qwen stills -> Wan motion) |
 | `shotplan_t2v`, `shotplan_t2v_2_2` | Shotplan multi-shot reuse |
 | `vace_1.3B`, `vace_14B` ★, `vace_14B_2_2`, `vace_14B_sf`, `vace_14B_fusionix` ★, `vace_14B_cocktail`, `vace_14B_cocktail_2_2`, `vace_14B_lightning_3p_2_2`, `vace_fun_14B_2_2`, `vace_fun_14B_cocktail_2_2`, `vace_standin_14B`, `vace_multitalk_14B`, `vace_lynx_14B`, `vace_ditto_14B` | ★ `vace_14B` + Fusionix (accelerated default); 1.3B lean; cocktail/lightning/SF accelerators; Fun/Standin/MultiTalk/Lynx/Ditto composites |
@@ -260,11 +264,13 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 | `ltxv_13B`, `ltxv_distilled` | LTX-Video 13B legacy |
 | `ltx2_19B`, `ltx2_19B_nvfp4`, `ltx2_distilled` (+`_gguf_q4_k_m/_q6_k/_q8_0`) | LTX-2 19B, distilled, GGUF/NVFP4 |
 | `ltx2_22B` ★, `ltx2_22B_1_1`, `ltx2_22B_distilled` ★, `ltx2_22B_distilled_1_1` ★, `ltx2_22B_nvfp4`, `ltx2_22B_msr`, `ltx2_22B_msr_v2`, `ltx2_22B_edit_anything` (+distilled/edit variants, GGUF) | ★ `ltx2_22B_distilled_1_1` fast general; Dev for control; MSR/MSR-v2 2-5 refs; Ingredients; edit-anything |
-| `ltx2_25_22B`, `ltx2_25_22B_distilled` ★, `ltx2_25_22B_distilled_nvfp4`, `ltx2_25_22B_msr` | ★ 2.5 Distilled (native audio-video, IC-LoRA, Ingredients, unblur/uncompress) |
+| `ltx2_25_22B`, `ltx2_25_22B_distilled` ★, `ltx2_25_22B_distilled_nvfp4`, `ltx2_25_22B_msr`, `ltx2_25_22B_alpha_gen`, `ltx2_25_22B_layout_to_render` | ★ 2.5 Distilled (native audio-video, IC-LoRA, Ingredients, unblur/uncompress); Alpha Gen (soft alpha matte from any video, optional selection mask → transparent PNG frames ZIP / ProRes 4444); Layout to Render (playblast + appearance ref → finished shot) |
 | `joyai_echo`, `joyai_echo_surgical` ★ | ★ Surgical: connected multi-shot stories, reusable memories (`[/store_mem]`/`[/load_mem]`/`[/drop_mem]`) |
-| `minimax_h3_fl2va` ★, `..._pruned` ★, `..._pdd`, `..._pruned_pdd` | ★ `minimax_h3_fl2va_pruned` (video+soundtrack, start/end, inject `KFI`+`frames_positions`, control, outpaint, 2-phase+tiling, Spectrum/First-Block-Cache, Sol-Attn) |
-| `minimax_h3_ref2va`, `..._pruned` ★, `..._pdd`, `..._pruned_pdd` | ★ pruned (refs guide result, ref pixel budget 50-400%, persists across windows) |
+| `minimax_h3_fl2va` ★, `..._pruned` ★, `..._pdd`, `..._pruned_pdd`, `..._veda`, `..._pruned_veda` | ★ `minimax_h3_fl2va_pruned` (video+soundtrack, start/end, inject `KFI`+`frames_positions`, control, outpaint, 2-phase+tiling, Spectrum/First-Block-Cache, Sol-Attn); `_veda` variants use learned sparse attention (up to 2× faster at high res/longer videos, same settings+LoRAs) |
+| `minimax_h3_control`, `..._pruned` | ControlNet-Union 2.0 branch on FL2VA (33B / pruned 20B): pose, depth, edge, shape and recoloring controls, plus inpainting and spatial outpainting |
+| `minimax_h3_ref2va`, `..._pruned` ★, `..._pdd`, `..._pruned_pdd`, `..._veda`, `..._pruned_veda` | ★ pruned (refs guide result, ref pixel budget 50-400%, persists across windows); `_veda` = Veda sparse attention |
 | `minimax_h3_vdn`, `..._pruned`, `minimax_h3_tts_ref2va_pruned` | VDN 20%+ faster; TTS preset (hidden 32x32 video, 32 kHz audio only) |
+| `k6_pro_distill`, `k6_lite_distill` | Kandinsky 6: 5s video with synchronized soundtrack (speech with lip-sync, music, sound effects) from text or a start image; Pro 30B / Lite 3B, both distilled (10 steps), low-VRAM with a faster in-house VAE |
 | `k5_lite_t2v` (+`_10s_distil`, `..._sparse`, `_5s_distil`), `k5_lite_i2v`, `k5_pro_t2v` (+`_10s_sft`, `..._sparse`), `k5_pro_i2v` | Kandinsky 5 Pro/Lite, camera-motion control |
 | `longcat_video`, `longcat_avatar`, `longcat_avatar_multi`, `longcat_avatar_v1_5` ★ | ★ v1.5 distilled audio-driven avatar, sliding windows |
 | `ovi`, `ovi_fastwan`, `ovi_1_1` ★, `ovi_1_1_10s`, `ovi_1_1_fastwan`, `ovi_1_1_10s_fastwan` | ★ Ovi 1.1 video + synced soundtrack, speaking characters |
@@ -278,15 +284,36 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 | `flux`, `flux_schnell`, `flux_chroma`, `flux_chroma_radiance`, `flux_krea`, `flux_srpo`, `flux_srpo_uso`, `flux_dev_kontext` ★, `flux_dev_kontext_dreamomni2`, `flux_dev_umo`, `flux_dev_uso` | Schnell/Dev/Kontext (instruction edit)/Krea/Chroma/SRPO/USO |
 | `flux2_dev`, `flux2_dev_nvfp4`, `flux2_klein_4b`, `flux2_klein_9b`, `flux2_klein_base_4b`, `flux2_klein_base_9b`, `pi_flux2`, `pi_flux2_nvfp4` | Flux 2 + Klein 4B/9B (+base), Pi VAE variants |
 | `flux3_klein` ★, `flux3_klein_base`, `flux3_klein_nvfp4`, `flux3_klein_base_nvfp4` | ★ Flux 3 Klein 5.6B distilled (16 steps, no CFG) + Base (50 steps, CFG); up to 10 ordered references; NVFP4 variants |
-| `qwen_image_20B` ★, `qwen_image_21_7B` ★, `qwen_image_2512_20B`, `qwen_image_edit_20B`, `qwen_image_edit_plus_20B` ★, `qwen_image_edit_plus2_20B`, `qwen_image_edit_plus_20B_nunchaku_r128_fp4/int4`, `qwen_image_layered_20B` | ★ base/edit-plus (multi-subject, long text); 2.1 new; layered; Nunchaku quant |
+| `qwen_image_20B` ★, `qwen_image_21_7B` ★, `qwen_image_21_turbo_7B`, `qwen_image_2512_20B`, `qwen_image_edit_20B`, `qwen_image_edit_plus_20B` ★, `qwen_image_edit_plus2_20B`, `qwen_image_edit_plus_20B_nunchaku_r128_fp4/int4`, `qwen_image_layered_20B` | ★ base/edit-plus (multi-subject, long text); 2.1 new; 2.1 Turbo 7B (8-step distilled, Turbo scheduler at guidance 1, no acceleration LoRA); layered; Nunchaku quant |
 | `z_image` ★, `z_image_base`, `z_image_control`, `z_image_control2`, `z_image_control2_1`, `z_image_control2_1_8s`, `z_image_twinflow_turbo`, `z_image_nunchaku_r128_fp4/r256_int4` | ★ Turbo 6B fast; Control/Control2.x edit; TwinFlow; Nunchaku |
-| `krea2_raw` ★, `krea2_turbo` ★, `krea2_raw_edit`, `krea2_turbo_edit` | ★ RAW (CFG) / Turbo (distilled); Identity Edit (2 refs + LanPaint inpaint/outpaint, NAG negatives) |
+| `krea2_raw` ★, `krea2_turbo` ★, `krea2_raw_edit`, `krea2_turbo_edit` (+`general`/`identity` **v2** full-rank edit LoRAs) | ★ RAW (CFG) / Turbo (distilled); Edit presets: General (recolor, relight, backgrounds, objects, text, restyle), Identity (2 refs + scene/pose/outfit restaging with likeness preserved; LanPaint inpaint/outpaint, NAG negatives) |
+| `moss_image`, `moss_image_sft` | MOSS Image 5B (OpenMOSS): text-to-image from plain language, tags or the Prompt Helper layout editor (boxes guide composition, not exact pixel masks); optional layout enhancer follows the selected canvas; Base & SFT (curated-data post-training), 50 steps CFG |
+| `ming_image_0_1_design`, `ming_image_0_1_design_layer` | Ming Image 0.1 Design 6B: text-rich designs/infographics/posters (text or structured JSON prompt, Prompt Helper layer arrangement, optional RGBA output, classic/JSON enhancers); Design-Layer splits a flattened design into transparent layers (each added to the gallery + a ZIP of the full set) |
 | `ideogram4` ★, `ideogram4_nf4`, `ideogram4_turbotime` | ★ typography/layout/JSON prompt (+Magic Prompt + visual helper); Turbo 4-8 steps |
 | `hidream_o1`, `hidream_o1_dev`, `hidream_o1_dev_2604` | HiDream text/ref + control |
 | `sensenova_u1_5_8b_mot` ★ | ★ native-4K infographics, Infographic Prompt enhancer, 8-step LoRA profile |
 | `kiwi_edit`, `kiwi_edit_instruct_only`, `kiwi_edit_reference_only`, `lucy_edit`, `lucy_edit_1_1`, `lucy_edit_fastwan`, `lucy_edit_fastwan_1_1` | Instruction/reference edit variants |
 
+### 3D / world reconstruction
+
+| Architecture ids | Model_type ids |
+| --- | --- |
+| `hunyuan3d_21` ★, `hunyuan3d_21_shape` | ★ Hunyuan3D 2.1: one object photo → 3D asset with PBR textures (base colour + metallic-roughness), or PBR texturing of an existing mesh; Shape variant = mesh only (GLB) |
+| `trellis2` | TRELLIS.2 (Microsoft, 4B): one image → textured GLB with PBR materials (sparse-voxel + mesh decode) |
+| `triposg` | TripoSG (VAST, 1.5B): one image → detailed mesh (GLB, geometry only) |
+| `triposplat` | TripoSplat: one image → Gaussian splats (PLY, up to 262K Gaussians) |
+| `partcrafter` | PartCrafter (built on TripoSG): one image → one mesh per part (GLB, one coloured node per part) |
+| `worldmirror_2` | WorldMirror 2.0 (Tencent, 1.2B): several photos or a video → static 3D scene (Gaussian splats or point cloud) with estimated cameras, in one pass |
+| `mapanything` | MapAnything (Meta): several photos or video frames → merged metric point cloud shown as splats, with every camera pose |
+| `da3_points` | Depth Anything 3 (the checkpoint behind WanGP's depth preprocessor): photos or video frames → merged point cloud scene |
+| `moge2` | MoGe-2 (Microsoft): one photo → visible geometry in metres (splats or textured mesh, normals + camera FOV) |
+| `geosam2` | GeoSAM2 (VAST): splits an existing mesh into its parts, automatically or from point prompts on rendered views (one GLB node per part) |
+| `animate_any_mesh` | AnimateAnyMesh: animates a static 3D mesh from a text motion description (16 frames of vertex trajectories, no rig) |
+
+3D assets open in the new **3D Viewer**: rotate, snap any view at the resolution you want and reuse it as a start image, or send generated images/videos to 3D.
+
 ### Audio / TTS / music
+
 
 | Architecture ids | Model_type ids |
 | --- | --- |
