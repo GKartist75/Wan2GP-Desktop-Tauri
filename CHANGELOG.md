@@ -4,6 +4,11 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## Unreleased
 
+- **Upstream v18.17 parity (fde3c7e + wave) — the Bitdefender/Triton fix.** Upstream ships a **prebuilt CUDA helper** in-repo for `triton-windows 3.7.0.post26`–`3.7.1.post27`, checksum-verified and already compiled (CUDA: Windows/Python 3.11; HIP: Python 3.12 + rocm-sdk 7.14, experimental) — no JIT helper compile, no TinyCC/MSVC step, no antivirus exclusion needed on those stacks. The launcher mirrors it:
+  - **Triton pins** – the recommended line is now Triton 3.7 Windows (`>=3.7.0.post26,<=3.7.1.post27`) for RTX 30–50 (hardware overview, dashboard spec rows, User Guide; the raw key rename is honored — `v37` = 3.7, old `v37` 3.6 spec lives on as `v36`), and the AMD installer pins `v38`'s exact range instead of floating `>=3.7,<3.8`. Triton 3.6 stays supported for existing installs (the cache pin, Repair, Roll back to post24 and the opt-in MSVC pin remain as fallbacks for un-helpered builds — the User Guide says exactly where each still applies).
+  - **GGUF kernels 1.0.25 → 1.0.26** – docs-prescribed floor raised; stale pins swap to the 1.0.26 wheels (cu130/cu128/HIP — HIP is a version-only bump). 1.0.26 adds packed rows crossing quantization blocks, fixing MiniMax H3 image-reference projections; everything below 1.0.26 now flags stale and re-syncs.
+  - **Model inventory reconciled**: the guide's catalog was 32 defaults behind the live upstream state (the v18.00–v18.17 waves) — now 270 and complete again, with the new **3D / world reconstruction** section (Hunyuan3D 2.1, TRELLIS.2, TripoSG/TripoSplat, PartCrafter, WorldMirror 2.0, MapAnything, Depth Anything 3, MoGe-2, GeoSAM2, AnimateAnyMesh), **Kandinsky 6** (Pro 30B / Lite 3B, synced soundtrack), Wan 2.2 **Prism** and camera control (Fun Control-Camera, Uni3C), H3 **Veda sparse** + **ControlNet-Union** families, LTX-2.5 **Alpha Gen**/**Layout to Render**, **MOSS Image 5B**, **Ming Image 0.1 Design(+Layer)**, Qwen Image 2.1 Turbo and the Krea 2 v2 edit presets.
+
 - **Repair/Roll back show their commands.** The Troubleshooting Triton actions echo the exact pip command lines (`[>] <python> -m pip …`) to the console before running them — built from the same pinned argv the spawn uses, so shown and run can never diverge.
 
 ## [0.10.11] — 2026-10-17
