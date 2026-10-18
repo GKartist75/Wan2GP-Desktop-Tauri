@@ -828,7 +828,7 @@
             <!-- v17 (MMGP v4) RAM/VRAM controls. Mirrors WanGP's own
                  Configuration > RAM/VRAM Management panel one-for-one. -->
             <div class="mem-field">
-              <label class="token-hint" title="Which attention kernel WanGP uses. Upstream v17.10 is explicit that quite a few of its optimizations depend on Sage2/2+. Needs the matching wheel — Sync GPU Wheels installs SageAttention 2.2.0 for RTX 30/40/50 and 1.0.6 for RTX 20. Left unset on AMD/Intel, where there is no Sage build upstream. v18 H3 Veda Sparse models set their own per-task attention (override_attention=veda) — leave this alone when running those.">Attention Mode</label>
+              <label class="token-hint" title="Which attention kernel WanGP uses. Upstream v17.10 is explicit that quite a few of its optimizations depend on Sage2/2+. Needs the matching wheel — Sync GPU Wheels installs SageAttention 2.2.0 for RTX 30/40/50 and 1.0.6 for RTX 20. Left unset on AMD/Intel, where there is no Sage build upstream. v18 H3 Veda Sparse models set their own per-task attention (overrides: attention_mode='veda') — leave this alone when running those.">Attention Mode</label>
               <select id="memAttentionMode" class="input">
                 <option value="">— unset —</option>
                 <option value="sage2">SageAttention 2 / 2+ (recommended — v17 gains depend on it)</option>
@@ -877,15 +877,6 @@
                 <option value="3">High — saves the most VRAM</option>
               </select>
               <div class="mem-hint"><span id="recHeadSplit" class="tag-rec">rec: —</span><span id="savedHeadSplit" class="tag-saved">saved: —</span></div>
-            </div>
-            <div class="mem-field">
-              <label class="token-hint" title="Reads model files ahead of their use, so they are not already in RAM on first load. Windows may then keep more file data in cache.">Read Ahead (Windows)</label>
-              <select id="memReadAhead" class="input">
-                <option value="">— unset —</option>
-                <option value="true">On</option>
-                <option value="false">Off</option>
-              </select>
-              <div class="mem-hint"><span id="recReadAhead" class="tag-rec">rec: —</span><span id="savedReadAhead" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
               <label class="token-hint" title="Speeds up the models the memory profile does not keep in Reserved RAM, using 1–2 GB of it. Changing this reloads the model.">Smart Memory Pinning</label>

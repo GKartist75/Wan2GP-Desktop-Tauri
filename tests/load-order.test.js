@@ -52,7 +52,6 @@ test('every id the Auto-Tune panel reads exists exactly once', () => {
     'memVramAllocator',
     'memRamAllocator',
     'memHeadSplit',
-    'memReadAhead',
     'memSmartPinning',
     'memVideoPreload',
     'memImagePreload',

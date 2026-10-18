@@ -605,7 +605,7 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
         String::new()
     };
     let v17_line = format!(
-        "\n**v17 RAM/VRAM** mmgp={mmgp} allocator={alloc} head_split={hs} smart_pinning={pin} read_ahead={ra} reserved_pct={res} preload v/i/a={pv}/{pi}/{pa}\n**Kernels** attention={att} int8={i8} precision={prec} compile={comp}",
+        "\n**v17 RAM/VRAM** mmgp={mmgp} allocator={alloc} head_split={hs} smart_pinning={pin} reserved_pct={res} preload v/i/a={pv}/{pi}/{pa}\n**Kernels** attention={att} int8={i8} precision={prec} compile={comp}",
         mmgp = crate::status::pyproject_version(
             &std::fs::read_to_string(repo.join("mmgp").join("pyproject.toml")).unwrap_or_default(),
         )
@@ -613,7 +613,6 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
         alloc = pick("vram_allocator"),
         hs = pick("attention_head_split"),
         pin = pick("smart_memory_pinning"),
-        ra = pick("read_ahead"),
         res = pick("perc_reserved_mem_max"),
         pv = pick("video_preload_mode"),
         pi = pick("image_preload_mode"),
