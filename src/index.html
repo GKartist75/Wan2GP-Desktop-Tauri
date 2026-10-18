@@ -321,7 +321,7 @@
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>GGUF CUDA Kernel</h3>
-            <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the weight-multiply policy: <code>fast</code>/<code>low_vram</code> use the packed MMVQ/MMQ kernels, <code>materialized</code> dequantizes and uses cuBLAS. <em>Short-batch mode</em> drives the Q4_K/PTQ1_0 tensor-core path for 2–8 row batches (auto = per-shape). These are the knobs wheel <strong>1.0.25</strong> actually reads — the older Stream-K and BF16→FP16 switches were dropped upstream.</p>
+            <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the weight-multiply policy: <code>fast</code>/<code>low_vram</code> use the packed MMVQ/MMQ kernels, <code>materialized</code> dequantizes and uses cuBLAS. <em>Short-batch mode</em> drives the Q4_K/PTQ1_0 tensor-core path for 2–8 row batches (auto = per-shape). These are the knobs wheel <strong>1.0.27</strong> actually reads — the older Stream-K and BF16→FP16 switches were dropped upstream.</p>
             <label class="toggle-row"><input type="checkbox" id="ggufEnabled"> <span>Enable GGUF CUDA kernels</span></label>
             <div class="token-field" style="margin-top:8px">
               <label class="token-hint" style="display:block;margin-bottom:4px">Matmul mode</label>
@@ -1166,7 +1166,7 @@
             <span class="card-title">GPU Kernel Wheels</span>
             <span class="env-type-tag" id="kernelProfileTag"></span>
             <button class="btn btn-ghost small hide-on-collapse" id="restoreKernelsBtn" title="Reinstall setup_config wheels exactly as published — drops launcher overrides (GGUF floor; sage swap only if setup_config ever lags to post4). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
-                <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.25 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.27 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
                 <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only (RDNA4 gfx1200/gfx1201): installs the GGUF 1.0.27 torch213rocm100py312 HIP wheel into this env's torch 2.13+rocm10 stack (Update GPU Wheels installs it too). Replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
                 <button class="btn btn-ghost small hide-on-collapse" id="installWgpkernelsBtn" title="Optional INT8 fast path (WGPKernels 1.1.2, in setup_config since upstream 17307e5). Installs the wheel matching your torch build (cu130/cu128) for RTX 30/40/50 (compute 8.0+), or the rocm100 build for AMD RDNA4 (gfx1200/gfx1201) right in the installer's torch 2.13+rocm10 env." style="margin-left:8px;display:none">WGPKernels (INT8)</button>
           </div>
@@ -1290,7 +1290,7 @@
             <div class="deepy-cost-note">
               <span class="dot-ok">●</span> <strong>OpenCode</strong> — free, local models, no account.
               <span class="dot-bad">●</span> <strong>Claude Code / Codex</strong> — paid (subscription or API credits).
-              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 9B/27B (local)</strong> — runs on your GPU (needs GGUF kernels 1.0.25 via Sync Kernels); pick model + quantization below. Auto-sets 32k context + Summarize.
+              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 9B/27B (local)</strong> — runs on your GPU (needs GGUF kernels 1.0.27 via Sync Kernels); pick model + quantization below. Auto-sets 32k context + Summarize.
               <br>Prime plans advanced multi-step work and is required for every external LLM (it exposes WanGP's MCP tools). Zero is lightweight and local-only.
             </div>
             <div class="deepy-sub-label">Local engine</div>

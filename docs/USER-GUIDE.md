@@ -116,7 +116,11 @@ Addresses*: Same-PC, Phone (same Wi-Fi), plus an *External* Tailscale IPv4
 row (Copy + QR) for off-LAN access — needs Tailscale on both ends and
 Phone-LAN mode. Address URLs are click-to-open in the real browser (login
 must happen in a tab — embedded views 403). Topbar shows a persistent
-Deepy Web LED (green = running, red = stopped) next to the Wan2GP LED.
+Deepy Web LED (green = running, red = stopped) next to the Wan2GP LED,
+and — once WanGP reports them at boot — two kernel pills
+(`INT8 · <backend>`, `FP8 · <backend>`) with the same kind of status dot:
+green = accelerated backend in use, amber = WanGP fell back to PyTorch,
+grey = not reported yet. A server exit clears both.
 *2 · Auth*: Off or Fixed passphrase (generator, length 4–64, remember
 30 days optional). *3 · Connection*: port — empty means auto (server port
 + 1) — plus LAN HTTPS (bring/create cert, CA guide) and reverse-proxy
@@ -348,7 +352,7 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 | **SpargeAttn** | RTX 30+ | — | sparsity-aware speed-up alongside Sage |
 | **FlashAttention** | `2.8.3` (RTX 30+, Ampere+) | `2.8.4` (ROCm/Triton, prebuilt wheel) | memory-efficient exact attention |
 | **Nunchaku** | `1.2.1` | — | SVD-quantized (NF4/SVDQ) runtime |
-| **GGUF llama.cpp** | CUDA `1.0.26` build (`cu130` or `cu128` per env) | HIP `1.0.26` build, experimental | 4-bit GGUF kernels (packed rows crossing quant blocks from 1.0.26 — fixes MiniMax H3 image-reference projections) |
+| **GGUF llama.cpp** | CUDA `1.0.27` build (`cu130` or `cu128` per env) | HIP `1.0.27` build (in-env ROCm 10, RDNA4, experimental) | 4-bit GGUF kernels (single-launch row loop from 1.0.27 — 2–10% faster decode, less VRAM; packed rows from 1.0.26 — fixes MiniMax H3 image-reference projections) |
 | **LightX2V** | RTX 50xx only | — | FP4 kernels (sm120+) |
 | **bitsandbytes NF4** | `0.49.2` (optional — *not* installed by the default set) | — | 8-bit / NF4 dequant (one-click install from the dashboard, pinned) |
 

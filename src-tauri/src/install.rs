@@ -3950,7 +3950,7 @@ pub(crate) fn post_install_override_urls(
     // (cu128/py310); profiles still list `gguf` and setup.py remaps via
     // (torch_k, py_k). Check both components — either stale pin swaps to its
     // matching build (py tag picks the build; upstream's own fresh pin
-    // preferred, so a future 1.0.26 needs no launcher change).
+    // preferred, so a future GGUF build needs no launcher change).
     let gguf = ["gguf", "gguf_cu128"]
         .into_iter()
         .filter_map(|k| {
@@ -4863,10 +4863,10 @@ mod wangp_git_tests {
     fn kernel_spec_version_reads_wheels_and_pins() {
         assert_eq!(
             super::kernel_spec_version_full(
-                "--no-deps https://x/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl"
+                "--no-deps https://x/llamacpp_gguf_cuda-1.0.27%2Btorch210cu130py311-cp311-cp311-win_amd64.whl"
             )
             .as_deref(),
-            Some("1.0.25+torch210cu130py311")
+            Some("1.0.27+torch210cu130py311")
         );
         assert_eq!(
             super::kernel_spec_version_full(
@@ -4894,7 +4894,7 @@ mod wangp_git_tests {
 
     #[test]
     fn base_version_strips_local_build_tags() {
-        assert_eq!(super::base_version("1.0.25+torch210cu130py311"), "1.0.25");
+        assert_eq!(super::base_version("1.0.27+torch210cu130py311"), "1.0.27");
         assert_eq!(super::base_version("2.2.0+cu130torch2.10.0andhigher.post6"), "2.2.0");
         assert_eq!(super::base_version("3.6.0.post26"), "3.6.0.post26");
     }
@@ -5137,7 +5137,7 @@ pub(crate) fn kernel_version_matches(installed: &str, wanted_full: &str) -> bool
     !wanted_full.contains('+') && base_version(have) == base_version(want)
 }
 
-/// Base version before a local build tag: `1.0.25+torch210cu130py311`
+/// Base version before a local build tag: `1.0.27+torch210cu130py311`
 /// → `1.0.25`, `2.2.0+cu130torch2.10.post6` → `2.2.0`. Pure.
 pub(crate) fn base_version(v: &str) -> String {
     v.trim()
@@ -5974,8 +5974,8 @@ mod kernel_skip_tests {
                 "1.2.1+cu13.0torch2.10",
             ),
             (
-                "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl",
-                "1.0.25+torch210cu130py311",
+                "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.27/llamacpp_gguf_cuda-1.0.27%2Btorch210cu130py311-cp311-cp311-win_amd64.whl",
+                "1.0.27+torch210cu130py311",
             ),
             (
                 "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl",
@@ -6005,10 +6005,10 @@ mod kernel_skip_tests {
 
     #[test]
     fn untagged_specs_still_compare_on_the_base_version() {
-        let spec = "https://example.com/kernels/releases/download/v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+        let spec = "https://example.com/kernels/releases/download/v1.0.27/llamacpp_gguf_cuda-1.0.27%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
         let full = kernel_spec_version_full(spec).unwrap();
-        assert_eq!(full, "1.0.25+torch210cu130py311");
-        assert!(kernel_version_matches("1.0.25+torch210cu130py311", &full));
+        assert_eq!(full, "1.0.27+torch210cu130py311");
+        assert!(kernel_version_matches("1.0.27+torch210cu130py311", &full));
         assert!(!kernel_version_matches("1.0.24+torch210cu130py311", &full));
     }
 
@@ -6139,7 +6139,7 @@ mod override_wheels_tests {
     fn flags_stale_gguf_and_post4() {
         let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "RTX_30", true);
         let gguf = w.gguf.expect("stale gguf must swap");
-        assert!(gguf.contains("1.0.26"), "got {gguf}");
+        assert!(gguf.contains("1.0.27"), "got {gguf}");
         let sage = w.sage.expect("post4 must swap when safe");
         assert!(sage.contains("post6"), "got {sage}");
     }
@@ -6147,20 +6147,20 @@ mod override_wheels_tests {
     fn quiet_when_already_current_or_opted_out() {
         // Current GGUF + safe sage → nothing to do.
         let cur = cfg_with(
-            &GGUF_1014.replace("1.0.14", "1.0.26"),
+            &GGUF_1014.replace("1.0.14", "1.0.27"),
             "v220_cu13",
             super::SAGE_SAFE_WIN_URL,
         );
         let w = post_install_override_urls(&cur, "RTX_30", true);
         assert!(w.gguf.is_none() && w.sage.is_none());
-        // 1.0.24 is now stale too (floor 1.0.26).
-        let old24 = cfg_with(
-            &GGUF_1014.replace("1.0.14", "1.0.24"),
+        // 1.0.26 is now stale too (floor 1.0.27).
+        let old26 = cfg_with(
+            &GGUF_1014.replace("1.0.14", "1.0.26"),
             "v220_cu13",
             super::SAGE_SAFE_WIN_URL,
         );
-        let w24 = post_install_override_urls(&old24, "RTX_30", true);
-        assert!(w24.gguf.is_some(), "1.0.24 must swap to 1.0.26");
+        let w26 = post_install_override_urls(&old26, "RTX_30", true);
+        assert!(w26.gguf.is_some(), "1.0.26 must swap to 1.0.27");
         // User chose upstream sage → sage untouched, gguf still swaps.
         let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "RTX_30", false);
         assert!(w.gguf.is_some() && w.sage.is_none());
@@ -6171,7 +6171,7 @@ mod override_wheels_tests {
     #[test]
     fn swaps_stale_gguf_cu128_split() {
         // Upstream splits `gguf_cu128` (cu128/py310) at 1.0.25. A stale
-        // cu128 pin must swap to its matching 1.0.26 cu128 build.
+        // cu128 pin must swap to its matching 1.0.27 cu128 build.
         let stale_cu128 = GGUF_1014
             .replace("torch210cu130py311", "torch271cu128py310")
             .replace("py311", "py310");
@@ -6189,7 +6189,7 @@ mod override_wheels_tests {
         let w = post_install_override_urls(&cfg, "RTX_30", true);
         let gguf = w.gguf.expect("stale gguf_cu128 must swap");
         assert!(
-            gguf.contains("1.0.26") && gguf.contains("torch271cu128py310"),
+            gguf.contains("1.0.27") && gguf.contains("torch271cu128py310"),
             "got {gguf}"
         );
     }
