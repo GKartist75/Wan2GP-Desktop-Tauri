@@ -390,19 +390,19 @@ Essentials (names as in `SETTINGS.md` / Export Settings JSON):
 ### Complete settings key list (118 keys, `models/_settings.json`)
 
 Model handlers show/hide per model; Export Settings JSON is the per-model truth.
-Groups follow `SETTINGS.md`:
+Groups follow `SETTINGS.md`; `model_type`/`settings_version` are UI/export labels, not stored keys:
 
-* Model: `model_type`, `model_mode`, `settings_version`, `client_id`, `config`
+* Model/identity: `client_id`, `model_mode`, `config`
 * Prompt: `prompt`, `negative_prompt`, `alt_prompt`, `prompt_enhancer`, `multi_prompts_gen_type`, `multi_images_gen_type`, `custom_settings`
 * Shape: `image_mode`, `resolution`, `batch_size`, `video_length`, `duration_seconds`, `pause_seconds`, `force_fps`, `repeat_generation`, `output_filename`
-* Sampling: `seed`, `num_inference_steps`, `sample_solver`, `flow_shift`, `temperature`, `top_p`, `top_k`
+* Sampling: `seed`, `num_inference_steps`, `num_inference_steps2`, `sample_solver`, `flow_shift`, `temperature`, `top_p`, `top_k`
 * Guidance: `guidance_phases`, `model_switch_phase`, `switch_threshold`, `switch_threshold2`, `guidance_scale`, `guidance2_scale`, `guidance3_scale`, `audio_guidance_scale`, `embedded_guidance_scale`, `alt_guidance_scale`, `alt_scale`, `audio_scale`, `control_net_weight`, `control_net_weight2`, `control_net_weight_alt`
-* Image/video inputs: `image_prompt_type`, `image_start`, `image_end`, `image_refs`, `image_refs_relative_size`, `remove_background_images_ref`, `frames_positions`, `image_guide`, `image_mask`, `video_source`, `keep_frames_video_source`, `input_video_strength`, `video_prompt_type`, `video_guide`, `video_guide2`, `keep_frames_video_guide`, `denoising_strength`, `masking_strength`, `video_mask`, `mask_expand`, `custom_guide`, `video_guide_outpainting`, `video_guide_outpainting_ratio`, `min_frames_if_references`
-* Audio inputs: `audio_prompt_type`, `audio_guide`, `audio_guide2`, `audio_source`, `speakers_locations`, `replace_voice_sample`, `replace_voice_sample2`
+* Image/video inputs: `image_prompt_type`, `image_start`, `image_end`, `image_refs`, `image_refs_relative_size`, `remove_background_images_ref`, `frames_positions`, `image_guide`, `image_mask`, `video_source`, `keep_frames_video_source`, `input_video_strength`, `video_prompt_type`, `video_guide`, `video_guide2`, `video_guide3`, `keep_frames_video_guide`, `denoising_strength`, `masking_strength`, `video_mask`, `mask_expand`, `custom_guide`, `video_guide_outpainting`, `video_guide_outpainting_ratio`, `min_frames_if_references`
+* Audio inputs: `audio_prompt_type`, `audio_guide`, `audio_guide2`, `audio_guide3`, `audio_source`, `speakers_locations`, `replace_voice_method`, `replace_voice_sample`, `replace_voice_sample2`
 * Accel/cache: `skip_steps_cache_type` (`tea/mag/spectrum…`), `skip_steps_multiplier`, `skip_steps_start_step_perc`, `RIFLEx_setting`, `overrides` (replaces the old `override_profile`/`override_attention`/`override_compile` trio), `temporal_upsampling`, `spatial_upsampling`, `film_grain_intensity`, `film_grain_saturation`, `attention_sparsity`
-* Audio post: `postprocess_audio`, `postprocess_audio_prompt`, `postprocess_audio_neg_prompt`, `replace_voice_method`
+* Audio post: `postprocess_audio`, `postprocess_audio_prompt`, `postprocess_audio_neg_prompt`
 * Advanced sampling: `perturbation_switch/layers/start_perc/end_perc`, `apg_switch`, `cfg_star_switch`, `cfg_zero_step`, `NAG_scale/tau/alpha`, `self_refiner_setting/plan/f_uncertainty/certain_percentage`, `motion_amplitude`
-* Sliding windows: `sliding_window_size/overlap/color_correction_strength/overlap_noise/discard_last_frames/trim_first_frames`, `sub_parallel_window_size/overlap`, `keep_intermediate_sliding_windows`
+* Sliding windows: `sliding_window_size/overlap/color_correction_strength/overlap_noise/discard_last_frames/trim_first_frames`, `sub_parallel_window_size/overlap`
 * LoRAs: `activated_loras`, `loras_multipliers`
 * Spatial params: `spatial_upsampler_param/param2/prompt/reference_images`
 
@@ -630,10 +630,11 @@ to move); back up folder + media for portable archive.
   `submit_audio_remux/postprocessing`. Discovery: `list_model_defs/metadata`,
   `get_default_settings/schema/availability`.
 * MCP server: `python wgp.py --mcp --mcp-transport streamable-http --mcp-port 7866`
-  (v2 default; `--mcp-api-version 1` for historical clients). Gallery media IDs
+  (v2.1 default; `--mcp-api-version 2`/`1` for historical clients). Gallery media IDs
   work without filesystem access; direct paths need `--mcp-allow-read-file-system`.
   HTTP transports add short-lived upload/download URLs. Network MCP auth is OAuth
-  (`--mcp-auth`), separate from web login. Deepy Prime pins v2 internally.
+  (`--mcp-auth` + `--mcp-auth-url`, optional `--mcp-auth-password`), separate from web
+  login; `--mcp-webui` autostarts MCP with the normal web UI. Deepy Prime pins v2 internally.
 * Disclose WanGP use in any integrating product's UI + docs (license terms).
 
 ```mermaid
@@ -641,7 +642,7 @@ flowchart TD
   A["Want agents or scripts to drive WanGP?"]
   A --> P["Python app? Export Settings in UI, then init plus submit_task"]
   A --> H["Overnight jobs? Save Queue in UI, then wgp.py --process queue.zip"]
-  A --> M["Claude or OpenCode agent? wgp.py --mcp (v2, streamable-http on LAN)"]
+  A --> M["Claude or OpenCode agent? wgp.py --mcp (v2.1, streamable-http on LAN)"]
   P & H & M --> G["Gallery media IDs travel everywhere; direct paths need filesystem permission"]
 ```
 
@@ -659,8 +660,9 @@ flowchart TD
 * `--public-url https://host[:port]` pins one exact browser origin (scheme+host+port,
   no path) — needed when proxy rewrites Host or HTTP/HTTPS variants serve different
   apps; default accepts same-host HTTP/HTTPS. Mic recording may require trusted HTTPS.
-* MCP OAuth (`--mcp-auth`, separate passphrase, `--mcp-auth-url` public origin) —
-  browser cookie never authorizes MCP; tokens 1h, refresh ≤7d, restart revokes.
+* MCP OAuth (`--mcp-auth`, separate passphrase `--mcp-auth-password`/
+  `WANGP_MCP_AUTH_PASSWORD`, `--mcp-auth-url` public origin) — browser cookie never
+  authorizes MCP; tokens 1h, refresh ≤7d, restart revokes.
 
 ```mermaid
 flowchart TD
@@ -675,7 +677,7 @@ flowchart TD
 
 From `shared/cli_args.py` (launcher exposes the useful subset):
 
-### Complete launch-flag list (44 flags)
+### Complete launch-flag list (45 flags)
 
 | Flag | Use |
 | --- | --- |
@@ -689,7 +691,7 @@ From `shared/cli_args.py` (launcher exposes the useful subset):
 | `--server-port/--server-name/--listen/--share/--open-browser/--theme`, `--lock-config/--lock-model`, `--multiple-images` | Access + UI locks |
 | `--process queue.zip --dry-run --output-dir` | Headless batch; validate first |
 | `--ask-deepy`, `--deepy-server`, `--deepy-voice-language`, `--deepy-sessions-dir` | Deepy CLI / standalone web / dictation / sessions folder |
-| `--mcp --mcp-transport stdio/sse/streamable-http --mcp-host/--mcp-port --mcp-api-version 1/2 --mcp-async --mcp-console-output --mcp-allow-read-file-system` | Agent API (v2 default) |
+| `--mcp --mcp-transport stdio/sse/streamable-http --mcp-host/--mcp-port --mcp-api-version 1/2/2.1 --mcp-webui/--no-mcp-webui --mcp-async --mcp-console-output --mcp-allow-read-file-system` | Agent API (v2.1 default) |
 | `--auth/--no-auth/--auth-password`, `--public-url`, `--mcp-auth/--mcp-auth-password/--mcp-auth-url`, `--https-port/--ssl-certfile/--ssl-keyfile` | Login + TLS + proxy origin (see AUTH; `--public-url` = bare origin only, no path/query) |
 | `--loras/--lora-config/--check-loras/--lora-preset` | LoRA roots/overrides/preset |
 | `--settings/--config/--workspaces-dir/--output-dir` | Folders |

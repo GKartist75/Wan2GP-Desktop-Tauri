@@ -361,19 +361,30 @@
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>Agent API (MCP server)</h3>
-            <p class="token-hint">Run WanGP as a tool server for Claude/OpenCode agents (v2 default; v1 for old clients). Browser login never authorizes MCP — network use needs OAuth (<code>--mcp-auth</code>). Gallery media IDs work without filesystem access; direct paths need <code>--mcp-allow-read-file-system</code>.</p>
+            <p class="token-hint">Run WanGP as a tool server for Claude/OpenCode agents (v2.1 default; pin 2 or 1 for older clients). Browser login never authorizes MCP — network use needs its own OAuth (<code>--mcp-auth</code>). Gallery media IDs work without filesystem access; direct paths need <code>--mcp-allow-read-file-system</code>.</p>
             <div class="token-field" style="margin-top:8px">
               <select id="mcpTransport" class="input" style="max-width:170px" title="MCP transport">
                 <option value="stdio">stdio (local)</option>
                 <option value="streamable-http">streamable-http</option>
                 <option value="sse">sse (legacy)</option>
               </select>
-              <input type="text" id="mcpHost" class="input" value="127.0.0.1" style="max-width:150px" title="MCP host">
+              <input type="text" id="mcpHost" class="input" value="127.0.0.1" style="max-width:150px" title="MCP bind host for HTTP transports (use 0.0.0.0 only with OAuth + HTTPS)">
               <input type="number" id="mcpPort" class="input" value="7866" min="1024" max="65535" style="width:100px" title="MCP port">
-              <select id="mcpApi" class="input" style="max-width:110px" title="API version">
+              <select id="mcpApi" class="input" style="max-width:140px" title="MCP API version (upstream default: 2.1)">
+                <option value="2.1">API v2.1 (latest)</option>
                 <option value="2">API v2</option>
-                <option value="1">API v1</option>
+                <option value="1">API v1 (legacy)</option>
               </select>
+              <select id="mcpWebui" class="input" style="max-width:220px" title="Standalone MCP server, or autostart MCP with the normal web UI (Configuration &gt; Agents MCP autostart); --mcp / --mcp-webui / --no-mcp-webui">
+                <option value="">MCP server only (--mcp)</option>
+                <option value="--mcp-webui">MCP with the web UI (--mcp-webui)</option>
+                <option value="--no-mcp-webui">Web UI, MCP off (--no-mcp-webui)</option>
+              </select>
+            </div>
+            <div class="token-field" style="margin-top:8px">
+              <label class="toggle-row" title="Require an OAuth login for network MCP clients — separate from the web password"><input type="checkbox" id="mcpAuth"> <span>OAuth</span></label>
+              <input type="text" id="mcpAuthUrl" class="input" placeholder="https://host:7866 (--mcp-auth-url)" style="max-width:280px" title="Public origin clients reach (--mcp-auth-url); required for non-loopback OAuth">
+              <input type="password" id="mcpAuthPassword" class="input" placeholder="passphrase (blank = generated)" style="max-width:240px" title="Fixed MCP passphrase (--mcp-auth-password). Prefer the WANGP_MCP_AUTH_PASSWORD env var to keep it out of command history.">
             </div>
             <div class="token-field" style="margin-top:8px">
               <input type="text" id="mcpCommand" class="input" readonly style="max-width:640px" title="Launch command">
@@ -2161,6 +2172,7 @@
   <script src="services/pip-spec.js" defer></script>
   <script src="services/guide-catalog.js" defer></script>
   <script src="services/launch-args.js" defer></script>
+  <script src="services/mcp-command.js" defer></script>
   <script src="services/prompt-tools.js" defer></script>
   <script src="app.js" defer></script>
   <!-- After app.js: refreshLLMEngines reads globals ($/showToast/getLLMEngines) that app.js defines. All defer scripts run in document order, so this ordering is the contract. -->
