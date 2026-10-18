@@ -14,6 +14,7 @@ mod status;
 mod system;
 mod troubleshoot;
 mod updates;
+mod wheels;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;

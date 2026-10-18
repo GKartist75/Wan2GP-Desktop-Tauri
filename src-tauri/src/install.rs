@@ -3729,25 +3729,37 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
         return Err("python not found for active env".into());
     }
     let py_s = py.to_string_lossy().to_string();
-    let ok = crate::base::run_logged(
-        &app,
-        &py_s,
-        &[
-            "-m",
-            "pip",
-            "install",
-            "--no-deps",
-            "--force-reinstall",
-            "--upgrade",
-            HIP_GGUF_WHEEL_URL,
-        ],
-        None,
-        |s: &str| {
-            crate::base::push_log(s, "setup");
-            let _ = app.emit("launch-log", s.to_string());
-        },
+    let emit_hip = |s: &str| {
+        crate::base::push_log(s, "setup");
+        let _ = app.emit("launch-log", s.to_string());
+    };
+    let argv: Vec<String> = vec![
+        "-m".into(),
+        "pip".into(),
+        "install".into(),
+        "--no-deps".into(),
+        "--force-reinstall".into(),
+        "--upgrade".into(),
+        HIP_GGUF_WHEEL_URL.into(),
+    ];
+    // Download + verify before pip sees it (see `wheels`): a swapped or
+    // truncated asset fails loudly here instead of landing in the env.
+    let argv = match crate::wheels::verify_argv_wheels(
+        argv,
+        &crate::wheels::cache_dir(),
+        &emit_hip,
     )
-    .await;
+    .await
+    {
+        Ok(a) => a,
+        Err(e) => {
+            emit_hip(&format!("[!] {e}\n"));
+            mutating_done();
+            return Err(e);
+        }
+    };
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let ok = crate::base::run_logged(&app, &py_s, &argv_ref, None, emit_hip).await;
     mutating_done();
     if !ok {
         return Err("HIP GGUF wheel install failed — see console output. It needs the AMD env's torch 2.13.0+rocm10.0.0: the wheel checks the ROCm torch build at import.".into());
@@ -3836,25 +3848,35 @@ pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_jso
         "[*] Installing WGPKernels {} ({kind}) — INT8 fast path for int8_kernels = auto/wgpkernels…\n",
         crate::hw::WGPKERNELS_VERSION
     ));
-    let ok = crate::base::run_logged(
-        &app,
-        &py_s,
-        &[
-            "-m",
-            "pip",
-            "install",
-            "--no-deps",
-            "--force-reinstall",
-            "--upgrade",
-            &url,
-        ],
-        None,
-        |s: &str| {
-            crate::base::push_log(s, "setup");
-            let _ = app.emit("launch-log", s.to_string());
-        },
+    let emit_w = |s: &str| {
+        crate::base::push_log(s, "setup");
+        let _ = app.emit("launch-log", s.to_string());
+    };
+    let argv: Vec<String> = vec![
+        "-m".into(),
+        "pip".into(),
+        "install".into(),
+        "--no-deps".into(),
+        "--force-reinstall".into(),
+        "--upgrade".into(),
+        url.clone(),
+    ];
+    let argv = match crate::wheels::verify_argv_wheels(
+        argv,
+        &crate::wheels::cache_dir(),
+        &emit_w,
     )
-    .await;
+    .await
+    {
+        Ok(a) => a,
+        Err(e) => {
+            emit_w(&format!("[!] {e}\n"));
+            mutating_done();
+            return Err(e);
+        }
+    };
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let ok = crate::base::run_logged(&app, &py_s, &argv_ref, None, emit_w).await;
     mutating_done();
     if !ok {
         return Err("WGPKernels wheel install failed — see console output. The wheel must match your torch/CUDA build (cu130 for torch 2.10+cu13, cu128 for torch 2.7+cu12.8).".into());
@@ -4058,6 +4080,21 @@ async fn sync_post_install_overrides(app: &tauri::AppHandle, repo: &std::path::P
             vec!["-m".into(), "pip".into(), "install".into()];
         argv.extend(pip_install_argv(&url));
         argv.push("--upgrade".into());
+        // Download + verify every wheel URL before pip (see `wheels`).
+        let argv = match crate::wheels::verify_argv_wheels(
+            argv,
+            &crate::wheels::cache_dir(),
+            &emit_k,
+        )
+        .await
+        {
+            Ok(a) => a,
+            Err(e) => {
+                emit_k(&format!("[!] {e}\n"));
+                emit_log(&format!("[!] post-install override for {name} skipped — checksum verification failed, installing nothing\n"));
+                continue;
+            }
+        };
         let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
         if !crate::base::run_logged(&app, &py_s, &argv_ref, None, emit_k).await
         {
@@ -4489,6 +4526,22 @@ async fn sync_kernels_inner(
                 vec!["-m".into(), "pip".into(), "install".into()];
             argv.extend(pip_install_argv(&url));
             argv.push("--upgrade".into());
+            // Download + verify every wheel URL before pip (see `wheels`):
+            // a checksum mismatch aborts this component, installing nothing.
+            let argv = match crate::wheels::verify_argv_wheels(
+                argv,
+                &crate::wheels::cache_dir(),
+                &emit_k,
+            )
+            .await
+            {
+                Ok(a) => a,
+                Err(e) => {
+                    emit_k(&format!("[!] {e}\n"));
+                    failed.push(name.to_string());
+                    continue;
+                }
+            };
             let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
             if !run_logged(
                 &app,

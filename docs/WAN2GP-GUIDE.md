@@ -98,6 +98,17 @@ the experimental `rocm100` build, which loads in the installer's torch
 `torch213rocm100py312`) is built for that same env and *↻ Update GPU Wheels*
 installs it automatically on RDNA4. RDNA 1–3.5 cards have no WGPKernels/HIP
 wheel.
+
+Every kernel wheel is downloaded over TLS, hashed and checked **before** pip
+runs. The launcher pins the SHA-256 of the exact assets above (trust on first
+use: a re-uploaded wheel under the same version fails loudly) and falls back to
+GitHub's published digest for anything newer, so a version bump still verifies;
+when neither is available it warns and records the hash it saw. A mismatch
+aborts that component and nothing is installed. Verified wheels are kept in
+**`<data folder>\wheel-cache`** (e.g. `C:\Wan2GP\wheel-cache`) so a re-sync
+re-hashes a local file instead of re-downloading 150 MB — the folder is a cache
+and safe to delete.
+
 Pinokio installs are detected and left
 untouched — the launcher can reuse their model library instead of re-downloading.
 
