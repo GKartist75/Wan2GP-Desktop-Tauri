@@ -6,7 +6,11 @@
   "scripts": {
     "tauri": "tauri",
     "test": "node --test \"tests/*.test.js\"",
-    "harness": "node tests/harness/serve.js"
+    "harness": "node tests/harness/serve.js",
+    "pack:verify": "node scripts/verify-adult-pack.mjs",
+    "pack:report": "node scripts/verify-adult-pack.mjs --report",
+    "pack:check": "node scripts/refresh-adult-pack.mjs --check",
+    "pack:refresh": "node scripts/refresh-adult-pack.mjs --refresh"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
