@@ -45,14 +45,14 @@ $("restoreKernelsBtn")?.addEventListener("click", async function () {
     setTimeout(refreshDashboard, 1500);
   }
 });
-// Experimental AMD HIP GGUF wheel (sync-kernels-only opt-in, gfx1201).
-// Replaces the CUDA GGUF wheel (same dist name); needs a separate torch
-// 2.10+rocm7.14 env — it does not load in the installer's 2.13+rocm10 env.
+// Experimental AMD HIP GGUF wheel (RDNA4 opt-in / reinstall path).
+// Same dist name as the CUDA GGUF wheel; installs in THIS env's torch
+// 2.13+rocm10 stack (Update GPU Wheels installs it too).
 $("installHipGgufBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   if (
     !confirm(
-      "Install experimental HIP GGUF 1.0.26 (torch210rocm714) for RX 9070/R9700?\n\nNeeds a SEPARATE torch 2.10.0+rocm7.14.0 env - the wheel rejects other builds at import and does not load in the installer's torch 2.13+rocm10 env (use AMD setup (exp) to copy the env commands). Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
+      "Install experimental HIP GGUF 1.0.27 (torch213rocm100py312) for AMD RDNA4 (RX 9060/9070, gfx1200/gfx1201)?\n\nInstalls in this env's torch 2.13+rocm10 stack - the wheel checks the ROCm torch build at import. Update GPU Wheels installs the same wheel automatically. Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
     )
   )
     return;
@@ -96,43 +96,6 @@ $("installWgpkernelsBtn")?.addEventListener("click", async function () {
     this.disabled = false;
     this.textContent = "WGPKernels (INT8)";
     setTimeout(refreshDashboard, 1500);
-  }
-});
-// AMD experimental HIP setup helper. Only the HIP GGUF (torch210rocm714)
-// wheel still needs its own torch 2.10.0+rocm7.14.0 env — upstream:
-// "install into a separate AMD environment". WGPKernels 1.1.2 (rocm100)
-// installs directly in the installer's torch 2.13+rocm10 env. This just
-// surfaces the exact commands (one source of truth in the backend) and
-// copies them, so AMD users don't have to reverse-engineer the stack.
-$("installAmdSetupBtn")?.addEventListener("click", async function () {
-  try {
-    const r = await window.w2gp.amdHipRecipe();
-    const text = (r && r.text) || "";
-    if (!text) {
-      showToast("✗ Could not build the AMD setup recipe");
-      return;
-    }
-    let copied = false;
-    try {
-      await navigator.clipboard.writeText(text);
-      copied = true;
-    } catch {}
-    await window.w2gp.confirmDialog({
-      title: "AMD ROCm 7.14 setup (experimental)",
-      message: copied
-        ? "Setup commands copied to your clipboard."
-        : "Copy the setup commands below.",
-      detail:
-        "AMD RX 9070/R9700 (gfx1201) only. The HIP GGUF wheel needs " +
-        "PyTorch 2.10.0+rocm7.14.0 and does NOT load in the installer's " +
-        "torch 2.13+rocm10 environment — upstream requires a SEPARATE AMD " +
-        "environment. Create one (fresh venv/conda), run the commands there. " +
-        "WGPKernels needs no separate env anymore (rocm100 installs in " +
-        "place via the WGPKernels button or Update GPU Wheels).\n\n" +
-        text,
-    });
-  } catch (e) {
-    showToast("✗ " + errText(e));
   }
 });
 

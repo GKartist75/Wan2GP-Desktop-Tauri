@@ -68,12 +68,12 @@ The home screen. Top to bottom:
 
 **GPU Kernel Wheels card** — per-GPU wheels (torch, triton, sage/flash attention, nunchaku/GGUF) with installed versions. *↻ Update GPU Wheels* installs upstream's wanted set plus launcher fixes (sage safe build, GGUF floor that follows `setup_config.json` forward), *Restore GPU Wheels* reinstalls deepbeepmeep's pure upstream set. Sync follows your local checkout — if it is behind `origin/main`, the console warns you to update Wan2GP first, otherwise you install stale wheels. After every Wan2GP update the launcher also runs a compat check (setup_config shape + GGUF pins) and says so in the Console — re-run Sync when it reports new wheels.
 
-**AMD and the experimental kernels (RX 9060 / 9070 series — gfx1200/gfx1201).** WGPKernels 1.1.2 ships a `rocm100` wheel that installs in place; only HIP GGUF still needs a separate env:
+**AMD and the experimental kernels (RX 9060 / 9070 series — gfx1200/gfx1201).** Both wheels now install straight into the installer's torch 2.13+rocm10 env — there is no separate environment any more:
 
-- **WGPKernels (INT8)** — the INT8 fast path. One-click on NVIDIA RTX 30/40/50 (the launcher picks `cu130`/`cu128` from your torch build) and on AMD RDNA4 (the `rocm100` build installs right in the installer's TheRock torch 2.13+rocm10 env — no separate env). *↻ Update GPU Wheels* also installs it now that upstream profiles list it.
-- **HIP GGUF (exp)** — the AMD build of the GGUF CUDA wheel, still on the `torch210rocm714` build, which needs **PyTorch 2.10.0+rocm7.14.0** — *not* the installer's env — so it refuses there.
+- **WGPKernels (INT8)** — the INT8 fast path. One-click on NVIDIA RTX 30/40/50 (the launcher picks `cu130`/`cu128` from your torch build) and on AMD RDNA4 (the `rocm100` build installs right in the installer's TheRock torch 2.13+rocm10 env). *↻ Update GPU Wheels* also installs it now that upstream profiles list it.
+- **HIP GGUF (exp)** — the AMD build of the GGUF wheel (1.0.27, `torch213rocm100py312`). It is built for **this** env — torch 2.13.0+rocm10.0.0 — and the wheel checks the ROCm torch build at import. *↻ Update GPU Wheels* lands it automatically on RDNA4; the button stays as a reinstall path.
 
-Only the HIP GGUF wheel must live in a **separate environment** (upstream: *"install into a separate AMD environment"*). Click **AMD setup (exp)** in the GPU Kernel Wheels card to copy the exact commands (torch 2.10 + rocm7.14, then the wheel). RDNA 1–3.5 cards have **no** WGPKernels/HIP wheel.
+RDNA 1–3.5 cards have **no** WGPKernels/HIP wheel. Upstream's own HIP validation is still pending (no RDNA4 board on their side), so treat the HIP path as experimental.
 
 **Active Environment card** — the selected Python env (`uv`, `venv` or `conda`):
 

@@ -78,7 +78,7 @@ pub fn get_status() -> serde_json::Value {
                             if let Some(key) = k.as_str() {
                                 let (label, pip) = match key {
                                     "nunchaku_cu13" | "nunchaku" => ("Nunchaku", "nunchaku"),
-                                    "gguf" | "gguf_cu128" | "llamacpp_gguf_cuda" => {
+                                    "gguf" | "gguf_cu128" | "gguf_rocm10" | "llamacpp_gguf_cuda" => {
                                         ("GGUF (llamacpp)", "llamacpp_gguf_cuda")
                                     }
                                     "light2xv" | "lightx2v_kernel" => {
@@ -91,12 +91,27 @@ pub fn get_status() -> serde_json::Value {
                                     }
                                     _ => (key, key),
                                 };
-                                // configured version from setup_config.json components.kernels[key].cmd[win]
+                                // Configured version from setup_config.json
+                                // components.kernels[key].cmd[win]. GGUF ships
+                                // one build per (torch, python) and profiles
+                                // list the cu130 default (`gguf`), so resolve
+                                // the profile's own pair to the component it
+                                // actually installs (AMD → `gguf_rocm10`,
+                                // GTX_10 → `gguf_cu128`) — otherwise the
+                                // overview compares against a foreign build tag
+                                // and shows a permanent phantom mismatch.
+                                let comp_key = if key == "gguf" {
+                                    let t = prof.get("torch").and_then(|v| v.as_str()).unwrap_or("");
+                                    let p = prof.get("python").and_then(|v| v.as_str()).unwrap_or("");
+                                    crate::hw::gguf_component_for(t, p).unwrap_or("gguf")
+                                } else {
+                                    key
+                                };
                                 let mut configured: Option<String> = None;
                                 if let Some(cmd) = cfg
                                     .get("components")
                                     .and_then(|c| c.get("kernels"))
-                                    .and_then(|m| m.get(key))
+                                    .and_then(|m| m.get(comp_key))
                                     .and_then(|e| e.get("cmd"))
                                     .and_then(|c| c.get("win"))
                                     .and_then(|u| u.as_str())

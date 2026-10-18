@@ -172,7 +172,6 @@ if (!window.__TAURI__) {
         restoreKernels: () => call("restore_kernels"),
         installHipGguf: () => call("install_hip_gguf_wheel"),
         installWgpkernels: () => call("install_wgpkernels_wheel"),
-        amdHipRecipe: () => call("amd_hip_recipe"),
         installPlan: () => call("install_plan"),
         validateInstall: () => call("validate_install"),
         classifyTarget: () => call("classify_target"),

@@ -2,6 +2,10 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [Unreleased]
+
+- **AMD GGUF (HIP) installs in the launcher's own env again.** Upstream replaced the HIP wheel's `torch210rocm714py311` build with `torch213rocm100py312` (gguf-v1.0.27) — a ROCm 10 / torch 2.13 / Python 3.12 build that records and checks the exact ROCm torch build at import. The launcher had no `gguf_rocm10` handling at all, so *↻ Update GPU Wheels* resolved the cu130 wheel on AMD, and the GGUF floor's anti-swap guard no longer recognised the new HIP tag. Sync now maps `gguf` → `gguf_cu128`/`gguf_rocm10` from the live env (upstream `setup.py`'s `(torch, python)` table, RDNA4-gated), the Active Environment overview compares against that same component, and the separate ROCm 7.14 environment is **retired** — the **AMD setup (exp)** recipe and its button are gone, because the HIP wheel belongs in this env. Upstream's own HIP validation is still pending, so the button stays labelled experimental.
+
 ## [0.10.12] — 2026-10-17
 
 - **Upstream v18.18 parity (fde3c7e + wave) — the Bitdefender/Triton fix.** Upstream ships a **prebuilt CUDA helper** in-repo for `triton-windows 3.7.0.post26`–`3.7.1.post27`, checksum-verified and already compiled (CUDA: Windows/Python 3.11; HIP: Python 3.12 + rocm-sdk 7.14, experimental) — no JIT helper compile, no TinyCC/MSVC step, no antivirus exclusion needed on those stacks. The launcher mirrors it:

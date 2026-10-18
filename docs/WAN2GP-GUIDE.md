@@ -94,9 +94,10 @@ install/update it from **GPU Kernel Wheels → WGPKernels (INT8)** or
 Sync); Auto prefers it once present.
 On AMD, RDNA4 (RX 9060/9060 XT gfx1200 + RX 9070/9070 XT/R9700 gfx1201) uses
 the experimental `rocm100` build, which loads in the installer's torch
-2.13+rocm10 env — no separate env. Only the HIP GGUF wheel still needs a
-**separate** PyTorch 2.10+rocm7.14 env. The **AMD setup (exp)** button copies
-the commands to build it. RDNA 1–3.5 cards have no WGPKernels/HIP wheel.
+2.13+rocm10 env — no separate env. The HIP GGUF wheel (1.0.27,
+`torch213rocm100py312`) is built for that same env and *↻ Update GPU Wheels*
+installs it automatically on RDNA4. RDNA 1–3.5 cards have no WGPKernels/HIP
+wheel.
 Pinokio installs are detected and left
 untouched — the launcher can reuse their model library instead of re-downloading.
 

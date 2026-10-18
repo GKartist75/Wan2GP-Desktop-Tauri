@@ -1342,19 +1342,6 @@ pub(crate) fn amd_device_extras_for_targets(clinfo: &str) -> Option<String> {
     )
 }
 
-/// Experimental AMD HIP torch source (upstream docs/INSTALLATION.md, Sep 2026):
-/// gfx1201-only pinned stack on the AMD public index — NOT TheRock nightlies.
-/// `torch[device-gfx1201]==2.10.0+rocm7.14.0` + `rocm[libraries,device-gfx1201]`.
-/// Informational / log + future install-path use: the main install stays on
-/// TheRock 7.15, the HIP GGUF wheel opt-in (install_hip_gguf_wheel) requires
-/// this torch. Rejects other builds at GGUF import. Pure + unit-tested.
-pub(crate) fn amd_hip_stable_cmds(profile: &str) -> Option<String> {
-    if profile != "AMD_GFX1201" {
-        return None;
-    }
-    Some("--index-url https://repo.amd.com/rocm/whl-multi-arch/ \"torch[device-gfx1201]==2.10.0+rocm7.14.0\" \"rocm[libraries,device-gfx1201]==7.14.0\"".into())
-}
-
 /// Pure helper: default `attention_mode` to "sdpa" on AMD when the key is
 /// missing/empty OR holds a stale 'auto'/'sage'/'sage2' value.
 /// Rationale: upstream setup_config's unified AMD profile declares
@@ -2325,13 +2312,14 @@ pub async fn install(
         match patch_therock_torch_cmd(&repo, primary) {
                 Ok(()) => {
                     emit(&format!("[*] AMD TheRock torch: stable whl-next (torch 2.13+rocm10, per-box device targets)\n{primary}\n"));
-                    // gfx1201 HIP alternative: TheRock stays the install stack;
-                    // point RX 9070/R9700 users at the sync-kernels-only HIP opt-in
-                    // (separate torch 2.10 env — does not load in this 2.13 env).
-                    if plan["profile"].as_str().unwrap_or("") == "AMD_GFX1201" {
-                        if let Some(hip) = amd_hip_stable_cmds("AMD_GFX1201") {
-                            emit(&format!("[i] Experimental alternative for gfx1201: HIP torch 2.10+rocm7.14 ({hip}) + HIP GGUF wheel via dashboard Sync kernels → HIP GGUF (exp). Separate env only — it does not load in this 2.13 env. Validation pending.\n"));
-                        }
+                    // RDNA4: the experimental HIP GGUF wheel installs in THIS
+                    // env (torch 2.13+rocm10) — Sync lands it via gguf_rocm10,
+                    // and the HIP GGUF (exp) button reinstalls it. No separate
+                    // ROCm 7.14 environment any more.
+                    if ["AMD_GFX1200", "AMD_GFX1201"]
+                        .contains(&plan["profile"].as_str().unwrap_or(""))
+                    {
+                        emit("[i] Experimental HIP GGUF wheel (RDNA4, gguf 1.0.27+torch213rocm100py312) installs in this env via Sync GPU Wheels → GGUF, or the HIP GGUF (exp) button. Validation pending.\n");
                     }
                 }
                 // Fail-closed (issue #15): without the TheRock entry setup.py
@@ -3685,18 +3673,18 @@ pub async fn restore_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,
     sync_kernels_inner(app, true).await
 }
 
-/// Experimental AMD HIP GGUF wheel (upstream docs/INSTALLATION.md):
-/// `llamacpp_gguf_cuda-1.0.26+torch210rocm714py311` for RX 9070-series
-/// (gfx1201) on PyTorch 2.10.0+rocm7.14.0. The 1.0.26 bump is version-only
-/// (code, binaries and torch/ROCm requirements identical to 1.0.25; the new
-/// CUDA packed-row kernels are not in it). Sync-kernels-only opt-in: the main
-/// install stays on the TheRock 7.15 stack, this swaps just the GGUF dist
-/// (same package name as the CUDA wheel, so --force-reinstall). --no-deps
-/// preserves the installed torch — the HIP wheel rejects other builds at
-/// import. AMD-gated; non-AMD profiles refused. Non-gfx1201 AMD allowed with
-/// a warning (upstream targets gfx1201, validation pending). URL lives in
-/// hw.rs alongside the CUDA wheels (single source of truth).
-use crate::hw::GGUF_1026_WIN_PY311_HIP as HIP_GGUF_WHEEL_URL;
+/// Experimental AMD HIP GGUF wheel (upstream gguf-v1.0.27, llama.cpp/HIP.md):
+/// `llamacpp_gguf_cuda-1.0.27+torch213rocm100py312` for RDNA4
+/// (gfx1200/gfx1201). Same package name as the CUDA wheel, so --force-reinstall
+/// swaps it; --no-deps preserves the installed torch. It installs into the
+/// ACTIVE AMD env — the launcher's own torch 2.13.0+rocm10.0.0 / py3.12 stack,
+/// which is the build the wheel expects (it records and checks the exact ROCm
+/// torch build at import). Sync lands the same wheel via the `gguf_rocm10`
+/// component; this command stays as the explicit opt-in / reinstall path.
+/// AMD-gated; non-RDNA4 AMD allowed with a warning (upstream targets
+/// gfx1200/gfx1201, validation pending). URL lives in hw.rs alongside the CUDA
+/// wheels (single source of truth).
+use crate::hw::GGUF_1027_WIN_PY312_HIP as HIP_GGUF_WHEEL_URL;
 
 #[tauri::command]
 pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
@@ -3719,10 +3707,10 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
         gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
         gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""),
     );
-    if profile != "AMD_GFX1201" {
-        emit_log(&format!("[!] {profile} is not the upstream gfx1201 target (RX 9070/R9700) — installing anyway, validation pending.\n"));
+    if !["AMD_GFX1200", "AMD_GFX1201"].contains(&profile.as_str()) {
+        emit_log(&format!("[!] {profile} is not the upstream RDNA4 target (gfx1200/gfx1201) — installing anyway, validation pending.\n"));
     }
-    emit_log("[*] Installing experimental HIP GGUF wheel 1.0.26+torch210rocm714 (needs torch 2.10.0+rocm7.14.0; validation pending)…\n");
+    emit_log("[*] Installing experimental HIP GGUF wheel 1.0.27+torch213rocm100py312 (uses this env's torch 2.13.0+rocm10.0.0; RDNA4 only; validation pending)…\n");
     let repo = get_repo_dir();
     let env = get_active_env();
     let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
@@ -3762,7 +3750,7 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
     .await;
     mutating_done();
     if !ok {
-        return Err("HIP GGUF wheel install failed — see console output. Confirm torch 2.10.0+rocm7.14.0 is installed; the wheel rejects other builds at import.".into());
+        return Err("HIP GGUF wheel install failed — see console output. It needs the AMD env's torch 2.13.0+rocm10.0.0: the wheel checks the ROCm torch build at import.".into());
     }
     Ok(serde_json::json!({"ok": true, "success": true, "wheel": HIP_GGUF_WHEEL_URL}))
 }
@@ -3874,40 +3862,6 @@ pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_jso
     Ok(serde_json::json!({"ok": true, "success": true, "wheel": url, "version": crate::hw::WGPKERNELS_VERSION, "torchKind": kind}))
 }
 
-/// Copy-paste recipe for the SEPARATE AMD ROCm 7.14 environment (gfx1201).
-/// Since upstream 17307e5 this env is only needed for the `torch210rocm714`
-/// HIP GGUF wheel: WGPKernels 1.1.2 ships a `rocm100` wheel that installs
-/// directly in the installer's TheRock torch 2.13+rocm10 env (button/sync).
-/// The HIP GGUF wheel still targets PyTorch 2.10.0+rocm7.14.0 and does NOT
-/// load in the installer env. Single source of truth for the dashboard's
-/// "AMD setup (exp)" helper. Pure + unit-tested.
-#[tauri::command]
-pub fn amd_hip_recipe() -> serde_json::Value {
-    let torch_args = amd_hip_stable_cmds("AMD_GFX1201").unwrap_or_default();
-    let torch_cmd = format!("python -m pip install {torch_args}");
-    let hip_cmd = format!("python -m pip install --no-deps {HIP_GGUF_WHEEL_URL}");
-    let text = format!(
-        "# Separate AMD ROCm 7.14 environment (Windows, gfx1201 — RX 9070 / 9070 XT / R9700)\n\
-         # Only needed for the experimental HIP GGUF wheel below: WGPKernels 1.1.2\n\
-         # (rocm100) installs directly in the installer's torch 2.13+rocm10 env.\n\
-         # 1) PyTorch 2.10 + ROCm 7.14 (the installer's AMD env is torch 2.13 + rocm10 instead)\n\
-         {torch_cmd}\n\
-         # 2) HIP GGUF (optional, from the same env)\n\
-         {hip_cmd}\n\
-         # 3) ROCm SDK init (community recommendation for Veda sparse attention;\n\
-         #    upstream's main-env doc says it isn't needed there, but this is a\n\
-         #    separate 7.14 env — skip if 'rocm-sdk' isn't recognized after step 1)\n\
-         rocm-sdk init\n"
-    );
-    serde_json::json!({
-        "ok": true,
-        "gfxTarget": "gfx1201 (RX 9070 / 9070 XT / R9700)",
-        "torchCmd": torch_cmd,
-        "hipGgufCmd": hip_cmd,
-        "helpUrl": "https://github.com/deepbeepmeep/WanGP/blob/main/docs/INSTALLATION.md#wgpkernels-installation",
-        "text": text,
-    })
-}
 /// Post-install override wheels: the subset of Sync that setup.py can never
 /// produce — the GGUF floor and the sage safe build. setup.py installs
 /// upstream's pins verbatim; without this pass a lagging setup_config
@@ -4390,33 +4344,41 @@ async fn sync_kernels_inner(
                         .and_then(|u| u.as_str())
                         .unwrap_or("")
                         .to_string()
-                // GGUF cu128 split (upstream 5533384): profiles list `gguf`
-                // (cu130/py311) but py310 envs need `gguf_cu128`. Mirror
-                // setup.py's (torch_k, py_k) remap via the env python major/minor.
+                // GGUF build split (upstream 5533384 + the 1.0.27 ROCm wheel):
+                // profiles list `gguf` (cu130/py311), but py310 envs need
+                // `gguf_cu128` and RDNA4 AMD envs need `gguf_rocm10`. Mirror
+                // setup.py's (torch_k, py_k) table off the LIVE env — it is the
+                // env that receives the wheel, so it has the last word.
                 } else if name == "gguf" {
-                    let base_url = cfg
-                        .get("components")
-                        .and_then(|c| c.get("kernels"))
-                        .and_then(|m| m.get(name))
-                        .and_then(|e| e.get("cmd"))
-                        .and_then(|c| c.get("win"))
-                        .and_then(|u| u.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let cu128_url = cfg
-                        .get("components")
-                        .and_then(|c| c.get("kernels"))
-                        .and_then(|m| m.get("gguf_cu128"))
-                        .and_then(|e| e.get("cmd"))
-                        .and_then(|c| c.get("win"))
-                        .and_then(|u| u.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    if !cu128_url.is_empty() && env_python_version(&py) == Some((3, 10)) {
-                        cu128_url
-                    } else {
-                        base_url
+                    let kind = env_torch_kind(&py.to_string_lossy().to_string());
+                    let pv = env_python_version(&py)
+                        .map(|(a, b)| format!("{a}.{b}"))
+                        .unwrap_or_default();
+                    let mapped =
+                        crate::hw::gguf_component_for(kind.as_deref().unwrap_or(""), &pv);
+                    // RDNA4 gate (setup.py:454): the ROCm wheel only loads on
+                    // gfx1200/gfx1201 — skip loudly elsewhere rather than
+                    // install a wheel that cannot import.
+                    if mapped == Some("gguf_rocm10")
+                        && !["AMD_GFX1200", "AMD_GFX1201"].contains(&profile.as_str())
+                    {
+                        let m = format!("[*] profile '{profile}' maps to the ROCm GGUF wheel (gguf_rocm10), which is RDNA4-only (gfx1200/gfx1201) — skipping it\n");
+                        crate::base::push_log(&m, "setup");
+                        let _ = app.emit("launch-log", m);
+                        continue;
                     }
+                    // Unknown (torch, python) pair (or an unreadable probe) →
+                    // legacy py-tag pick, so a probe failure never drops it.
+                    let comp =
+                        mapped.unwrap_or(if pv == "3.10" { "gguf_cu128" } else { "gguf" });
+                    cfg.get("components")
+                        .and_then(|c| c.get("kernels"))
+                        .and_then(|m| m.get(comp))
+                        .and_then(|e| e.get("cmd"))
+                        .and_then(|c| c.get("win"))
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("")
+                        .to_string()
                 } else if name == "triton" {
                     // components.triton[tag] (v18.18 key rename honored):
                     // tagged per profile, outside kernels[]. Resolved through
@@ -8161,40 +8123,6 @@ mod exit_106_tests {
                 "got {primary}"
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod amd_recipe_tests {
-    use super::amd_hip_recipe;
-    #[test]
-    fn amd_recipe_matches_wheel_sources() {
-        let r = amd_hip_recipe();
-        // Torch stack: the gfx1201-only rocm7.14 pin (not the installer's
-        // TheRock rocm10 build) — still needed for the HIP GGUF wheel.
-        let torch = r["torchCmd"].as_str().unwrap();
-        assert!(torch.starts_with("python -m pip install "), "{torch}");
-        assert!(
-            torch.contains("torch[device-gfx1201]==2.10.0+rocm7.14.0"),
-            "{torch}"
-        );
-        assert!(
-            torch.contains("rocm[libraries,device-gfx1201]==7.14.0"),
-            "{torch}"
-        );
-        // WGPKernels installs in place now (rocm100) — the recipe states so
-        // instead of shipping a wheel command.
-        assert!(r["text"]
-            .as_str()
-            .unwrap()
-            .contains("WGPKernels 1.1.2"));
-        assert!(r["hipGgufCmd"]
-            .as_str()
-            .unwrap()
-            .contains("torch210rocm714py311"));
-        assert!(r["text"].as_str().unwrap().contains("torch[device-gfx1201]"));
-        // rocm-sdk init is recommended for Veda sparse attention on AMD.
-        assert!(r["text"].as_str().unwrap().contains("rocm-sdk init"));
     }
 }
 
