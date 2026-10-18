@@ -800,8 +800,11 @@ pub(crate) fn gguf_component_for(torch_kind: &str, python: &str) -> Option<&'sta
 /// wheel: the HIP wheel records and checks the exact ROCm torch build at
 /// import, so a cu130/cu128 link would fail outright on an AMD box. Matches
 /// every ROCm build tag (`rocm714` legacy → `rocm100` for 1.0.27+) plus `+hip`.
+/// A bare `torch212` clause used to sit here too, but every AMD/HIP wheel
+/// carries `rocm`/`+hip` and a future CUDA `torch212` build would have been
+/// wrongly exempted from the floor.
 fn is_amd_gguf_wheel(url_lower: &str) -> bool {
-    url_lower.contains("rocm") || url_lower.contains("+hip") || url_lower.contains("torch212")
+    url_lower.contains("rocm") || url_lower.contains("+hip")
 }
 
 /// Experimental AMD HIP wheel (upstream gguf-v1.0.27, llama.cpp/HIP.md):

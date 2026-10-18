@@ -103,7 +103,19 @@ pub fn get_status() -> serde_json::Value {
                                 let comp_key = if key == "gguf" {
                                     let t = prof.get("torch").and_then(|v| v.as_str()).unwrap_or("");
                                     let p = prof.get("python").and_then(|v| v.as_str()).unwrap_or("");
-                                    crate::hw::gguf_component_for(t, p).unwrap_or("gguf")
+                                    match crate::hw::gguf_component_for(t, p) {
+                                        // Non-RDNA4 AMD maps to the ROCm wheel, but
+                                        // Sync skips it (gfx1200/1201 only) — claim
+                                        // no configured build rather than a phantom
+                                        // mismatch that can never clear.
+                                        Some("gguf_rocm10")
+                                            if !["AMD_GFX1200", "AMD_GFX1201"]
+                                                .contains(&profile.as_str()) =>
+                                        {
+                                            ""
+                                        }
+                                        other => other.unwrap_or("gguf"),
+                                    }
                                 } else {
                                     key
                                 };
@@ -237,7 +249,19 @@ except Exception as e:
         .then(|| std::fs::read_to_string(&cfg_path).ok())
         .flatten()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|c| c.get("gpu_profiles").and_then(|p| p.get(&profile)).cloned())
+        .and_then(|c| {
+            // AMD sub-profiles (AMD_GFX1200/…) alias to upstream's unified
+            // `AMD` key — without this every Sparge/Flash/Triton/Sage tag reads
+            // "—" on an AMD box (same aliasing as the wheels list above).
+            let key = if profile.starts_with("AMD")
+                && c.get("gpu_profiles").and_then(|p| p.get(&profile)).is_none()
+            {
+                "AMD"
+            } else {
+                profile.as_str()
+            };
+            c.get("gpu_profiles").and_then(|p| p.get(key)).cloned()
+        })
         .unwrap_or(serde_json::json!({"sparge": null}));
     // Panels print the *expected* version beside the installed one; map the raw
     // upstream tags (v010_cu13, v210 …) to plain versions so no row ever reads

@@ -265,16 +265,21 @@ pub(crate) fn kernel_probe_failures(
 /// (#2274).
 /// Triton floors are deliberately NOT flagged: RTX_20 boxes want <3.3 per
 /// upstream docs, so "old" triton is profile-relative, not stale.
+/// `floor` is the effective GGUF floor (`hw::effective_gguf_floor`), passed in
+/// so the threshold follows a setup_config bump, not just the hardcoded const.
 /// Pure + unit-tested.
-pub(crate) fn kernel_probe_stale(map: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+pub(crate) fn kernel_probe_stale(
+    map: &serde_json::Map<String, serde_json::Value>,
+    floor: &str,
+) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(v) = map
         .get("llamacpp-gguf-cuda")
         .and_then(|d| d.get("version"))
         .and_then(|s| s.as_str())
     {
-        if crate::hw::version_gt(crate::hw::GGUF_FLOOR, v) {
-            out.push(format!("llamacpp-gguf-cuda {v} predates the {} SM120 kernels — Deepy decode falls back to slow PyTorch SDPA. Re-run Sync kernels.", crate::hw::GGUF_FLOOR));
+        if crate::hw::version_gt(floor, v) {
+            out.push(format!("llamacpp-gguf-cuda {v} predates the {floor} SM120 kernels — Deepy decode falls back to slow PyTorch SDPA. Re-run Sync kernels."));
         }
     }
     out
@@ -496,9 +501,10 @@ mod probe_tests {
     fn stale_gguf_flagged_floor_passes() {
         // #2274: 1.0.2 imports fine but silently disables the SM120 async
         // path — Verify must say so instead of reporting healthy.
+        let floor = "1.0.27";
         let raw_old =
             r#"{"llamacpp-gguf-cuda": {"version": "1.0.2", "import": "ok", "extra": ""}}"#;
-        let stale = kernel_probe_stale(&parse_kernel_json(raw_old).unwrap());
+        let stale = kernel_probe_stale(&parse_kernel_json(raw_old).unwrap(), floor);
         assert_eq!(stale.len(), 1);
         assert!(
             stale[0].contains("1.0.2") && stale[0].contains("Sync kernels"),
@@ -506,18 +512,25 @@ mod probe_tests {
         );
         let raw_floor =
             r#"{"llamacpp-gguf-cuda": {"version": "1.0.27", "import": "ok", "extra": ""}}"#;
-        assert!(kernel_probe_stale(&parse_kernel_json(raw_floor).unwrap()).is_empty());
+        assert!(kernel_probe_stale(&parse_kernel_json(raw_floor).unwrap(), floor).is_empty());
         // 1.0.21-1.0.26 predate the 1.0.27 floor (docs prescription) — now stale.
         for v in ["1.0.21", "1.0.22", "1.0.23", "1.0.24", "1.0.25", "1.0.26"] {
             let raw = format!(r#"{{"llamacpp-gguf-cuda": {{"version": "{v}", "import": "ok", "extra": ""}}}}"#);
             assert_eq!(
-                kernel_probe_stale(&parse_kernel_json(&raw).unwrap()).len(),
+                kernel_probe_stale(&parse_kernel_json(&raw).unwrap(), floor).len(),
                 1,
                 "{v} should be stale"
             );
         }
+        // A higher effective floor (setup_config bump) raises the threshold.
+        let raw_newer =
+            r#"{"llamacpp-gguf-cuda": {"version": "1.0.27", "import": "ok", "extra": ""}}"#;
+        assert_eq!(
+            kernel_probe_stale(&parse_kernel_json(raw_newer).unwrap(), "1.0.28").len(),
+            1
+        );
         let raw_missing = r#"{"torch": {"version": "x", "import": "ok", "extra": ""}}"#;
-        assert!(kernel_probe_stale(&parse_kernel_json(raw_missing).unwrap()).is_empty());
+        assert!(kernel_probe_stale(&parse_kernel_json(raw_missing).unwrap(), floor).is_empty());
     }
     #[test]
     fn blackwell_names() {

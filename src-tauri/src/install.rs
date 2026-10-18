@@ -1958,7 +1958,18 @@ pub async fn install(
     env_type: Option<String>,
 ) -> Result<serde_json::Value, String> {
     mutating_try("install")?;
-    let env = env_type.unwrap_or("uv".into()); // uv | venv | conda
+    // Validate the env type instead of trusting it: an unknown string used to
+    // fall through every `env == "uv" || "venv" || "conda"` gate (skipping the
+    // smoke test) yet still get a completion marker, so the next run thought
+    // the install was fine.
+    let env = match env_type.as_deref().map(str::trim) {
+        None | Some("") => "uv".to_string(),
+        Some(t @ ("uv" | "venv" | "conda")) => t.to_string(),
+        Some(other) => {
+            mutating_done();
+            return Err(format!("unknown environment type '{other}' (expected uv, venv or conda)"));
+        }
+    };
     let repo = get_repo_dir();
     let emit = |msg: &str| {
         crate::base::push_log(msg, "setup");
@@ -2516,6 +2527,13 @@ pub async fn install(
                     .output()
                     .is_ok_and(|o| o.status.success());
                 if !runs {
+                    // Restore the process env before bailing: the conda PATH
+                    // prepend above and the WAN2GP_TAURI_* vars must not leak
+                    // into later launches.
+                    if let Some(old) = saved_path.clone() {
+                        std::env::set_var("PATH", old);
+                    }
+                    clear_setup_child_env();
                     mutating_done();
                     return Err("conda env is missing and no system Python can drive setup.py (it creates env_conda itself in step 1/3). Install Python 3.11 via the Download button, or pick the uv env type (it self-provisions).".into());
                 }
@@ -3733,6 +3751,33 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
         crate::base::push_log(s, "setup");
         let _ = app.emit("launch-log", s.to_string());
     };
+    // This is a fixed cp312 / torch 2.13 + ROCm 10 build. Check the ACTIVE env
+    // before pip sees it: a py3.11 env gets a wheel pip refuses (cp312 tag), and
+    // an older-ROCm env gets one that fails at import — both surfaced as a
+    // launcher bug rather than a wrong-env message. Sync maps the wheel from the
+    // live env, so it is the right path for anything else.
+    let kind = env_torch_kind(&py_s);
+    let pv = env_python_version(&py)
+        .map(|(a, b)| format!("{a}.{b}"))
+        .unwrap_or_default();
+    if kind.as_deref() != Some("rocm100") || pv != "3.12" {
+        mutating_done();
+        return Err(format!(
+            "The HIP GGUF wheel is a ROCm 10 / torch 2.13 / Python 3.12 build, but this env reports torch '{}' / python '{}'. Rebuild the AMD env (ROCm 10) or use \u{21bb} Update GPU Wheels, which maps the wheel from the live env.",
+            kind.as_deref().unwrap_or("unknown"),
+            if pv.is_empty() { "unknown" } else { pv.as_str() },
+        ));
+    }
+    let torch_ver = silent_command(&py_s)
+        .args(["-c", "import torch;print(torch.__version__)"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if !torch_ver.is_empty() && !torch_ver.contains("2.13") {
+        emit_log(&format!("[!] torch {torch_ver} is not the 2.13 build the HIP wheel records at import — install may fail.\n"));
+    }
     let argv: Vec<String> = vec![
         "-m".into(),
         "pip".into(),
@@ -4304,16 +4349,23 @@ async fn sync_kernels_inner(
             .and_then(serde_json::Value::as_bool)
             != Some(false)
     }; // ponytail: default safe post6 (1348e5b) — off means setup_config as published
-       // ponytail: Sage wheel is not in gpu_profiles[RTX_30].kernels (only nunchaku+gguf) — handle it separately like Electron's setSageAttentionSafe
+    // Sage lives outside kernels[] too (`gpu_profiles[profile].sage` ->
+    // `components.sage[tag]`). Append it whenever the profile declares a tag —
+    // RTX_20 `v1`, RTX_30/40/50 `v220_cu13`, AMD `v1` — so the wheel/spec
+    // actually syncs (it used to be RTX_30/40/50-only, so RTX_20/AMD silently
+    // skipped it) and the safe/upstream toggle still has it in the list.
+    let sage_tag = cfg
+        .get("gpu_profiles")
+        .and_then(|p| p.get(cfg_profile))
+        .and_then(|pr| pr.get("sage"))
+        .and_then(|v| v.as_str());
     let mut all_kernels = kernels.clone();
-    if ["RTX_30", "RTX_40", "RTX_50"].contains(&profile.as_str()) {
-        // ensure sage is in the sync list when toggling safe/upstream, so the wheel actually swaps
-        if !all_kernels
+    if sage_tag.is_some()
+        && !all_kernels
             .iter()
             .any(|k| k.as_str() == Some("sage") || k.as_str() == Some("sageattention"))
-        {
-            all_kernels.push(serde_json::json!("sage"));
-        }
+    {
+        all_kernels.push(serde_json::json!("sage"));
     }
     // Triton sync (v18.18-parity): upstream profiles tag triton outside
     // kernels[] (`gpu_profiles[profile].triton` -> `components.triton[tag]`),
@@ -4335,21 +4387,23 @@ async fn sync_kernels_inner(
         if let Some(name) = k.as_str() {
             // find wheel url — nunchaku/gguf are under components.kernels, sage is under components.sage[profile.sage]
             let mut url = if name == "sage" || name == "sageattention" {
-                // sage: look up via gpu_profiles[profile].sage -> components.sage[version].cmd[win]
-                let sage_ver = cfg
-                    .get("gpu_profiles")
-                    .and_then(|p| p.get(&profile))
-                    .and_then(|pr| pr.get("sage"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("v220_cu13");
+                // sage: gpu_profiles[cfg_profile].sage -> components.sage[tag].
+                // `v1` is a bare PyPI spec (`sageattention==1.0.6`); the 2.x
+                // entries are per-OS objects with `win`/`linux`.
+                let sage_ver = sage_tag.unwrap_or("v220_cu13");
                 cfg.get("components")
                     .and_then(|c| c.get("sage"))
                     .and_then(|m| m.get(sage_ver))
                     .and_then(|e| e.get("cmd"))
-                    .and_then(|c| c.get("win"))
-                    .and_then(|u| u.as_str())
-                    .unwrap_or("")
-                    .to_string()
+                    .map(|cmd| match cmd {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other
+                            .get("win")
+                            .and_then(|u| u.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                    .unwrap_or_default()
             } else {
                 // WGPKernels stack split (upstream 17307e5, mirrors
                 // setup.py): profiles list `wgpkernels` but cu128/rocm10
@@ -4358,6 +4412,7 @@ async fn sync_kernels_inner(
                 if name == "wgpkernels" {
                     let kind = env_torch_kind(&py.to_string_lossy().to_string());
                     let comp = match kind.as_deref() {
+                        Some("cu130") => "wgpkernels",
                         Some("cu128") => "wgpkernels_cu128",
                         Some("rocm100")
                             if ["AMD_GFX1200", "AMD_GFX1201"]
@@ -4371,7 +4426,21 @@ async fn sync_kernels_inner(
                             let _ = app.emit("launch-log", m);
                             continue;
                         }
-                        _ => "wgpkernels",
+                        // Probe failure on an AMD box must never guess the
+                        // CUDA cu130 wheel; NVIDIA profiles imply cu130.
+                        None if profile.starts_with("AMD") => {
+                            let m = format!("[!] WGPKernels: could not read this env's torch build (AMD) — skipping; install it from the WGPKernels button once torch imports\n");
+                            crate::base::push_log(&m, "setup");
+                            let _ = app.emit("launch-log", m);
+                            continue;
+                        }
+                        None => "wgpkernels",
+                        Some(other) => {
+                            let m = format!("[!] WGPKernels: no wheel for torch build '{other}' — skipping (needs cu130/cu128, or rocm100 on RDNA4)\n");
+                            crate::base::push_log(&m, "setup");
+                            let _ = app.emit("launch-log", m);
+                            continue;
+                        }
                     };
                     cfg.get("components")
                         .and_then(|c| c.get("kernels"))
@@ -4405,9 +4474,27 @@ async fn sync_kernels_inner(
                         continue;
                     }
                     // Unknown (torch, python) pair (or an unreadable probe) →
-                    // legacy py-tag pick, so a probe failure never drops it.
-                    let comp =
-                        mapped.unwrap_or(if pv == "3.10" { "gguf_cu128" } else { "gguf" });
+                    // legacy py-tag pick, so a probe failure never drops it on
+                    // NVIDIA. A ROCm env is the exception: a CUDA cu130/cu128
+                    // wheel cannot import there, so skip rather than replace a
+                    // working HIP wheel with a broken one.
+                    let comp = match mapped {
+                        Some(c) => c,
+                        None => {
+                            let rocm = profile.starts_with("AMD")
+                                || kind
+                                    .as_deref()
+                                    .map(|k| k.starts_with("rocm"))
+                                    .unwrap_or(false);
+                            if rocm {
+                                let m = format!("[!] profile '{profile}' GGUF: no ROCm wheel for torch build '{}' / python '{pv}' — skipping rather than installing a CUDA wheel\n", kind.as_deref().unwrap_or("unknown"));
+                                crate::base::push_log(&m, "setup");
+                                let _ = app.emit("launch-log", m);
+                                continue;
+                            }
+                            if pv == "3.10" { "gguf_cu128" } else { "gguf" }
+                        }
+                    };
                     cfg.get("components")
                         .and_then(|c| c.get("kernels"))
                         .and_then(|m| m.get(comp))
@@ -5141,7 +5228,7 @@ pub(crate) fn changed_path_count(out: &str) -> usize {
 /// so an unknown component can never be reported as already current.
 fn kernel_dist_names(name: &str) -> &'static [&'static str] {
     match name {
-        "gguf" | "gguf_cu128" => &["llamacpp-gguf-cuda"],
+        "gguf" | "gguf_cu128" | "gguf_rocm10" => &["llamacpp-gguf-cuda"],
         "wgpkernels" | "wgpkernels_cu128" | "wgpkernels_rocm10" => &["wgpkernels"],
         "sage" | "sageattention" => &["sageattention"],
         "nunchaku" | "nunchaku_cu13" => &["nunchaku"],
@@ -5173,7 +5260,8 @@ pub(crate) fn kernel_spec_version_full(spec: &str) -> Option<String> {
     let mut parts = file.trim_end_matches(".whl").split('-');
     parts.next()?; // dist name
     let raw = parts.next()?;
-    (!raw.is_empty()).then(|| raw.replace("%2B", "+"))
+    // Upstream URL-encodes `+` as `%2B`; some tools emit lowercase `%2b`.
+    (!raw.is_empty()).then(|| raw.replace("%2B", "+").replace("%2b", "+"))
 }
 
 /// Does the installed dist already satisfy the wanted wheel? Exact match wins

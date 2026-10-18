@@ -278,7 +278,14 @@ fn verify_kernels(
             // Sage3 is gated, never synced — a stray install must not fail
             // Verify; sage3_note() reports it at the right level instead.
             fails.retain(|f| !f.starts_with("sageattn3"));
-            let stale = crate::amd::kernel_probe_stale(&map);
+            // Effective floor (setup_config may pin higher than the const) so a
+            // future upstream bump raises the warning threshold too.
+            let floor = std::fs::read_to_string(get_repo_dir().join("setup_config.json"))
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .map(|c| crate::hw::effective_gguf_floor(&c))
+                .unwrap_or_else(|| crate::hw::GGUF_FLOOR.to_string());
+            let stale = crate::amd::kernel_probe_stale(&map, &floor);
             let sage_note = crate::amd::sage3_note(&map, crate::amd::is_blackwell_gpu(&device));
             base["kernels"] = serde_json::Value::Object(map);
             if fails.is_empty() {
