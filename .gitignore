@@ -13,3 +13,6 @@ relnotes-*.md
 build-local.log
 build-*.log
 .empryo
+scripts/.adult-pack-cache
+# verifier stdout, redirected on purpose (a piped run truncates the manifest)
+verify-out.txt

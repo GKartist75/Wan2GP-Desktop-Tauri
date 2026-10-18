@@ -26,6 +26,7 @@ flowchart TD
 - [Manage → Auto-Tune](#manage--auto-tune)
 - [Manage → Plugins](#manage--plugins)
 - [Manage → Library](#manage--library)
+- [Manage → Pack](#manage--pack)
 - [Guide (topbar)](#guide-topbar)
 - [Console & logs](#console--logs)
 - [Typical workflows](#typical-workflows)
@@ -439,6 +440,93 @@ and URL/LoRA counts, plus import (validated, never overwrites), export
 **Workspaces** — per-project media counts, real on-disk sizes, moved/missing
 file flags, archive-lock toggle, definitions backup ZIP (back up outputs too
 for a portable archive).
+
+## Manage → Pack
+
+📦 **Adult (NSFW) model pack** — a curated catalog of adult checkpoints and
+LoRAs that Wan2GP can actually load, plus a way to find and add your own.
+
+This tab is **off by default and nothing is downloaded until you tick it** — the
+18+ confirmation gates the whole panel. Installing Wan2GP must never carry an
+opt-in adult-content decision, which is why this lives in Manage and not in
+Setup.
+
+**Every row shows what you actually have:**
+
+| On the row | Meaning |
+| --- | --- |
+| thumbnail | a pinned preview from the repo, or example renders matched on CivitAI |
+| `v1.4 · 2025-10-24` | version and release date |
+| **downloaded** | on disk and matching the verified size |
+| **update available** | on disk, but the author has published newer bytes |
+| **recipe written** | its `finetunes/*.json` is in place |
+| **weights on disk** | a checkpoint's files were prefetched |
+
+The chips above the list answer "what do I already have" at a glance.
+
+### Three ways in
+
+1. **Browse the catalog** — 108 LoRA files and 19 checkpoint recipes across Wan
+   2.2, MiniMax H3, LTX 2.3 and image models. Ticking a group selects it;
+   HIGH/LOW halves always travel together, because Wan2GP loads both in one job.
+2. **Trending & most downloaded** — no keyword needed. Rank by trending, most
+   downloaded, most liked or newest; filter by type and base model. The list is
+   *"what is hot among models Wan2GP can load"*, not a generic firehose: anything
+   that does not map to a real architecture is never shown.
+3. **Search by name, then Add…** — search HuggingFace or CivitAI, inspect the
+   repo's files, pick one, and **Add** it. Adding writes
+   `finetunes/<id>.json`, so **Wan2GP downloads the weights itself on first run**
+   — the launcher never re-hosts a model. Anything you add is remembered in
+   `adult-pack-custom.json`, outside the shipped catalog, so updates cannot drop it.
+
+Examples: **Examples** on a row opens the model's own sample media (video reels
+included). Most mirrors publish no media of their own, so unmatched models get
+**Find examples on CivitAI**, which shows candidate renders *with their model
+names* — check the name before trusting a picture.
+
+### Every row has its own actions
+
+The `⋯` button at the end of a row does everything that one model can do to
+itself, so you never have to select a whole group to act on one entry:
+
+- **Make / Rewrite finetune JSON** — writes the recipe Wan2GP reads
+- **Fetch weights now** — prefetch a checkpoint's files instead of waiting
+- **Open recipe** — jump to it in the finetune manager
+- **Copy URL / Copy file name / Open source page**
+- **Delete…** — the only red action; always confirmed, never touches anything
+  you added yourself
+
+LoRA rows deliberately have no "make finetune JSON": Wan2GP loads LoRAs from
+`loras\`, so the row says that instead of offering a button that cannot work.
+
+### Updates
+
+**Check for updates** lists every catalog repo and compares each file's current
+SHA-256 against the pinned one — so an update is reported only when the bytes
+really changed, not because a date moved. **Apply & download selected** re-points
+the local hash (in `adult-pack-pins.json`) and then downloads, verified against
+that new hash. A downloaded file whose size no longer matches is flagged as
+**update available** with its before/after size.
+
+### Finetune manager
+
+Every recipe Wan2GP will offer, from all three origins — this pack, your own
+additions, and anything you imported by hand. Edit the JSON in place, **Check
+links** (HEADs every source URL), **Copy** to share, or delete a recipe (the
+weights stay on disk). Writes are validated first: a recipe needs a name, an
+architecture and at least one usable URL, and it can never overwrite a shipped
+base model in `defaults/`.
+
+### CivitAI account tier
+
+Two author-exclusive releases (DaSiWa TastySin v8, Wan 2.2 NSFW Lightning) are
+resolved live from your own CivitAI token — the version id is looked up at the
+moment you fetch, because a pinned id would be stale the moment the author
+publishes. The token is stored in its own file, never in
+`desktop-config.json`, and the launcher never re-hosts anything. Browsing and
+searching CivitAI need no token; downloading does.
+
+---
 
 ## Guide (topbar)
 
