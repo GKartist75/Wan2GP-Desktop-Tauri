@@ -1,4 +1,5 @@
 mod amd;
+mod adult_pack;
 mod base;
 mod config;
 mod deepy_web;
@@ -346,7 +347,27 @@ pub fn run() {
             deepy_web::main_lan_urls,
             log_server::log_server_start,
             log_server::log_server_stop,
-            log_server::log_server_status
+            log_server::log_server_status,
+            adult_pack::adult_pack_manifest,
+            adult_pack::adult_pack_save,
+            adult_pack::adult_pack_fetch,
+            adult_pack::adult_pack_write_finetunes,
+            adult_pack::adult_pack_civitai_verify,
+            adult_pack::adult_pack_civitai_download,
+            adult_pack::adult_pack_status,
+            adult_pack::adult_pack_remove,
+            adult_pack::adult_pack_gallery,
+            adult_pack::adult_pack_civitai_gallery,
+            adult_pack::adult_pack_search,
+            adult_pack::adult_pack_browse,
+            adult_pack::adult_pack_updates,
+            adult_pack::adult_pack_apply_updates,
+            adult_pack::adult_pack_inspect,
+            adult_pack::adult_pack_add,
+            adult_pack::adult_pack_finetune_list,
+            adult_pack::adult_pack_finetune_read,
+            adult_pack::adult_pack_finetune_write,
+            adult_pack::adult_pack_finetune_check
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
