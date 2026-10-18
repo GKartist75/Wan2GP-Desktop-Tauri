@@ -1042,9 +1042,9 @@
           <span class="led-dot" id="ledDot"></span>
           <span class="led-text" id="ledText">Running</span>
         </span>
-        <span id="backendLeds" class="backend-leds" style="display:none" title="Live kernel backends WanGP selected at boot (from the server log) — shown only while known">
-          <span class="backend-chip" id="ledInt8">INT8 · …</span>
-          <span class="backend-chip" id="ledFp8">FP8 · …</span>
+        <span id="backendLeds" class="backend-leds" style="display:none" title="Live kernel backends WanGP selected at boot (from the server log) — green = accelerated path, amber = WanGP fell back to PyTorch, grey = not reported yet. Shown only while known.">
+          <span class="backend-chip"><span class="led-dot" id="ledInt8Dot"></span><span id="ledInt8">INT8 · …</span></span>
+          <span class="backend-chip"><span class="led-dot" id="ledFp8Dot"></span><span id="ledFp8">FP8 · …</span></span>
         </span>
         <span id="deepyWebLed" class="running-led" style="display:none" title="Deepy Web process status">
           <span class="led-dot" id="deepyWebLedDot"></span>

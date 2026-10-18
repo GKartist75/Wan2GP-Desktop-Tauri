@@ -10,14 +10,25 @@
 // beside the Running LED. Visibility is value-gated: the pills exist only
 // while a backend is known (server booted and reported) — no server, no
 // pills, so there is never a "—" row to mistake for a forgotten setting.
+// Each pill carries a status dot like the Running LED: green = an
+// accelerated backend is in use, amber = WanGP fell back to plain PyTorch
+// (upstream's last choice — allowed, but it should not glow like a fast
+// path), grey = not reported yet.
 // Latest line wins; a server exit clears both (and hides the pills).
+function _backendChipDot(val) {
+  const v = String(val == null ? "" : val).trim();
+  if (!v) return "led-idle";
+  // Both INT8 and FP8 report PyTorch as the fallback; a mixed FP8 line
+  // ("Triton, PyTorch for scaled FP8 checkpoints") means one path fell back.
+  return /\bpytorch\b/i.test(v) ? "led-warn" : "led-running";
+}
 function _paintBackendChips() {
   try {
     const pairs = [
-      ["ledInt8", "INT8", window._int8Backend],
-      ["ledFp8", "FP8", window._fp8Backend],
+      ["ledInt8", "ledInt8Dot", "INT8", window._int8Backend],
+      ["ledFp8", "ledFp8Dot", "FP8", window._fp8Backend],
     ];
-    for (const [id, label, val] of pairs) {
+    for (const [id, dotId, label, val] of pairs) {
       const el = $(id);
       if (el) {
         el.textContent = label + " · " + (val || "…");
@@ -25,6 +36,8 @@ function _paintBackendChips() {
           ? label + " backend WanGP selected at boot: " + val
           : label + " backend not reported yet";
       }
+      const dot = $(dotId);
+      if (dot) dot.className = ("led-dot " + _backendChipDot(val)).trim();
     }
     const box = $("backendLeds");
     if (box)

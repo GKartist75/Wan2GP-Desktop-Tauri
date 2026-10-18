@@ -3089,6 +3089,14 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
 .led-stopped {
  background: #ef4444;
 }
+/* Backend-chip states: idle (not reported yet) / fallback (PyTorch). */
+.led-idle {
+ background: var(--text-tertiary);
+}
+.led-warn {
+ background: #fbbf24;
+ box-shadow: 0 0 6px rgba(251, 191, 36, 0.45);
+}
 .led-text {
  color: var(--text-secondary);
 }
@@ -3104,6 +3112,9 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
   font-family: "Geist Mono", monospace;
 }
 .backend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--text-secondary);
   white-space: nowrap;
 }

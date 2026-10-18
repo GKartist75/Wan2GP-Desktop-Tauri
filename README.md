@@ -241,7 +241,7 @@ A fresh install seeds the recommended values once, with setdefault semantics, so
 
 - **Dockable console** — live server log in green-on-black, dock to bottom/left/top or float. Search, export, **Clear**.
 - **Topbar sparklines** — CPU/GPU/RAM/VRAM mini real-time charts.
-- **Running LED & Stop** — status light + one-click server stop.
+- **Running LED & Stop** — status light + one-click server stop. Once WanGP reports them at boot, `INT8 · <backend>` / `FP8 · <backend>` pills sit beside it with the same kind of dot: green = accelerated kernel in use, amber = PyTorch fallback, grey = not reported yet.
 - **Auto-start with Windows**, notifications on server ready/stop.
 - **Queue notifications** — sets up Wan2GP's native Apprise destinations (Telegram/Discord/ntfy.sh…) in `wgp_config.json`, Install covers `apprise` + `keyring`; legacy log-driven sender stays for older Wan2GP.
 - **Keyboard shortcuts** — <kbd>Esc</kbd>/<kbd>Ctrl+W</kbd> close webview.
