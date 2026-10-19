@@ -1040,17 +1040,19 @@
         <div class="brand-mark-small">GK<span> Artist</span></div>
         <span class="app-title">Wan2GP Desktop Launcher</span>
         <span class="app-version" id="appVersionTag">v—</span>
-        <span id="runningLed" class="running-led" style="display:none">
-          <span class="led-dot" id="ledDot"></span>
-          <span class="led-text" id="ledText">Running</span>
-        </span>
-        <span id="backendLeds" class="backend-leds" style="display:none" title="Live kernel backends WanGP selected at boot (from the server log) — green = accelerated path, amber = WanGP fell back to PyTorch, grey = not reported yet. Shown only while known.">
-          <span class="backend-chip"><span class="led-dot" id="ledInt8Dot"></span><span id="ledInt8">INT8 · …</span></span>
-          <span class="backend-chip"><span class="led-dot" id="ledFp8Dot"></span><span id="ledFp8">FP8 · …</span></span>
-        </span>
-        <span id="deepyWebLed" class="running-led" style="display:none" title="Deepy Web process status">
-          <span class="led-dot" id="deepyWebLedDot"></span>
-          <span class="led-text" id="deepyWebLedText">Deepy Web</span>
+        <span id="statusGrid" class="status-grid">
+          <span id="runningLed" class="running-led" style="display:none">
+            <span class="led-dot" id="ledDot"></span>
+            <span class="led-text" id="ledText">Running</span>
+          </span>
+          <span id="deepyWebLed" class="running-led" style="display:none" title="Deepy Web process status">
+            <span class="led-dot" id="deepyWebLedDot"></span>
+            <span class="led-text" id="deepyWebLedText">Deepy Web</span>
+          </span>
+          <span id="backendLeds" class="backend-leds" style="display:none" title="Live kernel backends WanGP selected at boot (from the server log) — green = accelerated path, amber = WanGP fell back to PyTorch, grey = not reported yet. Shown only while known.">
+            <span class="backend-chip"><span class="led-dot" id="ledInt8Dot"></span><span id="ledInt8">INT8 · …</span></span>
+            <span class="backend-chip"><span class="led-dot" id="ledFp8Dot"></span><span id="ledFp8">FP8 · …</span></span>
+          </span>
         </span>
       </div>
       <div class="topbar-right">

@@ -3119,6 +3119,37 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
   white-space: nowrap;
 }
 
+/* ── Topbar status cluster: 2 × 2 ─────────────────────────────────────────
+   Four status items used to run inline beside the title (Running · INT8 · FP8 ·
+   Deepy Web), which pushed the right-hand controls off the bar on narrower
+   windows. They now sit in a compact 2 × 2 grid — Running / Deepy Web on the
+   first row, the two backend chips on the second — so the cluster is about as
+   wide as its widest pair instead of the sum of all four.
+   Hidden items (Running while stopped, chips before the log reports) are
+   display:none and therefore create no grid cell at all, so the remaining
+   items close up instead of leaving a hole. */
+.status-grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+  margin-left: 10px;
+  min-width: 0;
+}
+.status-grid > * {
+  margin-left: 0;
+  line-height: 1.1;
+}
+/* The chip pair spans both columns as the second row: the two chips read as
+   the grid's second row (INT8 | FP8) without a nested grid to keep in sync. */
+.status-grid .backend-leds {
+  grid-column: 1 / -1;
+  margin-left: 0;
+  gap: 10px;
+  white-space: nowrap;
+}
+
 /* ── Dock Menu (reused for floating terminal) ── */
 .dock-btns {
  display: flex;

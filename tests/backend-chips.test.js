@@ -104,3 +104,32 @@ test('chips live beside Running, not in Active Environment', () => {
   assert.match(tab, /\$\("backendLeds"\)/, 'paint must toggle the container')
   assert.match(tab, /onLaunchLog/, 'the launch-log subscription still feeds the chips')
 })
+
+test('the four status items sit in one 2×2 cluster, not an inline row', () => {
+  // Inline, the cluster was Running · INT8 · FP8 · Deepy Web wide, and pushed
+  // the topbar controls off the bar. It is a grid now: Running / Deepy Web on
+  // the first row, the chip pair spanning the second.
+  const grid = html.match(
+    /<span id="statusGrid"[^>]*>([\s\S]*?)\r?\n\s*<\/span>\r?\n\s*<\/div>/,
+  )
+  assert.ok(grid, 'statusGrid wrapper missing from index.html')
+  const inner = grid[1]
+  assert.match(inner, /id="runningLed"/)
+  assert.match(inner, /id="deepyWebLed"/)
+  assert.match(inner, /id="backendLeds"/)
+  // Order inside the grid: the two process LEDs first, then the chip pair.
+  assert.ok(
+    inner.indexOf('id="runningLed"') < inner.indexOf('id="deepyWebLed"'),
+    'Running precedes Deepy Web in the first row',
+  )
+  assert.ok(
+    inner.indexOf('id="deepyWebLed"') < inner.indexOf('id="backendLeds"'),
+    'the chip pair is the second row',
+  )
+  // The cluster must not be a bare inline run of four spans any more.
+  assert.doesNotMatch(
+    html,
+    /id="backendLeds"[\s\S]{0,80}id="deepyWebLed"/,
+    'chips must not sit between the two process LEDs',
+  )
+})
