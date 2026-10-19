@@ -30,6 +30,9 @@ async function refreshDlss5() {
       : "DLSS 5 not installed — optional NVIDIA upsampler runtime.";
   _dlss5Rows = Array.isArray(s.files) ? s.files : [];
   _dlss5State = {};
+  // Verdicts describe the files as they were when hashed — a fresh status read
+  // means the on-disk set may have changed, so they must not outlive it.
+  _dlss5Verify = {};
   renderDlss5Progress();
 }
 // ── DLSS5 compatibility check (Test button): mirrors upstream
@@ -179,6 +182,44 @@ $("dlss5CheckBtn")?.addEventListener("click", async () => {
           : "✗ DLSS 5 unavailable — see card + console",
     );
     syncDlss5FixBtn(r);
+    // The file rows above print a per-file SHA from Wan2GP's manifest, but the
+    // backend's "installed" is only an existence check — so answer the question
+    // for real while we are already asking: hash every file and compare. Runs
+    // only here (and behind an explicit button), never on a plain panel open,
+    // because it streams a couple hundred MB.
+    try {
+      if (!_dlss5Rows.length) await refreshDlss5();
+      const v = await window.w2gp.dlss5VerifyFiles();
+      if (v && v.ok) {
+        const byId = {};
+        for (const row of v.rows || []) byId[row.id] = row;
+        _dlss5Verify = byId;
+        renderDlss5Progress();
+        const bad = (v.rows || []).filter(
+          (x) => x.state === "mismatch" || x.state === "unreadable",
+        );
+        appendLog(
+          `[DLSS5 files] ${v.match}/${v.total} SHA verified · ${v.missing} missing · ${v.mismatch} mismatched` +
+            (bad.length
+              ? "\n" +
+                bad
+                  .map(
+                    (b) =>
+                      `  ${b.id}: expected ${b.expected.slice(0, 12)}… got ${String(b.got).slice(0, 12)}…`,
+                  )
+                  .join("\n")
+              : ""),
+        );
+        if (bad.length)
+          showToast(
+            `⚠ DLSS 5: ${bad.length} file(s) don't match the pinned SHA — see console`,
+          );
+      } else if (v && v.error) {
+        appendLog("[!] DLSS 5 file verification unavailable: " + v.error);
+      }
+    } catch (e) {
+      appendLog("[!] DLSS 5 file verification failed: " + errText(e));
+    }
   } catch (e) {
     box.textContent = "✗ " + errText(e);
     appendLog("[!] DLSS 5 check failed: " + errText(e));
@@ -293,17 +334,52 @@ $("dlss5AcceptChk")?.addEventListener("change", (e) => {
 $("dlss5CancelBtn")?.addEventListener("click", () => {
   $("dlss5Modal").classList.add("hidden");
 });
-// ── DLSS5 file overview: one always-visible row per installed file (path +
-// version + expected SHA from the backend manifest) with installed /
-// not-installed state. Live install events only override the phase mid-install;
-// refreshDlss5 re-seeds backend truth after.
+// ── DLSS5 file overview: one always-visible row per file (version + the SHA
+// DLSS5_FILES pins) with its real state. The backend's "installed" is a file
+// existence check only, so a row must never imply the SHA matched unless it
+// actually did: either the installer verified it live, or the user ran Check
+// compatibility, which hashes every file (dlss5_verify_files). Everything else
+// says "expected".
 // ponytail: the script owns integrity — rows mirror its Downloading /
 // verified / Installed lines. True byte-% isn't in the script output, so the
 // downloading state is honest (no fake progress bar).
 let _dlss5Rows = [],
   _dlss5State = {},
+  _dlss5Verify = {},
   _dlss5LastPkg = null,
   _dlss5Done = false;
+// Verdict for one file row: tone + trailing text. Pure, so the wording — and
+// the rule that only a real hash comparison earns the ✓ — is tested without a
+// DOM or a couple hundred MB of DLLs.
+function dlss5RowVerdict(f, phase, verdict) {
+  const sha = String((f && f.sha) || "");
+  const short = sha.slice(0, 12) + (sha.length > 12 ? "…" : "");
+  const got = String((verdict && verdict.got) || "");
+  const gotShort = got.slice(0, 12) + (got.length > 12 ? "…" : "");
+  if (phase === "verified")
+    return { tone: "ok", tail: "✓ SHA " + short + " verified by the installer" };
+  const st = verdict && verdict.state;
+  if (st === "match")
+    return { tone: "ok", tail: "✓ SHA " + short + " matches what Wan2GP pins" };
+  if (st === "mismatch")
+    return {
+      tone: "bad",
+      tail: "⚠ SHA " + short + " expected — this file hashes to " + gotShort,
+    };
+  if (st === "unreadable")
+    return {
+      tone: "bad",
+      tail: "⚠ SHA " + short + " expected — the file could not be read",
+    };
+  if (st === "missing")
+    return { tone: "bad", tail: "SHA " + short + " expected — file missing" };
+  if (f && f.installed)
+    return {
+      tone: "warn",
+      tail: "SHA " + short + " expected — press Check compatibility to verify",
+    };
+  return { tone: "bad", tail: "SHA " + short + " expected — not installed" };
+}
 function renderDlss5Progress() {
   const box = $("dlss5Progress");
   if (!box) return;
@@ -316,7 +392,6 @@ function renderDlss5Progress() {
   box.textContent = "";
   for (const f of _dlss5Rows) {
     const ph = _dlss5State[f.id];
-    const sha = String(f.sha || "");
     const row = document.createElement("div");
     row.className = "spec-row";
     const lab = document.createElement("span");
@@ -329,19 +404,15 @@ function renderDlss5Progress() {
       lab.append(dots, " " + f.id);
       val.textContent = f.version + " · downloading…";
     } else {
-      const ok = ph === "verified" || (!ph && f.installed);
+      const v = dlss5RowVerdict(f, ph, _dlss5Verify[f.id]);
       const icon = document.createElement("span");
-      if (ok) icon.className = "dot-ok";
-      else icon.style.color = "#F87171";
+      // Green = nothing to do, amber = present but unproven, red = missing or
+      // wrong bytes.
+      if (v.tone === "ok") icon.className = "dot-ok";
+      else icon.style.color = v.tone === "bad" ? "#F87171" : "#FBBF24";
       icon.textContent = "●";
       lab.append(icon, " " + f.id);
-      val.textContent =
-        f.version +
-        " · " +
-        (ok ? "✓ SHA " : "SHA ") +
-        sha.slice(0, 12) +
-        "… " +
-        (ok ? "" : "— not installed");
+      val.textContent = f.version + " · " + v.tail;
     }
     row.append(lab, val);
     box.append(row);
@@ -354,3 +425,105 @@ function renderDlss5Progress() {
     box.append(d);
   }
 }
+
+// ── DLSS 5 upstream-release probe (read-only) ─────────────────────────────
+// Answers "how would I even know a newer DLSS is out?" without leaving the
+// panel. Upstream's scripts/install_dlss5.ps1 owns the component versions —
+// its package table is version-pinned with hardcoded URLs and SHA-256s — so a
+// newer build only becomes installable through a Wan2GP update. This asks the
+// same sources that script pins whether a newer release exists: it downloads
+// nothing, installs nothing, and never moves a pin.
+const DLSS5_UPDATE_STATES = {
+  current: { color: null, text: "up to date with the pinned build" },
+  newer: {
+    color: "#FBBF24",
+    text: "newer release upstream — update Wan2GP to pick it up",
+  },
+  differs: {
+    color: "#FBBF24",
+    text: "a different build upstream — check its release notes",
+  },
+  older: { color: null, text: "pinned build is newer than upstream's newest tag" },
+  unknown: { color: "", text: "not checked" },
+};
+$("dlss5UpdateBtn")?.addEventListener("click", async () => {
+  const btn = $("dlss5UpdateBtn"),
+    box = $("dlss5UpdateResult");
+  if (!btn || !box) return;
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = "Checking…";
+  box.style.display = "block";
+  box.textContent = "";
+  appendLog("[*] DLSS 5 update check — asking the sources upstream's installer pins…");
+  try {
+    const r = await window.w2gp.dlss5UpdateCheck();
+    if (!r || !r.ok) throw new Error((r && r.error) || "check failed");
+    const rows = Array.isArray(r.rows) ? r.rows : [];
+    const consoleLines = [];
+    for (const row of rows) {
+      const st = DLSS5_UPDATE_STATES[row.state] || DLSS5_UPDATE_STATES.unknown;
+      const line = document.createElement("div");
+      line.className = "spec-row";
+      const lab = document.createElement("span");
+      lab.className = "spec-label";
+      const icon = document.createElement("span");
+      // Three verdict colors, same convention as the compatibility rows:
+      // green nothing-to-do, amber look-at-this, grey not checked.
+      if (st.color === null) icon.className = "dot-ok";
+      else icon.style.color = st.color;
+      icon.textContent = "●";
+      lab.append(icon, " " + row.id);
+      const val = document.createElement("span");
+      val.className = "spec-value";
+      // The tag rides along for anything the launcher isn't already on: for
+      // "differs" it is the whole point (a same-base flavor like
+      // dlssnr-310.8.Lecram vs the pinned 310.8.SF-v2), and an -rc upstream
+      // is flagged so "newer release" can't read as "Wan2GP will install it".
+      const rc = /-rc\d*$/i.test(row.latest || "") ? " · release candidate" : "";
+      val.textContent =
+        `pinned ${row.pinned || "?"}` +
+        (row.latest && row.latest !== row.pinned ? ` · upstream ${row.latest}` : "") +
+        (row.state !== "current" && row.tag ? ` (${row.tag})` : "") +
+        rc +
+        ` — ${st.text}`;
+      line.append(lab, val);
+      box.append(line);
+      consoleLines.push(
+        `${row.id}: pinned ${row.pinned || "?"} · upstream ${row.latest || "?"} [${row.state}] ${row.tag} (${row.source})`,
+      );
+    }
+    const news = rows.filter((x) => x.state === "newer");
+    const note = document.createElement("div");
+    note.className = "pip-advanced-hint";
+    if (!r.online) {
+      note.textContent =
+        "Couldn't reach the upstream sources (offline, or GitHub rate limited) — nothing was checked or changed. A GitHub token in Manage settings raises the rate limit.";
+    } else if (news.length) {
+      note.style.color = "#FBBF24";
+      note.textContent =
+        `Newer upstream release${news.length > 1 ? "s" : ""}: ` +
+        news.map((x) => `${x.id} ${x.latest}`).join(", ") +
+        " — install it by updating Wan2GP (this panel never downloads a build upstream has not pinned).";
+    } else {
+      note.textContent =
+        "Nothing newer upstream: these are the builds Wan2GP's own installer pins today.";
+    }
+    box.append(note);
+    appendLog("[DLSS5 update check]\n" + consoleLines.join("\n"));
+    showToast(
+      !r.online
+        ? "✗ DLSS 5 update check — upstream unreachable"
+        : news.length
+          ? `↻ ${news.length} newer DLSS 5 component${news.length > 1 ? "s" : ""} upstream — update Wan2GP`
+          : "✓ DLSS 5 components match upstream's pins",
+    );
+  } catch (e) {
+    box.textContent = "✗ " + errText(e);
+    appendLog("[!] DLSS 5 update check failed: " + errText(e));
+    showToast("✗ DLSS 5 update check failed: " + errText(e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+});

@@ -87,7 +87,7 @@ fn str_field(v: &serde_json::Value, key: &str) -> String {
         .to_string()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn plugins_list() -> serde_json::Value {
     let repo = get_repo_dir();
     if !repo.join("wgp.py").exists() {

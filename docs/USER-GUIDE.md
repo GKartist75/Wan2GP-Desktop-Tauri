@@ -66,7 +66,7 @@ The home screen. Top to bottom:
 - New models are large (e.g. Qwen Image 2.1 ships bf16 + int8 safetensors plus encoder/VAE) and download on first use; the first H3 INT8 run also fetches its ConvRot VAE. Pre/post-processing checkpoints download on demand (upstream JIT), so the upfront footprint stays smaller than it looks.
 - H3 Video VAE on Auto follows your Transformer Quantization choice (16-bit → BF16, FP8 → FP8 mixed, INT8 → INT8 ConvRot decoder); explicit BF16/FP8/INT8 choices in the Memory panel override Auto and are preserved.
 
-**GPU Kernel Wheels card** — per-GPU wheels (torch, triton, sage/flash attention, nunchaku/GGUF) with installed versions. *↻ Update GPU Wheels* installs upstream's wanted set plus launcher fixes (sage safe build, GGUF floor that follows `setup_config.json` forward), *Restore GPU Wheels* reinstalls deepbeepmeep's pure upstream set. Sync follows your local checkout — if it is behind `origin/main`, the console warns you to update Wan2GP first, otherwise you install stale wheels. After every Wan2GP update the launcher also runs a compat check (setup_config shape + GGUF pins) and says so in the Console — re-run Sync when it reports new wheels. Every wheel is downloaded, SHA-256-verified and only then handed to pip: the launcher ships pins for the exact assets it knows, falls back to GitHub's published digest for a newer version, and aborts the component on a mismatch. Verified wheels live in the launcher data folder's `wheel-cache` (safe to delete; it only saves re-downloading).
+**GPU Kernel Wheels card** — per-GPU wheels (torch, triton, sage/flash attention, nunchaku/GGUF) with installed versions. *↻ Update GPU Wheels* installs upstream's wanted set plus launcher fixes (sage safe build, GGUF floor that follows `setup_config.json` forward), *Restore GPU Wheels* reinstalls deepbeepmeep's pure upstream set. Sync follows your local checkout — if it is behind `origin/main`, the console warns you to update Wan2GP first, otherwise you install stale wheels. After every Wan2GP update the launcher also runs a compat check (setup_config shape + GGUF pins) and says so in the Console — re-run Sync when it reports new wheels. Every wheel is downloaded, SHA-256-verified and only then handed to pip: the launcher ships pins for the exact assets it knows, falls back to GitHub's published digest for a newer version, and aborts the component on a mismatch. Each install prints the hash it computed and whose digest it matched — e.g. `sha256 <hash> — matches the sha256 deepbeepmeep/WGPKernels published for release v1.1.2 (launcher pin)`, named from the wheel's own repo since Nunchaku and SageAttention ship from theirs — so the check is readable in the Console instead of a bare "verified". Verified wheels live in the launcher data folder's `wheel-cache` (safe to delete; it only saves re-downloading), and reusing a cached wheel re-hashes it and prints the same evidence.
 
 **AMD and the experimental kernels (RX 9060 / 9070 series — gfx1200/gfx1201).** Both wheels now install straight into the installer's torch 2.13+rocm10 env — there is no separate environment any more:
 
@@ -144,7 +144,18 @@ their key actions live (enhancement mode + Apply, Disabled/Zero/Prime +
 Apply, LAN toggle + Deepy Start/Stop); Kernel/Env headers collapse clean.
 
 **DLSS 5 card** — optional NVIDIA upsampler runtimes. *Install DLSS 5…* opens a
-confirmation (Cancel / Install).
+confirmation (Cancel / Install). *Check compatibility* is read-only (GPU tier,
+installed files, HAGS, frame-gen probe) **and verifies the files**: it hashes each
+one and compares it with the SHA-256 Wan2GP's installer pins, so a row reads
+*✓ SHA … matches what Wan2GP pins* or *⚠ SHA … expected — this file hashes to …*.
+Until you run it, the rows print the pinned hash as **expected** rather than
+claiming a match — the panel only stats the files on open (hashing them streams a
+couple hundred MB, so it waits to be asked). *Check for updates* asks the sources
+that upstream's installer script pins (`RankFTW/rhi-repo`,
+`DeepBeepMeep/dlss5-visual-enhancer`, reshade.me) whether a newer component
+release exists — read-only, downloads nothing. The component versions
+themselves are pinned by that script, so a newer one arrives through
+*Update Wan2GP*, never from this card.
 
 **Advanced — pip packages card** — install any extra PyPI package into the
 active env, with a copy button for the equivalent command.
@@ -282,7 +293,11 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **Server Port** — default 7860.
 - **GPU Device** — `auto` or a pinned `cuda:N` for generation.
 - **Launcher GPU** — which GPU the launcher UI itself prefers.
-- **SageAttention wheel** — which Sage build to use.
+- **SageAttention wheel** — which Sage build to use: *Safe* prefers the launcher's
+  known-good build; *Upstream* installs `setup_config.json` exactly as published.
+  They resolve to the same `post6` wheel today, so the choice only starts to
+  matter (and say so in the Console) when upstream pins a different build in that
+  wheel family. Applies on next Sync / install.
 - **GGUF CUDA Kernel** — llama.cpp CUDA offload switch (matmul mode —
   packed MMVQ/MMQ or cuBLAS dense — short-batch mode for the Q4_K/PTQ1_0
   tensor-core path, or disable). Applies on next launch. Verified against wheel
@@ -427,6 +442,8 @@ Two caveats if you override video to `dynamic`: it **only engages with the MMGP 
 ## Manage → Plugins
 
 - **Installed & Available** — plugin list with enable/disable/install/remove.
+  Plugins by the launcher's author (GKartist75) are pinned to the top of their
+  group, marked 📌, whichever sort is active.
 - **Install from URL** — sideload a plugin from a link.
 - **★ Favourites** — starred plugins auto-install on fresh setup (stored in
   `desktop-config.json`). Nothing auto-installs otherwise: plugins come only

@@ -530,7 +530,7 @@ pub fn troubleshoot_long_paths_enable() -> Result<serde_json::Value, String> {
 }
 
 /// Debug bundle markdown for Discord/GitHub (upstream "Before asking for help").
-#[tauri::command]
+#[tauri::command(async)]
 pub fn troubleshoot_debug_bundle() -> serde_json::Value {
     let gpu = get_gpu_info_sync();
     let dc = load_config_value();

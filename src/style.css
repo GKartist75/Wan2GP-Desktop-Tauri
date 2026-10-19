@@ -3218,6 +3218,12 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
  color: var(--signal-amber);
  font-weight: 700;
 }
+/* the launcher author's own plugins — pinned above their group's alphabetical run */
+.plugin-own-badge {
+ margin-left: 5px;
+ font-size: 0.7rem;
+ opacity: 0.85;
+}
 #pluginList .browser-row.plugin-has-update .btn {
  border-color: color-mix(in srgb, var(--signal-amber) 55%, transparent);
 }

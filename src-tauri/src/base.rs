@@ -122,6 +122,75 @@ pub(crate) fn push_log(text: &str, source: &str) {
         }
     }
 }
+/// One panic record as written to `launcher-crash.log`. Pure, so the format is
+/// tested without aborting a process.
+pub(crate) fn format_panic_record(when: &str, location: Option<&str>, payload: &str) -> String {
+    let at = match location {
+        Some(l) if !l.is_empty() => format!(" at {l}"),
+        _ => String::new(),
+    };
+    format!("[{when}] panic{at}: {payload}\n")
+}
+
+/// Where the crash log lives (next to the rest of the launcher's data files).
+pub(crate) fn panic_log_path() -> PathBuf {
+    get_data_dir().join("launcher-crash.log")
+}
+
+/// Append one panic record. Runs inside the panic hook, so it must not panic
+/// itself: every failure is swallowed and the process is left to die.
+pub(crate) fn record_panic(location: Option<&str>, payload: &str) {
+    let when = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let line = format_panic_record(&when, location, payload);
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(panic_log_path())
+        .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+}
+
+/// Last-chance crash reporting.
+///
+/// The release profile is `panic = "abort"`: a panic is process death — no
+/// window, no toast, and the in-memory console history dies with it. The hook
+/// still runs before the abort, so it is the only place that can leave the user
+/// something to send in. The default hook is kept as well, so a dev run still
+/// prints the panic to stderr.
+pub(crate) fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "<non-string panic payload>".to_string());
+        record_panic(location.as_deref(), &payload);
+        default_hook(info);
+    }));
+}
+
+/// Surface a crash left behind by a previous session, once.
+///
+/// Reported through the normal console history so it reaches the frontend on
+/// startup, then rotated to `launcher-crash.previous.log`: a stale file must not
+/// make every later launch look like it just crashed, but the details stay on
+/// disk for a bug report.
+pub(crate) fn report_previous_crash() -> Option<String> {
+    let path = panic_log_path();
+    let text = std::fs::read_to_string(&path).ok()?;
+    let detail = text.lines().rev().find(|l| !l.trim().is_empty())?.trim().to_string();
+    let line = format!(
+        "[!] The previous launcher session ended with a Rust panic — full log: {} (most recent: {detail})",
+        path.display()
+    );
+    let _ = std::fs::rename(&path, get_data_dir().join("launcher-crash.previous.log"));
+    Some(line)
+}
+
 pub(crate) fn invalidate_path_cache() {
     if let Some(m) = CACHED_DATA_DIR.get() {
         let _ = m.lock().map(|mut g| {
@@ -281,6 +350,7 @@ pub(crate) fn get_data_dir() -> PathBuf {
 }
 /// Drop the 5s data/repo dir caches. Tests only — each hermetic test resolves a
 /// different tempdir, so a cached value from a sibling test would leak into it.
+#[cfg(test)]
 pub(crate) fn reset_dir_caches() {
     if let Some(c) = CACHED_DATA_DIR.get() {
         if let Ok(mut g) = c.lock() {
@@ -712,6 +782,39 @@ mod child_tag_tests {
             tag_child_lines("  \nUvicorn running"),
             "  \n[wan2gp] Uvicorn running"
         );
+    }
+}
+#[cfg(test)]
+mod panic_log_tests {
+    use super::{
+        format_panic_record, panic_log_path, record_panic, report_previous_crash, TestDataDir,
+    };
+
+    #[test]
+    fn record_format_names_the_location() {
+        assert_eq!(
+            format_panic_record("2026-01-02T03:04:05Z", Some("src/x.rs:7:9"), "boom"),
+            "[2026-01-02T03:04:05Z] panic at src/x.rs:7:9: boom\n"
+        );
+        // A panic without a location still records, just without the " at …".
+        assert_eq!(format_panic_record("t", None, "boom"), "[t] panic: boom\n");
+    }
+
+    #[test]
+    fn record_panic_appends_and_report_rotates_once() {
+        let _d = TestDataDir::new();
+        record_panic(Some("src/a.rs:1:2"), "first");
+        record_panic(None, "second");
+        let text = std::fs::read_to_string(panic_log_path()).unwrap();
+        assert!(text.contains("panic at src/a.rs:1:2: first"));
+        assert_eq!(text.lines().count(), 2, "appends instead of truncating");
+        // Reported once, naming the newest entry...
+        let line = report_previous_crash().expect("a crash log must be reported");
+        assert!(line.contains("second"), "the newest entry is the one named");
+        assert!(line.contains("launcher-crash.log"));
+        assert!(!panic_log_path().exists(), "a reported log is rotated away");
+        // ...and not again on the next launch.
+        assert!(report_previous_crash().is_none());
     }
 }
 #[cfg(test)]

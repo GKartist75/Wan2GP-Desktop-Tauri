@@ -2,7 +2,7 @@
 use crate::base::*;
 use std::path::PathBuf;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detect_electron() -> serde_json::Value {
     #[cfg(not(windows))]
     {

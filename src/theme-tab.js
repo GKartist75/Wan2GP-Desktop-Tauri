@@ -484,20 +484,34 @@ function initAppearControls() {
 
 let prevPhaseId = null;
 
-// Show renderer errors on splash so blank-screen root cause is visible
-window.addEventListener("error", (e) => {
+// Show renderer errors on splash so blank-screen root cause is visible — and put
+// them in the console too: once boot is past, the splash is gone, so a failure
+// that only painted #splashError surfaced as "nothing happened". Each distinct
+// message is logged once (an error thrown every frame must not flood the
+// console), and the seen-set is capped so a stream of unique messages can't grow
+// without bound.
+const _errSeen = new Set();
+function reportRendererError(what, detail) {
+  const text = String(
+    (detail && (detail.stack || detail.message)) || detail || "unknown error",
+  );
   const el = $("splashError");
   if (el) {
-    el.textContent = e.error?.stack || e.message || String(e);
+    el.textContent = text;
     el.classList.remove("hidden");
   }
+  if (_errSeen.has(text)) return;
+  if (_errSeen.size > 200) _errSeen.clear();
+  _errSeen.add(text);
+  if (typeof appendLog === "function") {
+    appendLog(`[!] ${what}: ${text.split("\n")[0]}`);
+  }
+}
+window.addEventListener("error", (e) => {
+  reportRendererError("renderer error", e.error || e.message || e);
 });
 window.addEventListener("unhandledrejection", (e) => {
-  const el = $("splashError");
-  if (el) {
-    el.textContent = e.reason?.stack || String(e.reason);
-    el.classList.remove("hidden");
-  }
+  reportRendererError("unhandled promise rejection", e.reason || e);
 });
 
 // Theme toggle buttons — moved here from app.js: the handler is a value read at

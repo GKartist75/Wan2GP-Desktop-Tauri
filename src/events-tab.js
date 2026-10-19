@@ -10,30 +10,21 @@ $("updateBtn").addEventListener("click", async () => {
   $("updateBtn").textContent = "Working...";
   try {
     const r = await window.w2gp.update();
-    // A no-op update (checkout already exactly upstream) says so instead
-    // of printing a "complete" line for work that never happened.
-    appendLog(
-      r && r.updated === false
-        ? "[=] Wan2GP already up to date — nothing to update"
-        : "[*] Wan2GP update complete",
-    );
-    if (r && r.requirements === "reinstalled") {
-      appendLog("[*] requirements.txt changed — pinned packages reinstalled");
-      const pd = r && r.pinDiff;
-      if (Array.isArray(pd) && pd.length) appendLog("    " + pd.join("\n    "));
-    } else if (r && r.requirements === "failed")
-      appendLog(
-        "[!] requirements reinstall failed — see the console output above; the git pull itself stays applied.",
-      );
+    // The backend already streams every human-readable line of this update
+    // through launch-log into this same console (git transcript, the
+    // "[✓] Wan2GP update complete — now at upstream …" / "[=] Already at
+    // upstream … — nothing to update" summary, the requirements reinstall +
+    // pin diff + "[✓] dependencies match requirements.txt (N pinned)", the
+    // failure line, the drift line, and each compat note). So this handler
+    // must not restate them — it only does what a log line cannot: toasts,
+    // the drift banner, and a dashboard refresh. Printing them here too was
+    // the source of the doubled "update complete" / "reinstalled" lines.
     if (
       r &&
       r.depCheck === "drift" &&
       Array.isArray(r.drift) &&
       r.drift.length
     ) {
-      appendLog(
-        "[!] dependency drift: " + r.drift.join(", ") + " — use restore",
-      );
       showToast(
         "[!] Dependency drift — packages missing or outdated. See the red banner.",
       );
@@ -46,7 +37,6 @@ $("updateBtn").addEventListener("click", async () => {
     // Launcher-compat verify pass (backend): non-empty means the update
     // pulled a setup_config shape this launcher doesn't fully understand.
     if (r && Array.isArray(r.compat) && r.compat.length) {
-      appendLog("[!] launcher compat: " + r.compat.join(" | "));
       showToast("[!] Upstream changed setup — see Console, then Sync GPU Wheels");
     }
     refreshDashboard();

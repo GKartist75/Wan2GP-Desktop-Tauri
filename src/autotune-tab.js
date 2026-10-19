@@ -308,8 +308,15 @@ function memProfilePopulate(settings, opts = {}) {
     const v = settings[key];
     if (opts.mode === "recommend") {
       // Seed the dropdown with the recommended value (user can override).
+      // Only keys Detect actually carries are re-seeded. A key the payload
+      // doesn't mention at all (ram_allocator above all — upstream already
+      // defaults to mmgp, so no recommendation covers it) must not blank a
+      // control that memProfileLoad seeded from disk, or that the user picked
+      // here: that painted "— unset —" beside "saved: MMGP Optimized…" after
+      // the first-open auto-detect and every manual Detect, and silently
+      // reverted a manual pick. Keys Detect does carry are still overwritten.
       const sel = $(f.sel);
-      if (sel)
+      if (sel && v !== undefined)
         sel.value =
           v != null && v !== "" ? String(v) : key === "vae_config" ? "0" : "";
       const rec = $(f.rec);

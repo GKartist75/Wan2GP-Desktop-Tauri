@@ -264,7 +264,7 @@ pub(crate) fn summarize_finetune(id: &str, text: &str, bytes: u64) -> serde_json
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn library_loras() -> serde_json::Value {
     let Some(root) = resolve_loras_root() else {
         return serde_json::json!({"ok": false, "error": "No LoRA root configured"});
@@ -326,7 +326,7 @@ pub fn library_loras() -> serde_json::Value {
     serde_json::json!({"ok": true, "root": root.to_string_lossy().to_string(), "folders": folders})
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn library_finetunes() -> serde_json::Value {
     let dir = get_repo_dir().join("finetunes");
     let mut items = vec![];
@@ -544,7 +544,7 @@ pub(crate) fn summarize_workspace(id: &str, v: &serde_json::Value) -> serde_json
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn workspace_list() -> serde_json::Value {
     let dir = get_repo_dir().join("workspaces");
     let mut items = vec![];

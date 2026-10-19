@@ -317,7 +317,7 @@
               </select>
               <button class="btn btn-primary small" id="sageSafeSaveBtn" title="Save SageAttention wheel choice (applies on next sync/install)">Save</button>
             </div>
-            <p class="token-hint">RTX 30/40/50: <code>post4</code>-class builds degrade speed when CUDA Graphs are used (triton fallback) — deepbeepmeep Oct 2026. <code>post6</code> is the fixed build and the current upstream pin. Safe swaps a stale post4 to post6; Upstream installs setup_config exactly as published. Change applies on next sync/install.</p>
+            <p class="token-hint">RTX 30/40/50: <code>post4</code>-class builds degrade speed when CUDA Graphs are used (triton fallback) — deepbeepmeep Oct 2026. <b>Safe</b> prefers the launcher's known-good <code>post6</code> build whenever upstream's pick in the same <code>cu130torch2.10</code> wheel family differs, and names what it substituted in the Console; <b>Upstream</b> installs setup_config exactly as published. Today both resolve to the same <code>post6</code> wheel, so the choice changes nothing until upstream ships another build in that family. Change applies on next sync/install.</p>
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>GGUF CUDA Kernel</h3>
@@ -1640,10 +1640,13 @@
           <div class="deepy-actions">
             <button class="btn btn-primary" id="dlss5InstallBtn" title="Open the DLSS 5 installer (consent step required)">Install DLSS 5…</button>
             <button class="btn btn-ghost" id="dlss5CheckBtn" title="Run the DLSS 5 compatibility check (GPU tier, files, HAGS, frame-gen probe)">Check compatibility</button>
+            <button class="btn btn-ghost" id="dlss5UpdateBtn" title="Read-only: ask the sources upstream's installer script pins whether a newer DLSS / ReShade / RenoDX release exists. Downloads and installs nothing.">Check for updates</button>
             <button class="btn btn-ghost" id="dlss5FixBtn" title="Patch Wan2GP's GPU check so workstation cards (RTX PRO, Ada, RTX Ax000) pass DLSS gating — backed up, reversible">Apply workstation GPU fix</button>
             <label class="path-hint" style="margin-left:8px"><input type="checkbox" id="dlss5ForceChk"> Force (backup + replace existing files)</label>
           </div>
           <div id="dlss5CheckResult" class="path-hint" style="display:none;margin-top:6px;white-space:pre-line"></div>
+          <div id="dlss5UpdateResult" class="path-hint" style="display:none;margin-top:6px"></div>
+          <p class="path-hint" style="margin-top:4px">Component versions are pinned by Wan2GP's own installer script — <em>Check for updates</em> only asks the sources it pins whether a newer release exists; installing one is an <em>Update Wan2GP</em> away.</p>
           <p class="path-hint" style="margin-top:4px"><em>Stop Wan2GP first — files under <code>dlss5/</code> can't be replaced while in use.</em></p>
         </div>
 

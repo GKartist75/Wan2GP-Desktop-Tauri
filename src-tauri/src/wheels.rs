@@ -24,6 +24,11 @@
 //! Python installers' "no pinned checksum — trusting TLS" precedent) but the
 //! computed hash is logged so it can be pinned later.
 //!
+//! Every outcome prints the evidence: the sha256 the launcher computed and
+//! whose digest it matched (the publisher's, named from the URL) — a cache hit
+//! included, which re-hashes the file it is about to install. "Verified" is
+//! therefore checkable in the console instead of something to take on faith.
+//!
 //! Verified wheels are kept in `<data dir>\wheel-cache` — next to the Triton
 //! JIT cache, outside the Wan2GP checkout — so a re-sync re-hashes a local file
 //! instead of re-downloading 150 MB.
@@ -192,12 +197,41 @@ pub(crate) enum WheelTrust {
 }
 
 impl WheelTrust {
-    fn label(self) -> &'static str {
+    /// Whose sha256 these bytes were matched against, and how the launcher
+    /// knows it. The publisher is named from the URL because the gates differ:
+    /// most kernel wheels are deepbeepmeep's (`deepbeepmeep/kernels`,
+    /// `deepbeepmeep/WGPKernels`), while Nunchaku and SageAttention ship from
+    /// their own repos — a bare "verified" would hide whose digest it was.
+    fn matched(self, url: &str) -> String {
+        let (who, tag) = github_release_asset(url)
+            .map(|(owner, repo, tag, _)| (format!("{owner}/{repo}"), tag))
+            .unwrap_or_else(|| ("the publisher".to_string(), String::new()));
         match self {
-            WheelTrust::Pinned => "sha256 pinned, verified",
-            WheelTrust::PublishedDigest => "sha256 (GitHub digest) verified",
-            WheelTrust::Unverified => "no published checksum",
+            WheelTrust::Pinned => {
+                let release = if tag.is_empty() {
+                    String::new()
+                } else {
+                    format!(" for release {tag}")
+                };
+                format!("the sha256 {who} published{release} (launcher pin)")
+            }
+            WheelTrust::PublishedDigest => {
+                let release = if tag.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (release {tag})")
+                };
+                format!("the sha256 GitHub publishes for {who}{release}")
+            }
+            WheelTrust::Unverified => "nothing published to compare against".to_string(),
         }
+    }
+
+    /// The evidence line every verified wheel prints under its name: the hash
+    /// itself, then whose sha256 it matched — so "verified" is never something
+    /// the user has to take on faith.
+    fn evidence(self, hash: &str, url: &str) -> String {
+        format!("    sha256 {hash} — matches {}\n", self.matched(url))
     }
 }
 
@@ -290,18 +324,28 @@ pub(crate) async fn fetch_verified<E: Fn(&str)>(
     if dest.exists() {
         match expected.as_deref() {
             Some(want) => {
-                if sha256_file(&dest).as_deref() == Some(want) {
-                    emit(&format!("[*] wheel cache hit ({name}) — {}\n", trust.label()));
+                // Re-hash the cached file and print what it actually is: a
+                // cache hit still states the hash and whose digest it matches.
+                let got = sha256_file(&dest);
+                if got.as_deref() == Some(want) {
+                    let got = got.unwrap_or_else(|| want.to_string());
+                    emit(&format!(
+                        "[*] wheel cache hit ({name})\n{}",
+                        trust.evidence(&got, url)
+                    ));
                     return Ok((dest, trust));
                 }
                 emit(&format!(
-                    "[!] cached {name} no longer matches its checksum — re-downloading\n"
+                    "[!] cached {name} no longer matches its checksum — re-downloading\n    expected {want} ({})\n",
+                    trust.matched(url)
                 ));
             }
             // Nothing to check it against: reusing is as good as re-fetching.
             None => {
                 emit(&format!(
-                    "[*] wheel cache hit ({name}) — no published checksum to verify against\n"
+                    "[*] wheel cache hit ({name}) — no published checksum to verify against\n    sha256 {} — {}\n",
+                    sha256_file(&dest).unwrap_or_else(|| "unreadable".to_string()),
+                    trust.matched(url)
                 ));
                 return Ok((dest, trust));
             }
@@ -319,18 +363,19 @@ pub(crate) async fn fetch_verified<E: Fn(&str)>(
         Some(want) if got != want => {
             let _ = std::fs::remove_file(&dest);
             Err(format!(
-                "checksum mismatch for {name} — refusing to install\n    expected {want}\n    got      {got}\n\
+                "checksum mismatch for {name} — refusing to install\n    expected {want} ({})\n    got      {got}\n\
                  The release asset changed, or the download was tampered with or corrupted.\n\
-                 Update Wan2GP and re-run Update GPU Wheels; if it still fails, check the asset on GitHub."
+                 Update Wan2GP and re-run Update GPU Wheels; if it still fails, check the asset on GitHub.",
+                trust.matched(url)
             ))
         }
         Some(_) => {
-            emit(&format!("[✓] {name} — {}\n", trust.label()));
+            emit(&format!("[✓] {name}\n{}", trust.evidence(&got, url)));
             Ok((dest, trust))
         }
         None => {
             emit(&format!(
-                "[!] {name}: no published checksum — installing on TLS alone. sha256 {got}\n"
+                "[!] {name}: no published checksum found (none on GitHub, or the API was unreachable) — installing on TLS alone\n    sha256 {got}\n"
             ));
             Ok((dest, trust))
         }
@@ -422,6 +467,37 @@ mod tests {
     }
 
     #[test]
+    fn evidence_line_prints_the_hash_and_whose_digest_it_matched() {
+        const GGUF: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.27/llamacpp_gguf_cuda-1.0.27%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+        let h = pinned_sha(GGUF).unwrap();
+        let line = WheelTrust::Pinned.evidence(h, GGUF);
+        assert!(line.contains(h), "the hash itself must be printed: {line}");
+        assert!(
+            line.contains("deepbeepmeep/kernels"),
+            "whose digest it matched must be named: {line}"
+        );
+        assert!(line.contains("gguf-v1.0.27"), "the release tag pins it down: {line}");
+        assert!(line.contains("matches"), "{line}");
+
+        // A wheel from someone else's repo must credit *them*.
+        const NUNCHAKU: &str = "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl";
+        let line = WheelTrust::PublishedDigest.evidence(&"ab".repeat(32), NUNCHAKU);
+        assert!(line.contains("nunchaku-ai/nunchaku"), "{line}");
+        assert!(line.contains("v1.2.1"), "{line}");
+        assert!(
+            !line.contains("deepbeepmeep"),
+            "must not credit the wrong publisher: {line}"
+        );
+    }
+
+    #[test]
+    fn an_unverified_wheel_never_reads_as_a_match() {
+        let line = WheelTrust::Unverified.matched("https://example.com/pkg-1.0.whl");
+        assert!(line.contains("nothing published"), "{line}");
+        assert!(!line.contains("matches"), "{line}");
+    }
+
+    #[test]
     fn github_release_asset_parses_release_urls() {
         assert_eq!(
             github_release_asset("https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl"),
@@ -468,7 +544,9 @@ mod tests {
 
     /// Network test, ignored by default: proves the real download → hash →
     /// verify → cache-hit path end to end against the smallest pinned wheel.
-    /// Run it with
+    /// Run it (with every other ignored test) via
+    /// `powershell -ExecutionPolicy Bypass -File scripts\live-tests.ps1`,
+    /// or directly with
     /// `cargo test --lib wheels::tests::live_download_verifies_and_caches -- --ignored --nocapture`.
     #[test]
     #[ignore]
@@ -486,6 +564,15 @@ mod tests {
             sha256_file(&path).as_deref(),
             pinned_sha(URL),
             "downloaded bytes must match the pin"
+        );
+        // The console must carry the evidence, not just the word "verified".
+        let want = pinned_sha(URL).unwrap();
+        assert!(
+            msgs.lock()
+                .unwrap()
+                .iter()
+                .any(|m| m.contains(want) && m.contains("deepbeepmeep/kernels")),
+            "the verified line must print the hash and whose digest it matched"
         );
 
         // Second call reuses the verified file instead of re-downloading.

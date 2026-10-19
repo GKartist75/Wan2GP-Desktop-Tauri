@@ -93,7 +93,7 @@ pub fn reset_wgp_config() -> Result<serde_json::Value, String> {
 // (stale values make Gradio reject the whole form on save). Part 2: fix model
 // paths nested inside the repo (issue #18). Backs files up as *.bak-repair.
 // Response shape matches what the Manage-tab handler renders.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn repair_settings() -> serde_json::Value {
     const CLAMPS: &[(&str, &[i64])] = &[
         ("apg_switch", &[0, 1]),
@@ -883,7 +883,7 @@ pub(crate) fn redact_config_secrets(v: &serde_json::Value) -> serde_json::Value 
         _ => v.clone(),
     }
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn report_issue() -> serde_json::Value {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1810,11 +1810,6 @@ pub fn ui_mode_set(mode: Option<String>) -> serde_json::Value {
     let mf = get_data_dir().join("ui_mode.json");
     let _ = std::fs::write(&mf, serde_json::json!({"mode": mode}).to_string());
     serde_json::json!({"ok": true})
-}
-#[allow(dead_code)]
-#[tauri::command]
-pub fn on_system_theme_change() -> serde_json::Value {
-    serde_json::json!(null)
 }
 // App-close cleanup, split in two for the ordered close (see lib.rs):
 // - shutdown_cleanup_fast: tracked PIDs + terminal window, milliseconds,

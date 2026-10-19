@@ -684,6 +684,8 @@ if (!window.__TAURI__) {
         dlss5Status: () => call("dlss5_status"),
   tritonRuntimeStatus: () => call("triton_runtime_status"),
         dlss5Check: () => call("dlss5_check"),
+        dlss5UpdateCheck: () => call("dlss5_update_check"),
+        dlss5VerifyFiles: () => call("dlss5_verify_files"),
         dlss5ApplyWorkstationFix: () => call("dlss5_apply_workstation_fix"),
         dlss5RevertWorkstationFix: () => call("dlss5_revert_workstation_fix"),
         installDlss5: (force) => call("install_dlss5", { force: !!force }),
