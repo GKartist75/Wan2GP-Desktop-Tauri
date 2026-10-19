@@ -22,6 +22,7 @@ const bridge = fs.readFileSync(path.join(SRC, 'w2gp.js'), 'utf8')
 const tab = fs.readFileSync(path.join(SRC, 'dlss5-tab.js'), 'utf8')
 const rust = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'install.rs'), 'utf8')
 const lib = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'lib.rs'), 'utf8')
+const dlTab = fs.readFileSync(path.join(SRC, 'downloads-tab.js'), 'utf8')
 
 test('the DLSS 5 card carries the update-probe button and its own result box', () => {
   assert.match(html, /id="dlss5UpdateBtn"/)
@@ -73,4 +74,40 @@ test('an unreachable upstream is reported honestly, not as "current"', () => {
   assert.match(tab, /Couldn't reach the upstream sources/)
   assert.match(tab, /upstream unreachable/)
   assert.match(tab, /nothing was checked or changed/)
+})
+
+test('upstream-update notes appear only after the user asks for them', () => {
+  // A healthy, installed panel must not decorate itself with "update Wan2GP" on
+  // launch: that is what made correct rows look wrong. The startup probe still
+  // refreshes the data, it just does not paint it.
+  assert.match(tab, /_dlss5UpdateAsked = false/, 'the session starts with notes off')
+  assert.match(
+    tab,
+    /_dlss5UpdateAsked \? _dlss5Update\[f\.pkg\] : undefined/,
+    'the row is handed no update verdict until it is asked for',
+  )
+  const handler = tab.slice(tab.indexOf('$("dlss5UpdateBtn")'))
+  assert.match(handler, /_dlss5UpdateAsked = true/, 'the button is what turns them on')
+  const auto = tab.slice(tab.indexOf('async function maybeRefreshDlss5Updates()'))
+  const autoBody = auto.slice(0, auto.indexOf('async function verifyDlss5Files()'))
+  assert.doesNotMatch(
+    autoBody,
+    /_dlss5UpdateAsked/,
+    'the automatic TTL probe never decorates the panel',
+  )
+})
+
+test('the Force setting is remembered, the consent tick is not', () => {
+  // Force changes what an install does (replace vs skip), so losing it on the
+  // next launch silently changes behaviour. Consent is the opposite: it must be
+  // given again every time.
+  assert.match(dlTab, /async function loadDlss5Prefs\(\)/, 'the setting must be read back')
+  assert.match(dlTab, /async function saveDlss5Prefs\(/, 'and written on change')
+  assert.match(dlTab, /cfg\.dlss5 = \{ \.\.\.\(cfg\.dlss5 \|\| \{\}\), force: !!force \}/)
+  assert.match(dlTab, /loadDlss5Prefs\(\);/, 'it is restored on load, not only on click')
+  assert.doesNotMatch(
+    dlTab,
+    /dlss5AcceptChk[\s\S]{0,200}configSave/,
+    'the consent tick must never be persisted',
+  )
 })

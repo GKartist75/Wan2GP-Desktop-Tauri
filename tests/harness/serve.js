@@ -46,7 +46,10 @@ const server = http.createServer((req, res) => {
   const file = path.join(ROOT, rel)
 
   // Stay inside src/ — the harness serves the renderer, nothing else.
-  if (!file.startsWith(ROOT)) {
+  // `startsWith(ROOT)` alone accepts a sibling whose name shares the prefix
+  // (src2/…), so compare the relative path instead.
+  const within = path.relative(ROOT, file)
+  if (within.startsWith('..') || path.isAbsolute(within)) {
     res.writeHead(403).end('forbidden')
     return
   }

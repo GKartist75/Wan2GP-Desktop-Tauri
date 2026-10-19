@@ -40,9 +40,10 @@ pub fn get_desktop_git_info() -> serde_json::Value {
 
 // Shared GitHub client: native HTTP (no curl/powershell spawns), token auth,
 // ETag caching so repeated checks don't burn rate limit.
-static GH_ETAG: std::sync::OnceLock<std::sync::Mutex<Option<String>>> = std::sync::OnceLock::new();
-static GH_CACHED_COMMITS: std::sync::OnceLock<std::sync::Mutex<Option<serde_json::Value>>> =
-    std::sync::OnceLock::new();
+static GH_ETAG: std::sync::LazyLock<std::sync::Mutex<Option<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+static GH_CACHED_COMMITS: std::sync::LazyLock<std::sync::Mutex<Option<serde_json::Value>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 fn gh_client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent("wan2gp-tauri")
@@ -67,11 +68,7 @@ pub async fn get_wangp_upstream_info() -> serde_json::Value {
     if !token.is_empty() {
         req = req.header("Authorization", format!("token {token}"));
     }
-    if let Some(m) = GH_ETAG
-        .get()
-        .and_then(|x| x.lock().ok())
-        .and_then(|g| g.clone())
-    {
+    if let Some(m) = GH_ETAG.lock().ok().and_then(|g| g.clone()) {
         req = req.header("If-None-Match", m);
     }
     let resp = match req.send().await {
@@ -81,11 +78,7 @@ pub async fn get_wangp_upstream_info() -> serde_json::Value {
         }
     };
     if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
-        if let Some(cached) = GH_CACHED_COMMITS
-            .get()
-            .and_then(|m| m.lock().ok())
-            .and_then(|g| g.clone())
-        {
+        if let Some(cached) = GH_CACHED_COMMITS.lock().ok().and_then(|g| g.clone()) {
             return cached;
         }
     }
@@ -94,7 +87,7 @@ pub async fn get_wangp_upstream_info() -> serde_json::Value {
     }
     if let Some(etag) = resp.headers().get("etag").and_then(|v| v.to_str().ok()) {
         let etag = etag.to_string();
-        if let Ok(mut g) = GH_ETAG.get_or_init(|| std::sync::Mutex::new(None)).lock() {
+        if let Ok(mut g) = GH_ETAG.lock() {
             *g = Some(etag);
         }
     }
@@ -132,10 +125,7 @@ pub async fn get_wangp_upstream_info() -> serde_json::Value {
             .collect();
         if !commits.is_empty() {
             let out = serde_json::json!({"commits": commits});
-            if let Ok(mut g) = GH_CACHED_COMMITS
-                .get_or_init(|| std::sync::Mutex::new(None))
-                .lock()
-            {
+            if let Ok(mut g) = GH_CACHED_COMMITS.lock() {
                 *g = Some(out.clone());
             }
             return out;
@@ -186,8 +176,8 @@ pub async fn get_wangp_version() -> serde_json::Value {
         Ok(r) => match r.text().await {
             Err(_) => serde_json::Value::Null,
             Ok(body) => parse_wangp_version(&body)
-                    .map(serde_json::Value::String)
-                    .unwrap_or(serde_json::Value::Null)
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
         },
     }
 }
@@ -234,15 +224,17 @@ fn parse_wangp_version(body: &str) -> Option<String> {
 // download_update (downloading{percent} → downloaded); Install & Restart runs
 // install_update (passive NSIS swap, app exits). Update metadata comes from
 // latest.json on the public GitHub releases page.
-static PENDING_UPDATE: std::sync::OnceLock<std::sync::Mutex<Option<tauri_plugin_updater::Update>>> =
-    std::sync::OnceLock::new();
-static DOWNLOADED_UPDATE: std::sync::OnceLock<std::sync::Mutex<Option<(String, Vec<u8>)>>> =
-    std::sync::OnceLock::new();
-pub(crate) fn pending_lock() -> &'static std::sync::Mutex<Option<tauri_plugin_updater::Update>> {
-    PENDING_UPDATE.get_or_init(|| std::sync::Mutex::new(None))
+type PendingUpdate = std::sync::Mutex<Option<tauri_plugin_updater::Update>>;
+type DownloadedUpdate = std::sync::Mutex<Option<(String, Vec<u8>)>>;
+static PENDING_UPDATE: std::sync::LazyLock<PendingUpdate> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+static DOWNLOADED_UPDATE: std::sync::LazyLock<DownloadedUpdate> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+pub(crate) fn pending_lock() -> &'static PendingUpdate {
+    &PENDING_UPDATE
 }
-pub(crate) fn downloaded_lock() -> &'static std::sync::Mutex<Option<(String, Vec<u8>)>> {
-    DOWNLOADED_UPDATE.get_or_init(|| std::sync::Mutex::new(None))
+pub(crate) fn downloaded_lock() -> &'static DownloadedUpdate {
+    &DOWNLOADED_UPDATE
 }
 #[tauri::command]
 pub async fn check_update(
@@ -307,7 +299,8 @@ pub async fn download_update(
             |got, total| {
                 if let Some(t) = total {
                     if t > 0 {
-                        let pct = (got as u64 * 100 / t) as i64;
+                        let pct =
+                            (got as u64).saturating_mul(100).checked_div(t).unwrap_or(0) as i64;
                         if pct != last_pct {
                             last_pct = pct;
                             let _ = app2.emit(

@@ -232,7 +232,9 @@ pub(crate) fn lora_cache_hits(
 pub(crate) fn finetune_id_valid(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
-        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 /// Summarize one finetune definition (never fails — unparsable files report
@@ -243,7 +245,12 @@ pub(crate) fn summarize_finetune(id: &str, text: &str, bytes: u64) -> serde_json
         return serde_json::json!({"id": id, "error": "not valid JSON", "bytes": bytes});
     };
     let m = v.get("model");
-    let str_list = |key: &str| m.and_then(|m| m.get(key)).and_then(|u| u.as_array()).map(|a| a.len()).unwrap_or(0);
+    let str_list = |key: &str| {
+        m.and_then(|m| m.get(key))
+            .and_then(|u| u.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0)
+    };
     let desc = m
         .and_then(|m| m.get("description"))
         .and_then(|d| d.as_str())
@@ -286,7 +293,9 @@ pub fn library_loras() -> serde_json::Value {
         }
     }
     let mut folders = vec![];
-    let entries = std::fs::read_dir(&root).map(|r| r.filter_map(|e| e.ok()).collect::<Vec<_>>()).unwrap_or_default();
+    let entries = std::fs::read_dir(&root)
+        .map(|r| r.filter_map(|e| e.ok()).collect::<Vec<_>>())
+        .unwrap_or_default();
     for e in entries {
         let p = e.path();
         if !p.is_dir() {
@@ -336,7 +345,11 @@ pub fn library_finetunes() -> serde_json::Value {
             if p.extension().and_then(|x| x.to_str()) != Some("json") {
                 continue;
             }
-            let id = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let id = p
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
             if !finetune_id_valid(&id) {
                 continue;
             }
@@ -358,18 +371,25 @@ pub fn library_finetune_import(source: String) -> Result<serde_json::Value, Stri
     if src.extension().and_then(|x| x.to_str()) != Some("json") {
         return Err("Source must be a .json file".into());
     }
-    let id = src.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    let id = src
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
     if !finetune_id_valid(&id) {
         return Err("Filename must be [A-Za-z0-9_-], max 64 chars".into());
     }
     let text = std::fs::read_to_string(&src).map_err(|e| format!("Cannot read source ({e})"))?;
-    let v: serde_json::Value = serde_json::from_str(&text).map_err(|_| "Source is not valid JSON".to_string())?;
+    let v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|_| "Source is not valid JSON".to_string())?;
     if v.get("model").is_none() {
         return Err("Not a finetune definition (no \"model\" object)".into());
     }
     let dest = get_repo_dir().join("finetunes").join(format!("{id}.json"));
     if dest.exists() {
-        return Err(format!("{id}.json already exists — delete it first to replace"));
+        return Err(format!(
+            "{id}.json already exists — delete it first to replace"
+        ));
     }
     std::fs::write(&dest, text).map_err(|e| format!("Cannot write ({e})"))?;
     Ok(serde_json::json!({"ok": true, "id": id}))
@@ -516,7 +536,11 @@ pub(crate) fn summarize_workspace(id: &str, v: &serde_json::Value) -> serde_json
     let files: Vec<String> = g
         .and_then(|g| g.get("file_list"))
         .and_then(|l| l.as_array())
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                .collect()
+        })
         .unwrap_or_default();
     let audio: usize = g
         .and_then(|g| g.get("audio_file_list"))
@@ -554,14 +578,20 @@ pub fn workspace_list() -> serde_json::Value {
             let p = e.path();
             if p.is_dir() {
                 if p.file_name().and_then(|n| n.to_str()) == Some("archives") {
-                    archived = std::fs::read_dir(&p).map(|r| r.filter_map(|x| x.ok()).count()).unwrap_or(0);
+                    archived = std::fs::read_dir(&p)
+                        .map(|r| r.filter_map(|x| x.ok()).count())
+                        .unwrap_or(0);
                 }
                 continue;
             }
             if p.extension().and_then(|x| x.to_str()) != Some("json") {
                 continue;
             }
-            let id = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let id = p
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
             if !finetune_id_valid(&id) {
                 continue;
             }
@@ -573,8 +603,14 @@ pub fn workspace_list() -> serde_json::Value {
         }
     }
     items.sort_by(|a, b| {
-        let ta = a.get("last_activity").and_then(|t| t.as_f64()).unwrap_or(0.0);
-        let tb = b.get("last_activity").and_then(|t| t.as_f64()).unwrap_or(0.0);
+        let ta = a
+            .get("last_activity")
+            .and_then(|t| t.as_f64())
+            .unwrap_or(0.0);
+        let tb = b
+            .get("last_activity")
+            .and_then(|t| t.as_f64())
+            .unwrap_or(0.0);
         tb.partial_cmp(&ta).unwrap_or(std::cmp::Ordering::Equal)
     });
     serde_json::json!({"ok": true, "dir": dir.to_string_lossy().to_string(), "items": items, "archived": archived})
@@ -590,7 +626,10 @@ pub fn workspace_protect(id: String, protected: bool) -> Result<serde_json::Valu
     let mut v: serde_json::Value =
         serde_json::from_str(&text).map_err(|_| "Workspace is not valid JSON".to_string())?;
     if let Some(m) = v.as_object_mut() {
-        m.insert("archive_protected".into(), serde_json::Value::Bool(protected));
+        m.insert(
+            "archive_protected".into(),
+            serde_json::Value::Bool(protected),
+        );
     }
     let out = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
     std::fs::write(&p, out).map_err(|e| format!("Cannot write ({e})"))?;
@@ -598,7 +637,14 @@ pub fn workspace_protect(id: String, protected: bool) -> Result<serde_json::Valu
 }
 
 #[tauri::command]
-pub fn workspace_backup() -> Result<serde_json::Value, String> {
+pub async fn workspace_backup() -> Result<serde_json::Value, String> {
+    // Compress-Archive can take minutes: keep it off the invoke thread.
+    tauri::async_runtime::spawn_blocking(workspace_backup_blocking)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn workspace_backup_blocking() -> Result<serde_json::Value, String> {
     use crate::base::get_data_dir;
     let dir = get_repo_dir().join("workspaces");
     if !dir.is_dir() {
@@ -928,8 +974,8 @@ pub async fn uninstall_env(
     )
     .map_err(|e| e.to_string())?;
     crate::base::invalidate_path_cache();
-    if let Some(m) = crate::base::LAST_STATUS.get() {
-        *m.lock().unwrap() = None;
+    if let Ok(mut g) = crate::base::LAST_STATUS.lock() {
+        *g = None;
     }
     log(&format!("[{name}] uninstalled\n"));
     Ok(serde_json::json!({"ok": true, "success": true}))

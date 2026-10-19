@@ -257,6 +257,40 @@ if (!window.__TAURI__) {
         },
         isDataDirRoaming: () => call("is_data_dir_roaming"),
         writeWgpConfig: (cfg) => call("write_wgp_config", { cfg }),
+        // Adult (NSFW) model pack — opt-in installer content.
+        adultPackManifest: () => call("adult_pack_manifest"),
+        adultPackSave: (selection, token) =>
+            call("adult_pack_save", { selection, token }),
+        adultPackFetch: (ids) => call("adult_pack_fetch", { ids }),
+        adultPackWriteFinetunes: (ids) =>
+            call("adult_pack_write_finetunes", { ids }),
+        adultPackCivitaiVerify: (token) =>
+            call("adult_pack_civitai_verify", { token }),
+        adultPackCivitaiDownload: (id, token) =>
+            call("adult_pack_civitai_download", { id, token }),
+        adultPackStatus: () => call("adult_pack_status"),
+        adultPackRemove: (ids) => call("adult_pack_remove", { ids }),
+        adultPackGallery: (repo, rev) => call("adult_pack_gallery", { repo, rev }),
+        adultPackCivitaiGallery: (id) => call("adult_pack_civitai_gallery", { id }),
+        adultPackSearch: (source, query, kind, family, limit) =>
+            call("adult_pack_search", { source, query, kind, family, limit }),
+        adultPackBrowse: (source, sort, period, kind, family, limit) =>
+            call("adult_pack_browse", { source, sort, period, kind, family, limit }),
+        adultPackUpdates: () => call("adult_pack_updates"),
+        adultPackApplyUpdates: (ids) => call("adult_pack_apply_updates", { ids }),
+        adultPackInspect: (source, id, architecture, version) =>
+            call("adult_pack_inspect", { source, id, architecture, version }),
+        adultPackAdd: (entry) => call("adult_pack_add", { entry }),
+        adultPackArches: () => call("adult_pack_arches"),
+        adultPackResolveUrl: (input) => call("adult_pack_resolve_url", { input }),
+        adultPackLoraInventory: () => call("adult_pack_lora_inventory"),
+        adultPackLoraDelete: (rel) => call("adult_pack_lora_delete", { rel }),
+        adultPackFinetuneList: () => call("adult_pack_finetune_list"),
+        adultPackFinetuneRead: (id) => call("adult_pack_finetune_read", { id }),
+        adultPackFinetuneWrite: (id, content) =>
+            call("adult_pack_finetune_write", { id, content }),
+        adultPackFinetuneCheck: (id) => call("adult_pack_finetune_check", { id }),
+        onAdultPackProgress: (cb) => listen("adult-pack-progress", cb),
         selectFolder: () => call("select_folder"),
         resetWgpConfig: () => call("reset_wgp_config"),
         confirmDialog: async (opts) => {
@@ -286,15 +320,6 @@ if (!window.__TAURI__) {
         launchWebview: () => call("launch_webview"),
         stopWangp: () => call("stop_wangp"),
         stopAllServers: () => call("stop_all_servers"),
-        popoutWebview: async (url) => {
-            const u = url || "http://localhost:7861";
-            try {
-                await call("open_external", { url: u });
-            } catch {}
-            const safePop = safeRedirectUrl(u);
-            if (safePop) openValidatedFallback(safePop);
-            return { ok: true };
-        },
         // ponytail: BrowserView → embedded iframe in webviewContainer (Tauri) — simple, no separate window.
         // Manage → Launch → "Desktop embed" switch: embedMode=native renders Gradio in a
         // real child Webview (backend owns it, downloads arrive as download-finished
@@ -575,9 +600,6 @@ if (!window.__TAURI__) {
                     if (safeExt) openValidatedFallback(safeExt);
                 } catch {}
             }
-            try {
-                await call("open_external", { url: u });
-            } catch {}
             return { ok: true };
         },
         detectBrowsers: () => call("detect_browsers"),
@@ -686,6 +708,7 @@ if (!window.__TAURI__) {
         dlss5Check: () => call("dlss5_check"),
         dlss5UpdateCheck: () => call("dlss5_update_check"),
         dlss5VerifyFiles: () => call("dlss5_verify_files"),
+        dlss5CachedState: () => call("dlss5_cached_state"),
         dlss5ApplyWorkstationFix: () => call("dlss5_apply_workstation_fix"),
         dlss5RevertWorkstationFix: () => call("dlss5_revert_workstation_fix"),
         installDlss5: (force) => call("install_dlss5", { force: !!force }),
@@ -765,10 +788,6 @@ if (!window.__TAURI__) {
             });
             return () => {};
         },
-        onSetupProfile: (cb) => {
-            listen("setup-profile", cb);
-            return () => {};
-        },
         onLaunchLog: (cb) => {
             listen("launch-log", cb);
             return () => {};
@@ -789,32 +808,12 @@ if (!window.__TAURI__) {
             listen("update-status", cb);
             return () => {};
         },
-        onBvNavState: (cb) => {
-            listen("bv-nav-state", cb);
-            return () => {};
-        },
-        onTermDockChanged: (cb) => {
-            listen("term-dock-changed", cb);
-            return () => {};
-        },
         onTermClosed: (cb) => {
             listen("term-closed", cb);
             return () => {};
         },
-        onOpenMigration: (cb) => {
-            listen("open-migration", cb);
-            return () => {};
-        },
         onMigrationProgress: (cb) => {
             listen("migration-progress", cb);
-            return () => {};
-        },
-        onSystemThemeChange: (cb) => {
-            listen("system-theme-changed", cb);
-            return () => {};
-        },
-        onBvCrashRecovered: (cb) => {
-            listen("bv-crash-recovered", cb);
             return () => {};
         },
     };

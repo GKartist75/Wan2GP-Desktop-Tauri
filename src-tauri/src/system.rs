@@ -1,12 +1,10 @@
 //! Folders, dialogs, data-dir management, reports, shortcuts, view shims.
 use crate::base::*;
-use crate::{hw::get_gpu_info_sync, status::{get_active_env, resolve_env_python}};
+use crate::{
+    hw::get_gpu_info_sync,
+    status::{get_active_env, resolve_env_python},
+};
 use std::path::{Path, PathBuf};
-
-#[tauri::command]
-pub fn greet(name: &str) -> String {
-    format!("Hello, {name}! You've been greeted from Rust!")
-}
 
 #[tauri::command]
 pub fn open_folder(path: String, app: tauri::AppHandle) -> Result<(), String> {
@@ -936,7 +934,10 @@ pub fn report_issue() -> serde_json::Value {
                 .args(["-c", &probe])
                 .output()
                 .is_ok_and(|o| o.status.success());
-            lines.push(format!("{m}: {}", if ver { "import ok" } else { "missing" }));
+            lines.push(format!(
+                "{m}: {}",
+                if ver { "import ok" } else { "missing" }
+            ));
         }
     } else {
         lines.push("\n── torch / kernels ──".into());
@@ -1021,9 +1022,13 @@ fn valid_backup_name(name: &str) -> bool {
     const PRE: &str = "wgp_config.backup-";
     name.starts_with(PRE)
         && name.ends_with(".json")
-        && !name.contains('/') && !name.contains('\\') && !name.contains("..")
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
         && name.len() <= 64
-        && name[PRE.len()..name.len() - 5].chars().all(|c| c.is_ascii_digit())
+        && name[PRE.len()..name.len() - 5]
+            .chars()
+            .all(|c| c.is_ascii_digit())
 }
 
 /// F11: restore a backup (current config is snapshotted first, so restore
@@ -1039,7 +1044,8 @@ pub fn config_backup_restore(name: String) -> Result<serde_json::Value, String> 
         return Err("Backup not found".into());
     }
     let _ = snapshot_wgp_config();
-    std::fs::copy(&src, repo.join("wgp_config.json")).map_err(|e| format!("Restore failed ({e})"))?;
+    std::fs::copy(&src, repo.join("wgp_config.json"))
+        .map_err(|e| format!("Restore failed ({e})"))?;
     Ok(serde_json::json!({"ok": true, "restored": name}))
 }
 
@@ -1110,10 +1116,10 @@ const GRADIO_VIEW_LABEL: &str = "wan2gp-view";
 /// in the frontend seen-set again. Both events also go to the backend log
 /// bus, so a dead frontend listener still leaves a trace.
 static DL_NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-static DL_IDS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
-    std::sync::OnceLock::new();
+static DL_IDS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 fn dl_ids() -> &'static std::sync::Mutex<std::collections::HashMap<String, u64>> {
-    DL_IDS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+    &DL_IDS
 }
 
 /// Staging area for native-embed downloads: bytes land here invisibly, then
@@ -1341,8 +1347,7 @@ pub fn destroy_browser_view(app: tauri::AppHandle) -> serde_json::Value {
 #[tauri::command]
 pub fn get_log_history() -> serde_json::Value {
     let lines = crate::base::LOG_HISTORY
-        .get()
-        .and_then(|m| m.lock().ok())
+        .lock()
         .map(|g| g.clone())
         .unwrap_or_default();
     serde_json::Value::Array(
@@ -1681,10 +1686,8 @@ pub fn mirror_console(app: tauri::AppHandle, text: String) -> serde_json::Value 
 #[tauri::command]
 pub fn clear_log_history(app: tauri::AppHandle) -> serde_json::Value {
     use tauri::Emitter;
-    if let Some(m) = crate::base::LOG_HISTORY.get() {
-        if let Ok(mut g) = m.lock() {
-            g.clear();
-        }
+    if let Ok(mut g) = crate::base::LOG_HISTORY.lock() {
+        g.clear();
     }
     let _ = app.emit("console-cleared", ());
     serde_json::json!({"ok": true})
@@ -1777,7 +1780,14 @@ pub fn notifier_ensure() -> serde_json::Value {
         // touching deps; fully missing: plain install.
         apprise_already = false;
         let args: &[&str] = if runnable(&["-c", "import apprise"]) {
-            &["-m", "pip", "install", "--force-reinstall", "--no-deps", "apprise"]
+            &[
+                "-m",
+                "pip",
+                "install",
+                "--force-reinstall",
+                "--no-deps",
+                "apprise",
+            ]
         } else {
             &["-m", "pip", "install", "apprise"]
         };

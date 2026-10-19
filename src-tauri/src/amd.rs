@@ -321,6 +321,7 @@ pub(crate) fn is_blackwell_gpu(name: &str) -> bool {
 /// - stray install + older GPU → warn it is inert, safe to remove;
 /// - nothing installed + Blackwell → info why sync skipped it;
 /// - nothing installed + older GPU → silent (common case, no noise).
+///
 /// Returns (level, message). Pure + unit-tested.
 pub(crate) fn sage3_note(
     map: &serde_json::Map<String, serde_json::Value>,
@@ -515,7 +516,9 @@ mod probe_tests {
         assert!(kernel_probe_stale(&parse_kernel_json(raw_floor).unwrap(), floor).is_empty());
         // 1.0.21-1.0.26 predate the 1.0.27 floor (docs prescription) — now stale.
         for v in ["1.0.21", "1.0.22", "1.0.23", "1.0.24", "1.0.25", "1.0.26"] {
-            let raw = format!(r#"{{"llamacpp-gguf-cuda": {{"version": "{v}", "import": "ok", "extra": ""}}}}"#);
+            let raw = format!(
+                r#"{{"llamacpp-gguf-cuda": {{"version": "{v}", "import": "ok", "extra": ""}}}}"#
+            );
             assert_eq!(
                 kernel_probe_stale(&parse_kernel_json(&raw).unwrap(), floor).len(),
                 1,

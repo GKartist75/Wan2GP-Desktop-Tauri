@@ -23,6 +23,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (verEl) verEl.textContent = v;
       var appVerEl = $("appVersionTag");
       if (appVerEl) appVerEl.textContent = "v" + v;
+      appendLog(
+        `[*] Launcher v${v} ready — dashboard live. Metrics polling every 3s; update checks in background.`,
+      );
     });
     setupScrollUnfollow("termBody", "dashTermFollowBtn");
     setupScrollUnfollow("installTermBody", "installFollowBtn");
@@ -66,11 +69,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         prevPhaseId = p.id;
       }
     });
-    window.w2gp.onSetupProfile((p) => {
-      $("installProfile").textContent = p;
-      $("installProfileRow").style.display = "flex";
-    });
-
     const cfg =
       cfgPreload || (await window.w2gp.configLoad().catch(() => ({})));
     // Resolve unconditionally: applyTheme also clears the hardcoded
@@ -95,33 +93,25 @@ document.addEventListener("DOMContentLoaded", async () => {
       );
     }
 
-    // Embedded-Wan2GP view crashed and was auto-reloaded by the main process.
-    window.w2gp.onBvCrashRecovered(() =>
-      showToast("Wan2GP view reloaded after a crash"),
-    );
-
-    // hardware probe — fire-and-forget, fills specs when ready (no await)
+    // hardware probe — fire-and-forget, fills specs when ready (no await).
+    // Retry once only if the first probe returned nothing: a slow but
+    // successful probe used to be repeated 2s later for no reason.
+    let hwLoaded = false;
     loadHardware()
       .then((s) => {
-        if (s)
+        if (s) {
+          hwLoaded = true;
           appendLog(
             `[*] Hardware: ${s.cpu || "?"} · ${s.ram || "?"} RAM · ${s.gpu || "?"} (${s.vram || "?"})`,
           );
+        }
       })
       .catch((e) => {
         console.warn("[hw] detectHardware failed", e);
-      });
-    setTimeout(() => loadHardware().catch(() => {}), 2000);
-
-    window.w2gp
-      .getDesktopVersion()
-      .then((v) => {
-        if (v)
-          appendLog(
-            `[*] Launcher v${v} ready — dashboard live. Metrics polling every 3s; update checks in background.`,
-          );
       })
-      .catch(() => {});
+      .finally(() => {
+        if (!hwLoaded) setTimeout(() => loadHardware().catch(() => {}), 2000);
+      });
 
     if (installed.repo && installed.env) {
       // ponytail: fast paint — show dashboard instantly (~300ms), fill versions in background

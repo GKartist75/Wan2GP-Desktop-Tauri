@@ -42,7 +42,6 @@ function progressKey(line) {
 // floating/docked/dashboard consoles stay identical (history + live).
 function appendLog(text, forward) {
   if (!text) return;
-  if (!text) return;
   // Normalize Windows \r\n to \n first (avoids \r clearing lastLine before \n pushes it)
   const parts = text.replace(/\r\n/g, "\n").split(/(\r|\n)/);
   for (const part of parts) {

@@ -55,29 +55,77 @@ pub(crate) fn cache_dir() -> PathBuf {
 /// why they are pinned here rather than only fetched.
 pub(crate) const PINNED_WHEELS: &[(&str, &str)] = &[
     // GGUF llama.cpp kernels (upstream gguf-v1.0.27; the HIP one is RDNA4 opt-in).
-    ("llamacpp_gguf_cuda-1.0.27+torch210cu130py311-cp311-cp311-win_amd64.whl", "7a666946c23200bacc5f92f01558d4be5a2c52685dee06e3fc538f1b5359bb44"),
-    ("llamacpp_gguf_cuda-1.0.27+torch271cu128py310-cp310-cp310-win_amd64.whl", "1eb5e56d24af0cf9bf14497630a3de5100898e887833e684218b83bbf964ecb0"),
-    ("llamacpp_gguf_cuda-1.0.27+torch213rocm100py312-cp312-cp312-win_amd64.whl", "09a27db982bda190a50499b5dc5445a03c0a6cd643bd33b95ff3a3fe523aa239"),
+    (
+        "llamacpp_gguf_cuda-1.0.27+torch210cu130py311-cp311-cp311-win_amd64.whl",
+        "7a666946c23200bacc5f92f01558d4be5a2c52685dee06e3fc538f1b5359bb44",
+    ),
+    (
+        "llamacpp_gguf_cuda-1.0.27+torch271cu128py310-cp310-cp310-win_amd64.whl",
+        "1eb5e56d24af0cf9bf14497630a3de5100898e887833e684218b83bbf964ecb0",
+    ),
+    (
+        "llamacpp_gguf_cuda-1.0.27+torch213rocm100py312-cp312-cp312-win_amd64.whl",
+        "09a27db982bda190a50499b5dc5445a03c0a6cd643bd33b95ff3a3fe523aa239",
+    ),
     // WGPKernels 1.1.2 (NVIDIA cu130/cu128, AMD RDNA4 rocm100).
-    ("wgpkernels-1.1.2+cu130-py3-none-win_amd64.whl", "84f5f892aa1d422846f6ad24fefbc983dbc366eacbbac279f028f47d4880b167"),
-    ("wgpkernels-1.1.2+cu128-py3-none-win_amd64.whl", "eb948edced4fa9b77c8a6faacacd2bb23aa9d6797fafe95362fa9f636d94e739"),
-    ("wgpkernels-1.1.2+rocm100-py3-none-win_amd64.whl", "cb99dd4ecb024103dc75dc1c7b7f98ef93bf49fa1348ae3290b4cd9cf04ff53e"),
+    (
+        "wgpkernels-1.1.2+cu130-py3-none-win_amd64.whl",
+        "84f5f892aa1d422846f6ad24fefbc983dbc366eacbbac279f028f47d4880b167",
+    ),
+    (
+        "wgpkernels-1.1.2+cu128-py3-none-win_amd64.whl",
+        "eb948edced4fa9b77c8a6faacacd2bb23aa9d6797fafe95362fa9f636d94e739",
+    ),
+    (
+        "wgpkernels-1.1.2+rocm100-py3-none-win_amd64.whl",
+        "cb99dd4ecb024103dc75dc1c7b7f98ef93bf49fa1348ae3290b4cd9cf04ff53e",
+    ),
     // Nunchaku (upstream torch2.7 build and the cu13.0/torch2.10 build).
-    ("nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl", "a31fbb48650f9a5c0ed48e447f34e64e471318ff3466f73c9167a09bede28771"),
-    ("nunchaku-1.2.0+torch2.7-cp310-cp310-win_amd64.whl", "9eb877dad499bbe7eae3bc0e98b7f65b96bcaa81771ea9657f3a576cb0847d0f"),
+    (
+        "nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl",
+        "a31fbb48650f9a5c0ed48e447f34e64e471318ff3466f73c9167a09bede28771",
+    ),
+    (
+        "nunchaku-1.2.0+torch2.7-cp310-cp310-win_amd64.whl",
+        "9eb877dad499bbe7eae3bc0e98b7f65b96bcaa81771ea9657f3a576cb0847d0f",
+    ),
     // LightX2V kernels.
-    ("lightx2v_kernel-0.0.2+torch2.10.0-cp311-abi3-win_amd64.whl", "1b2a722b0dfac79962b64eabb99fe7295defeab37f5b002d95f2b8b3aa1cc210"),
+    (
+        "lightx2v_kernel-0.0.2+torch2.10.0-cp311-abi3-win_amd64.whl",
+        "1b2a722b0dfac79962b64eabb99fe7295defeab37f5b002d95f2b8b3aa1cc210",
+    ),
     // SageAttention — the launcher's safe build (post6 cu130) and upstream's
     // pinned PyTorch-2.7.1 builds (cp310/cp311).
-    ("sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl", "1635283f5c01ec3cda58a784d0d7eabbcaffaf9511d1b263db4750e1ed7958bb"),
-    ("sageattention-2.2.0+cu128torch2.7.1-cp311-cp311-win_amd64.whl", "92b2ef73b6b5d6cf8d23914c9c408204264c49ac6e264676d5f5a70d293f430a"),
-    ("sageattention-2.2.0+cu128torch2.7.1-cp310-cp310-win_amd64.whl", "68015b797baef5c3b4db4f645052299d6f0174476f1b9f12973a86f7341569fa"),
+    (
+        "sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl",
+        "1635283f5c01ec3cda58a784d0d7eabbcaffaf9511d1b263db4750e1ed7958bb",
+    ),
+    (
+        "sageattention-2.2.0+cu128torch2.7.1-cp311-cp311-win_amd64.whl",
+        "92b2ef73b6b5d6cf8d23914c9c408204264c49ac6e264676d5f5a70d293f430a",
+    ),
+    (
+        "sageattention-2.2.0+cu128torch2.7.1-cp310-cp310-win_amd64.whl",
+        "68015b797baef5c3b4db4f645052299d6f0174476f1b9f12973a86f7341569fa",
+    ),
     // SpargeAttention.
-    ("spas_sage_attn-0.1.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl", "2b34a5abe45c0ea51872f78dc1d0b407893ac5ecab3bf71425a73e769e47f27a"),
-    ("spas_sage_attn-0.1.0+cu128torch2.7.1.post3-cp39-abi3-win_amd64.whl", "425afea0544f948f5236199f1e23f13e821a5d13cf761035ab9723b5de25e802"),
+    (
+        "spas_sage_attn-0.1.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl",
+        "2b34a5abe45c0ea51872f78dc1d0b407893ac5ecab3bf71425a73e769e47f27a",
+    ),
+    (
+        "spas_sage_attn-0.1.0+cu128torch2.7.1.post3-cp39-abi3-win_amd64.whl",
+        "425afea0544f948f5236199f1e23f13e821a5d13cf761035ab9723b5de25e802",
+    ),
     // FlashAttention-2 Windows wheels (CUDA 2.8.3, ROCm 2.8.4).
-    ("flash_attn-2.8.3-cp311-cp311-win_amd64.whl", "de0e6713775ace8d0b74d5b04ac8bff2767362a2d86f81e2b7a6e6b8dd924e52"),
-    ("flash_attn-2.8.4-py3-none-win_amd64.whl", "90dda5975e87e53a9e3ce8f8761c410212e5a7e01a7bc1e9a8d8a601531445bc"),
+    (
+        "flash_attn-2.8.3-cp311-cp311-win_amd64.whl",
+        "de0e6713775ace8d0b74d5b04ac8bff2767362a2d86f81e2b7a6e6b8dd924e52",
+    ),
+    (
+        "flash_attn-2.8.4-py3-none-win_amd64.whl",
+        "90dda5975e87e53a9e3ce8f8761c410212e5a7e01a7bc1e9a8d8a601531445bc",
+    ),
 ];
 
 /// Percent-decode a URL path segment (`%2B` → `+`, which local-version wheels
@@ -105,7 +153,9 @@ pub(crate) fn percent_decode(s: &str) -> String {
 /// Query/fragment are dropped; the name is percent-decoded (`+` in a
 /// local-version wheel arrives as `%2B`).
 pub(crate) fn wheel_filename(url: &str) -> Option<String> {
-    let trimmed = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    let trimmed = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
     let path = trimmed.split(['?', '#']).next().unwrap_or("");
     let last = path.rsplit('/').next()?;
     if last.is_empty() {
@@ -238,11 +288,7 @@ impl WheelTrust {
 /// Stream a URL to `dest`, hashing as it goes; returns the SHA-256 hex.
 /// Writes to `<dest>.part` first so an interrupted download never leaves a
 /// file that looks installable.
-async fn download_to<E: Fn(&str)>(
-    url: &str,
-    dest: &Path,
-    emit: &E,
-) -> Result<String, String> {
+async fn download_to<E: Fn(&str)>(url: &str, dest: &Path, emit: &E) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .user_agent("wan2gp-tauri")
         .timeout(std::time::Duration::from_secs(1800))
@@ -259,7 +305,9 @@ async fn download_to<E: Fn(&str)>(
     let total = resp.content_length();
     let part = dest.with_file_name(format!(
         "{}.part",
-        dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+        dest.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
     ));
     let mut file = std::fs::File::create(&part)
         .map_err(|e| format!("cannot write {}: {e}", part.display()))?;
@@ -278,11 +326,9 @@ async fn download_to<E: Fn(&str)>(
         if got >= next_mark {
             next_mark = got + 32 * 1024 * 1024;
             let msg = match total {
-                Some(t) if t > 0 => format!(
-                    "    … {}/{} MB\n",
-                    got / (1024 * 1024),
-                    t / (1024 * 1024)
-                ),
+                Some(t) if t > 0 => {
+                    format!("    … {}/{} MB\n", got / (1024 * 1024), t / (1024 * 1024))
+                }
                 _ => format!("    … {} MB\n", got / (1024 * 1024)),
             };
             emit(&msg);
@@ -290,8 +336,7 @@ async fn download_to<E: Fn(&str)>(
     }
     drop(file);
     let hex = format!("{:x}", hasher.finalize());
-    std::fs::rename(&part, dest)
-        .map_err(|e| format!("cannot finalize {}: {e}", dest.display()))?;
+    std::fs::rename(&part, dest).map_err(|e| format!("cannot finalize {}: {e}", dest.display()))?;
     Ok(hex)
 }
 
@@ -455,7 +500,10 @@ mod tests {
         for (name, hash) in PINNED_WHEELS {
             assert!(name.ends_with(".whl"), "not a wheel filename: {name}");
             assert_eq!(hash.len(), 64, "not a sha256: {name}");
-            assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "not hex: {name}");
+            assert!(
+                hash.chars().all(|c| c.is_ascii_hexdigit()),
+                "not hex: {name}"
+            );
             assert_eq!(*hash, hash.to_ascii_lowercase(), "not lowercase: {name}");
         }
         for (i, (name, _)) in PINNED_WHEELS.iter().enumerate() {
@@ -476,7 +524,10 @@ mod tests {
             line.contains("deepbeepmeep/kernels"),
             "whose digest it matched must be named: {line}"
         );
-        assert!(line.contains("gguf-v1.0.27"), "the release tag pins it down: {line}");
+        assert!(
+            line.contains("gguf-v1.0.27"),
+            "the release tag pins it down: {line}"
+        );
         assert!(line.contains("matches"), "{line}");
 
         // A wheel from someone else's repo must credit *them*.
@@ -517,7 +568,10 @@ mod tests {
     fn hex_from_digest_accepts_only_sha256_hex() {
         let h = "a".repeat(64);
         assert_eq!(hex_from_digest(&format!("sha256:{h}")), Some(h.clone()));
-        assert_eq!(hex_from_digest(&format!("sha256:{}", h.to_uppercase())), Some(h.clone()));
+        assert_eq!(
+            hex_from_digest(&format!("sha256:{}", h.to_uppercase())),
+            Some(h.clone())
+        );
         assert!(hex_from_digest("sha512:abc").is_none());
         assert!(hex_from_digest("sha256:tooshort").is_none());
         assert!(hex_from_digest(&"z".repeat(64)).is_none());
@@ -552,7 +606,10 @@ mod tests {
     #[ignore]
     fn live_download_verifies_and_caches() {
         const URL: &str = "https://github.com/deepbeepmeep/kernels/releases/download/Light2xv/lightx2v_kernel-0.0.2%2Btorch2.10.0-cp311-abi3-win_amd64.whl";
-        assert!(pinned_sha(URL).is_some(), "expected a pin for the live test wheel");
+        assert!(
+            pinned_sha(URL).is_some(),
+            "expected a pin for the live test wheel"
+        );
         let dir = tempfile::tempdir().unwrap();
         let msgs = std::sync::Mutex::new(Vec::new());
         let emit = |s: &str| msgs.lock().unwrap().push(s.to_string());

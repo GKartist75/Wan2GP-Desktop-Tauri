@@ -10,7 +10,7 @@ history see [CHANGELOG.md](../CHANGELOG.md).
 flowchart TB
     subgraph Launcher["Tauri launcher (this repo)"]
         UI["Dashboard UI\n(src/: app.js, w2gp.js, services/)"]
-        BE["Backend (src-tauri/src/)\ninstall · launch · status · features\nplugins · config · hw · updates"]
+        BE["Backend (src-tauri/src/)\ninstall · launch · status · features · base\nplugins · config · hw · updates · wheels\namd · system · troubleshoot · electron\ndeepy_web · log_server · adult_pack (opt-in)"]
         UI <-->|invoke / events| BE
     end
     subgraph Machine["Windows machine"]

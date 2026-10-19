@@ -5,8 +5,8 @@
 use crate::base::*;
 use crate::{
     hw::{
-        build_install_plan, classify_amd_driver, get_gpu_info_sync,
-        kernel_profile_key, wmi_all_gpus, wmi_virtual_adapters,
+        build_install_plan, classify_amd_driver, get_gpu_info_sync, kernel_profile_key,
+        wmi_all_gpus, wmi_virtual_adapters,
     },
     status::{get_active_env, resolve_env_python},
 };
@@ -387,7 +387,9 @@ pub(crate) fn uv_self_update_applicable(
 /// Case- and separator-insensitive path compare for uv's receipt (written with
 /// backslashes on Windows, possibly with a trailing separator).
 pub(crate) fn norm_path(s: &str) -> String {
-    s.replace('/', "\\").trim_end_matches('\\').to_ascii_lowercase()
+    s.replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_ascii_lowercase()
 }
 
 /// `install_prefix` from uv's own install receipt — the only authoritative
@@ -400,9 +402,12 @@ fn uv_receipt_install_prefix() -> Option<String> {
     let base = std::env::var("XDG_CONFIG_HOME")
         .or_else(|_| std::env::var("HOME").map(|h| format!("{h}/.config")))
         .ok()?;
-    let raw =
-        std::fs::read_to_string(std::path::Path::new(&base).join("uv").join("uv-receipt.json"))
-            .ok()?;
+    let raw = std::fs::read_to_string(
+        std::path::Path::new(&base)
+            .join("uv")
+            .join("uv-receipt.json"),
+    )
+    .ok()?;
     serde_json::from_str::<serde_json::Value>(&raw)
         .ok()?
         .get("install_prefix")?
@@ -648,7 +653,10 @@ async fn ensure_uv_python(
             app,
             &emit,
             "sh",
-            &["-c", "curl -LsSf https://astral.sh/uv/install.sh | UV_NO_MODIFY_PATH=1 sh"],
+            &[
+                "-c",
+                "curl -LsSf https://astral.sh/uv/install.sh | UV_NO_MODIFY_PATH=1 sh",
+            ],
         )
         .await
         .0;
@@ -829,7 +837,14 @@ fn diagnose_python_fail(wanted: &str) -> String {
 /// %APPDATA%\uv\python, as ATFGriff's log shows). A full C: fails the
 /// Python download even when J: has terabytes free.
 #[tauri::command]
-pub fn python_preflight() -> serde_json::Value {
+pub async fn python_preflight() -> Result<serde_json::Value, String> {
+    // Spawns uv + a Python version probe; run it off the invoke thread.
+    tauri::async_runtime::spawn_blocking(python_preflight_blocking)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+fn python_preflight_blocking() -> serde_json::Value {
     let wanted = pinned_python_wanted();
     let uv_bin = uv_command();
     let uv_ver = silent_command(uv_bin.as_str())
@@ -1298,25 +1313,21 @@ pub(crate) fn amd_fallback_target(profile: &str, gpu_name: &str) -> &'static str
     let g = gpu_name.to_uppercase();
     if g.contains("GFX103")
         || g.contains("RX 6")
-        || ["6300", "6400", "6450", "6500", "6600", "6650", "6700", "6750", "6800", "6850", "6900", "6950"]
-            .iter()
-            .any(|x| g.contains(x))
+        || [
+            "6300", "6400", "6450", "6500", "6600", "6650", "6700", "6750", "6800", "6850", "6900",
+            "6950",
+        ]
+        .iter()
+        .any(|x| g.contains(x))
     {
         return "gfx1030";
     }
-    if profile == "AMD_GFX1200"
-        || g.contains("9060")
-        || g.contains("1200")
-    {
+    if profile == "AMD_GFX1200" || g.contains("9060") || g.contains("1200") {
         // RDNA 4 Navi 44 (RX 9060 / 9060 XT) — upstream gfx1200 row, NOT
         // gfx1201 (9070/R9700). Mixing these installs the wrong wheels.
         return "gfx1200";
     }
-    if profile == "AMD_GFX1201"
-        || g.contains("9070")
-        || g.contains("9700")
-        || g.contains("1201")
-    {
+    if profile == "AMD_GFX1201" || g.contains("9070") || g.contains("9700") || g.contains("1201") {
         return "gfx1201";
     }
     // Strix Point 890M / Phoenix narrows to gfx1150 even when the
@@ -1489,18 +1500,17 @@ fn patch_therock_torch_cmd(repo: &std::path::Path, torch_cmd: &str) -> Result<()
     let mut cfg: serde_json::Value =
         serde_json::from_str(&raw).map_err(|e| format!("setup_config.json invalid: {e}"))?;
     let cmd = torch_cmd.to_string();
-    let torch = cfg
-        .get_mut("components")
-        .and_then(|c| c.get_mut("torch"));
-    let slot = torch.and_then(|t| {
-        if t.get("rocm10").is_some() {
-            t.get_mut("rocm10")
-        } else {
-            t.get_mut("rocm65")
-        }
-    })
-    .and_then(|r| r.get_mut("cmd"))
-    .and_then(|c| c.get_mut("win"));
+    let torch = cfg.get_mut("components").and_then(|c| c.get_mut("torch"));
+    let slot = torch
+        .and_then(|t| {
+            if t.get("rocm10").is_some() {
+                t.get_mut("rocm10")
+            } else {
+                t.get_mut("rocm65")
+            }
+        })
+        .and_then(|r| r.get_mut("cmd"))
+        .and_then(|c| c.get_mut("win"));
     match slot {
         Some(s) => {
             *s = serde_json::Value::String(cmd);
@@ -1998,20 +2008,6 @@ pub(crate) fn long_paths_state(output: &str) -> Option<bool> {
 }
 
 #[tauri::command]
-pub async fn preflight_check() -> Result<serde_json::Value, String> {
-    // Read-only (no mutating guard): future UI can run this any time.
-    let repo = get_repo_dir();
-    let gpu = get_gpu_info_sync();
-    let plan = build_install_plan(&gpu);
-    let (fatal, checks) = run_preflight_checks(&repo, &gpu, &plan);
-    Ok(serde_json::json!({
-        "ok": !fatal,
-        "profile": plan.get("profile"),
-        "checks": checks.iter().map(|c| serde_json::json!({"id": c.id, "level": c.level, "msg": c.msg})).collect::<Vec<_>>(),
-    }))
-}
-
-#[tauri::command]
 pub async fn install(
     app: tauri::AppHandle,
     env_type: Option<String>,
@@ -2026,7 +2022,9 @@ pub async fn install(
         Some(t @ ("uv" | "venv" | "conda")) => t.to_string(),
         Some(other) => {
             mutating_done();
-            return Err(format!("unknown environment type '{other}' (expected uv, venv or conda)"));
+            return Err(format!(
+                "unknown environment type '{other}' (expected uv, venv or conda)"
+            ));
         }
     };
     let repo = get_repo_dir();
@@ -2380,28 +2378,29 @@ pub async fn install(
     };
     if let Some((primary, _)) = &amd_cmds {
         match patch_therock_torch_cmd(&repo, primary) {
-                Ok(()) => {
-                    emit(&format!("[*] AMD TheRock torch: stable whl-next (torch 2.13+rocm10, per-box device targets)\n{primary}\n"));
-                    // RDNA4: the experimental HIP GGUF wheel installs in THIS
-                    // env (torch 2.13+rocm10) — Sync lands it via gguf_rocm10,
-                    // and the HIP GGUF (exp) button reinstalls it. No separate
-                    // ROCm 7.14 environment any more.
-                    if ["AMD_GFX1200", "AMD_GFX1201"]
-                        .contains(&plan["profile"].as_str().unwrap_or(""))
-                    {
-                        emit("[i] Experimental HIP GGUF wheel (RDNA4, gguf 1.0.27+torch213rocm100py312) installs in this env via Sync GPU Wheels → GGUF, or the HIP GGUF (exp) button. Validation pending.\n");
-                    }
-                }
-                // Fail-closed (issue #15): without the TheRock entry setup.py
-                // installs its stock torch entry — never run it unpatched.
-                Err(e) => {
-                    #[cfg(windows)]
-                    if let Some(old) = saved_path.clone() { std::env::set_var("PATH", old); }
-                    clear_setup_child_env();
-                    mutating_done();
-                    return Err(format!("AMD install needs setup_config.json's TheRock torch entry, but patching it failed ({e}) — upstream schema changed. setup.py was NOT run: its stock entry would install the wrong torch. Copy diagnostics (System → Troubleshooting) and report this."));
+            Ok(()) => {
+                emit(&format!("[*] AMD TheRock torch: stable whl-next (torch 2.13+rocm10, per-box device targets)\n{primary}\n"));
+                // RDNA4: the experimental HIP GGUF wheel installs in THIS
+                // env (torch 2.13+rocm10) — Sync lands it via gguf_rocm10,
+                // and the HIP GGUF (exp) button reinstalls it. No separate
+                // ROCm 7.14 environment any more.
+                if ["AMD_GFX1200", "AMD_GFX1201"].contains(&plan["profile"].as_str().unwrap_or(""))
+                {
+                    emit("[i] Experimental HIP GGUF wheel (RDNA4, gguf 1.0.27+torch213rocm100py312) installs in this env via Sync GPU Wheels → GGUF, or the HIP GGUF (exp) button. Validation pending.\n");
                 }
             }
+            // Fail-closed (issue #15): without the TheRock entry setup.py
+            // installs its stock torch entry — never run it unpatched.
+            Err(e) => {
+                #[cfg(windows)]
+                if let Some(old) = saved_path.clone() {
+                    std::env::set_var("PATH", old);
+                }
+                clear_setup_child_env();
+                mutating_done();
+                return Err(format!("AMD install needs setup_config.json's TheRock torch entry, but patching it failed ({e}) — upstream schema changed. setup.py was NOT run: its stock entry would install the wrong torch. Copy diagnostics (System → Troubleshooting) and report this."));
+            }
+        }
     }
     // setup.py driver (issue #15): setup.py --auto re-detects the GPU
     // itself (wmic.exe is removed on current Windows 11 → Unknown →
@@ -3116,7 +3115,9 @@ pub async fn install(
                 })
                 .unwrap_or_default();
             if torch_ver.contains("rocm10") || torch_ver.contains("rocm7.15") {
-                emit(&format!("[*] AMD env: torch {torch_ver} (numpy 2.x compatible) — skipping numpy pin.\n"));
+                emit(&format!(
+                    "[*] AMD env: torch {torch_ver} (numpy 2.x compatible) — skipping numpy pin.\n"
+                ));
             } else {
                 emit("[*] AMD env: pinning numpy==1.26.4 for ROCm torch compat…\n");
                 match silent_command(&smoke_py).args(["-m", "pip", "install", "numpy==1.26.4", "setuptools", "hf-xet"]).current_dir(&repo).output() {
@@ -3848,12 +3849,8 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
     ];
     // Download + verify before pip sees it (see `wheels`): a swapped or
     // truncated asset fails loudly here instead of landing in the env.
-    let argv = match crate::wheels::verify_argv_wheels(
-        argv,
-        &crate::wheels::cache_dir(),
-        &emit_hip,
-    )
-    .await
+    let argv = match crate::wheels::verify_argv_wheels(argv, &crate::wheels::cache_dir(), &emit_hip)
+        .await
     {
         Ok(a) => a,
         Err(e) => {
@@ -3941,7 +3938,11 @@ pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_jso
         mutating_done();
         return Err("Could not read the active env's torch build — install PyTorch first (Run Setup / restore).".into());
     };
-    let os = if cfg!(windows) { "win_amd64" } else { "linux_x86_64" };
+    let os = if cfg!(windows) {
+        "win_amd64"
+    } else {
+        "linux_x86_64"
+    };
     let Some(url) = crate::hw::wgpkernels_wheel_url(&kind, os) else {
         mutating_done();
         return Err(format!(
@@ -3965,27 +3966,24 @@ pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_jso
         "--upgrade".into(),
         url.clone(),
     ];
-    let argv = match crate::wheels::verify_argv_wheels(
-        argv,
-        &crate::wheels::cache_dir(),
-        &emit_w,
-    )
-    .await
-    {
-        Ok(a) => a,
-        Err(e) => {
-            emit_w(&format!("[!] {e}\n"));
-            mutating_done();
-            return Err(e);
-        }
-    };
+    let argv =
+        match crate::wheels::verify_argv_wheels(argv, &crate::wheels::cache_dir(), &emit_w).await {
+            Ok(a) => a,
+            Err(e) => {
+                emit_w(&format!("[!] {e}\n"));
+                mutating_done();
+                return Err(e);
+            }
+        };
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     let ok = crate::base::run_logged(&app, &py_s, &argv_ref, None, emit_w).await;
     mutating_done();
     if !ok {
         return Err("WGPKernels wheel install failed — see console output. The wheel must match your torch/CUDA build (cu130 for torch 2.10+cu13, cu128 for torch 2.7+cu12.8).".into());
     }
-    Ok(serde_json::json!({"ok": true, "success": true, "wheel": url, "version": crate::hw::WGPKERNELS_VERSION, "torchKind": kind}))
+    Ok(
+        serde_json::json!({"ok": true, "success": true, "wheel": url, "version": crate::hw::WGPKERNELS_VERSION, "torchKind": kind}),
+    )
 }
 
 /// Post-install override wheels: the subset of Sync that setup.py can never
@@ -4196,8 +4194,7 @@ async fn sync_post_install_overrides(app: &tauri::AppHandle, repo: &std::path::P
             let _ = app.emit("setup-output", s.to_string());
         };
         // Split the cmd (`--no-deps <url>` must be TWO argv items, not one).
-        let mut argv: Vec<String> =
-            vec!["-m".into(), "pip".into(), "install".into()];
+        let mut argv: Vec<String> = vec!["-m".into(), "pip".into(), "install".into()];
         argv.extend(pip_install_argv(&url));
         argv.push("--upgrade".into());
         // Download + verify every wheel URL before pip (see `wheels`).
@@ -4216,8 +4213,7 @@ async fn sync_post_install_overrides(app: &tauri::AppHandle, repo: &std::path::P
             }
         };
         let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
-        if !crate::base::run_logged(&app, &py_s, &argv_ref, None, emit_k).await
-        {
+        if !crate::base::run_logged(app, &py_s, &argv_ref, None, emit_k).await {
             emit_log(&format!("[!] post-install override for {name} failed — install itself succeeded; run Update GPU Wheels manually\n"));
         }
     }
@@ -4248,7 +4244,9 @@ pub(crate) fn kernel_triton_keep_line(installed: &str, wanted: &str) -> String {
 }
 
 pub(crate) fn kernel_sync_summary_line(synced: usize, current: usize, failed: usize) -> String {
-    format!("[✓] kernel sync complete — {synced} synced, {current} already current, {failed} failed\n")
+    format!(
+        "[✓] kernel sync complete — {synced} synced, {current} already current, {failed} failed\n"
+    )
 }
 
 async fn sync_kernels_inner(
@@ -4392,9 +4390,7 @@ async fn sync_kernels_inner(
                     });
                 let _ = tx.send(out);
             });
-            if let Ok(Some(remote)) =
-                rx.recv_timeout(std::time::Duration::from_secs(15))
-            {
+            if let Ok(Some(remote)) = rx.recv_timeout(std::time::Duration::from_secs(15)) {
                 if let Some(remote_hash) = remote.split_whitespace().next() {
                     // Equality is NOT the question: after any non-fast-forward
                     // `git pull` the checkout carries a local merge commit, so
@@ -4424,10 +4420,7 @@ async fn sync_kernels_inner(
     // resolve through setup_config's single `AMD` profile, which since
     // upstream 17307e5 lists `wgpkernels` in its kernels.
     let cfg_profile: &str = if profile.starts_with("AMD")
-        && cfg
-            .get("gpu_profiles")
-            .and_then(|p| p.get("AMD"))
-            .is_some()
+        && cfg.get("gpu_profiles").and_then(|p| p.get("AMD")).is_some()
     {
         "AMD"
     } else {
@@ -4450,11 +4443,11 @@ async fn sync_kernels_inner(
             .and_then(serde_json::Value::as_bool)
             != Some(false)
     }; // ponytail: default safe post6 (1348e5b) — off means setup_config as published
-    // Sage lives outside kernels[] too (`gpu_profiles[profile].sage` ->
-    // `components.sage[tag]`). Append it whenever the profile declares a tag —
-    // RTX_20 `v1`, RTX_30/40/50 `v220_cu13`, AMD `v1` — so the wheel/spec
-    // actually syncs (it used to be RTX_30/40/50-only, so RTX_20/AMD silently
-    // skipped it) and the safe/upstream toggle still has it in the list.
+       // Sage lives outside kernels[] too (`gpu_profiles[profile].sage` ->
+       // `components.sage[tag]`). Append it whenever the profile declares a tag —
+       // RTX_20 `v1`, RTX_30/40/50 `v220_cu13`, AMD `v1` — so the wheel/spec
+       // actually syncs (it used to be RTX_30/40/50-only, so RTX_20/AMD silently
+       // skipped it) and the safe/upstream toggle still has it in the list.
     let sage_tag = cfg
         .get("gpu_profiles")
         .and_then(|p| p.get(cfg_profile))
@@ -4511,13 +4504,12 @@ async fn sync_kernels_inner(
                 // envs need their own component. rocm10 is RDNA4-only
                 // (setup.py gates on the device-gfx1200/1201 torch extra).
                 if name == "wgpkernels" {
-                    let kind = env_torch_kind(&py.to_string_lossy().to_string());
+                    let kind = env_torch_kind(py.to_string_lossy().as_ref());
                     let comp = match kind.as_deref() {
                         Some("cu130") => "wgpkernels",
                         Some("cu128") => "wgpkernels_cu128",
                         Some("rocm100")
-                            if ["AMD_GFX1200", "AMD_GFX1201"]
-                                .contains(&profile.as_str()) =>
+                            if ["AMD_GFX1200", "AMD_GFX1201"].contains(&profile.as_str()) =>
                         {
                             "wgpkernels_rocm10"
                         }
@@ -4530,7 +4522,7 @@ async fn sync_kernels_inner(
                         // Probe failure on an AMD box must never guess the
                         // CUDA cu130 wheel; NVIDIA profiles imply cu130.
                         None if profile.starts_with("AMD") => {
-                            let m = format!("[!] WGPKernels: could not read this env's torch build (AMD) — skipping; install it from the WGPKernels button once torch imports\n");
+                            let m = "[!] WGPKernels: could not read this env's torch build (AMD) — skipping; install it from the WGPKernels button once torch imports\n".to_string();
                             crate::base::push_log(&m, "setup");
                             let _ = app.emit("launch-log", m);
                             continue;
@@ -4557,12 +4549,11 @@ async fn sync_kernels_inner(
                 // setup.py's (torch_k, py_k) table off the LIVE env — it is the
                 // env that receives the wheel, so it has the last word.
                 } else if name == "gguf" {
-                    let kind = env_torch_kind(&py.to_string_lossy().to_string());
+                    let kind = env_torch_kind(py.to_string_lossy().as_ref());
                     let pv = env_python_version(&py)
                         .map(|(a, b)| format!("{a}.{b}"))
                         .unwrap_or_default();
-                    let mapped =
-                        crate::hw::gguf_component_for(kind.as_deref().unwrap_or(""), &pv);
+                    let mapped = crate::hw::gguf_component_for(kind.as_deref().unwrap_or(""), &pv);
                     // RDNA4 gate (setup.py:454): the ROCm wheel only loads on
                     // gfx1200/gfx1201 — skip loudly elsewhere rather than
                     // install a wheel that cannot import.
@@ -4593,7 +4584,11 @@ async fn sync_kernels_inner(
                                 let _ = app.emit("launch-log", m);
                                 continue;
                             }
-                            if pv == "3.10" { "gguf_cu128" } else { "gguf" }
+                            if pv == "3.10" {
+                                "gguf_cu128"
+                            } else {
+                                "gguf"
+                            }
                         }
                     };
                     cfg.get("components")
@@ -4645,7 +4640,8 @@ async fn sync_kernels_inner(
             // two coincide (upstream pins post6), so this is quiet — it fires
             // the moment upstream picks a different build in that family, and
             // says so in the console rather than swapping silently.
-            if (name == "sage" || name == "sageattention") && sage_needs_safe_swap(&url, sage_safe) {
+            if (name == "sage" || name == "sageattention") && sage_needs_safe_swap(&url, sage_safe)
+            {
                 let m = format!(
                     "[*] SageAttention: upstream pins {} — installing the launcher's known-good build instead (uncheck 'Safe SageAttention build' to take upstream's)\n",
                     url.rsplit('/').next().unwrap_or(&url)
@@ -4689,27 +4685,27 @@ async fn sync_kernels_inner(
                 }
             }
             // Already at the wanted version? Skip the download. pip re-fetches a
-              // direct-URL wheel every run, so a no-op Sync used to pull
-              // 282 MB (nunchaku 111.7 + gguf 153.5 + sage 16.7) for wheels
-              // already installed at exactly those versions. Probe trouble
-              // never skips — unknown components and failed probes install,
-              // which is the pre-existing behaviour.
-              if let Some(want) = kernel_spec_version_full(&url) {
-                  let dists = kernel_dist_names(name);
-                  if !dists.is_empty() {
-                      let py_probe = py.to_string_lossy().to_string();
-                      if let Some(have) = pip_show_version(&py_probe, dists).await {
-                          if kernel_version_matches(&have, &want) {
-                              let m = kernel_skip_line(&name, &have);
-                              crate::base::push_log(&m, "setup");
-                              let _ = app.emit("launch-log", m);
-                              current += 1;
-                              continue;
-                          }
-                      }
-                  }
-              }
-              let m = format!("[*] sync kernel {name}\n");
+            // direct-URL wheel every run, so a no-op Sync used to pull
+            // 282 MB (nunchaku 111.7 + gguf 153.5 + sage 16.7) for wheels
+            // already installed at exactly those versions. Probe trouble
+            // never skips — unknown components and failed probes install,
+            // which is the pre-existing behaviour.
+            if let Some(want) = kernel_spec_version_full(&url) {
+                let dists = kernel_dist_names(name);
+                if !dists.is_empty() {
+                    let py_probe = py.to_string_lossy().to_string();
+                    if let Some(have) = pip_show_version(&py_probe, dists).await {
+                        if kernel_version_matches(&have, &want) {
+                            let m = kernel_skip_line(name, &have);
+                            crate::base::push_log(&m, "setup");
+                            let _ = app.emit("launch-log", m);
+                            current += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+            let m = format!("[*] sync kernel {name}\n");
             crate::base::push_log(&m, "setup");
             let _ = app.emit("launch-log", m);
             let emit_k = |s: &str| {
@@ -4719,36 +4715,24 @@ async fn sync_kernels_inner(
             let py_s = py.to_string_lossy().to_string();
             // Split the setup_config cmd: `--no-deps <url>` must be TWO argv
             // items — one combined string fails with `no such option`.
-            let mut argv: Vec<String> =
-                vec!["-m".into(), "pip".into(), "install".into()];
+            let mut argv: Vec<String> = vec!["-m".into(), "pip".into(), "install".into()];
             argv.extend(pip_install_argv(&url));
             argv.push("--upgrade".into());
             // Download + verify every wheel URL before pip (see `wheels`):
             // a checksum mismatch aborts this component, installing nothing.
-            let argv = match crate::wheels::verify_argv_wheels(
-                argv,
-                &crate::wheels::cache_dir(),
-                &emit_k,
-            )
-            .await
-            {
-                Ok(a) => a,
-                Err(e) => {
-                    emit_k(&format!("[!] {e}\n"));
-                    failed.push(name.to_string());
-                    continue;
-                }
-            };
+            let argv =
+                match crate::wheels::verify_argv_wheels(argv, &crate::wheels::cache_dir(), &emit_k)
+                    .await
+                {
+                    Ok(a) => a,
+                    Err(e) => {
+                        emit_k(&format!("[!] {e}\n"));
+                        failed.push(name.to_string());
+                        continue;
+                    }
+                };
             let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
-            if !run_logged(
-                &app,
-                &py_s,
-                &argv_ref,
-                None,
-                emit_k,
-            )
-            .await
-            {
+            if !run_logged(&app, &py_s, &argv_ref, None, emit_k).await {
                 failed.push(name.to_string());
             } else {
                 synced += 1;
@@ -4756,7 +4740,7 @@ async fn sync_kernels_inner(
         }
     }
     mutating_done();
-        emit_log(&kernel_sync_summary_line(synced, current, failed.len()));
+    emit_log(&kernel_sync_summary_line(synced, current, failed.len()));
     if !failed.is_empty() {
         return Err(format!(
             "kernel sync failed for: {} — see console output",
@@ -5135,14 +5119,20 @@ mod wangp_git_tests {
             Some("1.2.1+cu13.0torch2.10")
         );
         // No version to compare → never skip (fail-open to installing).
-        assert_eq!(super::kernel_spec_version_full("--no-deps https://x/pkg.whl"), None);
+        assert_eq!(
+            super::kernel_spec_version_full("--no-deps https://x/pkg.whl"),
+            None
+        );
         assert_eq!(super::kernel_spec_version_full(""), None);
     }
 
     #[test]
     fn base_version_strips_local_build_tags() {
         assert_eq!(super::base_version("1.0.27+torch210cu130py311"), "1.0.27");
-        assert_eq!(super::base_version("2.2.0+cu130torch2.10.0andhigher.post6"), "2.2.0");
+        assert_eq!(
+            super::base_version("2.2.0+cu130torch2.10.0andhigher.post6"),
+            "2.2.0"
+        );
         assert_eq!(super::base_version("3.6.0.post26"), "3.6.0.post26");
     }
 
@@ -5158,7 +5148,9 @@ mod wangp_git_tests {
     fn update_backup_folder_is_not_a_personal_file() {
         use super::{count_personal_untracked, is_update_backup_path, parse_git_porcelain};
         assert!(is_update_backup_path(".launcher-update-backup"));
-        assert!(is_update_backup_path(".launcher-update-backup/defaults/x.json"));
+        assert!(is_update_backup_path(
+            ".launcher-update-backup/defaults/x.json"
+        ));
         assert!(!is_update_backup_path(".launcher-update-backup-old/x.json"));
         assert!(!is_update_backup_path("defaults/x.json"));
         assert!(!is_update_backup_path("launcher-update-backup/x.json"));
@@ -5271,44 +5263,46 @@ mod wangp_pin_tests {
     }
 }
 /// Fresh-install seeding of the Performance Settings keys, so the first
-    /// launch is already calibrated for this box instead of waiting for a
-    /// Detect click. Setdefault-only (see `seed_memory_defaults`) and called
-    /// from `install()` alone — an update must never re-seed over settings the
-    /// user tuned here or inside WanGP.
-    ///
-    /// Creates wgp_config.json when it does not exist yet: upstream
-    /// filldefaults whatever is missing on first launch, so a partial
-    /// document is the normal shape, not a corrupt one. Silent on any
-    /// trouble — a failed seed never fails an install.
-    fn seed_install_memory_defaults(repo: &Path, emit: &dyn Fn(&str)) {
-        let cfg_path = repo.join("wgp_config.json");
-        let mut cfg = std::fs::read_to_string(&cfg_path)
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .unwrap_or_else(|| serde_json::json!({}));
-        let rec =
-            crate::features::auto_tune_recommend(Some(crate::features::auto_tune_detect()), None);
-        let seeded = crate::features::seed_memory_defaults(&mut cfg, &rec);
-        if seeded.is_empty() {
-            return;
-        }
-        if atomic_write(
-            &cfg_path,
-            &serde_json::to_string_pretty(&cfg).unwrap_or_default(),
-        )
-        .is_err()
-        {
-            emit("[i] could not seed the recommended performance settings — set them from Performance Settings when convenient.\n");
-            return;
-        }
-        emit(&format!(
-            "[i] seeded {} recommended performance setting(s) for this hardware: {}\n",
-            seeded.len(),
-            seeded.join(", ")
-        ));
+/// launch is already calibrated for this box instead of waiting for a
+/// Detect click. Setdefault-only (see `seed_memory_defaults`) and called
+/// from `install()` alone — an update must never re-seed over settings the
+/// user tuned here or inside WanGP.
+///
+/// Creates wgp_config.json when it does not exist yet: upstream
+/// filldefaults whatever is missing on first launch, so a partial
+/// document is the normal shape, not a corrupt one. Silent on any
+/// trouble — a failed seed never fails an install.
+fn seed_install_memory_defaults(repo: &Path, emit: &dyn Fn(&str)) {
+    let cfg_path = repo.join("wgp_config.json");
+    let mut cfg = std::fs::read_to_string(&cfg_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let rec = crate::features::auto_tune_recommend(
+        Some(crate::features::auto_tune_detect_blocking()),
+        None,
+    );
+    let seeded = crate::features::seed_memory_defaults(&mut cfg, &rec);
+    if seeded.is_empty() {
+        return;
     }
+    if atomic_write(
+        &cfg_path,
+        &serde_json::to_string_pretty(&cfg).unwrap_or_default(),
+    )
+    .is_err()
+    {
+        emit("[i] could not seed the recommended performance settings — set them from Performance Settings when convenient.\n");
+        return;
+    }
+    emit(&format!(
+        "[i] seeded {} recommended performance setting(s) for this hardware: {}\n",
+        seeded.len(),
+        seeded.join(", ")
+    ));
+}
 
-    /// Files that differ between the current checkout and what was just
+/// Files that differ between the current checkout and what was just
 /// fetched. NEVER `rev-list --count HEAD..@{u}`: the install clone is
 /// `--depth 1`, so git records a shallow boundary at the old HEAD and
 /// the first fetch walks the whole upstream history back through it —
@@ -5394,7 +5388,7 @@ pub(crate) fn kernel_version_matches(installed: &str, wanted_full: &str) -> bool
 /// → `1.0.25`, `2.2.0+cu130torch2.10.post6` → `2.2.0`. Pure.
 pub(crate) fn base_version(v: &str) -> String {
     v.trim()
-        .split(|c| c == '+' || c == '%')
+        .split(['+', '%'])
         .next()
         .unwrap_or("")
         .trim()
@@ -5444,7 +5438,9 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
     if let Some(0) = incoming {
         if !dirty {
             let head = wangp_head_short(&repo).unwrap_or_else(|| "?".into());
-            emit(&format!("[=] Already at upstream {head} — nothing to update.\n"));
+            emit(&format!(
+                "[=] Already at upstream {head} — nothing to update.\n"
+            ));
             let (_dep, drift) = post_update_dep_check(&repo, &req_path, &emit);
             let kept = kept_update_backups(&repo);
             if kept > 0 {
@@ -5479,7 +5475,14 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         }
     }
     clear_untracked_merge_collisions(&repo, emit);
-    if !run_logged(&app, "git", &["reset", "--hard", "FETCH_HEAD"], Some(&repo), emit).await
+    if !run_logged(
+        &app,
+        "git",
+        &["reset", "--hard", "FETCH_HEAD"],
+        Some(&repo),
+        emit,
+    )
+    .await
     {
         mutating_done();
         return Err("git reset to upstream failed — offline? See console output above.".into());
@@ -5493,7 +5496,9 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         .output();
     if !git_unmerged_paths(&repo).is_empty() {
         mutating_done();
-        return Err("merge state survived the reset — run Verify / Repair Wan2GP files, then retry.".into());
+        return Err(
+            "merge state survived the reset — run Verify / Repair Wan2GP files, then retry.".into(),
+        );
     }
     // Quiet success summary (one line, always): the checkout is now exactly
     // upstream — no local edits survive (by policy), untracked untouched.
@@ -5590,7 +5595,7 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
                 } else {
                     requirements = "reinstalled";
                 }
-                  if mmgp_unpinned {
+                if mmgp_unpinned {
                     match silent_command(&py)
                         .args(["-m", "pip", "uninstall", "-y", "mmgp"])
                         .current_dir(&repo)
@@ -5918,7 +5923,10 @@ pub(crate) fn pin_marker_applies(marker: &str, py: (u32, u32)) -> bool {
             // Operators longest-first so `>=` wins over `>`.
             let (key, op, val) = ["==", "!=", "<=", ">=", "<", ">"]
                 .iter()
-                .find_map(|op| c.find(op).map(|i| (c[..i].trim(), *op, c[i + op.len()..].trim())))
+                .find_map(|op| {
+                    c.find(op)
+                        .map(|i| (c[..i].trim(), *op, c[i + op.len()..].trim()))
+                })
                 .unwrap_or(("", "", ""));
             if key.is_empty() {
                 return true;
@@ -5975,9 +5983,7 @@ fn env_python_version(py: &std::path::Path) -> Option<(u32, u32)> {
         return None;
     }
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    let mut it = text
-        .lines()
-        .filter_map(|l| l.trim().parse::<u32>().ok());
+    let mut it = text.lines().filter_map(|l| l.trim().parse::<u32>().ok());
     Some((it.next()?, it.next()?))
 }
 
@@ -6048,11 +6054,7 @@ pub(crate) fn parse_requirement_pins_for(
 /// environment-marker branches to the active interpreter, so conditional
 /// pins can't report phantom bumps; duplicate names resolve last-wins.
 /// Pure + unit-tested.
-pub(crate) fn diff_requirement_pins(
-    old: &str,
-    new: &str,
-    py: Option<(u32, u32)>,
-) -> Vec<String> {
+pub(crate) fn diff_requirement_pins(old: &str, new: &str, py: Option<(u32, u32)>) -> Vec<String> {
     use std::collections::HashMap;
     fn deduped(pins: Vec<(String, String)>) -> Vec<(String, String)> {
         let mut order: Vec<String> = Vec::new();
@@ -6221,7 +6223,9 @@ fn post_update_dep_check(
 }
 #[cfg(test)]
 mod kernel_skip_tests {
-    use super::{base_version, kernel_dist_names, kernel_spec_version_full, kernel_version_matches};
+    use super::{
+        base_version, kernel_dist_names, kernel_spec_version_full, kernel_version_matches,
+    };
 
     /// The three wheels an RTX_30 sync touches, exactly as setup_config.json
     /// spells them, against what `pip show` really prints for them. The
@@ -6245,7 +6249,8 @@ mod kernel_skip_tests {
             ),
         ];
         for (spec, installed) in cases {
-            let want = kernel_spec_version_full(spec).unwrap_or_else(|| panic!("no version in {spec}"));
+            let want =
+                kernel_spec_version_full(spec).unwrap_or_else(|| panic!("no version in {spec}"));
             assert!(
                 kernel_version_matches(installed, &want),
                 "{spec}: wanted {want} vs installed {installed}"
@@ -6259,10 +6264,16 @@ mod kernel_skip_tests {
         let post6 = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl";
         let post4 = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl";
         let have = "2.2.0+cu130torch2.10.0andhigher.post6";
-        assert!(kernel_version_matches(have, &kernel_spec_version_full(post6).unwrap()));
+        assert!(kernel_version_matches(
+            have,
+            &kernel_spec_version_full(post6).unwrap()
+        ));
         // User turns the safe toggle off: same base version, different wheel —
         // must NOT be skipped, or the setting silently does nothing.
-        assert!(!kernel_version_matches(have, &kernel_spec_version_full(post4).unwrap()));
+        assert!(!kernel_version_matches(
+            have,
+            &kernel_spec_version_full(post4).unwrap()
+        ));
     }
 
     #[test]
@@ -6304,8 +6315,13 @@ mod pip_argv_tests {
         );
         // Bare specs stay a single item.
         assert_eq!(
-            pip_install_argv("https://example.com/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl"),
-            vec!["https://example.com/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl".to_string()]
+            pip_install_argv(
+                "https://example.com/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl"
+            ),
+            vec![
+                "https://example.com/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-win_amd64.whl"
+                    .to_string()
+            ]
         );
         assert_eq!(
             pip_install_argv("sageattention==1.0.6"),
@@ -6474,7 +6490,11 @@ mod override_wheels_tests {
     const SAGE_CU128: &str = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows/sageattention-2.2.0+cu128torch2.7.1-cp310-cp310-win_amd64.whl";
     #[test]
     fn flags_stale_gguf_and_post4() {
-        let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "RTX_30", true);
+        let w = post_install_override_urls(
+            &cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4),
+            "RTX_30",
+            true,
+        );
         let gguf = w.gguf.expect("stale gguf must swap");
         assert!(gguf.contains("1.0.27"), "got {gguf}");
         let sage = w.sage.expect("post4 must swap when safe");
@@ -6498,9 +6518,17 @@ mod override_wheels_tests {
     }
     #[test]
     fn future_family_build_swaps_only_while_the_toggle_is_on() {
-        let on = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST7), "RTX_30", true);
+        let on = post_install_override_urls(
+            &cfg_with(GGUF_1014, "v220_cu13", SAGE_POST7),
+            "RTX_30",
+            true,
+        );
         assert_eq!(on.sage.as_deref(), Some(super::SAGE_SAFE_WIN_URL));
-        let off = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST7), "RTX_30", false);
+        let off = post_install_override_urls(
+            &cfg_with(GGUF_1014, "v220_cu13", SAGE_POST7),
+            "RTX_30",
+            false,
+        );
         assert!(off.sage.is_none(), "opted out must install upstream's pick");
     }
     #[test]
@@ -6522,10 +6550,18 @@ mod override_wheels_tests {
         let w26 = post_install_override_urls(&old26, "RTX_30", true);
         assert!(w26.gguf.is_some(), "1.0.26 must swap to 1.0.27");
         // User chose upstream sage → sage untouched, gguf still swaps.
-        let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "RTX_30", false);
+        let w = post_install_override_urls(
+            &cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4),
+            "RTX_30",
+            false,
+        );
         assert!(w.gguf.is_some() && w.sage.is_none());
         // Non-RTX profile → sage untouched.
-        let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "GTX_10", true);
+        let w = post_install_override_urls(
+            &cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4),
+            "GTX_10",
+            true,
+        );
         assert!(w.sage.is_none());
     }
     #[test]
@@ -6678,9 +6714,18 @@ mod req_pin_tests {
         assert!(pin_marker_applies("python_version == \"3.11\"", (3, 11)));
         // Platform clauses use the compile-time OS; inequality against a
         // nonexistent platform is true on every OS (keeps tests portable).
-        assert!(pin_marker_applies("platform_system != \"NoSuchOS\" and python_version == \"3.11\"", (3, 11)));
-        assert!(!pin_marker_applies("platform_system == \"NoSuchOS\" and python_version == \"3.11\"", (3, 11)));
-        assert!(pin_marker_applies("python_version == \"3.10\" or python_version == \"3.11\"", (3, 11)));
+        assert!(pin_marker_applies(
+            "platform_system != \"NoSuchOS\" and python_version == \"3.11\"",
+            (3, 11)
+        ));
+        assert!(!pin_marker_applies(
+            "platform_system == \"NoSuchOS\" and python_version == \"3.11\"",
+            (3, 11)
+        ));
+        assert!(pin_marker_applies(
+            "python_version == \"3.10\" or python_version == \"3.11\"",
+            (3, 11)
+        ));
         // Unknown keys fail visible (kept), never silently dropped.
         assert!(pin_marker_applies("os_name == \"whatever\"", (3, 11)));
         assert!(pin_marker_applies("not a marker at all", (3, 11)));
@@ -7332,6 +7377,73 @@ pub fn dlss5_status() -> serde_json::Value {
     serde_json::json!({"ok": true, "installed": present > 0, "complete": present == files.len(), "present": present, "total": files.len(), "files": files})
 }
 
+// ── persisted DLSS 5 verdicts ────────────────────────────────────────────
+// Hashing the runtime costs a couple hundred MB of reads, so the panel must
+// not repeat it on every launch. The last real comparison is cached and only
+// trusted while the file still has the same pin, size and mtime — change any
+// of the three (replace, reinstall, new Wan2GP pin) and the row drops back to
+// "expected" until something actually hashes it again. The upstream probe
+// result lives in the same file so installed rows can carry an update badge.
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn dlss5_cache_file() -> PathBuf {
+    get_data_dir().join("dlss5-verified.json")
+}
+
+fn dlss5_cache_read() -> serde_json::Value {
+    std::fs::read_to_string(dlss5_cache_file())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+fn dlss5_cache_update<F: FnOnce(&mut serde_json::Map<String, serde_json::Value>)>(f: F) {
+    let mut v = dlss5_cache_read();
+    if !v.is_object() {
+        v = serde_json::json!({});
+    }
+    if let Some(obj) = v.as_object_mut() {
+        f(obj);
+    }
+    if let Ok(s) = serde_json::to_string_pretty(&v) {
+        let _ = atomic_write(&dlss5_cache_file(), &s);
+    }
+}
+
+/// (size, mtime in ms) — the cheap identity of the bytes a hash described.
+fn dlss5_file_stamp(p: &Path) -> Option<(u64, u64)> {
+    let md = std::fs::metadata(p).ok()?;
+    let ms = md
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Some((md.len(), ms))
+}
+
+/// A cached row is evidence only if it still describes the file on disk and
+/// the same pin it was compared against.
+pub(crate) fn dlss_cache_row_valid(
+    expected: &str,
+    entry: &serde_json::Value,
+    size: u64,
+    mtime_ms: u64,
+) -> bool {
+    entry.get("expected").and_then(|v| v.as_str()) == Some(expected)
+        && entry.get("size").and_then(|v| v.as_u64()) == Some(size)
+        && entry.get("mtimeMs").and_then(|v| v.as_u64()) == Some(mtime_ms)
+        && matches!(
+            entry.get("state").and_then(|v| v.as_str()),
+            Some("match") | Some("mismatch")
+        )
+}
+
 /// Verdict for one DLSS 5 file: existence first, then the hash itself. Pure so
 /// the classification is tested without 200 MB of DLLs on disk.
 pub(crate) fn dlss_file_state(exists: bool, got: Option<&str>, expected: &str) -> &'static str {
@@ -7373,6 +7485,11 @@ fn dlss5_verify_files_blocking(dlss5: &std::path::Path) -> serde_json::Value {
             "missing" => n_missing += 1,
             _ => n_mismatch += 1,
         }
+        let stamp = if exists {
+            dlss5_file_stamp(&p).unwrap_or((0, 0))
+        } else {
+            (0, 0)
+        };
         rows.push(serde_json::json!({
             "id": path,
             "pkg": pkg,
@@ -7380,6 +7497,8 @@ fn dlss5_verify_files_blocking(dlss5: &std::path::Path) -> serde_json::Value {
             "expected": sha,
             "got": got.unwrap_or_default(),
             "state": state,
+            "size": stamp.0,
+            "mtimeMs": stamp.1,
         }));
     }
     serde_json::json!({
@@ -7403,9 +7522,83 @@ pub async fn dlss5_verify_files() -> serde_json::Value {
     }
     let dlss5 = repo.join("dlss5");
     match tauri::async_runtime::spawn_blocking(move || dlss5_verify_files_blocking(&dlss5)).await {
-        Ok(v) => v,
-        Err(e) => serde_json::json!({"ok": false, "error": format!("verification task failed: {e}")}),
+        Ok(v) => {
+            // Remember a real comparison so the next launch can show it
+            // without re-reading hundreds of MB. Metadata-keyed, so the cache
+            // stops counting the moment the file changes.
+            if v["ok"].as_bool() == Some(true) {
+                if let Some(rows) = v["rows"].as_array() {
+                    let mut files = serde_json::Map::new();
+                    for row in rows {
+                        let Some(id) = row["id"].as_str() else {
+                            continue;
+                        };
+                        files.insert(
+                            id.to_string(),
+                            serde_json::json!({
+                                "expected": row["expected"],
+                                "got": row["got"],
+                                "state": row["state"],
+                                "size": row["size"],
+                                "mtimeMs": row["mtimeMs"],
+                            }),
+                        );
+                    }
+                    let now = unix_now_secs();
+                    dlss5_cache_update(|c| {
+                        c.insert("verifiedAt".into(), serde_json::json!(now));
+                        c.insert("files".into(), serde_json::Value::Object(files));
+                    });
+                }
+            }
+            v
+        }
+        Err(e) => {
+            serde_json::json!({"ok": false, "error": format!("verification task failed: {e}")})
+        }
     }
+}
+
+/// Cache-only view of the last verification + upstream probe. Every cached
+/// row is revalidated against the current pin, size and mtime before it is
+/// returned, so the panel can paint green immediately after a restart without
+/// trusting bytes that changed since they were hashed.
+#[tauri::command]
+pub fn dlss5_cached_state() -> serde_json::Value {
+    let repo = get_repo_dir();
+    if !repo.join("wgp.py").exists() {
+        return serde_json::json!({"ok": false, "error": "Wan2GP not installed"});
+    }
+    let dlss5 = repo.join("dlss5");
+    let cache = dlss5_cache_read();
+    let mut rows = Vec::new();
+    if let Some(files) = cache.get("files").and_then(|v| v.as_object()) {
+        for (path, pkg, version, sha) in DLSS5_FILES.iter() {
+            let Some(entry) = files.get(*path) else {
+                continue;
+            };
+            let Some((size, mtime_ms)) = dlss5_file_stamp(&dlss5.join(path)) else {
+                continue;
+            };
+            if !dlss_cache_row_valid(sha, entry, size, mtime_ms) {
+                continue;
+            }
+            rows.push(serde_json::json!({
+                "id": path,
+                "pkg": pkg,
+                "version": version,
+                "expected": sha,
+                "got": entry.get("got").and_then(|v| v.as_str()).unwrap_or(""),
+                "state": entry.get("state").and_then(|v| v.as_str()).unwrap_or(""),
+            }));
+        }
+    }
+    serde_json::json!({
+        "ok": true,
+        "rows": rows,
+        "verifiedAt": cache.get("verifiedAt").cloned().unwrap_or(serde_json::Value::Null),
+        "update": cache.get("update").cloned().unwrap_or(serde_json::Value::Null),
+    })
 }
 
 // ===========================================================================
@@ -7629,8 +7822,7 @@ pub async fn dlss5_update_check() -> serde_json::Value {
         let tag = found.and_then(|t| dlss_newest_tag(t, prefix));
         let latest = tag.map(|t| t.strip_prefix(prefix).unwrap_or(t));
         let pinned = dlss_pinned_version(pkg);
-        let (state, latest_version) =
-            dlss_update_verdict(pinned.as_deref().unwrap_or(""), latest);
+        let (state, latest_version) = dlss_update_verdict(pinned.as_deref().unwrap_or(""), latest);
         rows.push(serde_json::json!({
             "id": id,
             "pinned": pinned.unwrap_or_default(),
@@ -7645,8 +7837,7 @@ pub async fn dlss5_update_check() -> serde_json::Value {
     let reshade = reshade_latest(&client).await;
     online |= reshade.is_some();
     let reshade_pin = dlss_pinned_version("reshade").unwrap_or_default();
-    let (reshade_state, reshade_version) =
-        dlss_update_verdict(&reshade_pin, reshade.as_deref());
+    let (reshade_state, reshade_version) = dlss_update_verdict(&reshade_pin, reshade.as_deref());
     rows.push(serde_json::json!({
         "id": "reshade",
         "pinned": reshade_pin,
@@ -7656,7 +7847,26 @@ pub async fn dlss5_update_check() -> serde_json::Value {
         "source": "reshade.me",
     }));
 
-    serde_json::json!({"ok": true, "online": online, "rows": rows})
+    let checked_at = unix_now_secs();
+    let result = serde_json::json!({
+        "ok": true,
+        "online": online,
+        "rows": rows,
+        "checkedAt": checked_at,
+    });
+    // Only a real answer is cached; an offline/rate-limited probe must not
+    // suppress the next attempt for the whole TTL.
+    if online {
+        let update = serde_json::json!({
+            "checkedAt": checked_at,
+            "online": true,
+            "rows": result["rows"].clone(),
+        });
+        dlss5_cache_update(|c| {
+            c.insert("update".into(), update);
+        });
+    }
+    result
 }
 
 #[cfg(test)]
@@ -7667,7 +7877,10 @@ mod dlss5_update_tests {
     fn pinned_versions_come_from_the_manifest() {
         assert_eq!(dlss_pinned_version("dlss").as_deref(), Some("310.8.0"));
         assert_eq!(dlss_pinned_version("dlssg").as_deref(), Some("310.7.0"));
-        assert_eq!(dlss_pinned_version("dlssnr").as_deref(), Some("310.8.SF-v2"));
+        assert_eq!(
+            dlss_pinned_version("dlssnr").as_deref(),
+            Some("310.8.SF-v2")
+        );
         assert_eq!(dlss_pinned_version("renodx").as_deref(), Some("4.70"));
         assert_eq!(dlss_pinned_version("workers").as_deref(), Some("1.1.3"));
         assert_eq!(dlss_pinned_version("reshade").as_deref(), Some("6.8.0"));
@@ -7708,7 +7921,10 @@ mod dlss5_update_tests {
         assert_eq!(dlss_version_cmp("310.9.0", "310.8.0"), Ordering::Greater);
         assert_eq!(dlss_version_cmp("310.8.0", "310.9.0"), Ordering::Less);
         assert_eq!(dlss_version_cmp("310.8.0", "310.8"), Ordering::Equal);
-        assert_eq!(dlss_version_cmp("310.8.SF-v2", "310.8.SF-v3"), Ordering::Equal);
+        assert_eq!(
+            dlss_version_cmp("310.8.SF-v2", "310.8.SF-v3"),
+            Ordering::Equal
+        );
         // No numeric head at all: unorderable, so never a false "newer".
         assert_eq!(dlss_version_cmp("v1.1.3", "1.1.2"), Ordering::Equal);
     }
@@ -7726,7 +7942,10 @@ mod dlss5_update_tests {
         .collect();
         assert_eq!(dlss_newest_tag(&tags, "dlss-"), Some("dlss-310.9.0"));
         assert_eq!(dlss_newest_tag(&tags, "dlssg-"), Some("dlssg-310.7.0"));
-        assert_eq!(dlss_newest_tag(&tags, "renodx-dlss5-"), Some("renodx-dlss5-4.70"));
+        assert_eq!(
+            dlss_newest_tag(&tags, "renodx-dlss5-"),
+            Some("renodx-dlss5-4.70")
+        );
         assert_eq!(dlss_newest_tag(&tags, "wangp-v"), None);
         // Two tags it cannot order keep the first (GitHub's newest-first).
         let unorderable: Vec<String> = ["dlssnr-310.8.SF-v3", "dlssnr-310.8.SF-v2"]
@@ -7762,7 +7981,10 @@ mod dlss5_update_tests {
 /// is experimental upstream but shipped to every install — hardened equally.
 const TRITON_HELPER_MANIFESTS: &[(&str, &str)] = &[
     ("manifest.json", "CUDA helper (Python 3.11 · NVIDIA)"),
-    ("manifest_hip.json", "HIP helper (Python 3.12 · AMD ROCm, experimental)"),
+    (
+        "manifest_hip.json",
+        "HIP helper (Python 3.12 · AMD ROCm, experimental)",
+    ),
 ];
 
 /// SHA-256 of a file as lowercase hex. None when unreadable (missing/quarantined).
@@ -7820,18 +8042,44 @@ fn helper_row_verdict(
         Some(t) => t,
         None => {
             // Manifest missing or opaque — the row cannot be verified.
-            return (RowVerdict { missing: true, modified: false }, String::new(), String::new());
+            return (
+                RowVerdict {
+                    missing: true,
+                    modified: false,
+                },
+                String::new(),
+                String::new(),
+            );
         }
     };
     let bin_path = dir.join(bin.trim());
     if !bin_path.is_file() {
-        return (RowVerdict { missing: true, modified: false }, bin, built);
+        return (
+            RowVerdict {
+                missing: true,
+                modified: false,
+            },
+            bin,
+            built,
+        );
     }
     match file_sha256_hex(&bin_path) {
-        Some(got) if got.eq_ignore_ascii_case(sha.trim()) => {
-            (RowVerdict { missing: false, modified: false }, bin, built)
-        }
-        _ => (RowVerdict { missing: false, modified: true }, bin, built),
+        Some(got) if got.eq_ignore_ascii_case(sha.trim()) => (
+            RowVerdict {
+                missing: false,
+                modified: false,
+            },
+            bin,
+            built,
+        ),
+        _ => (
+            RowVerdict {
+                missing: false,
+                modified: true,
+            },
+            bin,
+            built,
+        ),
     }
 }
 
@@ -7868,7 +8116,10 @@ pub fn triton_runtime_status() -> serde_json::Value {
         // The engager wiring `shared/triton_runtime/__init__.py` is what
         // actually activates the helper — without it nothing engages even
         // with both pyds intact.
-        verdicts.push(RowVerdict { missing: true, modified: false });
+        verdicts.push(RowVerdict {
+            missing: true,
+            modified: false,
+        });
     }
     let (state, summary) = helper_state(&verdicts);
     // The engager (shared/triton_runtime/__init__.py) is what actually wires
@@ -7902,7 +8153,10 @@ mod triton_helper_tests {
     fn parses_both_upstream_shapes() {
         let (bin, sha, built) = parse_helper_manifest(CUDA_MANIFEST.as_bytes()).unwrap();
         assert_eq!(bin, "cuda_utils.cp311-win_amd64.pyd");
-        assert_eq!(sha, "6b07c1ff54bccd57b8eda216ef5fab8b41a3f93701e1c491147d2ad44f85f7f3");
+        assert_eq!(
+            sha,
+            "6b07c1ff54bccd57b8eda216ef5fab8b41a3f93701e1c491147d2ad44f85f7f3"
+        );
         assert_eq!(built, "3.7.1.post27");
         let (bin2, _, built2) = parse_helper_manifest(HIP_MANIFEST.as_bytes()).unwrap();
         assert_eq!(bin2, "hip_utils.cp312-win_amd64.pyd");
@@ -7922,23 +8176,44 @@ mod triton_helper_tests {
             Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
         );
         // Unreadable path → None (quarantined/missing file).
-        assert_eq!(file_sha256_hex(std::path::Path::new("Z:/definitely/not/here.pyd")), None);
+        assert_eq!(
+            file_sha256_hex(std::path::Path::new("Z:/definitely/not/here.pyd")),
+            None
+        );
     }
 
     #[test]
     fn state_summary_matrix() {
-        let ok = [RowVerdict { missing: false, modified: false }];
+        let ok = [RowVerdict {
+            missing: false,
+            modified: false,
+        }];
         let (s, m) = helper_state(&ok);
         assert_eq!(s, "intact");
         assert_eq!(m, "intact");
-        let (s, m) = helper_state(&[RowVerdict { missing: true, modified: false }]);
+        let (s, m) = helper_state(&[RowVerdict {
+            missing: true,
+            modified: false,
+        }]);
         assert_eq!(s, "missing");
         assert_eq!(m, "missing — AV quarantine suspected");
-        let (s, m) = helper_state(&[RowVerdict { missing: false, modified: true }]);
+        let (s, m) = helper_state(&[RowVerdict {
+            missing: false,
+            modified: true,
+        }]);
         assert_eq!(s, "modified");
         assert_eq!(m, "modified — reinstall Wan2GP");
         // Mixed: missing wins the short wording, reinstall is the action.
-        let (s, m) = helper_state(&[RowVerdict { missing: true, modified: false }, RowVerdict { missing: false, modified: true }]);
+        let (s, m) = helper_state(&[
+            RowVerdict {
+                missing: true,
+                modified: false,
+            },
+            RowVerdict {
+                missing: false,
+                modified: true,
+            },
+        ]);
         assert_eq!(s, "missing");
         assert_eq!(m, "missing/modified — reinstall Wan2GP");
     }
@@ -7961,7 +8236,10 @@ mod triton_helper_tests {
         let s = super::triton_runtime_status();
         println!("triton_runtime_status = {s}");
         let st = s["state"].as_str().unwrap_or("");
-        assert!(st == "intact" || st == "absent", "unexpected live state: {st} in {s}");
+        assert!(
+            st == "intact" || st == "absent",
+            "unexpected live state: {st} in {s}"
+        );
         if st == "intact" {
             assert_eq!(s["summary"].as_str(), Some("intact"));
             for r in s["rows"].as_array().unwrap() {
@@ -8004,10 +8282,7 @@ pub(crate) fn dlss_upstream_series(name: &str) -> Option<u32> {
                     k += 1;
                 }
                 // Upstream requires whitespace between RTX and the digits.
-                if k == j
-                    || k + 4 > b.len()
-                    || !b[k..k + 4].iter().all(|c| c.is_ascii_digit())
-                {
+                if k == j || k + 4 > b.len() || !b[k..k + 4].iter().all(|c| c.is_ascii_digit()) {
                     i += 1;
                     continue;
                 }
@@ -8044,7 +8319,9 @@ fn dlss_reason(series: u32, minimum: u32) -> String {
 /// (available, multi-frame max, runtime version). Pure + unit-tested.
 pub(crate) fn dlss_probe_summary(v: &serde_json::Value) -> (bool, Option<u64>, Option<String>) {
     (
-        v.get("available").and_then(|a| a.as_bool()).unwrap_or(false),
+        v.get("available")
+            .and_then(|a| a.as_bool())
+            .unwrap_or(false),
         v.get("multi_frame_count_max").and_then(|m| m.as_u64()),
         v.get("runtime_version")
             .and_then(|r| r.as_str())
@@ -8066,9 +8343,7 @@ pub(crate) fn dlss_verdict_state(
     hags: Option<bool>,
     probe_available: Option<bool>,
 ) -> serde_json::Value {
-    let blocked = |reason: String| {
-        serde_json::json!({"available": false, "reason": reason, "state": "blocked"})
-    };
+    let blocked = |reason: String| serde_json::json!({"available": false, "reason": reason, "state": "blocked"});
     if !os_windows {
         return blocked("Windows 11 required".into());
     }
@@ -8154,7 +8429,11 @@ pub async fn dlss5_check() -> serde_json::Value {
         .filter_map(|n| dlss_upstream_series(n))
         .max()
         .unwrap_or(0);
-    let fixed_series = names.iter().map(|n| dlss_fixed_series(n)).max().unwrap_or(0);
+    let fixed_series = names
+        .iter()
+        .map(|n| dlss_fixed_series(n))
+        .max()
+        .unwrap_or(0);
     let profile = if gpu_name.is_empty() {
         String::new()
     } else {
@@ -8199,58 +8478,60 @@ pub async fn dlss5_check() -> serde_json::Value {
             .await
         })
         .await;
-        if let Ok(Ok(join)) = run {
-            if let Ok(out) = join {
-                if out.status.success() {
-                    if let Ok(v) =
-                        serde_json::from_slice::<serde_json::Value>(&out.stdout)
-                    {
-                        let (avail, max_frames, rt_ver) = dlss_probe_summary(&v);
-                        probe = Some(serde_json::json!({
-                            "available": avail,
-                            "maxFrames": max_frames,
-                            "runtimeVersion": rt_ver,
-                            "raw": String::from_utf8_lossy(&out.stdout).trim().to_string(),
-                        }));
-                    } else {
-                        probe = Some(serde_json::json!({"available": false, "raw": "unparseable probe output"}));
-                    }
+        if let Ok(Ok(Ok(out))) = run {
+            if out.status.success() {
+                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                    let (avail, max_frames, rt_ver) = dlss_probe_summary(&v);
+                    probe = Some(serde_json::json!({
+                        "available": avail,
+                        "maxFrames": max_frames,
+                        "runtimeVersion": rt_ver,
+                        "raw": String::from_utf8_lossy(&out.stdout).trim().to_string(),
+                    }));
                 } else {
-                    // `ExitStatus`'s own Display already reads "exit code: 2",
-                    // so the old "exit {}" prefix rendered "exit exit code: 2".
-                    probe = Some(serde_json::json!({"available": false, "raw": out.status.to_string()}));
+                    probe = Some(
+                        serde_json::json!({"available": false, "raw": "unparseable probe output"}),
+                    );
                 }
+            } else {
+                // `ExitStatus`'s own Display already reads "exit code: 2",
+                // so the old "exit {}" prefix rendered "exit exit code: 2".
+                probe =
+                    Some(serde_json::json!({"available": false, "raw": out.status.to_string()}));
             }
         }
         if probe.is_none() {
-            probe = Some(serde_json::json!({"available": false, "raw": "probe timed out or failed to run"}));
+            probe = Some(
+                serde_json::json!({"available": false, "raw": "probe timed out or failed to run"}),
+            );
         }
     }
-    let verdict = |missing: &[&str], series: u32, minimum: u32, temporal: bool| -> serde_json::Value {
-        let probe_avail = if temporal {
-            probe
-                .as_ref()
-                .and_then(|p| p.get("available"))
-                .and_then(|a| a.as_bool())
-        } else {
-            None
+    let verdict =
+        |missing: &[&str], series: u32, minimum: u32, temporal: bool| -> serde_json::Value {
+            let probe_avail = if temporal {
+                probe
+                    .as_ref()
+                    .and_then(|p| p.get("available"))
+                    .and_then(|a| a.as_bool())
+            } else {
+                None
+            };
+            dlss_verdict_state(
+                missing.first().copied(),
+                series,
+                minimum,
+                temporal,
+                os_windows,
+                hags,
+                probe_avail,
+            )
         };
-        dlss_verdict_state(
-            missing.first().copied(),
-            series,
-            minimum,
-            temporal,
-            os_windows,
-            hags,
-            probe_avail,
-        )
-    };
     let nr = verdict(&nr_missing, fixed_series, 30, false);
     let fg = verdict(&fg_missing, fixed_series, 40, true);
     let nr_upstream = verdict(&nr_missing, upstream_series, 30, false);
     let fg_upstream = verdict(&fg_missing, upstream_series, 40, true);
-    let workstation_mismatch = fixed_series >= 30 && upstream_series < 30
-        || fixed_series >= 40 && upstream_series < 40;
+    let workstation_mismatch =
+        fixed_series >= 30 && upstream_series < 30 || fixed_series >= 40 && upstream_series < 40;
     let runtime_patch = dlss_runtime_patch_status(&repo);
     serde_json::json!({
         "ok": true,
@@ -8304,11 +8585,7 @@ pub(crate) fn dlss_patch_runtime_text(orig: &str) -> Option<String> {
     if !norm.contains(DLSS_RUNTIME_ANCHOR) {
         return None;
     }
-    let patched = norm.replacen(
-        DLSS_RUNTIME_ANCHOR,
-        DLSS_RUNTIME_PATCHED_BLOCK,
-        1,
-    );
+    let patched = norm.replacen(DLSS_RUNTIME_ANCHOR, DLSS_RUNTIME_PATCHED_BLOCK, 1);
     Some(if crlf {
         patched.replace('\n', "\r\n")
     } else {
@@ -8351,10 +8628,7 @@ fn dlss_runtime_paths(repo: &std::path::Path) -> (std::path::PathBuf, std::path:
     let runtime = repo.join(DLSS_RUNTIME_REL);
     let backup = runtime.with_extension(format!(
         "{}.{}",
-        runtime
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("py"),
+        runtime.extension().and_then(|e| e.to_str()).unwrap_or("py"),
         DLSS_RUNTIME_BACKUP_EXT
     ));
     (runtime, backup)
@@ -8385,8 +8659,9 @@ pub fn dlss5_apply_workstation_fix() -> Result<serde_json::Value, String> {
         return done(Err("Wan2GP not installed".into()));
     }
     let (runtime, backup) = dlss_runtime_paths(&repo);
-    let orig = std::fs::read_to_string(&runtime)
-        .map_err(|_| "postprocessing/dlss5/runtime.py not found — update Wan2GP first".to_string())?;
+    let orig = std::fs::read_to_string(&runtime).map_err(|_| {
+        "postprocessing/dlss5/runtime.py not found — update Wan2GP first".to_string()
+    })?;
     if orig.contains(DLSS_RUNTIME_MARKER) {
         return done(Ok(serde_json::json!({"ok": true, "already": true})));
     }
@@ -8395,7 +8670,9 @@ pub fn dlss5_apply_workstation_fix() -> Result<serde_json::Value, String> {
             "[*] DLSS GPU check already tiers workstation cards upstream — nothing to patch.\n",
             "setup",
         );
-        return done(Ok(serde_json::json!({"ok": true, "already": true, "upstream": true})));
+        return done(Ok(
+            serde_json::json!({"ok": true, "already": true, "upstream": true}),
+        ));
     }
     let patched = dlss_patch_runtime_text(&orig);
     if patched.is_none() {
@@ -8416,8 +8693,7 @@ pub fn dlss5_apply_workstation_fix() -> Result<serde_json::Value, String> {
         std::fs::write(&backup, &orig)
             .map_err(|e| format!("backup unwritable ({}): {e}", backup.display()))?;
     }
-    std::fs::write(&runtime, &patched)
-        .map_err(|e| format!("patch failed: {e}"))?;
+    std::fs::write(&runtime, &patched).map_err(|e| format!("patch failed: {e}"))?;
     push_log(
         "[*] DLSS workstation-GPU fix applied to postprocessing/dlss5/runtime.py (original backed up). Stop Wan2GP first if running, restart it, then Check compatibility.\n",
         "setup",
@@ -8439,11 +8715,11 @@ pub fn dlss5_revert_workstation_fix() -> Result<serde_json::Value, String> {
     let (runtime, backup) = dlss_runtime_paths(&repo);
     if !backup.exists() {
         return done(Err(
-            "No backup found — nothing to revert (the fix was never applied by this launcher).".into(),
+            "No backup found — nothing to revert (the fix was never applied by this launcher)."
+                .into(),
         ));
     }
-    let orig = std::fs::read_to_string(&backup)
-        .map_err(|e| format!("backup unreadable: {e}"))?;
+    let orig = std::fs::read_to_string(&backup).map_err(|e| format!("backup unreadable: {e}"))?;
     std::fs::write(&runtime, &orig).map_err(|e| format!("revert failed: {e}"))?;
     push_log(
         "[*] DLSS workstation-GPU fix reverted (upstream runtime.py restored from backup). Restart Wan2GP to pick it up.\n",
@@ -8456,7 +8732,7 @@ pub fn dlss5_revert_workstation_fix() -> Result<serde_json::Value, String> {
 // this only mirrors its Downloading / verified / Installed lines to the UI.
 #[cfg(test)]
 mod dlss5_verify_tests {
-    use super::{dlss5_verify_files_blocking, dlss_file_state, DLSS5_FILES};
+    use super::{dlss5_verify_files_blocking, dlss_cache_row_valid, dlss_file_state, DLSS5_FILES};
 
     #[test]
     fn state_classifies_existence_and_hash() {
@@ -8483,6 +8759,11 @@ mod dlss5_verify_tests {
         assert_eq!(rows.len(), DLSS5_FILES.len());
         assert_eq!(rows[0]["state"], "mismatch");
         assert_eq!(rows[0]["expected"], first.3);
+        assert!(
+            rows[0]["size"].as_u64().unwrap_or(0) > 0,
+            "the row carries the stamp the cache is keyed on"
+        );
+        assert!(rows[0]["mtimeMs"].as_u64().is_some());
         let got = rows[0]["got"].as_str().unwrap();
         assert_eq!(got.len(), 64, "a computed hash must be reported in full");
         assert_eq!(got, crate::wheels::sha256_file(&p).unwrap());
@@ -8508,39 +8789,47 @@ mod dlss5_verify_tests {
                 "no pinned version for {pkg}"
             );
             assert_eq!(sha.len(), 64, "{pkg}: pin is not a sha256");
-            assert!(sha.chars().all(|c| c.is_ascii_hexdigit()), "{pkg}: pin is not hex");
+            assert!(
+                sha.chars().all(|c| c.is_ascii_hexdigit()),
+                "{pkg}: pin is not hex"
+            );
         }
+    }
+
+    #[test]
+    fn cached_verdict_only_survives_identical_pin_size_and_mtime() {
+        let entry = serde_json::json!({
+            "expected": "AB", "got": "ab", "state": "match", "size": 10, "mtimeMs": 99
+        });
+        assert!(dlss_cache_row_valid("AB", &entry, 10, 99));
+        assert!(!dlss_cache_row_valid("AC", &entry, 10, 99), "new pin");
+        assert!(!dlss_cache_row_valid("AB", &entry, 11, 99), "new size");
+        assert!(!dlss_cache_row_valid("AB", &entry, 10, 100), "new mtime");
+        let inconclusive = serde_json::json!({
+            "expected": "AB", "got": "", "state": "unreadable", "size": 10, "mtimeMs": 99
+        });
+        assert!(
+            !dlss_cache_row_valid("AB", &inconclusive, 10, 99),
+            "only a real comparison may be replayed"
+        );
     }
 }
 
 #[cfg(test)]
 mod dlss5_check_tests {
     use super::{
-        dlss_fixed_series, dlss_gpu_series_excerpt, dlss_patch_runtime_text,
-        dlss_probe_summary, dlss_reason, dlss_runtime_fixed_upstream,
-        dlss_upstream_series, dlss_verdict_state, DLSS_RUNTIME_ANCHOR,
-        DLSS_RUNTIME_MARKER,
+        dlss_fixed_series, dlss_gpu_series_excerpt, dlss_patch_runtime_text, dlss_probe_summary,
+        dlss_reason, dlss_runtime_fixed_upstream, dlss_upstream_series, dlss_verdict_state,
+        DLSS_RUNTIME_ANCHOR, DLSS_RUNTIME_MARKER,
     };
 
     #[test]
     fn upstream_matches_geforce_only() {
-        assert_eq!(
-            dlss_upstream_series("NVIDIA GeForce RTX 4090"),
-            Some(40)
-        );
-        assert_eq!(
-            dlss_upstream_series("NVIDIA GeForce RTX 3050"),
-            Some(30)
-        );
+        assert_eq!(dlss_upstream_series("NVIDIA GeForce RTX 4090"), Some(40));
+        assert_eq!(dlss_upstream_series("NVIDIA GeForce RTX 3050"), Some(30));
         // Workstation / datacenter names are invisible to upstream.
-        assert_eq!(
-            dlss_upstream_series("NVIDIA RTX PRO 5000 Blackwell"),
-            None
-        );
-        assert_eq!(
-            dlss_upstream_series("NVIDIA RTX 5000 Ada Generation"),
-            None
-        );
+        assert_eq!(dlss_upstream_series("NVIDIA RTX PRO 5000 Blackwell"), None);
+        assert_eq!(dlss_upstream_series("NVIDIA RTX 5000 Ada Generation"), None);
         assert_eq!(dlss_upstream_series("NVIDIA RTX A6000"), None);
     }
 
@@ -8634,7 +8923,10 @@ mod dlss5_check_tests {
         );
         assert_eq!(v["state"], "not-installed");
         assert_eq!(v["available"], false);
-        assert!(v["reason"].as_str().unwrap_or("").contains("Install DLSS 5"));
+        assert!(v["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Install DLSS 5"));
         // Weak card → blocked even with files present.
         let v = dlss_verdict_state(None, 0, 30, false, true, None, None);
         assert_eq!(v["state"], "blocked");
@@ -8786,10 +9078,7 @@ mod amd_therock_tests {
     /// Primary is the pinned stable whl-next recipe with device extras;
     /// fallback is the nightly whl-next float.
     fn check_primary(p: &str) {
-        assert!(
-            p.contains("stable.repo.amd.com/rocm/whl-next/"),
-            "got {p}"
-        );
+        assert!(p.contains("stable.repo.amd.com/rocm/whl-next/"), "got {p}");
         assert!(p.contains("2.13.0+rocm10.0.0"), "got {p}");
         assert!(p.contains("device-gfx"), "got {p}");
         assert!(!p.contains("--extra-index-url"), "got {p}");
@@ -8809,10 +9098,7 @@ mod amd_therock_tests {
             amd_fallback_target("AMD_GFX1200", "AMD Radeon RX 9060 XT"),
             "gfx1200"
         );
-        assert_eq!(
-            amd_fallback_target("AMD", "AMD Radeon RX 9060"),
-            "gfx1200"
-        );
+        assert_eq!(amd_fallback_target("AMD", "AMD Radeon RX 9060"), "gfx1200");
         assert_eq!(
             amd_fallback_target("AMD_GFX110X", "AMD Radeon RX 7900 XTX"),
             "gfx1100"
@@ -8870,10 +9156,7 @@ mod amd_therock_tests {
         ] {
             let (p, f) = amd_therock_torch_cmds(profile, gpu).unwrap();
             check_primary(&p);
-            assert!(
-                f.contains("nightly.repo.amd.com/rocm/whl-next/"),
-                "got {f}"
-            );
+            assert!(f.contains("nightly.repo.amd.com/rocm/whl-next/"), "got {f}");
             assert!(f.contains("--pre"), "got {f}");
         }
         assert!(amd_therock_torch_cmds("RTX_50", "NVIDIA GeForce RTX 5090").is_none());
@@ -9021,7 +9304,13 @@ mod pipeline_separation_tests {
         // kind.
         assert_eq!(
             triton_windows_pip_args(),
-            vec!["-m", "pip", "install", "-U", "triton-windows>=3.7.0.post26,<=3.7.1.post27"]
+            vec![
+                "-m",
+                "pip",
+                "install",
+                "-U",
+                "triton-windows>=3.7.0.post26,<=3.7.1.post27"
+            ]
         );
         let joined = triton_windows_pip_args().join(" ");
         for banned in [
@@ -9233,7 +9522,7 @@ mod setup_hook_tests {
             .args([
                 "-c",
                 "import ast,sys; ast.parse(open(sys.argv[1]).read())",
-                &check.to_string_lossy().to_string(),
+                check.to_string_lossy().as_ref(),
             ])
             .output()
             .map(|o| o.status.success())
@@ -9396,20 +9685,35 @@ mod owned_uv_tests {
         // receipt has to name our tools dir, or uv refuses with "Are multiple
         // copies of uv installed?" (seen live: receipt left on a %TEMP% prefix).
         let tools = std::path::Path::new("C:\\Wan2GP\\.tools");
-        assert!(uv_self_update_applicable(true, Some("C:\\Wan2GP\\.tools"), tools));
+        assert!(uv_self_update_applicable(
+            true,
+            Some("C:\\Wan2GP\\.tools"),
+            tools
+        ));
         // Separator / case / trailing-slash differences are the same dir.
-        assert!(uv_self_update_applicable(true, Some("c:/wan2gp/.tools/"), tools));
+        assert!(uv_self_update_applicable(
+            true,
+            Some("c:/wan2gp/.tools/"),
+            tools
+        ));
         assert!(!uv_self_update_applicable(
             true,
             Some("C:\\WINDOWS\\TEMP\\.tmpZYTAs6\\.tools"),
             tools
         ));
-        assert!(!uv_self_update_applicable(false, Some("C:\\Wan2GP\\.tools"), tools));
+        assert!(!uv_self_update_applicable(
+            false,
+            Some("C:\\Wan2GP\\.tools"),
+            tools
+        ));
         assert!(!uv_self_update_applicable(true, None, tools));
     }
     #[test]
     fn norm_path_is_case_and_separator_insensitive() {
-        assert_eq!(norm_path("C:\\Wan2GP\\.tools"), norm_path("c:/wan2gp/.tools/"));
+        assert_eq!(
+            norm_path("C:\\Wan2GP\\.tools"),
+            norm_path("c:/wan2gp/.tools/")
+        );
         assert_eq!(norm_path("C:/x/y/"), "c:\\x\\y");
     }
     #[test]

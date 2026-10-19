@@ -140,7 +140,11 @@ print(json.dumps({"ok": True, "urlsText": S.apprise_urls_text(urls)}))"#;
 
 /// Run a snippet with the repo as cwd (needed for `import shared.…`),
 /// optional JSON on stdin; parse the single JSON line on stdout.
-fn run_snippet(py: &PathBuf, snippet: &str, stdin_json: Option<&str>) -> Result<serde_json::Value, String> {
+fn run_snippet(
+    py: &PathBuf,
+    snippet: &str,
+    stdin_json: Option<&str>,
+) -> Result<serde_json::Value, String> {
     let repo = get_repo_dir();
     let cfg_path = repo.join("wgp_config.json");
     let mut child = silent_command(py)
@@ -225,8 +229,14 @@ pub fn notifier_native_test(cfg: serde_json::Value) -> serde_json::Value {
 pub fn notifier_native_save(cfg: serde_json::Value) -> serde_json::Value {
     let urls = cfg.get("urls").and_then(|v| v.as_str()).unwrap_or("");
     let secure = cfg.get("secure").and_then(|v| v.as_bool()).unwrap_or(true);
-    let on_generation = cfg.get("onGeneration").and_then(|v| v.as_bool()).unwrap_or(false);
-    let on_complete = cfg.get("onQueueComplete").and_then(|v| v.as_bool()).unwrap_or(false);
+    let on_generation = cfg
+        .get("onGeneration")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let on_complete = cfg
+        .get("onQueueComplete")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let on_interrupted = cfg
         .get("onQueueInterrupted")
         .and_then(|v| v.as_bool())
@@ -256,7 +266,10 @@ pub fn notifier_native_save(cfg: serde_json::Value) -> serde_json::Value {
     let native_managed = on_generation || on_complete || on_interrupted;
     let mut full = load_config_value();
     if let Some(m) = full.as_object_mut() {
-        let cur = m.get("notifier").cloned().unwrap_or(serde_json::Value::Null);
+        let cur = m
+            .get("notifier")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         let mut clean = crate::features::notifier_normalize(&cur);
         if let Some(c) = clean.as_object_mut() {
             c.insert("nativeManaged".into(), serde_json::json!(native_managed));

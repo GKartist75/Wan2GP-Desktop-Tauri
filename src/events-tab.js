@@ -179,6 +179,16 @@ function switchSettingsTab(tabName) {
     }, 30);
   }
 
+  // Model Pack tab: read the pinned catalog only when it is opened, so the
+  // opt-in adult pack costs nothing at boot.
+  if (tabName === "pack") {
+    setTimeout(() => {
+      try {
+        if (window.adultPack) window.adultPack.init();
+      } catch (e) {}
+    }, 30);
+  }
+
   // Appearance tab: queue row colors live here (visual pref, not auto-tuned).
   if (tabName === "general") {
     setTimeout(() => {

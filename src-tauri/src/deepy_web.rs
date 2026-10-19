@@ -14,7 +14,7 @@ use crate::base::*;
 use crate::status::{get_active_env, resolve_env_python};
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use tauri::Emitter;
 
 /// True while a `deepy_web_start` boot wait is in flight. Rejects concurrent
@@ -595,7 +595,9 @@ pub(crate) fn qwen27b_weights_present(cfg: &serde_json::Value, repo: &std::path:
             return true;
         }
         let dir9 = root.join(QWEN38_9B_ASSETS_DIR);
-        QWEN38_9B_WEIGHT_FILES.iter().any(|f| dir9.join(f).is_file())
+        QWEN38_9B_WEIGHT_FILES
+            .iter()
+            .any(|f| dir9.join(f).is_file())
     })
 }
 
@@ -671,55 +673,38 @@ fn resolve_py() -> String {
     "python".to_string()
 }
 
-static DEEPY_PID: std::sync::OnceLock<Mutex<Option<u32>>> = std::sync::OnceLock::new();
-static DEEPY_MODE: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new();
-static DEEPY_AUTH: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new();
+static DEEPY_PID: LazyLock<Mutex<Option<u32>>> = LazyLock::new(|| Mutex::new(None));
+static DEEPY_MODE: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
+static DEEPY_AUTH: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
 
 fn remember_deepy_auth(mode: Option<String>) {
-    *DEEPY_AUTH
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = mode;
+    *DEEPY_AUTH.lock().unwrap_or_else(|e| e.into_inner()) = mode;
 }
 
 fn last_deepy_auth() -> Option<String> {
-    DEEPY_AUTH
-        .get()
-        .and_then(|m| m.lock().ok())
-        .and_then(|g| g.clone())
+    DEEPY_AUTH.lock().ok().and_then(|g| g.clone())
 }
 
 fn clear_deepy_auth() {
-    *DEEPY_AUTH
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = None;
+    *DEEPY_AUTH.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// Drop all in-memory Deepy tracking (spawned PID + auth mode) — used when a
 /// boot is abandoned so later status polls fall back to the port probe.
 fn clear_deepy_tracking() {
-    if let Some(m) = DEEPY_PID.get() {
-        *m.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    }
+    *DEEPY_PID.lock().unwrap_or_else(|e| e.into_inner()) = None;
     clear_deepy_auth();
 }
 
 fn remember_deepy(child_pid: u32, mode: &str) {
-    *DEEPY_PID
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = Some(child_pid);
-    *DEEPY_MODE
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = Some(mode.to_string());
+    *DEEPY_PID.lock().unwrap_or_else(|e| e.into_inner()) = Some(child_pid);
+    *DEEPY_MODE.lock().unwrap_or_else(|e| e.into_inner()) = Some(mode.to_string());
 }
 
 fn last_deepy_mode() -> String {
     DEEPY_MODE
-        .get()
-        .and_then(|m| m.lock().ok())
+        .lock()
+        .ok()
         .and_then(|g| g.clone())
         .unwrap_or_else(|| "same-pc".to_string())
 }
@@ -1591,7 +1576,7 @@ pub(crate) fn outputs_candidates(cfg: &serde_json::Value, repo: &std::path::Path
 /// Fast-path kill for app close: the tracked child only (whole tree), no
 /// scans. The close worker's port sweep catches anything else.
 pub(crate) fn stop_deepy_fast() {
-    if let Some(pid) = DEEPY_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
+    if let Some(pid) = DEEPY_PID.lock().ok().and_then(|g| *g) {
         kill_pid_deepy(pid);
     }
 }
@@ -1659,7 +1644,7 @@ pub async fn deepy_web_stop(deepy_port: Option<u64>) -> Result<serde_json::Value
     // Port-scoped kill when a port is known: tracked child + listeners whose
     // cmdline matches (this also covers a manually-run server on the port).
     if let Some(port) = deepy_port {
-        if let Some(pid) = DEEPY_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
+        if let Some(pid) = DEEPY_PID.lock().ok().and_then(|g| *g) {
             if process_cmdline(pid).is_some_and(|cmd| should_stop_deepy_process(&cmd, port)) {
                 kill_pid_deepy(pid);
                 killed.push(pid);

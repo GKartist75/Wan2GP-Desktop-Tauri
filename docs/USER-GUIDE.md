@@ -26,6 +26,7 @@ flowchart TD
 - [Manage → Auto-Tune](#manage--auto-tune)
 - [Manage → Plugins](#manage--plugins)
 - [Manage → Library](#manage--library)
+- [Manage → Pack](#manage--pack)
 - [Guide (topbar)](#guide-topbar)
 - [Console & logs](#console--logs)
 - [Typical workflows](#typical-workflows)
@@ -144,18 +145,30 @@ their key actions live (enhancement mode + Apply, Disabled/Zero/Prime +
 Apply, LAN toggle + Deepy Start/Stop); Kernel/Env headers collapse clean.
 
 **DLSS 5 card** — optional NVIDIA upsampler runtimes. *Install DLSS 5…* opens a
-confirmation (Cancel / Install). *Check compatibility* is read-only (GPU tier,
+confirmation (Cancel / Install); its **Force (backup + replace existing files)**
+tick is remembered across restarts (upstream's installer leaves matching files
+alone and refuses to touch *different* ones until you rerun it with `-Force`,
+which backs up everything it replaces), while the consent tick in the install modal is cleared every
+time on purpose. *Check compatibility* is read-only (GPU tier,
 installed files, HAGS, frame-gen probe) **and verifies the files**: it hashes each
 one and compares it with the SHA-256 Wan2GP's installer pins, so a row reads
 *✓ SHA … matches what Wan2GP pins* or *⚠ SHA … expected — this file hashes to …*.
 Until you run it, the rows print the pinned hash as **expected** rather than
 claiming a match — the panel only stats the files on open (hashing them streams a
-couple hundred MB, so it waits to be asked). *Check for updates* asks the sources
+couple hundred MB, so it waits to be asked). A row is **green** when its bytes
+match the pin, **amber** when the file is present but was never hashed, and red
+when it is missing or wrong — green is local truth only, so a newer build
+*upstream* never tints a correct file. *Check for updates* asks the sources
 that upstream's installer script pins (`RankFTW/rhi-repo`,
 `DeepBeepMeep/dlss5-visual-enhancer`, reshade.me) whether a newer component
-release exists — read-only, downloads nothing. The component versions
-themselves are pinned by that script, so a newer one arrives through
-*Update Wan2GP*, never from this card.
+release exists — read-only, downloads nothing, and its *upstream* note appears **only after you press it** —
+the startup probe still refreshes the data quietly, so the button answers
+instantly — it just no longer decorates a healthy panel on launch. The component
+versions themselves are pinned by that script, so a newer one arrives through
+*Update Wan2GP*, never from this card. RenoDX and DLSSNR are deliberately held
+on the versions WanGP tested (newer development builds live on the RenoDX
+Discord), so those two can keep reporting a newer build upstream has chosen not
+to adopt.
 
 **Advanced — pip packages card** — install any extra PyPI package into the
 active env, with a copy button for the equivalent command.
@@ -459,6 +472,131 @@ and URL/LoRA counts, plus import (validated, never overwrites), export
 **Workspaces** — per-project media counts, real on-disk sizes, moved/missing
 file flags, archive-lock toggle, definitions backup ZIP (back up outputs too
 for a portable archive).
+
+## Manage → Pack
+
+📦 **Adult (NSFW) model pack** — a curated catalog of adult checkpoints and
+LoRAs that Wan2GP can actually load, plus a way to find and add your own.
+
+This tab is **off by default and nothing is downloaded until you tick it** — the
+18+ confirmation gates the whole panel. Installing Wan2GP must never carry an
+opt-in adult-content decision, which is why this lives in Manage and not in
+Setup.
+
+**Every row shows what you actually have:**
+
+| On the row | Meaning |
+| --- | --- |
+| thumbnail | a pinned preview from the repo, or example renders matched on CivitAI |
+| `v1.4 · 2025-10-24` | version and release date |
+| **downloaded** | on disk and matching the verified size |
+| **update available** | on disk, but the author has published newer bytes |
+| **recipe written** | its `finetunes/*.json` is in place |
+| **weights on disk** | a checkpoint's files were prefetched |
+
+The chips above the list answer "what do I already have" at a glance.
+
+### Four ways in
+
+1. **Browse the catalog** — 108 LoRA files and 19 checkpoint recipes across Wan
+   2.2, MiniMax H3, LTX 2.3 and image models. Ticking a group selects it;
+   HIGH/LOW halves always travel together, because Wan2GP loads both in one job.
+2. **Trending & most downloaded** — no keyword needed. Rank by trending, most
+   downloaded, most liked or newest; filter by type and base model. The list is
+   *"what is hot among models Wan2GP can load"*, not a generic firehose: anything
+   that does not map to a real architecture is never shown.
+3. **Search by name, then Add…** — search HuggingFace or CivitAI, inspect the
+   repo's files, pick one, and **Add** it. Adding writes
+   `finetunes/<id>.json`, so **Wan2GP downloads the weights itself on first run**
+   — the launcher never re-hosts a model. Anything you add is remembered in
+   `adult-pack-custom.json`, outside the shipped catalog, so updates cannot drop it.
+4. **Add by link** — when you already know the model, paste a HuggingFace repo
+   (`owner/name` or its URL), a CivitAI model URL, or a CivitAI model id, pick the
+   architecture, and **Open…**. This is the path for a model whose name matches no
+   keyword, so nothing is limited to the catalog's own vocabulary. On a CivitAI
+   model with several versions you can switch version before adding, and the
+   auto-detected file kind (LoRA vs checkpoint) can be overridden before you
+   confirm — a wrong guess never forces a file into the wrong folder.
+
+Examples: **Examples** on a row opens the model's own sample media (video reels
+included). Most mirrors publish no media of their own, so unmatched models get
+**Find examples on CivitAI**, which shows candidate renders *with their model
+names* — check the name before trusting a picture.
+
+### Every row has its own actions
+
+The `⋯` button at the end of a row does everything that one model can do to
+itself, so you never have to select a whole group to act on one entry:
+
+- **Make / Rewrite finetune JSON** — writes the recipe Wan2GP reads
+- **Fetch weights now** — prefetch a checkpoint's files instead of waiting
+- **Open recipe** — jump to it in the finetune manager
+- **Copy URL / Copy file name / Open source page**
+- **Delete…** — the only red action; always confirmed, never touches anything
+  you added yourself
+
+LoRA rows deliberately have no "make finetune JSON": Wan2GP loads LoRAs from
+`loras\`, so the row says that instead of offering a button that cannot work.
+
+### Updates
+
+**Check for updates** lists every catalog repo and compares each file's current
+SHA-256 against the pinned one — so an update is reported only when the bytes
+really changed, not because a date moved. **Apply & download selected** re-points
+the local hash (in `adult-pack-pins.json`) and then downloads, verified against
+that new hash. A downloaded file whose size no longer matches is flagged as
+**update available** with its before/after size.
+
+### Downloads
+
+**Download selected** is a queue, not a wall of log lines: one row per ticked
+item shows its size as it arrives and whether it is downloading, verifying or
+done. Files are fetched one at a time; an item that fails never stops the rest,
+and its row says **failed** while the log carries the reason. A file already on
+disk and hash-matching is reported as done without being re-downloaded. CivitAI
+author-exclusive items resolve and download before the batch and report in the
+log; every other file goes through the queue.
+
+### Finetune manager
+
+Every recipe Wan2GP will offer, from all three origins — this pack, your own
+additions, and anything you imported by hand. Edit the JSON in place, **Form
+view** to edit it with the same form used to create one, **Check links** (HEADs
+every source URL), **Copy** or **Export** to share, or delete a recipe (the
+weights stay on disk). **Import…** takes the full path to a shared `.json` and
+files it into `finetunes/`. Writes are validated first: a recipe needs a name, an
+architecture this build actually ships, and at least one usable URL, and it can
+never overwrite a shipped base model in `defaults/`.
+
+**＋ New finetune.json** creates one from scratch without hand-writing JSON:
+pick the file id, a display name, the base architecture (the list is what this
+build ships in `defaults/`, plus the curated map — so a recipe that could never
+load cannot be written), a description, and the source URLs one per line. Two
+optional extras cover the WanGP fields that matter most: **Second phase** for
+HIGH/LOW models such as Wan 2.2 (written as `URLs2`), and **Model notes** /
+**Prompt help** for the Markdown WanGP shows behind the model's info buttons
+(`infos` and `prompt_infos`). An id that already exists is refused — open that
+recipe below and press **Edit** instead, so a creation can never silently replace
+a definition. The full field list lives in upstream's
+[`docs/FINETUNES.md`](https://github.com/deepbeepmeep/WanGP/blob/main/docs/FINETUNES.md).
+
+### LoRA files on disk
+
+**Refresh files** scans your LoRAs folder and lists every weight it finds,
+including files you copied in yourself — rows the catalog knows about are marked
+**in catalog**, the rest are **unknown** and can be deleted from here rather than
+through Explorer. Deletion is confined to the LoRAs folder and always confirmed.
+
+### CivitAI account tier
+
+Two author-exclusive releases (DaSiWa TastySin v8, Wan 2.2 NSFW Lightning) are
+resolved live from your own CivitAI token — the version id is looked up at the
+moment you fetch, because a pinned id would be stale the moment the author
+publishes. The token is stored in its own file, never in
+`desktop-config.json`, and the launcher never re-hosts anything. Browsing and
+searching CivitAI need no token; downloading does.
+
+---
 
 ## Guide (topbar)
 

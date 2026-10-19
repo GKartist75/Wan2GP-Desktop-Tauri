@@ -8,7 +8,7 @@
   <a href="https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/latest" style="display:inline-block;padding:14px 36px;background:#2ea043;color:#fff;border-radius:8px;font-size:1.1rem;font-weight:600;text-decoration:none">
     ⬇ Download for Windows — Latest Release
   </a><br>
-  <code>wan2gp-tauri-spike_*_x64-setup.exe</code> · ≈ 3 MB · Windows 10 / 11<br>
+  <code>Wan2GP.Desktop.Launcher.Tauri_*_x64-setup.exe</code> · ≈ 3 MB · Windows 10 / 11<br>
   <small>Hardware needs scale with the model you pick — start at 6 GB VRAM, up to 24 GB+ for max quality.</small><br>
   <small>⚠️ Unsigned installer — "unknown publisher" warning is normal for open-source without a code-signing cert.</small>
 </p>
@@ -92,6 +92,7 @@ C:\Wan2GP-Models\               ← models library
 
 | Version | Headline |
 | --- | --- |
+| [**v0.10.15**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.15) | **Manage → 📦 Pack becomes a general model manager, and its downloads become a queue.** The opt-in tab can now add a model Wan2GP doesn't ship — paste a HuggingFace repo or CivitAI URL (version picker, overridable LoRA-vs-checkpoint kind) — edit/export/import finetune recipes in a real form, inventory and delete the LoRAs on disk, and narrow the catalog to *not downloaded* → **Select shown** → *Download selected*, with one queue row per item (`3/7`, per-file state, ✗ failed) instead of a scrolling log. **DLSS 5 tells local truth**: a hash-matching component is green, the `↻ upstream` note appears only after *Check for updates*, verdicts survive a restart, and **Force** is remembered. Plus HuggingFace/Anthropic tokens are no longer left in a temp batch file, five more blocking commands moved off the UI thread, and the release script can no longer publish a stale installer |
 | [**v0.10.14**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.14) | **Confirmations actually ask again, and the VRAM graph stays visible.** `tauri-plugin-dialog`'s async shims made every `confirm()` a truthy Promise while the ACL rejected the native call, so all 26 confirmation/alert sites silently fell through — they now use the launcher's own `askConfirm`/`notifyUser`; the topbar status cluster is a **2×2 grid** (203px vs 364px), and its metrics row now drops whole lower-priority readings in tiers instead of clipping **VRAM** off the end; plus the audit pass (**DLSS SHA verify on demand**, a **crash log** for release aborts, the **safe-Sage family rule**, heavy commands moved off the UI thread) and the **sync transcript fixtures** |
 | [**v0.10.13**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.14) _(shipped in v0.10.14)_ | **Upstream v18.19 parity — hardened.** The **AMD/HIP GGUF wheel now installs in this env again** (ROCm 10 / torch 2.13 / Python 3.12, RDNA4-gated from the live env — the separate ROCm 7.14 environment is retired) with **GGUF 1.0.27** and the **272-model inventory** (MOSS-TTS v1.5, Krea 2 Edit v2); **kernel wheels are SHA-256-verified before pip sees them** (16 launcher pins + GitHub's published digest, cached in `wheel-cache`); **Agent API (MCP) parity** — upstream's `2.1` default plus the `--mcp-webui`/`--no-mcp-webui` autostart override and OAuth flags; and a **wheel-selection pass** so *Update GPU Wheels* can never hand a CUDA wheel to a ROCm box, or the HIP button a `cp312` wheel to a py3.11 env |
 | [**v0.10.12**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.12) | **Upstream v18.18 parity — the Bitdefender/Triton fix**: upstream now ships a **prebuilt CUDA helper** (HIP besides, experimental) for the recommended Triton range `3.7.0.post26–3.7.1.post27` — never JIT-compiled, so no fresh hash to distrust: **no antivirus exclusions, no TinyCC/MSVC step** on Windows/Python 3.11 (and AMD ROCm) stacks, with a **Prebuilt Helper** integrity row on the dashboard (missing/modified = AV quarantine, hover for the file) + **GGUF 1.0.26** (fixes H3 image-reference projections) + **Update GPU Wheels syncs Triton** so existing installs move onto the helper range + guide inventory complete again (270 models, new 3D-reconstruction section) |
@@ -331,9 +332,10 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 ![DLSS5 installer — live per-component checklist with SHA-256 verification](screenshots/dlss5-checklist.png)
 
 - Strict consent: type `I ACCEPT` (third-party binaries are community-hosted, unsigned, proprietary — see [docs/DLSS5.md](https://github.com/deepbeepmeep/Wan2GP/blob/main/docs/DLSS5.md)).
-- **Force** backs up + replaces conflicting files. **Stop Wan2GP first.**
+- **Force** backs up + replaces conflicting files, and is **remembered across restarts** — it changes what an install does to files already on disk, so losing the tick shouldn't silently change the result. **Stop Wan2GP first.** (The consent tick in the install modal is deliberately **not** remembered; consent is per-install.)
 - Needs Windows 11 + RTX 30+ (Neural Rendering, 30 experimental) / RTX 40+ (Frame Generation) + HAGS.
-- **Check compatibility** reports per-mode verdicts (ready / not-installed / blocked) with GPU tier, files, HAGS, and the frame-gen probe.
+- **Check compatibility** reports per-mode verdicts (ready / not-installed / blocked) with GPU tier, files, HAGS, and the frame-gen probe — and its file verdicts are **remembered between launches** (revalidated against the pin, the file's size and its mtime), so the card opens with real ticks instead of *expected*.
+- **Green means local truth**: a component whose SHA matches what WanGP pins shows a green dot (unhashed-but-present is amber, missing/wrong bytes red) — a newer build *upstream* never tints a correct file. **Check for updates** is read-only and asks on demand whether DLSS / ReShade / RenoDX have moved on; the `↻ upstream …` note appears only after you press it, because upstream deliberately keeps RenoDX / DLSSNR pinned to the versions it tested and installs newer ones only through a Wan2GP update.
 - **Workstation GPU fix** (opt-in) — patches WanGP's GeForce-only GPU check so RTX PRO / Ada / RTX Ax000 / L40 / Hopper cards pass DLSS gating. Backed up (`*.launcher-bak`), reversible, refuses on upstream drift.
 
 > ⚠️ **Untested on real workstation hardware** — the tiers logic are simulated only (PRO 5000→50, 5000 Ada→40, A6000→30). Confirm on a PRO/A-series card before relying on it.
@@ -342,7 +344,7 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 ## 🧭 Guide & 📚 Library
 
-**Guide** (topbar tab, next to Manage) answers *what to make and with what*: goal picker with curated model picks + starter settings (copy the full model name into WanGP's toolbar search), 6 prompt templates with the line mode each needs, offline `[/...]` window-command checker, VACE pre-flight checklist, post-processing at a glance. Read-only — nothing changes until you pick inside WanGP. Full walkthroughs: [docs/WAN2GP-GUIDE.md](docs/WAN2GP-GUIDE.md) — all 238 models and 116 settings.
+**Guide** (topbar tab, next to Manage) answers *what to make and with what*: goal picker with curated model picks + starter settings (copy the full model name into WanGP's toolbar search), 6 prompt templates with the line mode each needs, offline `[/...]` window-command checker, VACE pre-flight checklist, post-processing at a glance. Read-only — nothing changes until you pick inside WanGP. Full walkthroughs: [docs/WAN2GP-GUIDE.md](docs/WAN2GP-GUIDE.md) — all 272 models and 116 settings.
 
 **Manage → Library** inventories what's on disk: downloaded checkpoints (sizes + kind tags), LoRA families (files/size/known URLs), finetunes (import validated JSON, export to share, delete), workspaces (real sizes, missing-file flags, archive lock, definitions backup).
 
@@ -369,12 +371,13 @@ Full workspace viewer: multi-select, reorder, eject, copy/move across workspaces
 
 ## 🛠 Build from source
 
-Prerequisites: [Rust](https://rustup.rs/) (1.77.2+) + Node.js. WebView2 comes with Windows.
+Prerequisites: [Rust](https://rustup.rs/) (**1.95+** — `sysinfo` 0.39 uses edition 2024) + Node.js 22+. WebView2 comes with Windows.
 
 ```bash
 git clone https://github.com/GKartist75/Wan2GP-Desktop-Tauri.git
 cd Wan2GP-Desktop-Tauri
-npx tauri build      # NSIS + MSI in src-tauri/target/release/bundle/
+npm ci
+npm run tauri -- build   # NSIS + MSI in src-tauri/target/release/bundle/
 ```
 
 Backend lives in `src-tauri/src/lib.rs` (`#[tauri::command]` handlers); frontend is vanilla HTML/CSS/JS in `src/` calling them via `invoke()` (`src/w2gp.js` bridge).
@@ -382,8 +385,8 @@ Backend lives in `src-tauri/src/lib.rs` (`#[tauri::command]` handlers); frontend
 ### Tests
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --lib   # 256 backend tests
-npm test                                               # 37 frontend tests
+cargo test --manifest-path src-tauri/Cargo.toml --lib   # 352 backend tests (3 ignored)
+npm test                                               # 212 frontend tests
 ```
 
 Both suites are hermetic — the backend one redirects `get_repo_dir()` at a
@@ -414,5 +417,7 @@ If this launcher saved you a setup headache, leave a star — it helps others fi
 ## Credits & License
 
 Wan2GP Desktop Launcher wraps [Wan2GP](https://github.com/deepbeepmeep/Wan2GP) by deepbeepmeep.
+
+The launcher itself is [MIT licensed](LICENSE). Wan2GP keeps its own upstream license; the opt-in adult model pack only links to third-party files and re-hosts nothing.
 
 Discord: [WanGP Community](https://discord.gg/g7efUW9jGV) · X: [@deepbeepmeep](https://x.com/deepbeepmeep) · Site: [wangp.ai](https://wangp.ai/)
