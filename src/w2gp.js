@@ -257,6 +257,36 @@ if (!window.__TAURI__) {
         },
         isDataDirRoaming: () => call("is_data_dir_roaming"),
         writeWgpConfig: (cfg) => call("write_wgp_config", { cfg }),
+        // Adult (NSFW) model pack — opt-in installer content.
+        adultPackManifest: () => call("adult_pack_manifest"),
+        adultPackSave: (selection, token) =>
+            call("adult_pack_save", { selection, token }),
+        adultPackFetch: (ids) => call("adult_pack_fetch", { ids }),
+        adultPackWriteFinetunes: (ids) =>
+            call("adult_pack_write_finetunes", { ids }),
+        adultPackCivitaiVerify: (token) =>
+            call("adult_pack_civitai_verify", { token }),
+        adultPackCivitaiDownload: (id, token) =>
+            call("adult_pack_civitai_download", { id, token }),
+        adultPackStatus: () => call("adult_pack_status"),
+        adultPackRemove: (ids) => call("adult_pack_remove", { ids }),
+        adultPackGallery: (repo, rev) => call("adult_pack_gallery", { repo, rev }),
+        adultPackCivitaiGallery: (id) => call("adult_pack_civitai_gallery", { id }),
+        adultPackSearch: (source, query, kind, family, limit) =>
+            call("adult_pack_search", { source, query, kind, family, limit }),
+        adultPackBrowse: (source, sort, period, kind, family, limit) =>
+            call("adult_pack_browse", { source, sort, period, kind, family, limit }),
+        adultPackUpdates: () => call("adult_pack_updates"),
+        adultPackApplyUpdates: (ids) => call("adult_pack_apply_updates", { ids }),
+        adultPackInspect: (source, id, architecture) =>
+            call("adult_pack_inspect", { source, id, architecture }),
+        adultPackAdd: (entry) => call("adult_pack_add", { entry }),
+        adultPackFinetuneList: () => call("adult_pack_finetune_list"),
+        adultPackFinetuneRead: (id) => call("adult_pack_finetune_read", { id }),
+        adultPackFinetuneWrite: (id, content) =>
+            call("adult_pack_finetune_write", { id, content }),
+        adultPackFinetuneCheck: (id) => call("adult_pack_finetune_check", { id }),
+        onAdultPackProgress: (cb) => listen("adult-pack-progress", cb),
         selectFolder: () => call("select_folder"),
         resetWgpConfig: () => call("reset_wgp_config"),
         confirmDialog: async (opts) => {

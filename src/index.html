@@ -37,6 +37,7 @@
       <button class="settings-tab" data-tab="autotune" title="Auto-Tune: hardware-calibrated performance settings">⚡ Auto-Tune</button>
       <button class="settings-tab" data-tab="plugins" title="Plugins: enable and install Wan2GP plugins">🧩 Plugins</button>
       <button class="settings-tab" data-tab="library" title="Library: LoRA families and finetune definitions">📚 Library</button>
+      <button class="settings-tab" data-tab="pack" title="Model Pack: optional adult (NSFW) checkpoints and LoRAs, installed on demand">📦 Pack</button>
     </div>
     <div class="settings-scroll">
       <div class="settings-tab-content active" data-tab="general">
@@ -682,6 +683,137 @@
             <span class="token-hint" id="wsStatus" style="margin-left:8px"></span>
           </div>
           <div id="wsBox" style="margin-top:8px"><p class="token-hint">Loading…</p></div>
+        </div>
+      </div>
+
+      <!-- ═══════ Model Pack Tab (opt-in adult content) ═══════ -->
+      <div class="settings-tab-content" data-tab="pack">
+        <div class="settings-section">
+          <h3>📦 Adult (NSFW) model pack</h3>
+          <p class="token-hint">
+            Optional trending adult checkpoints and LoRAs, installed on demand — never part of the Wan2GP
+            install. Everything is fetched from its published source and verified against a pinned
+            SHA-256; the launcher never re-hosts anything.
+          </p>
+          <div class="ap-header" style="margin-top:10px">
+            <label class="ap-head">
+              <input type="checkbox" id="apEnabled">
+              <span class="ap-title">Use the adult model pack</span>
+              <span class="ap-badge" id="apBadge">off</span>
+            </label>
+            <span class="ap-hint" id="apMeta"></span>
+          </div>
+          <label class="ap-age">
+            <input type="checkbox" id="apAge">
+            <span>I confirm I am 18 or older, and that adult content is legal where I live.</span>
+          </label>
+          <div id="apBody" style="display:none;margin-top:10px">
+            <div id="apGroups" class="ap-groups">
+              <p class="token-hint">Loading the pack catalog…</p>
+            </div>
+            <div class="ap-chips" id="apChips"></div>
+            <div class="ap-upd">
+              <div class="ap-sub">Updates</div>
+              <p class="ap-hint">The catalog pins every file's SHA-256, so a check compares each file's current hash against the pinned one — an update is reported only when the bytes really changed. Applying one re-points the local hash, then downloads and verifies the new file.</p>
+              <div class="token-field" style="margin-top:8px">
+                <button class="btn btn-ghost small" id="apUpdCheckBtn" title="List every catalog repo and compare each file hash">Check for updates</button>
+                <button class="btn btn-primary small" id="apUpdApplyBtn" disabled title="Point the selected files at their new hashes and download them">Apply &amp; download selected</button>
+                <span class="token-hint" id="apUpdStatus" style="margin-left:8px"></span>
+              </div>
+              <div class="ap-upd-list" id="apUpdList"></div>
+            </div>
+            <div id="apCivSection" class="ap-civ">
+              <div class="ap-sub">Via your CivitAI account</div>
+              <div class="ap-hint">Author-exclusive releases, resolved live. The launcher fetches them with your own token and records where they landed — it never re-hosts them.</div>
+              <div id="apCivItems"></div>
+              <div class="ap-token-row">
+                <input type="password" id="apToken" placeholder="CivitAI API token (optional) — settings.civitai.com, API keys" autocomplete="off" spellcheck="false">
+                <button class="btn btn-ghost small" id="apVerifyBtn" title="Check the token with one small request — no download">Verify</button>
+              </div>
+              <div class="ap-verify" id="apVerifyResult"></div>
+            </div>
+            <div class="ap-total">
+              <span id="apTotalText">—</span>
+              <span id="apFreeText" class="ap-hint"></span>
+            </div>
+            <div class="ap-legal" id="apLegal"></div>
+            <div class="ap-actions">
+              <button class="btn btn-primary small" id="apDownloadBtn" title="Download the selected LoRAs and prefetched checkpoints now">Download selected</button>
+              <button class="btn btn-ghost small" id="apRecipesBtn" title="Write the selected checkpoint definitions into finetunes/ so Wan2GP offers them">Write finetune recipes</button>
+              <button class="btn btn-ghost small" id="apMissingBtn" title="Download only what is missing or incomplete">Fetch missing only</button>
+              <button class="btn btn-ghost small" id="apRemoveBtn" title="Delete the selected files and recipes from disk">Remove selected…</button>
+              <button class="btn btn-ghost small" id="apRefreshBtn" title="Re-read the manifest and what is on disk">↻ Refresh</button>
+            </div>
+            <div class="ap-progress">
+              <div class="ap-progress-line" id="apProgress">Idle.</div>
+              <div class="ap-log" id="apLog"></div>
+            </div>
+            <div class="ap-sub">Finetune manager</div>
+            <p class="ap-hint">Every recipe Wan2GP will offer — from this pack, from your own additions, and anything you imported. Edit the JSON, check the source links still resolve, or delete a recipe.</p>
+            <div class="token-field" style="margin-top:8px">
+              <button class="btn btn-ghost small" id="apFmRefreshBtn" title="Re-read finetunes/">↻ Refresh recipes</button>
+              <button class="btn btn-ghost small" id="apFmCheckAllBtn" title="HEAD every recipe's source URL and report what is gone">Check all links</button>
+              <span class="token-hint" id="apFmStatus" style="margin-left:8px"></span>
+            </div>
+            <div class="ap-fm-list" id="apFmList"><p class="token-hint">Loading recipes…</p></div>
+
+            <div class="ap-search">
+              <div class="ap-sub">Trending &amp; most downloaded</div>
+              <p class="ap-hint">What is hot right now, filtered to families this Wan2GP build can load. Adding a checkpoint writes <code>finetunes/&lt;id&gt;.json</code>, so Wan2GP downloads the weights itself on first run.</p>
+              <div class="ap-search-row">
+                <select id="apBrowseSource" class="input" title="Where to look">
+                  <option value="hf">HuggingFace</option>
+                  <option value="civitai">CivitAI — adult (civitai.red)</option>
+                </select>
+                <select id="apBrowseSort" class="input" title="Ranking">
+                  <option value="trending">Trending</option>
+                  <option value="downloads">Most downloaded</option>
+                  <option value="likes">Most liked</option>
+                  <option value="newest">Newest</option>
+                </select>
+                <select id="apBrowsePeriod" class="input" title="Time window (CivitAI)">
+                  <option value="week">This week</option>
+                  <option value="month">This month</option>
+                  <option value="year">This year</option>
+                </select>
+                <select id="apBrowseKind" class="input" title="Model type">
+                  <option value="any">Any type</option>
+                  <option value="lora">LoRA</option>
+                  <option value="checkpoint">Checkpoint</option>
+                  <option value="gguf">GGUF</option>
+                </select>
+                <select id="apBrowseFamily" class="input" title="Base model">
+                  <option value="any">Any base model</option>
+                </select>
+                <button class="btn btn-ghost small" id="apBrowseBtn" title="Load the ranking">Browse</button>
+              </div>
+              <div class="ap-search-status ap-hint" id="apBrowseStatus"></div>
+              <div class="ap-search-results" id="apBrowseResults"></div>
+
+              <div class="ap-sub" style="margin-top:14px">Search by name</div>
+              <p class="ap-hint">Search HuggingFace or CivitAI for anything Wan2GP can load. Only families this Wan2GP build supports are listed; the launcher writes the finetune recipe and files the download into the right folder.</p>
+              <p class="ap-hint ap-split-note"><strong>civitai.com is now the SFW library</strong> — adult content moved to <strong>civitai.red</strong> in April 2026, and this search queries <code>civitai.red</code> because that is where mature models live. Your token works on both.</p>
+              <div class="ap-search-row">
+                <input type="text" id="apSearchQuery" class="input" placeholder="e.g. wan 2.2 nsfw, minimax h3, ltx 2.3, krea 2" autocomplete="off" spellcheck="false">
+                <select id="apSearchSource" class="input">
+                  <option value="hf">HuggingFace</option>
+                  <option value="civitai">CivitAI — adult (civitai.red)</option>
+                </select>
+                <select id="apSearchKind" class="input" title="Model type to search for">
+                  <option value="any">Any type</option>
+                  <option value="lora">LoRA</option>
+                  <option value="checkpoint">Checkpoint</option>
+                  <option value="gguf">GGUF</option>
+                </select>
+                <select id="apSearchFamily" class="input" title="Base model — filled from the supported families">
+                  <option value="any">Any base model</option>
+                </select>
+                <button class="btn btn-primary small" id="apSearchBtn" title="Search the source">Search</button>
+              </div>
+              <div class="ap-search-status ap-hint" id="apSearchStatus"></div>
+              <div class="ap-search-results" id="apSearchResults"></div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1888,6 +2020,9 @@
         <p class="path-hint path-hint-warn">⚠ Model checkpoints &amp; LoRAs are large (tens–hundreds of GB). Store them on a fast, non-system drive — <strong>not</strong> in AppData/Roaming, which roams with your profile and can bloat or sync unexpectedly. Default <code>C:\Wan2GP-Models\ckpts</code> keeps them separate from the repo.</p>
       </div>
 
+      <!-- Adult pack lives in Manage → Model Pack, never in Setup: installing
+           Wan2GP must not carry an opt-in adult-content decision. -->
+
       <!-- Target-folder verdict (classify_target): checks first, Install button after -->
       <div id="targetVerdict" class="install-stack" style="display:none">
         <div class="ipkgs-header">Install location check</div>
@@ -2188,6 +2323,7 @@
   <script src="deepy-web-tab.js" defer></script>
   <!-- Same rule: installer-tab.js registers a listener over $, defined by app.js. -->
   <script src="installer-tab.js" defer></script>
+<script src="adult-pack-tab.js" defer></script>
   <!-- Extracted sections, same rule: each reads globals ($/showToast/window.w2gp) defined by app.js. -->
   <script src="plugins-tab.js" defer></script>
   <script src="theme-tab.js" defer></script>

@@ -2,6 +2,79 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [Unreleased]
+
+- **Opt-in Adult (NSFW) model pack — Manage → 📦 Pack.** A new tab in Manage, deliberately
+  **not** part of Setup: installing Wan2GP must never carry an opt-in adult-content decision.
+  Off by default, and nothing unlocks until the 18+ confirmation is ticked. Two tiers, because
+  they behave very differently:
+  - **LoRA packs (~100 files, 4 groups: Wan 2.2 / MiniMax H3 / LTX 2.3 / image).**
+    Fetched during install with resumable GETs into
+    `loras\adult-pack\<family>\`, SHA-256 verified, each file individually
+    retriable. HIGH/LOW halves are pinned together — ticking one ticks its
+    partner, because Wan 2.2 loads both in the same job.
+  - **Checkpoint finetunes (14 recipes).** The launcher writes
+    `finetunes/adultpack_*.json` with the remote URLs and lets Wan2GP's own
+    downloader fetch weights on first use; each row has an optional *prefetch*
+    box for people who want it on disk now.
+  - **CivitAI token tier** for author-exclusive releases (DaSiWa TastySin v8,
+    Wan 2.2 NSFW Lightning): the version is resolved live at install time (a
+    pinned id would be stale the moment the author publishes), fetched with the
+    user's own token, and recorded as a local-path recipe. The token lives in
+    its own file, never in `desktop-config.json`, and the launcher never
+    re-hosts anything.
+
+  Pack content is **data, not code**: `scripts/adult-pack-sources.json` lists the
+  repos, `scripts/verify-adult-pack.mjs` resolves them against the HuggingFace
+  tree API and pins URL + SHA-256 + size into `src/adult-pack-manifest.json`, and
+  the Rust module embeds that manifest. Adding, updating or removing a model is
+  a JSON edit plus one script run — no Rust, no UI, no rebuild of the catalog.
+  The verifier caches listings (12h) and backs off on HTTP 429 so a full run
+  stays polite, and `--deep` cross-checks every URL against the CDN.
+
+  Install-time behaviour is gone with the move: the tab owns the lifecycle — **Download
+  selected**, **Write finetune recipes**, **Fetch missing only**, **Remove selected…** and a
+  live progress line plus console-style log. The panel shows free-space headroom next to the
+  running total, and the selection is remembered between visits.
+
+  Coverage is pinned against Wan2GP v18.17 / the 270-id inventory; a recipe whose
+  architecture is missing from the installed repo greys out instead of writing a
+  finetune that could never load.
+
+- **The pack now shows you what a model looks like, how old it is, and whether it
+  has moved on.** Three gaps in the first cut, all found by looking at the panel
+  rather than by reading the code:
+  - **Examples.** Most HF mirrors in this catalog publish **no media at all** — a
+    55-file repo with zero images, and 0 of 34 repos embed anything in their model
+    card. Rows therefore had nothing to show. The verifier now looks each entry up
+    on CivitAI (where these creators actually publish their renders), matches it by
+    name, and **bakes the example images into the manifest** — so a row shows
+    pictures instantly and offline, with no network call per row. Matching is
+    bidirectional and conservative: a word glued together on one side
+    (`HandjobBlowjobCombo` vs "Combo Handjob Blowjob") still matches, but a name
+    that merely *contains* ours ("Lusty Argonian Maid" vs `Lusty_Krea-2`) never
+    does — wrong examples are worse than none. Everything unmatched gets a
+    **Find examples on CivitAI** button and a search link, which shows candidate
+    renders with their names so the user can judge. A dead card preview (one repo's
+    model card pointed at `images/undefined_image (1).png`, never committed) is now
+    dropped instead of rendering as a broken tile.
+  - **Version and release date on every row.** Every entry carries a version
+    token from its file name (or the repo's publish date) plus a release date —
+    the CivitAI version's `createdAt` where a confident match exists, the HF repo's
+    `createdAt` otherwise. Dimension and format markers (`_e320`, `alpha128`,
+    `q4_k_m`) are deliberately *not* versions.
+  - **Update detection is exact, and applicable.** **Check for updates** lists
+    every catalog repo and compares each file's current SHA-256 against the pinned
+    one — an update is reported only when the bytes really changed, not because a
+    date moved. **Apply & download** then re-points the local hash in
+    `adult-pack-pins.json` and downloads the new file, verified against the new
+    hash; without that override the download would be discarded for failing the
+    stale pin. Rows distinguish *downloaded*, *update available* (you hold outdated
+    bytes, with `2.8 GB → 3.0 GB` shown), *newer upstream* (you are current) and
+    *new version*, and headline chips answer "what do I already have".
+  - Search and trending results carry their example images, version and release
+    date too — a title alone tells you nothing about what a model produces.
+
 ## [0.10.14] — 2026-10-19
 
 - **The metrics row can no longer clip VRAM off the end of the topbar.** The row is a flex item, and a tight bar made it shrink its own container and hide its overflow — which cut the **last** metric, so the VRAM graph (the one you watch while a generation runs) disappeared behind a half-drawn *VRA* exactly when it was useful. It now drops whole, lower-priority readings in tiers instead: first the CPU/GPU/RAM sparklines, then RAM and GPU2, then CPU/GPU, then the VRAM graph, and only then the cluster itself. Nothing is ever cut through a label. The embedded Wan2GP view costs ~330px more (*Back to Dashboard*, *Console*, the zoom slider), so it runs the same ladder one rung higher behind a `wv-active` class on the dashboard; VRAM keeps its graph longest in both views. The thresholds are measured in a browser at the widths where each rung was still clipping (the bar wants ~1440px with every sparkline, ~1550px with a second GPU), and `tests/topbar-metrics-fit.test.js` pins the ids, the protected class and the rung order.
