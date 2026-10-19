@@ -317,11 +317,11 @@
               </select>
               <button class="btn btn-primary small" id="sageSafeSaveBtn" title="Save SageAttention wheel choice (applies on next sync/install)">Save</button>
             </div>
-            <p class="token-hint">RTX 30/40/50: <code>post4</code>-class builds degrade speed when CUDA Graphs are used (triton fallback) — deepbeepmeep Oct 2026. <code>post6</code> is the fixed build and the current upstream pin. Safe swaps a stale post4 to post6; Upstream installs setup_config exactly as published. Change applies on next sync/install.</p>
+            <p class="token-hint">RTX 30/40/50: <code>post4</code>-class builds degrade speed when CUDA Graphs are used (triton fallback) — deepbeepmeep Oct 2026. <b>Safe</b> prefers the launcher's known-good <code>post6</code> build whenever upstream's pick in the same <code>cu130torch2.10</code> wheel family differs, and names what it substituted in the Console; <b>Upstream</b> installs setup_config exactly as published. Today both resolve to the same <code>post6</code> wheel, so the choice changes nothing until upstream ships another build in that family. Change applies on next sync/install.</p>
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>GGUF CUDA Kernel</h3>
-            <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the weight-multiply policy: <code>fast</code>/<code>low_vram</code> use the packed MMVQ/MMQ kernels, <code>materialized</code> dequantizes and uses cuBLAS. <em>Short-batch mode</em> drives the Q4_K/PTQ1_0 tensor-core path for 2–8 row batches (auto = per-shape). These are the knobs wheel <strong>1.0.25</strong> actually reads — the older Stream-K and BF16→FP16 switches were dropped upstream.</p>
+            <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the weight-multiply policy: <code>fast</code>/<code>low_vram</code> use the packed MMVQ/MMQ kernels, <code>materialized</code> dequantizes and uses cuBLAS. <em>Short-batch mode</em> drives the Q4_K/PTQ1_0 tensor-core path for 2–8 row batches (auto = per-shape). These are the knobs wheel <strong>1.0.27</strong> actually reads — the older Stream-K and BF16→FP16 switches were dropped upstream.</p>
             <label class="toggle-row"><input type="checkbox" id="ggufEnabled"> <span>Enable GGUF CUDA kernels</span></label>
             <div class="token-field" style="margin-top:8px">
               <label class="token-hint" style="display:block;margin-bottom:4px">Matmul mode</label>
@@ -361,19 +361,30 @@
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>Agent API (MCP server)</h3>
-            <p class="token-hint">Run WanGP as a tool server for Claude/OpenCode agents (v2 default; v1 for old clients). Browser login never authorizes MCP — network use needs OAuth (<code>--mcp-auth</code>). Gallery media IDs work without filesystem access; direct paths need <code>--mcp-allow-read-file-system</code>.</p>
+            <p class="token-hint">Run WanGP as a tool server for Claude/OpenCode agents (v2.1 default; pin 2 or 1 for older clients). Browser login never authorizes MCP — network use needs its own OAuth (<code>--mcp-auth</code>). Gallery media IDs work without filesystem access; direct paths need <code>--mcp-allow-read-file-system</code>.</p>
             <div class="token-field" style="margin-top:8px">
               <select id="mcpTransport" class="input" style="max-width:170px" title="MCP transport">
                 <option value="stdio">stdio (local)</option>
                 <option value="streamable-http">streamable-http</option>
                 <option value="sse">sse (legacy)</option>
               </select>
-              <input type="text" id="mcpHost" class="input" value="127.0.0.1" style="max-width:150px" title="MCP host">
+              <input type="text" id="mcpHost" class="input" value="127.0.0.1" style="max-width:150px" title="MCP bind host for HTTP transports (use 0.0.0.0 only with OAuth + HTTPS)">
               <input type="number" id="mcpPort" class="input" value="7866" min="1024" max="65535" style="width:100px" title="MCP port">
-              <select id="mcpApi" class="input" style="max-width:110px" title="API version">
+              <select id="mcpApi" class="input" style="max-width:140px" title="MCP API version (upstream default: 2.1)">
+                <option value="2.1">API v2.1 (latest)</option>
                 <option value="2">API v2</option>
-                <option value="1">API v1</option>
+                <option value="1">API v1 (legacy)</option>
               </select>
+              <select id="mcpWebui" class="input" style="max-width:220px" title="Standalone MCP server, or autostart MCP with the normal web UI (Configuration &gt; Agents MCP autostart); --mcp / --mcp-webui / --no-mcp-webui">
+                <option value="">MCP server only (--mcp)</option>
+                <option value="--mcp-webui">MCP with the web UI (--mcp-webui)</option>
+                <option value="--no-mcp-webui">Web UI, MCP off (--no-mcp-webui)</option>
+              </select>
+            </div>
+            <div class="token-field" style="margin-top:8px">
+              <label class="toggle-row" title="Require an OAuth login for network MCP clients — separate from the web password"><input type="checkbox" id="mcpAuth"> <span>OAuth</span></label>
+              <input type="text" id="mcpAuthUrl" class="input" placeholder="https://host:7866 (--mcp-auth-url)" style="max-width:280px" title="Public origin clients reach (--mcp-auth-url); required for non-loopback OAuth">
+              <input type="password" id="mcpAuthPassword" class="input" placeholder="passphrase (blank = generated)" style="max-width:240px" title="Fixed MCP passphrase (--mcp-auth-password). Prefer the WANGP_MCP_AUTH_PASSWORD env var to keep it out of command history.">
             </div>
             <div class="token-field" style="margin-top:8px">
               <input type="text" id="mcpCommand" class="input" readonly style="max-width:640px" title="Launch command">
@@ -828,7 +839,7 @@
             <!-- v17 (MMGP v4) RAM/VRAM controls. Mirrors WanGP's own
                  Configuration > RAM/VRAM Management panel one-for-one. -->
             <div class="mem-field">
-              <label class="token-hint" title="Which attention kernel WanGP uses. Upstream v17.10 is explicit that quite a few of its optimizations depend on Sage2/2+. Needs the matching wheel — Sync GPU Wheels installs SageAttention 2.2.0 for RTX 30/40/50 and 1.0.6 for RTX 20. Left unset on AMD/Intel, where there is no Sage build upstream. v18 H3 Veda Sparse models set their own per-task attention (override_attention=veda) — leave this alone when running those.">Attention Mode</label>
+              <label class="token-hint" title="Which attention kernel WanGP uses. Upstream v17.10 is explicit that quite a few of its optimizations depend on Sage2/2+. Needs the matching wheel — Sync GPU Wheels installs SageAttention 2.2.0 for RTX 30/40/50 and 1.0.6 for RTX 20. Left unset on AMD/Intel, where there is no Sage build upstream. v18 H3 Veda Sparse models set their own per-task attention (overrides: attention_mode='veda') — leave this alone when running those.">Attention Mode</label>
               <select id="memAttentionMode" class="input">
                 <option value="">— unset —</option>
                 <option value="sage2">SageAttention 2 / 2+ (recommended — v17 gains depend on it)</option>
@@ -877,15 +888,6 @@
                 <option value="3">High — saves the most VRAM</option>
               </select>
               <div class="mem-hint"><span id="recHeadSplit" class="tag-rec">rec: —</span><span id="savedHeadSplit" class="tag-saved">saved: —</span></div>
-            </div>
-            <div class="mem-field">
-              <label class="token-hint" title="Reads model files ahead of their use, so they are not already in RAM on first load. Windows may then keep more file data in cache.">Read Ahead (Windows)</label>
-              <select id="memReadAhead" class="input">
-                <option value="">— unset —</option>
-                <option value="true">On</option>
-                <option value="false">Off</option>
-              </select>
-              <div class="mem-hint"><span id="recReadAhead" class="tag-rec">rec: —</span><span id="savedReadAhead" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
               <label class="token-hint" title="Speeds up the models the memory profile does not keep in Reserved RAM, using 1–2 GB of it. Changing this reloads the model.">Smart Memory Pinning</label>
@@ -1038,17 +1040,19 @@
         <div class="brand-mark-small">GK<span> Artist</span></div>
         <span class="app-title">Wan2GP Desktop Launcher</span>
         <span class="app-version" id="appVersionTag">v—</span>
-        <span id="runningLed" class="running-led" style="display:none">
-          <span class="led-dot" id="ledDot"></span>
-          <span class="led-text" id="ledText">Running</span>
-        </span>
-        <span id="backendLeds" class="backend-leds" style="display:none" title="Live kernel backends WanGP selected at boot (from the server log) — shown only while known">
-          <span class="backend-chip" id="ledInt8">INT8 · …</span>
-          <span class="backend-chip" id="ledFp8">FP8 · …</span>
-        </span>
-        <span id="deepyWebLed" class="running-led" style="display:none" title="Deepy Web process status">
-          <span class="led-dot" id="deepyWebLedDot"></span>
-          <span class="led-text" id="deepyWebLedText">Deepy Web</span>
+        <span id="statusGrid" class="status-grid">
+          <span id="runningLed" class="running-led" style="display:none">
+            <span class="led-dot" id="ledDot"></span>
+            <span class="led-text" id="ledText">Running</span>
+          </span>
+          <span id="deepyWebLed" class="running-led" style="display:none" title="Deepy Web process status">
+            <span class="led-dot" id="deepyWebLedDot"></span>
+            <span class="led-text" id="deepyWebLedText">Deepy Web</span>
+          </span>
+          <span id="backendLeds" class="backend-leds" style="display:none" title="Live kernel backends WanGP selected at boot (from the server log) — green = accelerated path, amber = WanGP fell back to PyTorch, grey = not reported yet. Shown only while known.">
+            <span class="backend-chip"><span class="led-dot" id="ledInt8Dot"></span><span id="ledInt8">INT8 · …</span></span>
+            <span class="backend-chip"><span class="led-dot" id="ledFp8Dot"></span><span id="ledFp8">FP8 · …</span></span>
+          </span>
         </span>
       </div>
       <div class="topbar-right">
@@ -1059,12 +1063,12 @@
           </select>
         </span>
         <div class="topbar-metrics" id="topbarMetrics">
-          <div class="metric" title="CPU"><span class="metric-label">CPU</span><canvas class="metric-spark" id="sparkCpu" width="44" height="18"></canvas><span class="metric-val" id="valCpu">—</span></div>
-          <div class="metric" title="GPU"><span class="metric-label">GPU</span><canvas class="metric-spark" id="sparkGpu" width="44" height="18"></canvas><span class="metric-val" id="valGpu">—</span></div>
+          <div class="metric" id="metricCpu" title="CPU"><span class="metric-label">CPU</span><canvas class="metric-spark" id="sparkCpu" width="44" height="18"></canvas><span class="metric-val" id="valCpu">—</span></div>
+          <div class="metric" id="metricGpu" title="GPU"><span class="metric-label">GPU</span><canvas class="metric-spark" id="sparkGpu" width="44" height="18"></canvas><span class="metric-val" id="valGpu">—</span></div>
           <div class="metric" id="metricGpu2" style="display:none" title="GPU 2"><span class="metric-label">GPU2</span><canvas class="metric-spark" id="sparkGpu2" width="44" height="18"></canvas><span class="metric-val" id="valGpu2">—</span></div>
-          <div class="metric" title="RAM used / total"><span class="metric-label">RAM</span><canvas class="metric-spark" id="sparkRam" width="44" height="18"></canvas><span class="metric-val" id="valRam">—</span></div>
-          <div class="metric" title="VRAM used / total"><span class="metric-label">VRAM</span><canvas class="metric-spark" id="sparkVram" width="44" height="18"></canvas><span class="metric-val" id="valVram">—</span></div>
-          <div class="metric" id="metricVram2" style="display:none" title="VRAM 2"><span class="metric-label">VRAM2</span><canvas class="metric-spark" id="sparkVram2" width="44" height="18"></canvas><span class="metric-val" id="valVram2">—</span></div>
+          <div class="metric" id="metricRam" title="RAM used / total"><span class="metric-label">RAM</span><canvas class="metric-spark" id="sparkRam" width="44" height="18"></canvas><span class="metric-val" id="valRam">—</span></div>
+          <div class="metric metric-vram" id="metricVram" title="VRAM used / total"><span class="metric-label">VRAM</span><canvas class="metric-spark" id="sparkVram" width="44" height="18"></canvas><span class="metric-val" id="valVram">—</span></div>
+          <div class="metric metric-vram" id="metricVram2" style="display:none" title="VRAM 2"><span class="metric-label">VRAM2</span><canvas class="metric-spark" id="sparkVram2" width="44" height="18"></canvas><span class="metric-val" id="valVram2">—</span></div>
         </div>
         <div id="wvControls" class="wv-controls" style="display:none">
           <span class="wv-sep"></span>
@@ -1166,10 +1170,9 @@
             <span class="card-title">GPU Kernel Wheels</span>
             <span class="env-type-tag" id="kernelProfileTag"></span>
             <button class="btn btn-ghost small hide-on-collapse" id="restoreKernelsBtn" title="Reinstall setup_config wheels exactly as published — drops launcher overrides (GGUF floor; sage swap only if setup_config ever lags to post4). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
-                <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.25 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
-                <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only: install GGUF 1.0.25 torch210rocm714 HIP wheel for RX 9070/R9700 gfx1201. Needs torch 2.10.0+rocm7.14.0; replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.27 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only (RDNA4 gfx1200/gfx1201): installs the GGUF 1.0.27 torch213rocm100py312 HIP wheel into this env's torch 2.13+rocm10 stack (Update GPU Wheels installs it too). Replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
                 <button class="btn btn-ghost small hide-on-collapse" id="installWgpkernelsBtn" title="Optional INT8 fast path (WGPKernels 1.1.2, in setup_config since upstream 17307e5). Installs the wheel matching your torch build (cu130/cu128) for RTX 30/40/50 (compute 8.0+), or the rocm100 build for AMD RDNA4 (gfx1200/gfx1201) right in the installer's torch 2.13+rocm10 env." style="margin-left:8px;display:none">WGPKernels (INT8)</button>
-                <button class="btn btn-ghost small hide-on-collapse" id="installAmdSetupBtn" title="AMD RX 9070/R9700 (gfx1201) only: the experimental HIP GGUF (torch210rocm714) wheel needs its OWN PyTorch 2.10.0+rocm7.14.0 environment — it does not load in the installer's torch 2.13+rocm10 env. WGPKernels needs no separate env (rocm100 installs in place). Click to show and copy the exact setup commands." style="margin-left:8px;display:none">AMD setup (exp)</button>
           </div>
           <div class="env-subsection" id="kernelWheelsSubsection" style="margin-top:0;border-top:none;padding-top:0">
             <div class="env-specs" id="kernelWheels">
@@ -1291,7 +1294,7 @@
             <div class="deepy-cost-note">
               <span class="dot-ok">●</span> <strong>OpenCode</strong> — free, local models, no account.
               <span class="dot-bad">●</span> <strong>Claude Code / Codex</strong> — paid (subscription or API credits).
-              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 9B/27B (local)</strong> — runs on your GPU (needs GGUF kernels 1.0.25 via Sync Kernels); pick model + quantization below. Auto-sets 32k context + Summarize.
+              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 9B/27B (local)</strong> — runs on your GPU (needs GGUF kernels 1.0.27 via Sync Kernels); pick model + quantization below. Auto-sets 32k context + Summarize.
               <br>Prime plans advanced multi-step work and is required for every external LLM (it exposes WanGP's MCP tools). Zero is lightweight and local-only.
             </div>
             <div class="deepy-sub-label">Local engine</div>
@@ -1639,10 +1642,13 @@
           <div class="deepy-actions">
             <button class="btn btn-primary" id="dlss5InstallBtn" title="Open the DLSS 5 installer (consent step required)">Install DLSS 5…</button>
             <button class="btn btn-ghost" id="dlss5CheckBtn" title="Run the DLSS 5 compatibility check (GPU tier, files, HAGS, frame-gen probe)">Check compatibility</button>
+            <button class="btn btn-ghost" id="dlss5UpdateBtn" title="Read-only: ask the sources upstream's installer script pins whether a newer DLSS / ReShade / RenoDX release exists. Downloads and installs nothing.">Check for updates</button>
             <button class="btn btn-ghost" id="dlss5FixBtn" title="Patch Wan2GP's GPU check so workstation cards (RTX PRO, Ada, RTX Ax000) pass DLSS gating — backed up, reversible">Apply workstation GPU fix</button>
             <label class="path-hint" style="margin-left:8px"><input type="checkbox" id="dlss5ForceChk"> Force (backup + replace existing files)</label>
           </div>
           <div id="dlss5CheckResult" class="path-hint" style="display:none;margin-top:6px;white-space:pre-line"></div>
+          <div id="dlss5UpdateResult" class="path-hint" style="display:none;margin-top:6px"></div>
+          <p class="path-hint" style="margin-top:4px">Component versions are pinned by Wan2GP's own installer script — <em>Check for updates</em> only asks the sources it pins whether a newer release exists; installing one is an <em>Update Wan2GP</em> away.</p>
           <p class="path-hint" style="margin-top:4px"><em>Stop Wan2GP first — files under <code>dlss5/</code> can't be replaced while in use.</em></p>
         </div>
 
@@ -2171,6 +2177,7 @@
   <script src="services/pip-spec.js" defer></script>
   <script src="services/guide-catalog.js" defer></script>
   <script src="services/launch-args.js" defer></script>
+  <script src="services/mcp-command.js" defer></script>
   <script src="services/prompt-tools.js" defer></script>
   <script src="app.js" defer></script>
   <!-- After app.js: refreshLLMEngines reads globals ($/showToast/getLLMEngines) that app.js defines. All defer scripts run in document order, so this ordering is the contract. -->

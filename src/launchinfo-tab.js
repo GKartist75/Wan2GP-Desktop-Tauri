@@ -269,6 +269,11 @@ function syncEmbedSwitchLocks() {
 
 function showWebviewUI() {
   $("wvControls").style.display = "flex";
+  // The metrics row has less room in this view (Back to Dashboard / Console /
+  // zoom slider take ~330px), so the topbar's responsive ladder keys off this
+  // class and protects the VRAM graph first.
+  const dash = $("dashboard");
+  if (dash) dash.classList.add("wv-active");
   // Topbar renderer switch (permanent, always visible): shows the active
   // renderer (gray iframe / green native). Locked while a session runs.
   try {
@@ -283,7 +288,9 @@ function showWebviewUI() {
 
 function hideWebviewUI() {
   $("wvControls").style.display = "none";
-  }
+  const dash = $("dashboard");
+  if (dash) dash.classList.remove("wv-active");
+}
 
 async function closeWebview(silent) {
   if (window.__viewBusy) {

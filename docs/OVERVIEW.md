@@ -107,7 +107,7 @@ or env surgery.
 flowchart LR
     CFG["setup_config.json\n(local, else origin/main)"] --> PROF["gpu_profiles[RTX_20..50]\nkernels: nunchaku_cu13 · gguf · light2xv"]
     PROF --> URLS["components.*.cmd.win wheel URLs"]
-    URLS --> SWAP["Overrides (documented)\nSage post4→post6 (safe toggle)\nGGUF floor (docs lead)"]
+    URLS --> SWAP["Overrides (documented)\nSage safe build (safe toggle)\nGGUF floor (docs lead)"]
     SWAP --> PIP["pip install --upgrade\nper kernel, failures named"]
 PIP --> OVERVIEW["Dashboard overview\nwant vs installed ✓/⚠/✗"]
 ```

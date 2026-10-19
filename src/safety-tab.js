@@ -36,7 +36,7 @@
       box.querySelectorAll('[data-cfg-restore]').forEach((btn) => {
         btn.addEventListener('click', async () => {
           const name = btn.getAttribute('data-cfg-restore')
-          if (!window.confirm('Restore "' + name + '"? Current config is snapshotted first, so this is undoable. WanGP picks it up on next launch.')) return
+          if (!(await askConfirm('Restore "' + name + '"? Current config is snapshotted first, so this is undoable. WanGP picks it up on next launch.'))) return
           try {
             await window.w2gp.configBackupRestore(name)
             if (status) status.textContent = 'Restored ' + name

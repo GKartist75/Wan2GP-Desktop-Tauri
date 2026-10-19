@@ -278,7 +278,14 @@ fn verify_kernels(
             // Sage3 is gated, never synced — a stray install must not fail
             // Verify; sage3_note() reports it at the right level instead.
             fails.retain(|f| !f.starts_with("sageattn3"));
-            let stale = crate::amd::kernel_probe_stale(&map);
+            // Effective floor (setup_config may pin higher than the const) so a
+            // future upstream bump raises the warning threshold too.
+            let floor = std::fs::read_to_string(get_repo_dir().join("setup_config.json"))
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .map(|c| crate::hw::effective_gguf_floor(&c))
+                .unwrap_or_else(|| crate::hw::GGUF_FLOOR.to_string());
+            let stale = crate::amd::kernel_probe_stale(&map, &floor);
             let sage_note = crate::amd::sage3_note(&map, crate::amd::is_blackwell_gpu(&device));
             base["kernels"] = serde_json::Value::Object(map);
             if fails.is_empty() {
@@ -523,7 +530,7 @@ pub fn troubleshoot_long_paths_enable() -> Result<serde_json::Value, String> {
 }
 
 /// Debug bundle markdown for Discord/GitHub (upstream "Before asking for help").
-#[tauri::command]
+#[tauri::command(async)]
 pub fn troubleshoot_debug_bundle() -> serde_json::Value {
     let gpu = get_gpu_info_sync();
     let dc = load_config_value();
@@ -605,7 +612,7 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
         String::new()
     };
     let v17_line = format!(
-        "\n**v17 RAM/VRAM** mmgp={mmgp} allocator={alloc} head_split={hs} smart_pinning={pin} read_ahead={ra} reserved_pct={res} preload v/i/a={pv}/{pi}/{pa}\n**Kernels** attention={att} int8={i8} precision={prec} compile={comp}",
+        "\n**v17 RAM/VRAM** mmgp={mmgp} allocator={alloc} head_split={hs} smart_pinning={pin} reserved_pct={res} preload v/i/a={pv}/{pi}/{pa}\n**Kernels** attention={att} int8={i8} precision={prec} compile={comp}",
         mmgp = crate::status::pyproject_version(
             &std::fs::read_to_string(repo.join("mmgp").join("pyproject.toml")).unwrap_or_default(),
         )
@@ -613,7 +620,6 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
         alloc = pick("vram_allocator"),
         hs = pick("attention_head_split"),
         pin = pick("smart_memory_pinning"),
-        ra = pick("read_ahead"),
         res = pick("perc_reserved_mem_max"),
         pv = pick("video_preload_mode"),
         pi = pick("image_preload_mode"),

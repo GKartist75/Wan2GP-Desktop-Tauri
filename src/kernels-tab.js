@@ -15,21 +15,21 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
   const box = $("kernelWheels");
   const tag = $("kernelProfileTag");
   if (!card || !box) return;
-  // Experimental HIP GGUF opt-in: AMD only, gfx1201 primary target.
+  // Experimental HIP GGUF opt-in: AMD only, RDNA4 (gfx1200/gfx1201) target.
   // Other AMD profiles see it too (upstream validation pending, warning on click).
   try {
     const hipBtn = $("installHipGgufBtn");
     if (hipBtn) {
       const p = String(kernelProfile || "");
       hipBtn.style.display = p.indexOf("AMD") === 0 ? "" : "none";
-      if (p.indexOf("AMD") === 0 && p !== "AMD_GFX1201") {
+      if (p.indexOf("AMD") === 0 && p !== "AMD_GFX1200" && p !== "AMD_GFX1201") {
         hipBtn.title =
-          "Experimental AMD-only: GGUF 1.0.26 torch210rocm714 HIP wheel (upstream targets gfx1201 RX 9070/R9700 - installing on " +
+          "Experimental AMD-only: GGUF 1.0.27 torch213rocm100py312 HIP wheel (upstream targets RDNA4 gfx1200/gfx1201 - installing on " +
           p +
-          " is unvalidated). Needs a separate torch 2.10.0+rocm7.14.0 env — it does not load in the installer's torch 2.13+rocm10 env.";
-      } else if (hipBtn.title && hipBtn.title.indexOf("does not load") === -1) {
+          " is unvalidated). Installs in this env's torch 2.13+rocm10 stack; Update GPU Wheels installs it too.";
+      } else if (hipBtn.title && hipBtn.title.indexOf("torch213rocm100") === -1) {
         hipBtn.title =
-          "Experimental AMD-only: GGUF 1.0.26 torch210rocm714 HIP wheel (gfx1201 RX 9070/R9700). Needs a separate torch 2.10.0+rocm7.14.0 env - it does not load in the installer's torch 2.13+rocm10 env.";
+          "Experimental AMD-only: GGUF 1.0.27 torch213rocm100py312 HIP wheel (RDNA4 gfx1200/gfx1201). Installs in this env's torch 2.13+rocm10 stack; Update GPU Wheels installs it too.";
       }
     }
   } catch {}
@@ -47,16 +47,6 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
           "Experimental AMD-only on RDNA4 (RX 9060/9070 series): the WGPKernels 1.1.2 " +
           "rocm100 wheel installs directly in the installer's torch 2.13+rocm10 env.";
       }
-    }
-  } catch {}
-  // AMD experimental-stack helper: shown for every AMD profile (the HIP
-  // GGUF wheel still needs its own torch 2.10 env) so the setup commands
-  // are always one click away.
-  try {
-    const amdBtn = $("installAmdSetupBtn");
-    if (amdBtn) {
-      const p = String(kernelProfile || "");
-      amdBtn.style.display = p.indexOf("AMD") === 0 ? "" : "none";
     }
   } catch {}
   const list = Array.isArray(wheels) ? wheels : [];

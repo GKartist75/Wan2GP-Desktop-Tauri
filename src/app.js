@@ -269,6 +269,31 @@ try {
 function errText(e) {
   return (e && e.message) || (e == null ? "unknown error" : e);
 }
+// ── Native dialogs: never window.confirm / window.alert ────────────────────
+// tauri-plugin-dialog 2.7.x injects init-iife.js, which replaces both globals
+// with *async* shims that invoke `plugin:dialog|confirm` and
+// `plugin:dialog|message`. The plugin registers only open/save/message, and
+// our capability grants no `dialog:` permission, so the shims reject with
+// "Command plugin:dialog|confirm not allowed by ACL" (seen in the console as
+// an unhandled rejection). The async half is the dangerous part: `confirm()`
+// returns a Promise, which is always truthy, so every `if (!confirm(…)) return`
+// guard read as "yes" — the confirmations were silently skipped and the action
+// ran anyway. These two helpers go through the launcher's own confirm_dialog
+// command (Rust-side native dialog, no ACL involved).
+async function askConfirm(message, title) {
+  const r = await window.w2gp.confirmDialog({
+    title: title || "Confirm",
+    message,
+  });
+  return r === "ok";
+}
+// Fire-and-forget notice box — callers are usually catch blocks that must not
+// throw, so the promise is swallowed on purpose.
+function notifyUser(message, title) {
+  Promise.resolve(
+    window.w2gp.confirmDialog({ title: title || "Notice", message }),
+  ).catch(() => {});
+}
 function show(id) {
   document
     .querySelectorAll(".screen")
@@ -507,7 +532,7 @@ $("sageSyncBtn")?.addEventListener("click", async () => {
       btn.disabled = false;
       btn.textContent = "Sync Kernels";
     }
-    alert("Kernel sync failed: " + (e?.message || e));
+    notifyUser("Kernel sync failed: " + (e?.message || e));
   }
 });
 $("sageSyncDismissBtn")?.addEventListener("click", () => {
@@ -999,9 +1024,9 @@ function hideDriftBanner() {
 }
 $("driftRestoreBtn")?.addEventListener("click", async () => {
   if (
-    !confirm(
+    !(await askConfirm(
       "Reinstall all packages from requirements.txt? This will restore pinned versions.",
-    )
+    ))
   )
     return;
   const btn = $("driftRestoreBtn");
@@ -1569,9 +1594,9 @@ $("uvCachePurgeBtn")?.addEventListener("click", async function () {
 });
 $("uvCacheRemoveBtn")?.addEventListener("click", async function () {
   if (
-    !confirm(
+    !(await askConfirm(
       "Remove the entire uv wheel cache? Next Wan2GP update will re-download everything (one-time).",
-    )
+    ))
   )
     return;
   this.disabled = true;

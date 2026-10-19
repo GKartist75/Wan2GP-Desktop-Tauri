@@ -81,7 +81,7 @@
           vram_safety_coefficient: 0.7, vae_config: 0,
           transformer_quantization: 'int8', int8_kernels: 'auto', kernel_precision: 'fast',
           vram_allocator: 'vmm_spill', attention_head_split: 2,
-          read_ahead: true, smart_memory_pinning: true,
+          smart_memory_pinning: true,
           video_preload_mode: 'default', image_preload_mode: 'dynamic', audio_preload_mode: 'default',
           perc_reserved_mem_max: 0,
           _recommendation_label: 'LowRAM · LowVRAM (upstream: recommended)',

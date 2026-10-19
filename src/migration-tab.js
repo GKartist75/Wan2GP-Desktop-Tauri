@@ -19,7 +19,7 @@ async function openMigrationModal() {
     prefs = null;
   }
   if (!prefs) {
-    alert("Could not determine migration targets.");
+    notifyUser("Could not determine migration targets.");
     return;
   }
   window._migPrefs = prefs;
@@ -96,7 +96,7 @@ async function runMigration(doMove) {
   const newDataDir = $("migDataDir").value.trim();
   // ponytail: reject file-as-folder
   if (isFilePickedAsFolder(newDataDir)) {
-    alert("Please select a folder, not a file:\n" + newDataDir);
+    notifyUser("Please select a folder, not a file:\n" + newDataDir);
     resetMigrationUI();
     return;
   }
@@ -130,7 +130,7 @@ async function runMigration(doMove) {
     output: $("migOutput").value,
   };
   if (!choices.dataDir) {
-    alert("Choose a Wan2GP data folder.");
+    notifyUser("Choose a Wan2GP data folder.");
     resetMigrationUI();
     return;
   }
@@ -151,7 +151,7 @@ async function runMigration(doMove) {
     ) {
       const r = await window.w2gp.moveFolder(oldDataDir, newDataDir);
       if (!r || (!r.ok && !r.success)) {
-        alert(
+        notifyUser(
           "Could not move files:\n" +
             ((r && r.error) || "unknown") +
             "\n\nClose any Wan2GP windows/terminals and try again.",
@@ -162,7 +162,7 @@ async function runMigration(doMove) {
     }
     const r2 = await window.w2gp.setDataDir(newDataDir);
     if (!r2 || (!r2.ok && !r2.success)) {
-      alert(
+      notifyUser(
         "Could not switch data folder:\n" + ((r2 && r2.error) || "unknown"),
       );
       resetMigrationUI();
@@ -181,7 +181,7 @@ async function runMigration(doMove) {
     btn.textContent = "Restarting…";
     setTimeout(() => location.reload(), 900);
   } catch (e) {
-    alert("Migration failed: " + errText(e));
+    notifyUser("Migration failed: " + errText(e));
     resetMigrationUI();
   }
 }

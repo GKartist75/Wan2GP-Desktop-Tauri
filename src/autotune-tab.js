@@ -28,7 +28,6 @@ function memProfileCollect() {
   // Auto-Tune has nothing to recommend — the control exists to switch back.
   const rma = $("memRamAllocator") ? $("memRamAllocator").value : "";
   const hs = $("memHeadSplit") ? $("memHeadSplit").value : "";
-  const ra = $("memReadAhead") ? $("memReadAhead").value : "";
   const sp = $("memSmartPinning") ? $("memSmartPinning").value : "";
   const vpm = $("memVideoPreload") ? $("memVideoPreload").value : "";
   const ipm = $("memImagePreload") ? $("memImagePreload").value : "";
@@ -45,7 +44,6 @@ function memProfileCollect() {
   if (va) s.vram_allocator = va;
   if (rma) s.ram_allocator = rma;
   if (hs !== "") s.attention_head_split = Number(hs);
-  if (ra) s.read_ahead = ra === "true";
   if (sp) s.smart_memory_pinning = sp === "true";
   if (cc) s.compute_cache = cc === "true";
   if (ccp) s.compute_cache_path = ccp;
@@ -162,11 +160,6 @@ const MEM_FIELDS = {
     rec: "recHeadSplit",
     saved: "savedHeadSplit",
   },
-  read_ahead: {
-    sel: "memReadAhead",
-    rec: "recReadAhead",
-    saved: "savedReadAhead",
-  },
   smart_memory_pinning: {
     sel: "memSmartPinning",
     rec: "recSmartPinning",
@@ -254,7 +247,7 @@ const ATTENTION_MODE_LABELS = {
   sage: "SageAttention 1 (Turing only)",
   flash: "FlashAttention (quality first, less VRAM)",
   sdpa: "SDPA (PyTorch default, always available)",
-  // v18: H3 Veda Sparse models set override_attention per-task in their own
+  // v18: H3 Veda Sparse models set their own per-task attention in their own
   // defaults — it is never written here, this label only keeps a saved: tag
   // readable if WanGP records it.
   veda: "Veda Sparse (H3 Veda models set this per-task — no change needed here)",
@@ -292,7 +285,7 @@ function fmtVal(key, v) {
     return HEAD_SPLIT_LABELS[Number(v)] || String(v);
   if (key.endsWith("_preload_mode"))
     return PRELOAD_MODE_LABELS[v] || String(v);
-  if (key === "read_ahead" || key === "smart_memory_pinning" || key === "compute_cache")
+  if (key === "smart_memory_pinning" || key === "compute_cache")
     return v === true ? "On" : v === false ? "Off" : String(v);
   if (key === "perc_reserved_mem_max")
     return Number(v) === 0 ? "Auto" : Number(v) + "%";
@@ -315,8 +308,15 @@ function memProfilePopulate(settings, opts = {}) {
     const v = settings[key];
     if (opts.mode === "recommend") {
       // Seed the dropdown with the recommended value (user can override).
+      // Only keys Detect actually carries are re-seeded. A key the payload
+      // doesn't mention at all (ram_allocator above all — upstream already
+      // defaults to mmgp, so no recommendation covers it) must not blank a
+      // control that memProfileLoad seeded from disk, or that the user picked
+      // here: that painted "— unset —" beside "saved: MMGP Optimized…" after
+      // the first-open auto-detect and every manual Detect, and silently
+      // reverted a manual pick. Keys Detect does carry are still overwritten.
       const sel = $(f.sel);
-      if (sel)
+      if (sel && v !== undefined)
         sel.value =
           v != null && v !== "" ? String(v) : key === "vae_config" ? "0" : "";
       const rec = $(f.rec);
@@ -372,7 +372,6 @@ function memProfileFromRecommendation(rec) {
         // early-returns there), which leaves those dropdowns on "— unset —".
       vram_allocator: rec.vram_allocator,
       attention_head_split: rec.attention_head_split,
-      read_ahead: rec.read_ahead,
       smart_memory_pinning: rec.smart_memory_pinning,
       video_preload_mode: rec.video_preload_mode,
       image_preload_mode: rec.image_preload_mode,

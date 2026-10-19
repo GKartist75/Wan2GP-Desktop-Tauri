@@ -42,33 +42,34 @@
     initMcpHelper()
   }
 
-  function mcpCommand() {
-    const t = ($('mcpTransport') && $('mcpTransport').value) || 'stdio'
-    const host = ($('mcpHost') && $('mcpHost').value.trim()) || '127.0.0.1'
-    const port = ($('mcpPort') && $('mcpPort').value) || '7866'
-    const api = ($('mcpApi') && $('mcpApi').value) || '2'
-    if (t === 'stdio') return 'python wgp.py --mcp --mcp-api-version ' + api
-    return 'python wgp.py --mcp --mcp-transport ' + t + ' --mcp-host ' + host + ' --mcp-port ' + port + ' --mcp-api-version ' + api
+  function mcpOpts() {
+    return {
+      transport: ($('mcpTransport') && $('mcpTransport').value) || 'stdio',
+      host: ($('mcpHost') && $('mcpHost').value) || '127.0.0.1',
+      port: ($('mcpPort') && $('mcpPort').value) || '7866',
+      api: ($('mcpApi') && $('mcpApi').value) || '2.1',
+      webui: ($('mcpWebui') && $('mcpWebui').value) || '',
+      auth: $('mcpAuth')?.checked === true,
+      authUrl: ($('mcpAuthUrl') && $('mcpAuthUrl').value) || '',
+      authPassword: ($('mcpAuthPassword') && $('mcpAuthPassword').value) || ''
+    }
   }
 
   function initMcpHelper() {
     if (!$('mcpCommand')) return
+    // mcpCommand/mcpHint come from services/mcp-command.js (pure, unit-tested).
+    const build = (typeof mcpCommand === 'function') ? mcpCommand : () => 'python wgp.py --mcp'
+    const hintFor = (typeof mcpHint === 'function') ? mcpHint : () => ''
     const refresh = () => {
-      $('mcpCommand').value = mcpCommand()
-      const t = ($('mcpTransport') && $('mcpTransport').value) || 'stdio'
+      const opts = mcpOpts()
+      // --mcp-transport only applies to a standalone --mcp server.
+      const tSel = $('mcpTransport')
+      if (tSel) tSel.disabled = opts.webui !== ''
+      $('mcpCommand').value = build(opts)
       const hint = $('mcpUrlHint')
-      if (hint) {
-        if (t === 'stdio') {
-          hint.textContent = 'Local clients spawn this command — no URL, no OAuth.'
-        } else {
-          const host = ($('mcpHost') && $('mcpHost').value.trim()) || '127.0.0.1'
-          const port = ($('mcpPort') && $('mcpPort').value) || '7866'
-          const path = (t === 'sse') ? '/sse' : '/mcp'
-          hint.textContent = 'Connect clients to http://' + host + ':' + port + path + ' — localhost only unless --mcp-auth + HTTPS.'
-        }
-      }
+      if (hint) hint.textContent = hintFor(opts)
     }
-    ;['mcpTransport', 'mcpHost', 'mcpPort', 'mcpApi'].forEach((id) => {
+    ;['mcpTransport', 'mcpHost', 'mcpPort', 'mcpApi', 'mcpWebui', 'mcpAuth', 'mcpAuthUrl', 'mcpAuthPassword'].forEach((id) => {
       $(id)?.addEventListener('change', refresh)
       $(id)?.addEventListener('input', refresh)
     })

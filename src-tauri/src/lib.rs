@@ -14,6 +14,7 @@ mod status;
 mod system;
 mod troubleshoot;
 mod updates;
+mod wheels;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
@@ -24,6 +25,13 @@ static CLOSE_CONFIRMED: AtomicBool = AtomicBool::new(false);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Crash reporting first, before anything else can crash: the release profile
+    // is `panic = "abort"`, so the hook is the only chance to leave a trace, and
+    // a crash from a previous session is surfaced in the console history.
+    crate::base::install_panic_hook();
+    if let Some(line) = crate::base::report_previous_crash() {
+        crate::base::push_log(&line, "launcher");
+    }
     // Launcher GPU preference — mirrors Electron early switch (main.js 323-350)
     // Reads desktop-config.json before WebView2 creation and sets browser args.
     // Supports: auto | integrated (low-power) | dedicated (high-perf) | disabled (SwiftShader)
@@ -156,6 +164,13 @@ pub fn run() {
                 }
             }
         })
+        // Command threading: Tauri runs a command on the thread that invokes it
+        // unless it is `async`, so anything heavy and user-initiated is declared
+        // `#[tauri::command(async)]` at its definition (repair_settings,
+        // report_issue, troubleshoot_debug_bundle, detect_electron, the library
+        // scans, plugins_list). The frequently-polled ones (get_status,
+        // get_system_metrics) stay sync on purpose: they are cache-throttled,
+        // and keeping their timing unchanged matters more than the move.
         .invoke_handler(tauri::generate_handler![
             system::greet,
             hw::detect_gpu,
@@ -212,13 +227,14 @@ pub fn run() {
             install::restore_kernels,
             install::install_hip_gguf_wheel,
             install::install_wgpkernels_wheel,
-            install::amd_hip_recipe,
             install::update,
             install::dep_check,
             install::dlss5_status,
     install::triton_runtime_status,
             install::install_dlss5,
             install::dlss5_check,
+            install::dlss5_update_check,
+            install::dlss5_verify_files,
             install::dlss5_apply_workstation_fix,
             install::dlss5_revert_workstation_fix,
             install::classify_target,

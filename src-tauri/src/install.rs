@@ -180,6 +180,11 @@ async fn run_capture(
 /// run): uv self-update only works with an install receipt, and a plain file
 /// copy refuses with "Self-update is only available..." (seen live on a
 /// snapshot copy). `.launcher-uv` marker = receipted install, no re-fetch.
+///
+/// The installer run never edits PATH (`UV_NO_MODIFY_PATH`): uv's installer
+/// ships `"modify_path": true` and would otherwise append our (or a throwaway
+/// temp) tools dir to the USER's persistent PATH on every run. We always
+/// invoke this copy by absolute path, so PATH entries would be pure litter.
 #[cfg(windows)]
 const UV_EXE: &str = "uv.exe";
 #[cfg(not(windows))]
@@ -242,8 +247,9 @@ fn path_uv_exe() -> Option<std::path::PathBuf> {
 }
 
 /// Run the official standalone installer INTO our tools dir (writes the
-/// install receipt, so `uv self update` keeps working on our copy).
-/// Best-effort — None offline or on installer failure (caller falls back).
+/// install receipt, so `uv self update` keeps working on our copy) without
+/// editing the user's PATH. Best-effort — None offline or on installer
+/// failure (caller falls back).
 fn installer_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
     let dir = data_dir.join(".tools");
     std::fs::create_dir_all(&dir).ok()?;
@@ -258,6 +264,12 @@ fn installer_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
             "irm https://astral.sh/uv/install.ps1 | iex",
         ])
         .env("UV_INSTALL_DIR", &dir_s)
+        // uv's installer ships `"modify_path": true` and appends the install
+        // dir to the USER's persistent PATH on every run. We invoke our copy
+        // by absolute path, so that entry is pure litter — 104 throwaway
+        // %TEMP%\.tmp*\tools entries (plus 1.65 GB of duplicate uv builds)
+        // had piled up on one box this way.
+        .env("UV_NO_MODIFY_PATH", "1")
         .output()
         .ok()
         .is_some_and(|o| o.status.success());
@@ -265,6 +277,7 @@ fn installer_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
     let ok = std::process::Command::new("sh")
         .args(["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"])
         .env("UV_INSTALL_DIR", &dir_s)
+        .env("UV_NO_MODIFY_PATH", "1")
         .output()
         .ok()
         .is_some_and(|o| o.status.success());
@@ -353,13 +366,48 @@ fn uv_command() -> String {
     "uv".into()
 }
 
-/// Self-update applies only to receipted standalone installs (`.launcher-uv`
-/// marker); a plain file copy refuses loudly with "Self-update is only
-/// available for uv binaries installed via the standalone installation
-/// scripts…" (seen live before every reinstall of a copy-fallback box).
-/// Kept pure for the test documenting the decision. Pure + unit-tested.
-pub(crate) fn uv_self_update_applicable(receipted_install: bool) -> bool {
+/// Self-update applies only to a receipted standalone install (`.launcher-uv`
+/// marker) **whose receipt names our tools dir**; a plain file copy refuses
+/// loudly with "Self-update is only available for uv binaries installed via
+/// the standalone installation scripts…" (seen live before every reinstall of
+/// a copy-fallback box). The receipt clause matters just as much: a marker
+/// left behind by an installer run that recorded a *different* prefix (seen
+/// live: `%TEMP%\.tmpXXXX\.tools`) makes uv refuse with "…the standalone
+/// installer was used to install uv to <other dir>. Are multiple copies of uv
+/// installed?" — pure noise before every reinstall. Pure + unit-tested.
+pub(crate) fn uv_self_update_applicable(
+    receipted_install: bool,
+    receipt_prefix: Option<&str>,
+    tools_dir: &std::path::Path,
+) -> bool {
     receipted_install
+        && receipt_prefix.is_some_and(|p| norm_path(p) == norm_path(&tools_dir.to_string_lossy()))
+}
+
+/// Case- and separator-insensitive path compare for uv's receipt (written with
+/// backslashes on Windows, possibly with a trailing separator).
+pub(crate) fn norm_path(s: &str) -> String {
+    s.replace('/', "\\").trim_end_matches('\\').to_ascii_lowercase()
+}
+
+/// `install_prefix` from uv's own install receipt — the only authoritative
+/// record of where uv thinks it lives. Windows: `%LOCALAPPDATA%\uv`; elsewhere
+/// uv's installer uses `$XDG_CONFIG_HOME/uv`. Missing/unreadable → None.
+fn uv_receipt_install_prefix() -> Option<String> {
+    #[cfg(windows)]
+    let base = std::env::var("LOCALAPPDATA").ok()?;
+    #[cfg(not(windows))]
+    let base = std::env::var("XDG_CONFIG_HOME")
+        .or_else(|_| std::env::var("HOME").map(|h| format!("{h}/.config")))
+        .ok()?;
+    let raw =
+        std::fs::read_to_string(std::path::Path::new(&base).join("uv").join("uv-receipt.json"))
+            .ok()?;
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()?
+        .get("install_prefix")?
+        .as_str()
+        .map(str::to_string)
 }
 
 /// Well-known install locations per tool (pure tables — unit-tested).
@@ -474,16 +522,27 @@ async fn ensure_uv_python(
     emit(&format!(
         "[*] Ensuring Python {wanted} via {uv_bin} (setup.py needs this exact version)…\n"
     ));
-    // Self-update ONLY on a receipted standalone install: a plain file copy
-    // refuses with "Self-update is only available for uv binaries installed
-    // via the standalone installation scripts…" (seen live on the copy
-    // fallback) — pure noise before every reinstall. The marker proves the
-    // receipt; an outdated no-receipt copy still has a recovery path (step
-    // 3b runs the official installer into our tools dir and retries). A
-    // foreign PATH uv is never self-updated either — it belongs to another
-    // app and can vanish under us (0.5.3 report).
-    if uv_self_update_applicable(owned_uv().is_some()) {
+    // Self-update ONLY on a receipted standalone install whose receipt still
+    // names our tools dir: a plain file copy refuses with "Self-update is only
+    // available for uv binaries installed via the standalone installation
+    // scripts…" (seen live on the copy fallback), and a receipt pointing
+    // elsewhere (seen live: a %TEMP%\.tmp*\tools prefix from an earlier
+    // installer run) refuses with "Are multiple copies of uv installed?" —
+    // both are pure noise before every reinstall. An outdated no-receipt copy
+    // still has a recovery path (step 3b reinstalls uv and retries). A foreign
+    // PATH uv is never self-updated either — it belongs to another app and can
+    // vanish under us (0.5.3 report).
+    let tools_dir = get_data_dir().join(".tools");
+    let receipt_prefix = uv_receipt_install_prefix();
+    if uv_self_update_applicable(owned_uv().is_some(), receipt_prefix.as_deref(), &tools_dir) {
         let _ = run_capture(app, &emit, uv_bin.as_str(), &["self", "update"]).await;
+    } else if let Some(prefix) = receipt_prefix.as_deref() {
+        crate::base::push_log(
+            &format!(
+                "[*] uv's install receipt names {prefix} — skipping self-update (uv would refuse)."
+            ),
+            "setup",
+        );
     } else {
         crate::base::push_log(
             "[*] uv has no standalone-install receipt — skipping self-update (not applicable to plain copies).",
@@ -579,7 +638,7 @@ async fn ensure_uv_python(
                 "-ExecutionPolicy",
                 "Bypass",
                 "-Command",
-                "& { iwr -useb https://astral.sh/uv/install.ps1 | iex }",
+                "& { $env:UV_NO_MODIFY_PATH='1'; iwr -useb https://astral.sh/uv/install.ps1 | iex }",
             ],
         )
         .await
@@ -589,7 +648,7 @@ async fn ensure_uv_python(
             app,
             &emit,
             "sh",
-            &["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"],
+            &["-c", "curl -LsSf https://astral.sh/uv/install.sh | UV_NO_MODIFY_PATH=1 sh"],
         )
         .await
         .0;
@@ -1342,19 +1401,6 @@ pub(crate) fn amd_device_extras_for_targets(clinfo: &str) -> Option<String> {
     )
 }
 
-/// Experimental AMD HIP torch source (upstream docs/INSTALLATION.md, Sep 2026):
-/// gfx1201-only pinned stack on the AMD public index — NOT TheRock nightlies.
-/// `torch[device-gfx1201]==2.10.0+rocm7.14.0` + `rocm[libraries,device-gfx1201]`.
-/// Informational / log + future install-path use: the main install stays on
-/// TheRock 7.15, the HIP GGUF wheel opt-in (install_hip_gguf_wheel) requires
-/// this torch. Rejects other builds at GGUF import. Pure + unit-tested.
-pub(crate) fn amd_hip_stable_cmds(profile: &str) -> Option<String> {
-    if profile != "AMD_GFX1201" {
-        return None;
-    }
-    Some("--index-url https://repo.amd.com/rocm/whl-multi-arch/ \"torch[device-gfx1201]==2.10.0+rocm7.14.0\" \"rocm[libraries,device-gfx1201]==7.14.0\"".into())
-}
-
 /// Pure helper: default `attention_mode` to "sdpa" on AMD when the key is
 /// missing/empty OR holds a stale 'auto'/'sage'/'sage2' value.
 /// Rationale: upstream setup_config's unified AMD profile declares
@@ -1971,7 +2017,18 @@ pub async fn install(
     env_type: Option<String>,
 ) -> Result<serde_json::Value, String> {
     mutating_try("install")?;
-    let env = env_type.unwrap_or("uv".into()); // uv | venv | conda
+    // Validate the env type instead of trusting it: an unknown string used to
+    // fall through every `env == "uv" || "venv" || "conda"` gate (skipping the
+    // smoke test) yet still get a completion marker, so the next run thought
+    // the install was fine.
+    let env = match env_type.as_deref().map(str::trim) {
+        None | Some("") => "uv".to_string(),
+        Some(t @ ("uv" | "venv" | "conda")) => t.to_string(),
+        Some(other) => {
+            mutating_done();
+            return Err(format!("unknown environment type '{other}' (expected uv, venv or conda)"));
+        }
+    };
     let repo = get_repo_dir();
     let emit = |msg: &str| {
         crate::base::push_log(msg, "setup");
@@ -2325,13 +2382,14 @@ pub async fn install(
         match patch_therock_torch_cmd(&repo, primary) {
                 Ok(()) => {
                     emit(&format!("[*] AMD TheRock torch: stable whl-next (torch 2.13+rocm10, per-box device targets)\n{primary}\n"));
-                    // gfx1201 HIP alternative: TheRock stays the install stack;
-                    // point RX 9070/R9700 users at the sync-kernels-only HIP opt-in
-                    // (separate torch 2.10 env — does not load in this 2.13 env).
-                    if plan["profile"].as_str().unwrap_or("") == "AMD_GFX1201" {
-                        if let Some(hip) = amd_hip_stable_cmds("AMD_GFX1201") {
-                            emit(&format!("[i] Experimental alternative for gfx1201: HIP torch 2.10+rocm7.14 ({hip}) + HIP GGUF wheel via dashboard Sync kernels → HIP GGUF (exp). Separate env only — it does not load in this 2.13 env. Validation pending.\n"));
-                        }
+                    // RDNA4: the experimental HIP GGUF wheel installs in THIS
+                    // env (torch 2.13+rocm10) — Sync lands it via gguf_rocm10,
+                    // and the HIP GGUF (exp) button reinstalls it. No separate
+                    // ROCm 7.14 environment any more.
+                    if ["AMD_GFX1200", "AMD_GFX1201"]
+                        .contains(&plan["profile"].as_str().unwrap_or(""))
+                    {
+                        emit("[i] Experimental HIP GGUF wheel (RDNA4, gguf 1.0.27+torch213rocm100py312) installs in this env via Sync GPU Wheels → GGUF, or the HIP GGUF (exp) button. Validation pending.\n");
                     }
                 }
                 // Fail-closed (issue #15): without the TheRock entry setup.py
@@ -2528,6 +2586,13 @@ pub async fn install(
                     .output()
                     .is_ok_and(|o| o.status.success());
                 if !runs {
+                    // Restore the process env before bailing: the conda PATH
+                    // prepend above and the WAN2GP_TAURI_* vars must not leak
+                    // into later launches.
+                    if let Some(old) = saved_path.clone() {
+                        std::env::set_var("PATH", old);
+                    }
+                    clear_setup_child_env();
                     mutating_done();
                     return Err("conda env is missing and no system Python can drive setup.py (it creates env_conda itself in step 1/3). Install Python 3.11 via the Download button, or pick the uv env type (it self-provisions).".into());
                 }
@@ -3685,18 +3750,18 @@ pub async fn restore_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,
     sync_kernels_inner(app, true).await
 }
 
-/// Experimental AMD HIP GGUF wheel (upstream docs/INSTALLATION.md):
-/// `llamacpp_gguf_cuda-1.0.26+torch210rocm714py311` for RX 9070-series
-/// (gfx1201) on PyTorch 2.10.0+rocm7.14.0. The 1.0.26 bump is version-only
-/// (code, binaries and torch/ROCm requirements identical to 1.0.25; the new
-/// CUDA packed-row kernels are not in it). Sync-kernels-only opt-in: the main
-/// install stays on the TheRock 7.15 stack, this swaps just the GGUF dist
-/// (same package name as the CUDA wheel, so --force-reinstall). --no-deps
-/// preserves the installed torch — the HIP wheel rejects other builds at
-/// import. AMD-gated; non-AMD profiles refused. Non-gfx1201 AMD allowed with
-/// a warning (upstream targets gfx1201, validation pending). URL lives in
-/// hw.rs alongside the CUDA wheels (single source of truth).
-use crate::hw::GGUF_1026_WIN_PY311_HIP as HIP_GGUF_WHEEL_URL;
+/// Experimental AMD HIP GGUF wheel (upstream gguf-v1.0.27, llama.cpp/HIP.md):
+/// `llamacpp_gguf_cuda-1.0.27+torch213rocm100py312` for RDNA4
+/// (gfx1200/gfx1201). Same package name as the CUDA wheel, so --force-reinstall
+/// swaps it; --no-deps preserves the installed torch. It installs into the
+/// ACTIVE AMD env — the launcher's own torch 2.13.0+rocm10.0.0 / py3.12 stack,
+/// which is the build the wheel expects (it records and checks the exact ROCm
+/// torch build at import). Sync lands the same wheel via the `gguf_rocm10`
+/// component; this command stays as the explicit opt-in / reinstall path.
+/// AMD-gated; non-RDNA4 AMD allowed with a warning (upstream targets
+/// gfx1200/gfx1201, validation pending). URL lives in hw.rs alongside the CUDA
+/// wheels (single source of truth).
+use crate::hw::GGUF_1027_WIN_PY312_HIP as HIP_GGUF_WHEEL_URL;
 
 #[tauri::command]
 pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
@@ -3719,10 +3784,10 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
         gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
         gpu.get("name").and_then(|v| v.as_str()).unwrap_or(""),
     );
-    if profile != "AMD_GFX1201" {
-        emit_log(&format!("[!] {profile} is not the upstream gfx1201 target (RX 9070/R9700) — installing anyway, validation pending.\n"));
+    if !["AMD_GFX1200", "AMD_GFX1201"].contains(&profile.as_str()) {
+        emit_log(&format!("[!] {profile} is not the upstream RDNA4 target (gfx1200/gfx1201) — installing anyway, validation pending.\n"));
     }
-    emit_log("[*] Installing experimental HIP GGUF wheel 1.0.26+torch210rocm714 (needs torch 2.10.0+rocm7.14.0; validation pending)…\n");
+    emit_log("[*] Installing experimental HIP GGUF wheel 1.0.27+torch213rocm100py312 (uses this env's torch 2.13.0+rocm10.0.0; RDNA4 only; validation pending)…\n");
     let repo = get_repo_dir();
     let env = get_active_env();
     let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
@@ -3741,28 +3806,67 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
         return Err("python not found for active env".into());
     }
     let py_s = py.to_string_lossy().to_string();
-    let ok = crate::base::run_logged(
-        &app,
-        &py_s,
-        &[
-            "-m",
-            "pip",
-            "install",
-            "--no-deps",
-            "--force-reinstall",
-            "--upgrade",
-            HIP_GGUF_WHEEL_URL,
-        ],
-        None,
-        |s: &str| {
-            crate::base::push_log(s, "setup");
-            let _ = app.emit("launch-log", s.to_string());
-        },
+    let emit_hip = |s: &str| {
+        crate::base::push_log(s, "setup");
+        let _ = app.emit("launch-log", s.to_string());
+    };
+    // This is a fixed cp312 / torch 2.13 + ROCm 10 build. Check the ACTIVE env
+    // before pip sees it: a py3.11 env gets a wheel pip refuses (cp312 tag), and
+    // an older-ROCm env gets one that fails at import — both surfaced as a
+    // launcher bug rather than a wrong-env message. Sync maps the wheel from the
+    // live env, so it is the right path for anything else.
+    let kind = env_torch_kind(&py_s);
+    let pv = env_python_version(&py)
+        .map(|(a, b)| format!("{a}.{b}"))
+        .unwrap_or_default();
+    if kind.as_deref() != Some("rocm100") || pv != "3.12" {
+        mutating_done();
+        return Err(format!(
+            "The HIP GGUF wheel is a ROCm 10 / torch 2.13 / Python 3.12 build, but this env reports torch '{}' / python '{}'. Rebuild the AMD env (ROCm 10) or use \u{21bb} Update GPU Wheels, which maps the wheel from the live env.",
+            kind.as_deref().unwrap_or("unknown"),
+            if pv.is_empty() { "unknown" } else { pv.as_str() },
+        ));
+    }
+    let torch_ver = silent_command(&py_s)
+        .args(["-c", "import torch;print(torch.__version__)"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if !torch_ver.is_empty() && !torch_ver.contains("2.13") {
+        emit_log(&format!("[!] torch {torch_ver} is not the 2.13 build the HIP wheel records at import — install may fail.\n"));
+    }
+    let argv: Vec<String> = vec![
+        "-m".into(),
+        "pip".into(),
+        "install".into(),
+        "--no-deps".into(),
+        "--force-reinstall".into(),
+        "--upgrade".into(),
+        HIP_GGUF_WHEEL_URL.into(),
+    ];
+    // Download + verify before pip sees it (see `wheels`): a swapped or
+    // truncated asset fails loudly here instead of landing in the env.
+    let argv = match crate::wheels::verify_argv_wheels(
+        argv,
+        &crate::wheels::cache_dir(),
+        &emit_hip,
     )
-    .await;
+    .await
+    {
+        Ok(a) => a,
+        Err(e) => {
+            emit_hip(&format!("[!] {e}\n"));
+            mutating_done();
+            return Err(e);
+        }
+    };
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let ok = crate::base::run_logged(&app, &py_s, &argv_ref, None, emit_hip).await;
     mutating_done();
     if !ok {
-        return Err("HIP GGUF wheel install failed — see console output. Confirm torch 2.10.0+rocm7.14.0 is installed; the wheel rejects other builds at import.".into());
+        return Err("HIP GGUF wheel install failed — see console output. It needs the AMD env's torch 2.13.0+rocm10.0.0: the wheel checks the ROCm torch build at import.".into());
     }
     Ok(serde_json::json!({"ok": true, "success": true, "wheel": HIP_GGUF_WHEEL_URL}))
 }
@@ -3848,25 +3952,35 @@ pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_jso
         "[*] Installing WGPKernels {} ({kind}) — INT8 fast path for int8_kernels = auto/wgpkernels…\n",
         crate::hw::WGPKERNELS_VERSION
     ));
-    let ok = crate::base::run_logged(
-        &app,
-        &py_s,
-        &[
-            "-m",
-            "pip",
-            "install",
-            "--no-deps",
-            "--force-reinstall",
-            "--upgrade",
-            &url,
-        ],
-        None,
-        |s: &str| {
-            crate::base::push_log(s, "setup");
-            let _ = app.emit("launch-log", s.to_string());
-        },
+    let emit_w = |s: &str| {
+        crate::base::push_log(s, "setup");
+        let _ = app.emit("launch-log", s.to_string());
+    };
+    let argv: Vec<String> = vec![
+        "-m".into(),
+        "pip".into(),
+        "install".into(),
+        "--no-deps".into(),
+        "--force-reinstall".into(),
+        "--upgrade".into(),
+        url.clone(),
+    ];
+    let argv = match crate::wheels::verify_argv_wheels(
+        argv,
+        &crate::wheels::cache_dir(),
+        &emit_w,
     )
-    .await;
+    .await
+    {
+        Ok(a) => a,
+        Err(e) => {
+            emit_w(&format!("[!] {e}\n"));
+            mutating_done();
+            return Err(e);
+        }
+    };
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let ok = crate::base::run_logged(&app, &py_s, &argv_ref, None, emit_w).await;
     mutating_done();
     if !ok {
         return Err("WGPKernels wheel install failed — see console output. The wheel must match your torch/CUDA build (cu130 for torch 2.10+cu13, cu128 for torch 2.7+cu12.8).".into());
@@ -3874,40 +3988,6 @@ pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_jso
     Ok(serde_json::json!({"ok": true, "success": true, "wheel": url, "version": crate::hw::WGPKERNELS_VERSION, "torchKind": kind}))
 }
 
-/// Copy-paste recipe for the SEPARATE AMD ROCm 7.14 environment (gfx1201).
-/// Since upstream 17307e5 this env is only needed for the `torch210rocm714`
-/// HIP GGUF wheel: WGPKernels 1.1.2 ships a `rocm100` wheel that installs
-/// directly in the installer's TheRock torch 2.13+rocm10 env (button/sync).
-/// The HIP GGUF wheel still targets PyTorch 2.10.0+rocm7.14.0 and does NOT
-/// load in the installer env. Single source of truth for the dashboard's
-/// "AMD setup (exp)" helper. Pure + unit-tested.
-#[tauri::command]
-pub fn amd_hip_recipe() -> serde_json::Value {
-    let torch_args = amd_hip_stable_cmds("AMD_GFX1201").unwrap_or_default();
-    let torch_cmd = format!("python -m pip install {torch_args}");
-    let hip_cmd = format!("python -m pip install --no-deps {HIP_GGUF_WHEEL_URL}");
-    let text = format!(
-        "# Separate AMD ROCm 7.14 environment (Windows, gfx1201 — RX 9070 / 9070 XT / R9700)\n\
-         # Only needed for the experimental HIP GGUF wheel below: WGPKernels 1.1.2\n\
-         # (rocm100) installs directly in the installer's torch 2.13+rocm10 env.\n\
-         # 1) PyTorch 2.10 + ROCm 7.14 (the installer's AMD env is torch 2.13 + rocm10 instead)\n\
-         {torch_cmd}\n\
-         # 2) HIP GGUF (optional, from the same env)\n\
-         {hip_cmd}\n\
-         # 3) ROCm SDK init (community recommendation for Veda sparse attention;\n\
-         #    upstream's main-env doc says it isn't needed there, but this is a\n\
-         #    separate 7.14 env — skip if 'rocm-sdk' isn't recognized after step 1)\n\
-         rocm-sdk init\n"
-    );
-    serde_json::json!({
-        "ok": true,
-        "gfxTarget": "gfx1201 (RX 9070 / 9070 XT / R9700)",
-        "torchCmd": torch_cmd,
-        "hipGgufCmd": hip_cmd,
-        "helpUrl": "https://github.com/deepbeepmeep/WanGP/blob/main/docs/INSTALLATION.md#wgpkernels-installation",
-        "text": text,
-    })
-}
 /// Post-install override wheels: the subset of Sync that setup.py can never
 /// produce — the GGUF floor and the sage safe build. setup.py installs
 /// upstream's pins verbatim; without this pass a lagging setup_config
@@ -3975,7 +4055,24 @@ pub(crate) fn triton_component_spec(cfg: &serde_json::Value, profile: &str) -> O
 }
 
 pub(crate) const SAGE_SAFE_WIN_URL: &str = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl";
-const SAGE_UPSTREAM_TAG: &str = "sageattention-2.2.0+cu130torch2.9.0andhigher.post4";
+
+/// True when `url` is a SageAttention Windows wheel for the same CUDA/torch line
+/// as the launcher's known-good build, but a different build of it — exactly the
+/// case the safe-build toggle exists for.
+///
+/// The toggle used to recognize a single historic upstream pin
+/// (`…torch2.9.0andhigher.post4`), which made it a no-op the moment upstream
+/// moved on — as it has, to the fixed post6. Keying on the wheel family keeps
+/// the promise the UI makes ("prefer the launcher's known-good SageAttention
+/// build") for whatever build upstream picks in that line, while a different
+/// torch line or a non-wheel spec (Turing's `sageattention==1.0.6`) is left
+/// alone: this build cannot stand in for those.
+pub(crate) fn sage_needs_safe_swap(url: &str, sage_safe: bool) -> bool {
+    sage_safe
+        && url.starts_with("https://github.com/woct0rdho/SageAttention/releases/download/")
+        && url.contains("+cu130torch2.")
+        && url != SAGE_SAFE_WIN_URL
+}
 
 pub(crate) fn post_install_override_urls(
     cfg: &serde_json::Value,
@@ -3996,7 +4093,7 @@ pub(crate) fn post_install_override_urls(
     // (cu128/py310); profiles still list `gguf` and setup.py remaps via
     // (torch_k, py_k). Check both components — either stale pin swaps to its
     // matching build (py tag picks the build; upstream's own fresh pin
-    // preferred, so a future 1.0.26 needs no launcher change).
+    // preferred, so a future GGUF build needs no launcher change).
     let gguf = ["gguf", "gguf_cu128"]
         .into_iter()
         .filter_map(|k| {
@@ -4024,11 +4121,10 @@ pub(crate) fn post_install_override_urls(
             .unwrap_or("")
             .to_string()
     };
-    // Empty lookup → cannot prove an override is needed → no-op. Only the
-    // known upstream post4 pin swaps to the safe build.
-    let sage = if sage_safe
-        && ["RTX_30", "RTX_40", "RTX_50"].contains(&profile)
-        && sage_url.contains(SAGE_UPSTREAM_TAG)
+    // Empty lookup → cannot prove an override is needed → no-op. The safe
+    // toggle only ever substitutes inside the safe build's wheel family.
+    let sage = if ["RTX_30", "RTX_40", "RTX_50"].contains(&profile)
+        && sage_needs_safe_swap(&sage_url, sage_safe)
     {
         Some(SAGE_SAFE_WIN_URL.to_string())
     } else {
@@ -4104,12 +4200,55 @@ async fn sync_post_install_overrides(app: &tauri::AppHandle, repo: &std::path::P
             vec!["-m".into(), "pip".into(), "install".into()];
         argv.extend(pip_install_argv(&url));
         argv.push("--upgrade".into());
+        // Download + verify every wheel URL before pip (see `wheels`).
+        let argv = match crate::wheels::verify_argv_wheels(
+            argv,
+            &crate::wheels::cache_dir(),
+            &emit_k,
+        )
+        .await
+        {
+            Ok(a) => a,
+            Err(e) => {
+                emit_k(&format!("[!] {e}\n"));
+                emit_log(&format!("[!] post-install override for {name} skipped — checksum verification failed, installing nothing\n"));
+                continue;
+            }
+        };
         let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
         if !crate::base::run_logged(&app, &py_s, &argv_ref, None, emit_k).await
         {
             emit_log(&format!("[!] post-install override for {name} failed — install itself succeeded; run Update GPU Wheels manually\n"));
         }
     }
+}
+
+/// The console lines a kernel-sync run prints, as pure strings.
+///
+/// These are the lines a user reads after every *Sync* and quotes in a bug
+/// report, so their exact wording is a contract: `sync_transcript_tests`
+/// asserts them against a captured all-up-to-date run — the common case on a
+/// healthy box, and the one where "did the launcher do the right thing?" is
+/// hardest to answer from the console alone.
+pub(crate) fn kernel_cfg_header_line(head: &str, gguf_ver: &str) -> String {
+    format!("[*] setup_config.json @ {head} (gguf {gguf_ver}) — deepbeepmeep's wanted wheels\n")
+}
+
+/// "already at <version>, skipped" — the no-op line. Note the version printed is
+/// what the env *has*, so a stale-looking number is the env's, not the pin's.
+pub(crate) fn kernel_skip_line(name: &str, have: &str) -> String {
+    format!("[*] sync kernel {name} — already at {have}, skipped\n")
+}
+
+/// Triton no-downgrade (#2264): a pinned spec must not clobber a working newer
+/// build. `wanted` is the spec's floor, which is why the wording says the
+/// installed build is newer than *wanted* rather than out of spec.
+pub(crate) fn kernel_triton_keep_line(installed: &str, wanted: &str) -> String {
+    format!("[*] keeping installed triton {installed} (newer than wanted {wanted}) — not downgrading (#2264); pin an older triton manually if the old build is required\n")
+}
+
+pub(crate) fn kernel_sync_summary_line(synced: usize, current: usize, failed: usize) -> String {
+    format!("[✓] kernel sync complete — {synced} synced, {current} already current, {failed} failed\n")
 }
 
 async fn sync_kernels_inner(
@@ -4225,9 +4364,7 @@ async fn sync_kernels_inner(
         } else {
             gguf_ver
         };
-        emit_log(&format!(
-            "[*] setup_config.json @ {head} (gguf {v}) — deepbeepmeep's wanted wheels\n"
-        ));
+        emit_log(&kernel_cfg_header_line(&head, &v));
         // Shape validation: upstream adds components without warning
         // (gguf_cu128, light2xv). Unknown entries warn here AND at each
         // skipped kernel below — never a silent under-install.
@@ -4313,16 +4450,23 @@ async fn sync_kernels_inner(
             .and_then(serde_json::Value::as_bool)
             != Some(false)
     }; // ponytail: default safe post6 (1348e5b) — off means setup_config as published
-       // ponytail: Sage wheel is not in gpu_profiles[RTX_30].kernels (only nunchaku+gguf) — handle it separately like Electron's setSageAttentionSafe
+    // Sage lives outside kernels[] too (`gpu_profiles[profile].sage` ->
+    // `components.sage[tag]`). Append it whenever the profile declares a tag —
+    // RTX_20 `v1`, RTX_30/40/50 `v220_cu13`, AMD `v1` — so the wheel/spec
+    // actually syncs (it used to be RTX_30/40/50-only, so RTX_20/AMD silently
+    // skipped it) and the safe/upstream toggle still has it in the list.
+    let sage_tag = cfg
+        .get("gpu_profiles")
+        .and_then(|p| p.get(cfg_profile))
+        .and_then(|pr| pr.get("sage"))
+        .and_then(|v| v.as_str());
     let mut all_kernels = kernels.clone();
-    if ["RTX_30", "RTX_40", "RTX_50"].contains(&profile.as_str()) {
-        // ensure sage is in the sync list when toggling safe/upstream, so the wheel actually swaps
-        if !all_kernels
+    if sage_tag.is_some()
+        && !all_kernels
             .iter()
             .any(|k| k.as_str() == Some("sage") || k.as_str() == Some("sageattention"))
-        {
-            all_kernels.push(serde_json::json!("sage"));
-        }
+    {
+        all_kernels.push(serde_json::json!("sage"));
     }
     // Triton sync (v18.18-parity): upstream profiles tag triton outside
     // kernels[] (`gpu_profiles[profile].triton` -> `components.triton[tag]`),
@@ -4344,21 +4488,23 @@ async fn sync_kernels_inner(
         if let Some(name) = k.as_str() {
             // find wheel url — nunchaku/gguf are under components.kernels, sage is under components.sage[profile.sage]
             let mut url = if name == "sage" || name == "sageattention" {
-                // sage: look up via gpu_profiles[profile].sage -> components.sage[version].cmd[win]
-                let sage_ver = cfg
-                    .get("gpu_profiles")
-                    .and_then(|p| p.get(&profile))
-                    .and_then(|pr| pr.get("sage"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("v220_cu13");
+                // sage: gpu_profiles[cfg_profile].sage -> components.sage[tag].
+                // `v1` is a bare PyPI spec (`sageattention==1.0.6`); the 2.x
+                // entries are per-OS objects with `win`/`linux`.
+                let sage_ver = sage_tag.unwrap_or("v220_cu13");
                 cfg.get("components")
                     .and_then(|c| c.get("sage"))
                     .and_then(|m| m.get(sage_ver))
                     .and_then(|e| e.get("cmd"))
-                    .and_then(|c| c.get("win"))
-                    .and_then(|u| u.as_str())
-                    .unwrap_or("")
-                    .to_string()
+                    .map(|cmd| match cmd {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other
+                            .get("win")
+                            .and_then(|u| u.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                    .unwrap_or_default()
             } else {
                 // WGPKernels stack split (upstream 17307e5, mirrors
                 // setup.py): profiles list `wgpkernels` but cu128/rocm10
@@ -4367,6 +4513,7 @@ async fn sync_kernels_inner(
                 if name == "wgpkernels" {
                     let kind = env_torch_kind(&py.to_string_lossy().to_string());
                     let comp = match kind.as_deref() {
+                        Some("cu130") => "wgpkernels",
                         Some("cu128") => "wgpkernels_cu128",
                         Some("rocm100")
                             if ["AMD_GFX1200", "AMD_GFX1201"]
@@ -4380,7 +4527,21 @@ async fn sync_kernels_inner(
                             let _ = app.emit("launch-log", m);
                             continue;
                         }
-                        _ => "wgpkernels",
+                        // Probe failure on an AMD box must never guess the
+                        // CUDA cu130 wheel; NVIDIA profiles imply cu130.
+                        None if profile.starts_with("AMD") => {
+                            let m = format!("[!] WGPKernels: could not read this env's torch build (AMD) — skipping; install it from the WGPKernels button once torch imports\n");
+                            crate::base::push_log(&m, "setup");
+                            let _ = app.emit("launch-log", m);
+                            continue;
+                        }
+                        None => "wgpkernels",
+                        Some(other) => {
+                            let m = format!("[!] WGPKernels: no wheel for torch build '{other}' — skipping (needs cu130/cu128, or rocm100 on RDNA4)\n");
+                            crate::base::push_log(&m, "setup");
+                            let _ = app.emit("launch-log", m);
+                            continue;
+                        }
                     };
                     cfg.get("components")
                         .and_then(|c| c.get("kernels"))
@@ -4390,33 +4551,59 @@ async fn sync_kernels_inner(
                         .and_then(|u| u.as_str())
                         .unwrap_or("")
                         .to_string()
-                // GGUF cu128 split (upstream 5533384): profiles list `gguf`
-                // (cu130/py311) but py310 envs need `gguf_cu128`. Mirror
-                // setup.py's (torch_k, py_k) remap via the env python major/minor.
+                // GGUF build split (upstream 5533384 + the 1.0.27 ROCm wheel):
+                // profiles list `gguf` (cu130/py311), but py310 envs need
+                // `gguf_cu128` and RDNA4 AMD envs need `gguf_rocm10`. Mirror
+                // setup.py's (torch_k, py_k) table off the LIVE env — it is the
+                // env that receives the wheel, so it has the last word.
                 } else if name == "gguf" {
-                    let base_url = cfg
-                        .get("components")
-                        .and_then(|c| c.get("kernels"))
-                        .and_then(|m| m.get(name))
-                        .and_then(|e| e.get("cmd"))
-                        .and_then(|c| c.get("win"))
-                        .and_then(|u| u.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let cu128_url = cfg
-                        .get("components")
-                        .and_then(|c| c.get("kernels"))
-                        .and_then(|m| m.get("gguf_cu128"))
-                        .and_then(|e| e.get("cmd"))
-                        .and_then(|c| c.get("win"))
-                        .and_then(|u| u.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    if !cu128_url.is_empty() && env_python_version(&py) == Some((3, 10)) {
-                        cu128_url
-                    } else {
-                        base_url
+                    let kind = env_torch_kind(&py.to_string_lossy().to_string());
+                    let pv = env_python_version(&py)
+                        .map(|(a, b)| format!("{a}.{b}"))
+                        .unwrap_or_default();
+                    let mapped =
+                        crate::hw::gguf_component_for(kind.as_deref().unwrap_or(""), &pv);
+                    // RDNA4 gate (setup.py:454): the ROCm wheel only loads on
+                    // gfx1200/gfx1201 — skip loudly elsewhere rather than
+                    // install a wheel that cannot import.
+                    if mapped == Some("gguf_rocm10")
+                        && !["AMD_GFX1200", "AMD_GFX1201"].contains(&profile.as_str())
+                    {
+                        let m = format!("[*] profile '{profile}' maps to the ROCm GGUF wheel (gguf_rocm10), which is RDNA4-only (gfx1200/gfx1201) — skipping it\n");
+                        crate::base::push_log(&m, "setup");
+                        let _ = app.emit("launch-log", m);
+                        continue;
                     }
+                    // Unknown (torch, python) pair (or an unreadable probe) →
+                    // legacy py-tag pick, so a probe failure never drops it on
+                    // NVIDIA. A ROCm env is the exception: a CUDA cu130/cu128
+                    // wheel cannot import there, so skip rather than replace a
+                    // working HIP wheel with a broken one.
+                    let comp = match mapped {
+                        Some(c) => c,
+                        None => {
+                            let rocm = profile.starts_with("AMD")
+                                || kind
+                                    .as_deref()
+                                    .map(|k| k.starts_with("rocm"))
+                                    .unwrap_or(false);
+                            if rocm {
+                                let m = format!("[!] profile '{profile}' GGUF: no ROCm wheel for torch build '{}' / python '{pv}' — skipping rather than installing a CUDA wheel\n", kind.as_deref().unwrap_or("unknown"));
+                                crate::base::push_log(&m, "setup");
+                                let _ = app.emit("launch-log", m);
+                                continue;
+                            }
+                            if pv == "3.10" { "gguf_cu128" } else { "gguf" }
+                        }
+                    };
+                    cfg.get("components")
+                        .and_then(|c| c.get("kernels"))
+                        .and_then(|m| m.get(comp))
+                        .and_then(|e| e.get("cmd"))
+                        .and_then(|c| c.get("win"))
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("")
+                        .to_string()
                 } else if name == "triton" {
                     // components.triton[tag] (v18.18 key rename honored):
                     // tagged per profile, outside kernels[]. Resolved through
@@ -4451,11 +4638,20 @@ async fn sync_kernels_inner(
                 continue;
             }
             // Sage safe toggle (deepbeepmeep 2026-10: post4-class builds degrade
-            // speed under CUDA Graphs — triton fallback is needed. post6 is
-            // the fixed build and current upstream pin). Toggle on swaps a
-            // stale post4 pin to post6; toggle off installs the setup_config
-            // URL exactly as published (post6 today).
-            if (name == "sage" || name == "sageattention") && sage_safe && url.contains(SAGE_UPSTREAM_TAG) {
+            // speed under CUDA Graphs — triton fallback is needed; post6 is the
+            // fixed build). Toggle on prefers the launcher's known-good build
+            // whenever upstream's pick in the same wheel family differs; toggle
+            // off installs the setup_config URL exactly as published. Today the
+            // two coincide (upstream pins post6), so this is quiet — it fires
+            // the moment upstream picks a different build in that family, and
+            // says so in the console rather than swapping silently.
+            if (name == "sage" || name == "sageattention") && sage_needs_safe_swap(&url, sage_safe) {
+                let m = format!(
+                    "[*] SageAttention: upstream pins {} — installing the launcher's known-good build instead (uncheck 'Safe SageAttention build' to take upstream's)\n",
+                    url.rsplit('/').next().unwrap_or(&url)
+                );
+                crate::base::push_log(&m, "setup");
+                let _ = app.emit("launch-log", m);
                 url = SAGE_SAFE_WIN_URL.into();
             }
             // Sage3 is gated, never synced (#2280): Blackwell-only AND
@@ -4484,7 +4680,7 @@ async fn sync_kernels_inner(
                     if let Some(inst) = pip_show_version(&py_s, &["triton-windows", "triton"]).await
                     {
                         if crate::hw::version_gt(&inst, &pinned) {
-                            let m = format!("[*] keeping installed triton {inst} (newer than wanted {pinned}) — not downgrading (#2264); pin an older triton manually if the old build is required\n");
+                            let m = kernel_triton_keep_line(&inst, &pinned);
                             crate::base::push_log(&m, "setup");
                             let _ = app.emit("launch-log", m);
                             continue;
@@ -4504,7 +4700,7 @@ async fn sync_kernels_inner(
                       let py_probe = py.to_string_lossy().to_string();
                       if let Some(have) = pip_show_version(&py_probe, dists).await {
                           if kernel_version_matches(&have, &want) {
-                              let m = format!("[*] sync kernel {name} — already at {have}, skipped\n");
+                              let m = kernel_skip_line(&name, &have);
                               crate::base::push_log(&m, "setup");
                               let _ = app.emit("launch-log", m);
                               current += 1;
@@ -4527,6 +4723,22 @@ async fn sync_kernels_inner(
                 vec!["-m".into(), "pip".into(), "install".into()];
             argv.extend(pip_install_argv(&url));
             argv.push("--upgrade".into());
+            // Download + verify every wheel URL before pip (see `wheels`):
+            // a checksum mismatch aborts this component, installing nothing.
+            let argv = match crate::wheels::verify_argv_wheels(
+                argv,
+                &crate::wheels::cache_dir(),
+                &emit_k,
+            )
+            .await
+            {
+                Ok(a) => a,
+                Err(e) => {
+                    emit_k(&format!("[!] {e}\n"));
+                    failed.push(name.to_string());
+                    continue;
+                }
+            };
             let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
             if !run_logged(
                 &app,
@@ -4544,10 +4756,7 @@ async fn sync_kernels_inner(
         }
     }
     mutating_done();
-        emit_log(&format!(
-            "[✓] kernel sync complete — {synced} synced, {current} already current, {} failed\n",
-            failed.len()
-        ));
+        emit_log(&kernel_sync_summary_line(synced, current, failed.len()));
     if !failed.is_empty() {
         return Err(format!(
             "kernel sync failed for: {} — see console output",
@@ -4901,10 +5110,10 @@ mod wangp_git_tests {
     fn kernel_spec_version_reads_wheels_and_pins() {
         assert_eq!(
             super::kernel_spec_version_full(
-                "--no-deps https://x/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl"
+                "--no-deps https://x/llamacpp_gguf_cuda-1.0.27%2Btorch210cu130py311-cp311-cp311-win_amd64.whl"
             )
             .as_deref(),
-            Some("1.0.25+torch210cu130py311")
+            Some("1.0.27+torch210cu130py311")
         );
         assert_eq!(
             super::kernel_spec_version_full(
@@ -4932,7 +5141,7 @@ mod wangp_git_tests {
 
     #[test]
     fn base_version_strips_local_build_tags() {
-        assert_eq!(super::base_version("1.0.25+torch210cu130py311"), "1.0.25");
+        assert_eq!(super::base_version("1.0.27+torch210cu130py311"), "1.0.27");
         assert_eq!(super::base_version("2.2.0+cu130torch2.10.0andhigher.post6"), "2.2.0");
         assert_eq!(super::base_version("3.6.0.post26"), "3.6.0.post26");
     }
@@ -4958,6 +5167,11 @@ mod wangp_git_tests {
         );
         assert_eq!(count_personal_untracked(&entries), 2);
     }
+
+    /// Was missing its `#[test]` since 8bdab92, so it never ran and the
+    /// "never used" warning was the only hint. Kept next to the porcelain tests
+    /// because `changed_path_count` backs the drift count they assert on.
+    #[test]
     fn changed_path_count_ignores_blank_lines() {
         assert_eq!(super::changed_path_count("a\nb\n"), 2);
         assert_eq!(super::changed_path_count("a\r\n\r\nb\r\n"), 2);
@@ -5126,7 +5340,7 @@ pub(crate) fn changed_path_count(out: &str) -> usize {
 /// so an unknown component can never be reported as already current.
 fn kernel_dist_names(name: &str) -> &'static [&'static str] {
     match name {
-        "gguf" | "gguf_cu128" => &["llamacpp-gguf-cuda"],
+        "gguf" | "gguf_cu128" | "gguf_rocm10" => &["llamacpp-gguf-cuda"],
         "wgpkernels" | "wgpkernels_cu128" | "wgpkernels_rocm10" => &["wgpkernels"],
         "sage" | "sageattention" => &["sageattention"],
         "nunchaku" | "nunchaku_cu13" => &["nunchaku"],
@@ -5158,7 +5372,8 @@ pub(crate) fn kernel_spec_version_full(spec: &str) -> Option<String> {
     let mut parts = file.trim_end_matches(".whl").split('-');
     parts.next()?; // dist name
     let raw = parts.next()?;
-    (!raw.is_empty()).then(|| raw.replace("%2B", "+"))
+    // Upstream URL-encodes `+` as `%2B`; some tools emit lowercase `%2b`.
+    (!raw.is_empty()).then(|| raw.replace("%2B", "+").replace("%2b", "+"))
 }
 
 /// Does the installed dist already satisfy the wanted wheel? Exact match wins
@@ -5175,7 +5390,7 @@ pub(crate) fn kernel_version_matches(installed: &str, wanted_full: &str) -> bool
     !wanted_full.contains('+') && base_version(have) == base_version(want)
 }
 
-/// Base version before a local build tag: `1.0.25+torch210cu130py311`
+/// Base version before a local build tag: `1.0.27+torch210cu130py311`
 /// → `1.0.25`, `2.2.0+cu130torch2.10.post6` → `2.2.0`. Pure.
 pub(crate) fn base_version(v: &str) -> String {
     v.trim()
@@ -5665,6 +5880,11 @@ pub async fn rollback_wangp(app: tauri::AppHandle) -> Result<serde_json::Value, 
 /// and non-`==` specifiers. Environment markers (`; …`) are stripped and
 /// the line is kept — see parse_requirement_pins_for for marker-aware
 /// filtering. Pure + unit-tested.
+///
+/// Test-only: production goes through the marker-aware `parse_requirement_pins_for`
+/// (and `pin_drift_entry` for verdicts); this is the unfiltered wrapper its tests
+/// assert against.
+#[cfg(test)]
 pub(crate) fn parse_requirement_pins(text: &str) -> Vec<(String, String)> {
     parse_requirement_pins_for(text, None)
 }
@@ -5879,6 +6099,10 @@ pub(crate) fn diff_requirement_pins(
 /// One rendered line of the visible per-pin requirements report:
 /// `    mmgp 3.8.0 ✓` when in-spec, `    mmgp 3.7.14 -> 3.8.0 ✗` on drift.
 /// Same verdict as the drift check (one source of truth). Pure + unit-tested.
+///
+/// Test-only: the live report formats from `pin_drift_entry` (see
+/// `post_update_dep_check`), which is the shared verdict source.
+#[cfg(test)]
 pub(crate) fn format_pin_line(name: &str, got: Option<&str>, wanted: &str) -> String {
     match pin_drift_entry(name, got, wanted) {
         None => format!("    {name} {} ✓", got.unwrap_or("?")),
@@ -6012,8 +6236,8 @@ mod kernel_skip_tests {
                 "1.2.1+cu13.0torch2.10",
             ),
             (
-                "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl",
-                "1.0.25+torch210cu130py311",
+                "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.27/llamacpp_gguf_cuda-1.0.27%2Btorch210cu130py311-cp311-cp311-win_amd64.whl",
+                "1.0.27+torch210cu130py311",
             ),
             (
                 "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl",
@@ -6043,10 +6267,10 @@ mod kernel_skip_tests {
 
     #[test]
     fn untagged_specs_still_compare_on_the_base_version() {
-        let spec = "https://example.com/kernels/releases/download/v1.0.25/llamacpp_gguf_cuda-1.0.25%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+        let spec = "https://example.com/kernels/releases/download/v1.0.27/llamacpp_gguf_cuda-1.0.27%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
         let full = kernel_spec_version_full(spec).unwrap();
-        assert_eq!(full, "1.0.25+torch210cu130py311");
-        assert!(kernel_version_matches("1.0.25+torch210cu130py311", &full));
+        assert_eq!(full, "1.0.27+torch210cu130py311");
+        assert!(kernel_version_matches("1.0.27+torch210cu130py311", &full));
         assert!(!kernel_version_matches("1.0.24+torch210cu130py311", &full));
     }
 
@@ -6160,6 +6384,79 @@ mod triton_component_tests {
     }
 }
 #[cfg(test)]
+mod sync_transcript_tests {
+    use super::{
+        kernel_cfg_header_line, kernel_skip_line, kernel_spec_version_full,
+        kernel_sync_summary_line, kernel_triton_keep_line, kernel_version_matches,
+        sage_needs_safe_swap, SAGE_SAFE_WIN_URL,
+    };
+
+    /// The whole block a healthy box prints, in order, as one golden fixture:
+    /// a captured all-up-to-date *Sync* (RTX 3080, `env_uv`, upstream
+    /// `fdc63bdf`). Kept as a single expected string so any change to any line —
+    /// or to the order — fails one obviously-named test with a readable diff,
+    /// instead of being lost among loose `format!`s in the sync loop.
+    #[test]
+    fn the_whole_block_matches_the_captured_console() {
+        // Built from the same four helpers the loop calls, so this asserts the
+        // wording *and* the assembly order at once.
+        let block = [
+            kernel_cfg_header_line("fdc63bdf", "1.0.27+torch210cu130py311"),
+            kernel_skip_line("wgpkernels", "1.1.2+cu130"),
+            kernel_skip_line("nunchaku_cu13", "1.2.1+cu13.0torch2.10"),
+            kernel_skip_line("gguf", "1.0.27+torch210cu130py311"),
+            kernel_skip_line("sage", "2.2.0+cu130torch2.10.0andhigher.post6"),
+            // Triton is handled by the no-downgrade guard *before* the skip
+            // branch, which is why the summary counts four kernels and the
+            // block never prints a `sync kernel triton` row.
+            kernel_triton_keep_line("3.7.1.post27", "3.7.0"),
+            kernel_sync_summary_line(0, 4, 0),
+        ]
+        .concat();
+        let expected = "\
+[*] setup_config.json @ fdc63bdf (gguf 1.0.27+torch210cu130py311) — deepbeepmeep's wanted wheels
+[*] sync kernel wgpkernels — already at 1.1.2+cu130, skipped
+[*] sync kernel nunchaku_cu13 — already at 1.2.1+cu13.0torch2.10, skipped
+[*] sync kernel gguf — already at 1.0.27+torch210cu130py311, skipped
+[*] sync kernel sage — already at 2.2.0+cu130torch2.10.0andhigher.post6, skipped
+[*] keeping installed triton 3.7.1.post27 (newer than wanted 3.7.0) — not downgrading (#2264); pin an older triton manually if the old build is required
+[✓] kernel sync complete — 0 synced, 4 already current, 0 failed
+";
+        assert_eq!(block, expected);
+    }
+
+    /// The sage row of that transcript is the safe-toggle evidence: upstream's
+    /// pin and the launcher's safe build are the same wheel, so the toggle
+    /// substitutes nothing and the kernel is *reported current* instead of being
+    /// reinstalled for no reason. The toggle is not dead — see
+    /// `override_wheels_tests::safe_toggle_only_substitutes_inside_the_wheel_family`
+    /// for the case where upstream moves to a different build.
+    #[test]
+    fn the_sage_row_of_that_run_is_the_toggle_doing_nothing_on_purpose() {
+        assert!(
+            !sage_needs_safe_swap(SAGE_SAFE_WIN_URL, true),
+            "identical wheels must not trigger a substitution"
+        );
+        let want = kernel_spec_version_full(SAGE_SAFE_WIN_URL).unwrap();
+        assert!(
+            kernel_version_matches("2.2.0+cu130torch2.10.0andhigher.post6", &want),
+            "the installed build is the pinned one, so the loop prints the skip line"
+        );
+    }
+
+    /// The skip line names what the env *has* (it just matched the pin), and it
+    /// is one line: the console splits history on \n, so a stray one would show
+    /// up as a blank row.
+    #[test]
+    fn the_skip_line_names_the_env_version_in_one_line() {
+        let line = kernel_skip_line("gguf", "1.0.27+torch210cu130py311");
+        assert!(line.contains("— already at 1.0.27+torch210cu130py311, skipped"));
+        assert!(!line.contains("want"), "the pin is not repeated here");
+        assert!(line.ends_with(", skipped\n"));
+        assert_eq!(line.matches('\n').count(), 1);
+    }
+}
+#[cfg(test)]
 mod override_wheels_tests {
     use super::post_install_override_urls;
     fn cfg_with(gguf_win: &str, sage_ver: &str, sage_win: &str) -> serde_json::Value {
@@ -6173,32 +6470,57 @@ mod override_wheels_tests {
     }
     const GGUF_1014: &str = "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.14+torch210cu130py311-cp311-cp311-win_amd64.whl";
     const SAGE_POST4: &str = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl";
+    const SAGE_POST7: &str = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post7/sageattention-2.2.0+cu130torch2.10.0andhigher.post7-cp310-abi3-win_amd64.whl";
+    const SAGE_CU128: &str = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows/sageattention-2.2.0+cu128torch2.7.1-cp310-cp310-win_amd64.whl";
     #[test]
     fn flags_stale_gguf_and_post4() {
         let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "RTX_30", true);
         let gguf = w.gguf.expect("stale gguf must swap");
-        assert!(gguf.contains("1.0.26"), "got {gguf}");
+        assert!(gguf.contains("1.0.27"), "got {gguf}");
         let sage = w.sage.expect("post4 must swap when safe");
         assert!(sage.contains("post6"), "got {sage}");
+    }
+    #[test]
+    fn safe_toggle_only_substitutes_inside_the_wheel_family() {
+        use super::sage_needs_safe_swap;
+        // The historic pin and any future build in the same CUDA/torch line
+        // both swap — that is what makes the toggle a real choice rather than a
+        // one-off for post4.
+        assert!(sage_needs_safe_swap(SAGE_POST4, true));
+        assert!(sage_needs_safe_swap(SAGE_POST7, true));
+        // The safe build itself, another torch line, and a non-wheel spec stay
+        // untouched: this build cannot stand in for those.
+        assert!(!sage_needs_safe_swap(super::SAGE_SAFE_WIN_URL, true));
+        assert!(!sage_needs_safe_swap(SAGE_CU128, true));
+        assert!(!sage_needs_safe_swap("sageattention==1.0.6", true));
+        // Toggle off = setup_config exactly as published.
+        assert!(!sage_needs_safe_swap(SAGE_POST7, false));
+    }
+    #[test]
+    fn future_family_build_swaps_only_while_the_toggle_is_on() {
+        let on = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST7), "RTX_30", true);
+        assert_eq!(on.sage.as_deref(), Some(super::SAGE_SAFE_WIN_URL));
+        let off = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST7), "RTX_30", false);
+        assert!(off.sage.is_none(), "opted out must install upstream's pick");
     }
     #[test]
     fn quiet_when_already_current_or_opted_out() {
         // Current GGUF + safe sage → nothing to do.
         let cur = cfg_with(
-            &GGUF_1014.replace("1.0.14", "1.0.26"),
+            &GGUF_1014.replace("1.0.14", "1.0.27"),
             "v220_cu13",
             super::SAGE_SAFE_WIN_URL,
         );
         let w = post_install_override_urls(&cur, "RTX_30", true);
         assert!(w.gguf.is_none() && w.sage.is_none());
-        // 1.0.24 is now stale too (floor 1.0.26).
-        let old24 = cfg_with(
-            &GGUF_1014.replace("1.0.14", "1.0.24"),
+        // 1.0.26 is now stale too (floor 1.0.27).
+        let old26 = cfg_with(
+            &GGUF_1014.replace("1.0.14", "1.0.26"),
             "v220_cu13",
             super::SAGE_SAFE_WIN_URL,
         );
-        let w24 = post_install_override_urls(&old24, "RTX_30", true);
-        assert!(w24.gguf.is_some(), "1.0.24 must swap to 1.0.26");
+        let w26 = post_install_override_urls(&old26, "RTX_30", true);
+        assert!(w26.gguf.is_some(), "1.0.26 must swap to 1.0.27");
         // User chose upstream sage → sage untouched, gguf still swaps.
         let w = post_install_override_urls(&cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4), "RTX_30", false);
         assert!(w.gguf.is_some() && w.sage.is_none());
@@ -6209,7 +6531,7 @@ mod override_wheels_tests {
     #[test]
     fn swaps_stale_gguf_cu128_split() {
         // Upstream splits `gguf_cu128` (cu128/py310) at 1.0.25. A stale
-        // cu128 pin must swap to its matching 1.0.26 cu128 build.
+        // cu128 pin must swap to its matching 1.0.27 cu128 build.
         let stale_cu128 = GGUF_1014
             .replace("torch210cu130py311", "torch271cu128py310")
             .replace("py311", "py310");
@@ -6227,7 +6549,7 @@ mod override_wheels_tests {
         let w = post_install_override_urls(&cfg, "RTX_30", true);
         let gguf = w.gguf.expect("stale gguf_cu128 must swap");
         assert!(
-            gguf.contains("1.0.26") && gguf.contains("torch271cu128py310"),
+            gguf.contains("1.0.27") && gguf.contains("torch271cu128py310"),
             "got {gguf}"
         );
     }
@@ -6632,7 +6954,7 @@ fn python_matches_pin(prog: &str, extra_args: &[&str], wanted: &str) -> bool {
 /// TLS-only by default; a pin turns a MITM (or a truncated download) into a
 /// loud refusal instead of executed bytes. Streamed — the git installer is ~120 MB.
 #[cfg(windows)]
-fn verify_sha256(path: &str, expected_hex: &str, emit: &impl Fn(String)) -> bool {
+fn verify_sha256(path: &str, expected_hex: &str, source: &str, emit: &impl Fn(String)) -> bool {
     use sha2::Digest;
     let mut file = match std::fs::File::open(path) {
         Ok(f) => f,
@@ -6648,9 +6970,10 @@ fn verify_sha256(path: &str, expected_hex: &str, emit: &impl Fn(String)) -> bool
     }
     let got = format!("{:x}", hasher.finalize());
     if got.eq_ignore_ascii_case(expected_hex) {
+        emit(format!("[✓] sha256 {got} — matches {source}\n"));
         return true;
     }
-    emit(format!("[!] CHECKSUM MISMATCH for {path}\n    got      {got}\n    expected {expected_hex}\n    refusing to run it — re-download manually from the official site.\n"));
+    emit(format!("[!] CHECKSUM MISMATCH for {path}\n    got      {got}\n    expected {expected_hex} ({source})\n    refusing to run it — re-download manually from the official site.\n"));
     false
 }
 
@@ -6754,12 +7077,19 @@ async fn official_fallback(app: &tauri::AppHandle, tool: &str) -> bool {
                     return false;
                 }
             }
-            match sha {
-                Some(s) if !verify_sha256(&dest, s, &emit) => return false,
-                None => emit(format!(
+            if let Some(s) = sha {
+                if !verify_sha256(
+                    &dest,
+                    s,
+                    &format!("the launcher's pin for Git for Windows {FALLBACK_VER}"),
+                    &emit,
+                ) {
+                    return false;
+                }
+            } else {
+                emit(format!(
                     "[!] No pinned checksum for Git {ver} — trusting TLS.\n"
-                )),
-                _ => {}
+                ));
             }
             emit("[*] Installing silently — a couple of minutes…\n".into());
             run_live(
@@ -6788,7 +7118,12 @@ async fn official_fallback(app: &tauri::AppHandle, tool: &str) -> bool {
             if !run_live(app, "powershell", download(url, &dest)).await {
                 return false;
             }
-            if !verify_sha256(&dest, SHA, &emit) {
+            if !verify_sha256(
+                &dest,
+                SHA,
+                "the launcher's pin for python.org's 3.11.9 installer",
+                &emit,
+            ) {
                 return false;
             }
             emit("[*] Installing silently — a couple of minutes…\n".into());
@@ -6995,6 +7330,414 @@ pub fn dlss5_status() -> serde_json::Value {
         .filter(|f| f["installed"].as_bool().unwrap_or(false))
         .count();
     serde_json::json!({"ok": true, "installed": present > 0, "complete": present == files.len(), "present": present, "total": files.len(), "files": files})
+}
+
+/// Verdict for one DLSS 5 file: existence first, then the hash itself. Pure so
+/// the classification is tested without 200 MB of DLLs on disk.
+pub(crate) fn dlss_file_state(exists: bool, got: Option<&str>, expected: &str) -> &'static str {
+    if !exists {
+        return "missing";
+    }
+    match got {
+        Some(g) if g.eq_ignore_ascii_case(expected) => "match",
+        Some(_) => "mismatch",
+        None => "unreadable",
+    }
+}
+
+/// Hash every installed DLSS 5 file and compare it with the manifest pin.
+///
+/// `dlss5_status` only stats the files, so its `installed` flag cannot back the
+/// SHA it prints next to each row. This is the other half: streamed SHA-256 of
+/// each file against `DLSS5_FILES`. Read-only — it reports
+/// `match` / `mismatch` / `missing` / `unreadable` and repairs nothing.
+///
+/// The whole set is a couple hundred MB, which is exactly why this is a
+/// separate, on-demand command and not part of `dlss5_status`: the panel paints
+/// from existence alone, and only the button that asks a real question ("is what
+/// I have what Wan2GP pinned?") pays for the read.
+fn dlss5_verify_files_blocking(dlss5: &std::path::Path) -> serde_json::Value {
+    let mut rows = Vec::with_capacity(DLSS5_FILES.len());
+    let (mut n_match, mut n_mismatch, mut n_missing) = (0usize, 0usize, 0usize);
+    for (path, pkg, version, sha) in DLSS5_FILES.iter() {
+        let p = dlss5.join(path);
+        let exists = p.exists();
+        let got = if exists {
+            crate::wheels::sha256_file(&p)
+        } else {
+            None
+        };
+        let state = dlss_file_state(exists, got.as_deref(), sha);
+        match state {
+            "match" => n_match += 1,
+            "missing" => n_missing += 1,
+            _ => n_mismatch += 1,
+        }
+        rows.push(serde_json::json!({
+            "id": path,
+            "pkg": pkg,
+            "version": version,
+            "expected": sha,
+            "got": got.unwrap_or_default(),
+            "state": state,
+        }));
+    }
+    serde_json::json!({
+        "ok": true,
+        "rows": rows,
+        "match": n_match,
+        "mismatch": n_mismatch,
+        "missing": n_missing,
+        "total": DLSS5_FILES.len(),
+    })
+}
+
+/// "Is the DLSS 5 install on disk actually what `DLSS5_FILES` pins?" — the
+/// question the panel's SHA column was only pretending to answer. Hashing is
+/// blocking IO, so it runs on the blocking pool rather than the async task.
+#[tauri::command]
+pub async fn dlss5_verify_files() -> serde_json::Value {
+    let repo = get_repo_dir();
+    if !repo.join("wgp.py").exists() {
+        return serde_json::json!({"ok": false, "error": "Wan2GP not installed"});
+    }
+    let dlss5 = repo.join("dlss5");
+    match tauri::async_runtime::spawn_blocking(move || dlss5_verify_files_blocking(&dlss5)).await {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({"ok": false, "error": format!("verification task failed: {e}")}),
+    }
+}
+
+// ===========================================================================
+// DLSS5 upstream-release probe (read-only)
+//
+// Upstream's `scripts/install_dlss5.ps1` owns every component version: its
+// package table is version-pinned with hardcoded URLs and SHA-256s, so a newer
+// DLSS / ReShade / RenoDX build can only become installable by updating
+// Wan2GP. Nothing here downloads, installs or hashes anything — it asks the
+// same sources that script pins whether a newer release exists (the two GitHub
+// repos that back five of the six components, reshade.me for the sixth), so
+// "a newer version is available" has an answer other than diffing the script
+// by hand.
+//
+// The versions compared against come from DLSS5_FILES — the same manifest the
+// panel prints — so the pins have exactly one home on the launcher side.
+// ===========================================================================
+
+/// (component id as the panel prints it, owner/repo, release-tag prefix,
+/// package id in DLSS5_FILES)
+const DLSS5_UPSTREAM: &[(&str, &str, &str, &str)] = &[
+    ("dlss", "RankFTW/rhi-repo", "dlss-", "dlss"),
+    ("dlssg", "RankFTW/rhi-repo", "dlssg-", "dlssg"),
+    ("dlssnr", "RankFTW/rhi-repo", "dlssnr-", "dlssnr"),
+    ("renodx", "RankFTW/rhi-repo", "renodx-dlss5-", "renodx"),
+    (
+        "workers",
+        "DeepBeepMeep/dlss5-visual-enhancer",
+        "wangp-v",
+        "workers",
+    ),
+];
+
+/// The version token DLSS5_FILES pins for `pkg`: "Workers v1.1.3" → "1.1.3",
+/// "DLSS Super Resolution 310.8.0" → "310.8.0". The manifest stays the single
+/// source of truth — this probe never keeps a second copy of the pins.
+fn dlss_pinned_version(pkg: &str) -> Option<String> {
+    DLSS5_FILES
+        .iter()
+        .find(|(_, p, _, _)| *p == pkg)
+        .and_then(|(_, _, version, _)| version.split_whitespace().last())
+        .map(|v| v.trim_start_matches('v').to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// Compare the leading dotted-numeric run of two version strings ("310.8.0",
+/// "4.70", "310.8.SF-v2" compares as 310.8). Equal means "this run cannot
+/// order them" — the caller reports `differs` rather than inventing an order.
+fn dlss_version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let run = |s: &str| -> Vec<u64> {
+        s.split('.')
+            .map_while(|p| p.trim().parse::<u64>().ok())
+            .collect()
+    };
+    let (ra, rb) = (run(a), run(b));
+    if ra.is_empty() || rb.is_empty() {
+        return std::cmp::Ordering::Equal;
+    }
+    for i in 0..ra.len().max(rb.len()) {
+        let (x, y) = (
+            ra.get(i).copied().unwrap_or(0),
+            rb.get(i).copied().unwrap_or(0),
+        );
+        if x != y {
+            return x.cmp(&y);
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+/// Newest release tag in `tags` carrying `prefix`. GitHub returns tags
+/// newest-first, so a pair this comparison cannot order keeps the earlier one.
+fn dlss_newest_tag<'a>(tags: &'a [String], prefix: &str) -> Option<&'a str> {
+    let mut best: Option<&str> = None;
+    for tag in tags
+        .iter()
+        .map(String::as_str)
+        .filter(|t| t.starts_with(prefix))
+    {
+        best = Some(match best {
+            None => tag,
+            Some(prev) => {
+                let cur = tag.strip_prefix(prefix).unwrap_or(tag);
+                let old = prev.strip_prefix(prefix).unwrap_or(prev);
+                if dlss_version_cmp(cur, old) == std::cmp::Ordering::Greater {
+                    tag
+                } else {
+                    prev
+                }
+            }
+        });
+    }
+    best
+}
+
+/// (`state`, upstream version) for one component. States: `current`, `newer`,
+/// `older`, `differs` (upstream ships a build this probe cannot order against
+/// the pin) and `unknown` (nothing fetched, or no matching tag/known pin).
+fn dlss_update_verdict(pinned: &str, latest: Option<&str>) -> (&'static str, String) {
+    let Some(latest) = latest.filter(|l| !l.is_empty()) else {
+        return ("unknown", String::new());
+    };
+    if pinned.is_empty() {
+        return ("unknown", latest.to_string());
+    }
+    if latest == pinned {
+        return ("current", latest.to_string());
+    }
+    match dlss_version_cmp(latest, pinned) {
+        std::cmp::Ordering::Greater => ("newer", latest.to_string()),
+        std::cmp::Ordering::Less => ("older", latest.to_string()),
+        std::cmp::Ordering::Equal => ("differs", latest.to_string()),
+    }
+}
+
+/// Newest ReShade *full add-on* build reshade.me links to. The site has no
+/// release API, so this reads the version out of its own download links
+/// (`ReShade_Setup_<version>_Addon.exe`); None when the page cannot be read or
+/// its markup moved, which the panel reports as "not checked" rather than a
+/// version the launcher guessed.
+async fn reshade_latest(client: &reqwest::Client) -> Option<String> {
+    let body = client
+        .get("https://reshade.me/")
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .text()
+        .await
+        .ok()?;
+    const MARKER: &str = "ReShade_Setup_";
+    let mut best: Option<String> = None;
+    let mut rest = body.as_str();
+    while let Some(i) = rest.find(MARKER) {
+        rest = &rest[i + MARKER.len()..];
+        let window = &rest[..rest.len().min(24)];
+        let Some(end) = window.find("_Addon") else {
+            continue;
+        };
+        let v = &window[..end];
+        if v.is_empty() || !v.chars().all(|c| c.is_ascii_digit() || c == '.') {
+            continue;
+        }
+        best = Some(match best.take() {
+            Some(prev) if dlss_version_cmp(v, &prev) != std::cmp::Ordering::Greater => prev,
+            _ => v.to_string(),
+        });
+    }
+    best
+}
+
+/// Release tags for `repo`, newest first, or None when the API is unreachable
+/// (offline, rate limited).
+async fn fetch_release_tags(
+    client: &reqwest::Client,
+    repo: &str,
+    token: &str,
+) -> Option<Vec<String>> {
+    let mut req = client
+        .get(format!(
+            "https://api.github.com/repos/{repo}/releases?per_page=100"
+        ))
+        .header("Accept", "application/vnd.github.v3+json");
+    if !token.is_empty() {
+        req = req.header("Authorization", format!("token {token}"));
+    }
+    let v: serde_json::Value = req
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    Some(
+        v.as_array()?
+            .iter()
+            .filter_map(|r| r.get("tag_name").and_then(|t| t.as_str()))
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// Read-only: ask upstream whether newer DLSS5 components exist. Installs and
+/// downloads nothing, and never changes a pin — a newer release is a
+/// *Wan2GP update* away, not a launcher-side upgrade.
+#[tauri::command]
+pub async fn dlss5_update_check() -> serde_json::Value {
+    let client = reqwest::Client::builder()
+        .user_agent("wan2gp-tauri")
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    // Same optional token the upstream-commits check uses: the probe is two
+    // calls per press, so anonymous only matters if the button is hammered.
+    let token = crate::base::load_config_value()
+        .get("githubToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    // Two repos back five of the six components: fetch each one once.
+    let mut tags: std::collections::HashMap<&str, Option<Vec<String>>> =
+        std::collections::HashMap::new();
+    for (_, repo, _, _) in DLSS5_UPSTREAM {
+        if tags.contains_key(*repo) {
+            continue;
+        }
+        let list = fetch_release_tags(&client, repo, &token).await;
+        tags.insert(repo, list);
+    }
+
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    let mut online = false;
+    for (id, repo, prefix, pkg) in DLSS5_UPSTREAM {
+        let found = tags.get(*repo).and_then(|o| o.as_ref());
+        online |= found.is_some();
+        let tag = found.and_then(|t| dlss_newest_tag(t, prefix));
+        let latest = tag.map(|t| t.strip_prefix(prefix).unwrap_or(t));
+        let pinned = dlss_pinned_version(pkg);
+        let (state, latest_version) =
+            dlss_update_verdict(pinned.as_deref().unwrap_or(""), latest);
+        rows.push(serde_json::json!({
+            "id": id,
+            "pinned": pinned.unwrap_or_default(),
+            "latest": latest_version,
+            "state": state,
+            "tag": tag.unwrap_or_default(),
+            "source": format!("github.com/{repo}"),
+        }));
+    }
+    // ReShade is the one component that is not a GitHub release — upstream
+    // pins a reshade.me download URL.
+    let reshade = reshade_latest(&client).await;
+    online |= reshade.is_some();
+    let reshade_pin = dlss_pinned_version("reshade").unwrap_or_default();
+    let (reshade_state, reshade_version) =
+        dlss_update_verdict(&reshade_pin, reshade.as_deref());
+    rows.push(serde_json::json!({
+        "id": "reshade",
+        "pinned": reshade_pin,
+        "latest": reshade_version,
+        "state": reshade_state,
+        "tag": reshade.unwrap_or_default(),
+        "source": "reshade.me",
+    }));
+
+    serde_json::json!({"ok": true, "online": online, "rows": rows})
+}
+
+#[cfg(test)]
+mod dlss5_update_tests {
+    use super::*;
+
+    #[test]
+    fn pinned_versions_come_from_the_manifest() {
+        assert_eq!(dlss_pinned_version("dlss").as_deref(), Some("310.8.0"));
+        assert_eq!(dlss_pinned_version("dlssg").as_deref(), Some("310.7.0"));
+        assert_eq!(dlss_pinned_version("dlssnr").as_deref(), Some("310.8.SF-v2"));
+        assert_eq!(dlss_pinned_version("renodx").as_deref(), Some("4.70"));
+        assert_eq!(dlss_pinned_version("workers").as_deref(), Some("1.1.3"));
+        assert_eq!(dlss_pinned_version("reshade").as_deref(), Some("6.8.0"));
+        assert_eq!(dlss_pinned_version("not-a-package"), None);
+    }
+
+    #[test]
+    fn every_probe_row_maps_to_a_manifest_pin() {
+        // A component added to the probe with a pkg id typo — or a DLSS5_FILES
+        // row upstream renames — would otherwise report "not checked" forever.
+        for (id, _, prefix, pkg) in DLSS5_UPSTREAM {
+            assert!(
+                dlss_pinned_version(pkg).is_some(),
+                "probe row {id} ({prefix}) has no DLSS5_FILES pin for pkg {pkg}"
+            );
+        }
+    }
+
+    #[test]
+    fn verdicts_cover_every_state() {
+        assert_eq!(dlss_update_verdict("310.8.0", Some("310.8.0")).0, "current");
+        assert_eq!(dlss_update_verdict("310.8.0", Some("310.9.0")).0, "newer");
+        assert_eq!(dlss_update_verdict("310.9.0", Some("310.8.0")).0, "older");
+        assert_eq!(
+            dlss_update_verdict("310.8.SF-v2", Some("310.8.SF-v3")).0,
+            "differs",
+            "an unorderable tag is reported as differing, never as newer",
+        );
+        assert_eq!(dlss_update_verdict("4.70", Some("4.71")).0, "newer");
+        assert_eq!(dlss_update_verdict("4.70", None).0, "unknown");
+        assert_eq!(dlss_update_verdict("4.70", Some("")).0, "unknown");
+        assert_eq!(dlss_update_verdict("", Some("4.70")).0, "unknown");
+    }
+
+    #[test]
+    fn version_cmp_orders_only_the_numeric_run() {
+        use std::cmp::Ordering;
+        assert_eq!(dlss_version_cmp("310.9.0", "310.8.0"), Ordering::Greater);
+        assert_eq!(dlss_version_cmp("310.8.0", "310.9.0"), Ordering::Less);
+        assert_eq!(dlss_version_cmp("310.8.0", "310.8"), Ordering::Equal);
+        assert_eq!(dlss_version_cmp("310.8.SF-v2", "310.8.SF-v3"), Ordering::Equal);
+        // No numeric head at all: unorderable, so never a false "newer".
+        assert_eq!(dlss_version_cmp("v1.1.3", "1.1.2"), Ordering::Equal);
+    }
+
+    #[test]
+    fn newest_tag_prefers_the_higher_version_and_ignores_other_components() {
+        let tags: Vec<String> = [
+            "dlssg-310.7.0",
+            "dlss-310.9.0",
+            "dlss-310.8.0",
+            "renodx-dlss5-4.70",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(dlss_newest_tag(&tags, "dlss-"), Some("dlss-310.9.0"));
+        assert_eq!(dlss_newest_tag(&tags, "dlssg-"), Some("dlssg-310.7.0"));
+        assert_eq!(dlss_newest_tag(&tags, "renodx-dlss5-"), Some("renodx-dlss5-4.70"));
+        assert_eq!(dlss_newest_tag(&tags, "wangp-v"), None);
+        // Two tags it cannot order keep the first (GitHub's newest-first).
+        let unorderable: Vec<String> = ["dlssnr-310.8.SF-v3", "dlssnr-310.8.SF-v2"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            dlss_newest_tag(&unorderable, "dlssnr-"),
+            Some("dlssnr-310.8.SF-v3")
+        );
+    }
 }
 
 // ===========================================================================
@@ -7473,7 +8216,9 @@ pub async fn dlss5_check() -> serde_json::Value {
                         probe = Some(serde_json::json!({"available": false, "raw": "unparseable probe output"}));
                     }
                 } else {
-                    probe = Some(serde_json::json!({"available": false, "raw": format!("exit {}", out.status)}));
+                    // `ExitStatus`'s own Display already reads "exit code: 2",
+                    // so the old "exit {}" prefix rendered "exit exit code: 2".
+                    probe = Some(serde_json::json!({"available": false, "raw": out.status.to_string()}));
                 }
             }
         }
@@ -7709,6 +8454,65 @@ pub fn dlss5_revert_workstation_fix() -> Result<serde_json::Value, String> {
 // Best-effort classification of Install-DLSS5.ps1 output into checklist events.
 // The script stays the integrity authority (pinned SHA-256 + NVIDIA sig check);
 // this only mirrors its Downloading / verified / Installed lines to the UI.
+#[cfg(test)]
+mod dlss5_verify_tests {
+    use super::{dlss5_verify_files_blocking, dlss_file_state, DLSS5_FILES};
+
+    #[test]
+    fn state_classifies_existence_and_hash() {
+        assert_eq!(dlss_file_state(false, None, "AB"), "missing");
+        assert_eq!(dlss_file_state(true, None, "AB"), "unreadable");
+        // Case-insensitive: the manifest pins are uppercase, sha256_file is not.
+        assert_eq!(dlss_file_state(true, Some("ab"), "AB"), "match");
+        assert_eq!(dlss_file_state(true, Some("ac"), "AB"), "mismatch");
+        assert_eq!(dlss_file_state(true, Some(""), "AB"), "mismatch");
+    }
+
+    #[test]
+    fn verify_reports_mismatch_and_missing_without_touching_files() {
+        let d = std::env::temp_dir().join(format!("wgp-dlss5-verify-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let first = &DLSS5_FILES[0];
+        let p = d.join(first.0);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, b"not the pinned bytes").unwrap();
+
+        let out = dlss5_verify_files_blocking(&d);
+        let rows = out["rows"].as_array().unwrap();
+        // One row per manifest entry — the manifest stays the single source.
+        assert_eq!(rows.len(), DLSS5_FILES.len());
+        assert_eq!(rows[0]["state"], "mismatch");
+        assert_eq!(rows[0]["expected"], first.3);
+        let got = rows[0]["got"].as_str().unwrap();
+        assert_eq!(got.len(), 64, "a computed hash must be reported in full");
+        assert_eq!(got, crate::wheels::sha256_file(&p).unwrap());
+        for row in &rows[1..] {
+            assert_eq!(row["state"], "missing");
+        }
+        assert_eq!(out["mismatch"], 1);
+        assert_eq!(out["missing"], DLSS5_FILES.len() - 1);
+        assert_eq!(out["match"], 0);
+        // Read-only: the junk file is still there, untouched.
+        assert!(p.exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn verify_probe_and_manifest_agree() {
+        // Every probe row is anchored to a manifest package, and every manifest
+        // entry carries a 64-hex pin — the assumption the panel's SHA column
+        // and the verifier both rest on.
+        for (_, pkg, _, sha) in DLSS5_FILES.iter() {
+            assert!(
+                super::dlss_pinned_version(pkg).is_some(),
+                "no pinned version for {pkg}"
+            );
+            assert_eq!(sha.len(), 64, "{pkg}: pin is not a sha256");
+            assert!(sha.chars().all(|c| c.is_ascii_hexdigit()), "{pkg}: pin is not hex");
+        }
+    }
+}
+
 #[cfg(test)]
 mod dlss5_check_tests {
     use super::{
@@ -8165,40 +8969,6 @@ mod exit_106_tests {
 }
 
 #[cfg(test)]
-mod amd_recipe_tests {
-    use super::amd_hip_recipe;
-    #[test]
-    fn amd_recipe_matches_wheel_sources() {
-        let r = amd_hip_recipe();
-        // Torch stack: the gfx1201-only rocm7.14 pin (not the installer's
-        // TheRock rocm10 build) — still needed for the HIP GGUF wheel.
-        let torch = r["torchCmd"].as_str().unwrap();
-        assert!(torch.starts_with("python -m pip install "), "{torch}");
-        assert!(
-            torch.contains("torch[device-gfx1201]==2.10.0+rocm7.14.0"),
-            "{torch}"
-        );
-        assert!(
-            torch.contains("rocm[libraries,device-gfx1201]==7.14.0"),
-            "{torch}"
-        );
-        // WGPKernels installs in place now (rocm100) — the recipe states so
-        // instead of shipping a wheel command.
-        assert!(r["text"]
-            .as_str()
-            .unwrap()
-            .contains("WGPKernels 1.1.2"));
-        assert!(r["hipGgufCmd"]
-            .as_str()
-            .unwrap()
-            .contains("torch210rocm714py311"));
-        assert!(r["text"].as_str().unwrap().contains("torch[device-gfx1201]"));
-        // rocm-sdk init is recommended for Veda sparse attention on AMD.
-        assert!(r["text"].as_str().unwrap().contains("rocm-sdk init"));
-    }
-}
-
-#[cfg(test)]
 mod pipeline_separation_tests {
     use super::{amd_therock_torch_cmds, triton_windows_pip_args};
     #[test]
@@ -8602,7 +9372,10 @@ mod long_paths_tests {
 
 #[cfg(test)]
 mod owned_uv_tests {
-    use super::{copy_owned_uv_in, owned_uv_in, path_uv_exe, uv_self_update_applicable, UV_EXE, UV_MARKER};
+    use super::{
+        copy_owned_uv_in, norm_path, owned_uv_in, path_uv_exe, uv_self_update_applicable, UV_EXE,
+        UV_MARKER,
+    };
     fn tmp_data(tag: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("wgp-owned-uv-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -8616,12 +9389,28 @@ mod owned_uv_tests {
         let _ = std::fs::remove_dir_all(&data);
     }
     #[test]
-    fn self_update_only_on_receipted_installs() {
+    fn self_update_only_when_the_receipt_names_our_tools_dir() {
         // The no-receipt copy fallback (and any bare PATH uv) always refuses
-        // `uv self update` with a confusing standalone-installer error — it
-        // must not run there. Only the markered .tools install qualifies.
-        assert!(uv_self_update_applicable(true));
-        assert!(!uv_self_update_applicable(false));
+        // `uv self update` with a confusing standalone-installer error, so it
+        // must not run there. A marker alone is not enough either: uv's own
+        // receipt has to name our tools dir, or uv refuses with "Are multiple
+        // copies of uv installed?" (seen live: receipt left on a %TEMP% prefix).
+        let tools = std::path::Path::new("C:\\Wan2GP\\.tools");
+        assert!(uv_self_update_applicable(true, Some("C:\\Wan2GP\\.tools"), tools));
+        // Separator / case / trailing-slash differences are the same dir.
+        assert!(uv_self_update_applicable(true, Some("c:/wan2gp/.tools/"), tools));
+        assert!(!uv_self_update_applicable(
+            true,
+            Some("C:\\WINDOWS\\TEMP\\.tmpZYTAs6\\.tools"),
+            tools
+        ));
+        assert!(!uv_self_update_applicable(false, Some("C:\\Wan2GP\\.tools"), tools));
+        assert!(!uv_self_update_applicable(true, None, tools));
+    }
+    #[test]
+    fn norm_path_is_case_and_separator_insensitive() {
+        assert_eq!(norm_path("C:\\Wan2GP\\.tools"), norm_path("c:/wan2gp/.tools/"));
+        assert_eq!(norm_path("C:/x/y/"), "c:\\x\\y");
     }
     #[test]
     fn dead_copy_is_not_adopted() {

@@ -14,6 +14,16 @@
  * results or user picks, never touching rec: tags — and memProfileLoad
  * calls it unconditionally.
  *
+ * Second door to the same report: the "recommend" mode. It re-seeds the
+ * dropdowns from the Detect payload, and the old branch wrote "" for every
+ * key the payload did not mention — so the first-open auto-detect (and every
+ * manual Detect / failsafe toggle) re-blanked the dropdown the seed had just
+ * filled: "— unset —" beside "saved: MMGP Optimized…" again, plus a silent
+ * revert of a manual pick. The backend omits keys it has no opinion on rather
+ * than sending null (features.rs: extra is merged only when applicable), so
+ * undefined is the signal: recommend mode now only overwrites keys the
+ * recommendation actually carries.
+ *
  * Like theme-persist.test.js, the real bodies run in a vm against fakes.
  */
 const test = require('node:test')
@@ -159,6 +169,70 @@ test('vae_config falls back to AUTO when disk has no key', () => {
   h.populate({}, { mode: 'saved-seed' })
   const sel = h.MEM_FIELDS.vae_config.sel
   assert.equal(h.__els.get(sel).value, '0', 'unset vae_config means AUTO upstream')
+})
+
+// ── recommend mode: never blank a key the recommendation does not carry ──
+// ram_allocator is the reported one (upstream already defaults to mmgp, so
+// Detect has no opinion on it); the v17 levers are absent on AMD/Intel for
+// the same reason and must not wipe an on-disk value either.
+
+test('recommend keeps a key the recommendation does not carry', () => {
+  const h = harness()
+  const F = h.MEM_FIELDS
+  h.populate(SAVED, { mode: 'saved-seed' }) // disk: ram_allocator = mmgp
+  h.populate({ video_profile: '2', vram_allocator: 'vmm' }, { mode: 'recommend' })
+  assert.equal(
+    h.__els.get(F.ram_allocator.sel).value,
+    'mmgp',
+    'Detect has no opinion on ram_allocator — the value on disk must survive',
+  )
+  assert.equal(
+    h.__els.get(F.video_profile.sel).value,
+    '2',
+    'a key the recommendation carries is still re-seeded',
+  )
+  assert.equal(h.__els.get(F.vram_allocator.sel).value, 'vmm')
+  assert.equal(
+    h.__els.get(F.ram_allocator.rec).textContent,
+    'rec: —',
+    'and Detect still reports that it has no recommendation for it',
+  )
+})
+
+test('recommend does not revert a manual pick for an uncarried key', () => {
+  const h = harness()
+  const F = h.MEM_FIELDS
+  h.__els.get(F.ram_allocator.sel).value = 'default' // user picked PyTorch allocator
+  h.populate({ video_profile: '2' }, { mode: 'recommend' })
+  assert.equal(
+    h.__els.get(F.ram_allocator.sel).value,
+    'default',
+    'Detect must not snap a manual pick back to "— unset —"',
+  )
+})
+
+test('recommend still clears a carried key whose value is empty', () => {
+  const h = harness()
+  const F = h.MEM_FIELDS
+  h.__els.get(F.attention_mode.sel).value = 'sage2'
+  h.populate({ attention_mode: '' }, { mode: 'recommend' })
+  assert.equal(
+    h.__els.get(F.attention_mode.sel).value,
+    '',
+    'a key Detect does carry, with no value, still means unset',
+  )
+})
+
+test('recommend carries vae_config 0 through as AUTO, not as empty', () => {
+  const h = harness()
+  h.populate({ vae_config: 0 }, { mode: 'recommend' })
+  assert.equal(h.__els.get(h.MEM_FIELDS.vae_config.sel).value, '0')
+})
+
+test('recommend only overwrites what the payload carries (structural)', () => {
+  // Guards the exact condition: reverting it to `if (sel)` re-introduces the
+  // blanked-dropdown report.
+  assert.match(tab, /if \(sel && v !== undefined\)/)
 })
 
 test('memProfileLoad seeds from disk unconditionally (no video-profile gate)', () => {

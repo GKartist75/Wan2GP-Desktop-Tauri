@@ -3089,6 +3089,14 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
 .led-stopped {
  background: #ef4444;
 }
+/* Backend-chip states: idle (not reported yet) / fallback (PyTorch). */
+.led-idle {
+ background: var(--text-tertiary);
+}
+.led-warn {
+ background: #fbbf24;
+ box-shadow: 0 0 6px rgba(251, 191, 36, 0.45);
+}
 .led-text {
  color: var(--text-secondary);
 }
@@ -3104,7 +3112,41 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
   font-family: "Geist Mono", monospace;
 }
 .backend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* ── Topbar status cluster: 2 × 2 ─────────────────────────────────────────
+   Four status items used to run inline beside the title (Running · INT8 · FP8 ·
+   Deepy Web), which pushed the right-hand controls off the bar on narrower
+   windows. They now sit in a compact 2 × 2 grid — Running / Deepy Web on the
+   first row, the two backend chips on the second — so the cluster is about as
+   wide as its widest pair instead of the sum of all four.
+   Hidden items (Running while stopped, chips before the log reports) are
+   display:none and therefore create no grid cell at all, so the remaining
+   items close up instead of leaving a hole. */
+.status-grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+  margin-left: 10px;
+  min-width: 0;
+}
+.status-grid > * {
+  margin-left: 0;
+  line-height: 1.1;
+}
+/* The chip pair spans both columns as the second row: the two chips read as
+   the grid's second row (INT8 | FP8) without a nested grid to keep in sync. */
+.status-grid .backend-leds {
+  grid-column: 1 / -1;
+  margin-left: 0;
+  gap: 10px;
   white-space: nowrap;
 }
 
@@ -3207,6 +3249,12 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
  color: var(--signal-amber);
  font-weight: 700;
 }
+/* the launcher author's own plugins — pinned above their group's alphabetical run */
+.plugin-own-badge {
+ margin-left: 5px;
+ font-size: 0.7rem;
+ opacity: 0.85;
+}
 #pluginList .browser-row.plugin-has-update .btn {
  border-color: color-mix(in srgb, var(--signal-amber) 55%, transparent);
 }
@@ -3306,8 +3354,67 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
  min-width: 0;
  overflow: hidden;
 }
+/* The metrics row is the first thing to run out of room (the bar needs ~1440px
+   for every sparkline, ~1550px with a second GPU), and it used to answer that by
+   shrinking its own container and clipping the *last* item — VRAM was the
+   casualty, so the graph you watch during a generation was the one that
+   disappeared. Drop whole, lower-priority readings in tiers instead: VRAM keeps
+   its sparkline longest, the CPU/GPU percentages stay readable as numbers, and
+   nothing is ever cut through the middle of a label. */
+@media (max-width: 1450px) {
+ .metric:not(.metric-vram) .metric-spark {
+  display: none;
+ }
+}
+@media (max-width: 1380px) {
+ #metricRam,
+ #metricGpu2 {
+  display: none;
+ }
+}
+@media (max-width: 1270px) {
+ #metricCpu,
+ #metricGpu {
+  display: none;
+ }
+}
 @media (max-width: 1150px) {
- .metric-spark {
+ .metric-vram .metric-spark {
+  display: none;
+ }
+}
+@media (max-width: 1060px) {
+ #topbarMetrics {
+  display: none;
+ }
+}
+
+/* Embedded Wan2GP view: Back to Dashboard + Console + the zoom slider cost about
+   330px more than the dashboard bar, so the same ladder starts one rung higher.
+   VRAM stays the protected reading — it is the one you watch while a generation
+   runs — and only the value survives once even the graph no longer fits. */
+#dashboard.wv-active .metric:not(.metric-vram) .metric-spark {
+ display: none;
+}
+@media (max-width: 1760px) {
+ #dashboard.wv-active #metricCpu,
+ #dashboard.wv-active #metricRam,
+ #dashboard.wv-active #metricGpu2 {
+  display: none;
+ }
+}
+@media (max-width: 1540px) {
+ #dashboard.wv-active #metricGpu {
+  display: none;
+ }
+}
+@media (max-width: 1470px) {
+ #dashboard.wv-active .metric-vram .metric-spark {
+  display: none;
+ }
+}
+@media (max-width: 1440px) {
+ #dashboard.wv-active #topbarMetrics {
   display: none;
  }
 }

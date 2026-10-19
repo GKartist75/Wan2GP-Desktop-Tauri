@@ -40,7 +40,7 @@ function renderDeepyQuant(enhancerId, savedQuant, primeBackend) {
             ? "Heretic Q4 runs Prime on ~6.5 GB VRAM — the fit for 8–12 GB GPUs. Weights download on first WanGP launch."
             : primeBackend === "6:gguf_q8"
               ? "Heretic Q8 (~11 GB VRAM) stays closest to full precision. Weights download on first WanGP launch."
-              : "Weights download on first WanGP launch. Needs GGUF kernels 1.0.26 (Sync Kernels).";
+              : "Weights download on first WanGP launch. Needs GGUF kernels 1.0.27 (Sync Kernels).";
     return;
   }
   if (beWrap) beWrap.style.display = "none";
@@ -77,7 +77,7 @@ function updateDeepyQuantHint(value, enhancerId) {
   if (!hint) return;
   hint.textContent =
     value === "gguf_ptq1"
-      ? "Bonsai PTQ1 runs Prime on ~10 GB VRAM (Sync Kernels for 1.0.26+). Weights download on first WanGP launch. Apply also sets INT8 KV cache."
+      ? "Bonsai PTQ1 runs Prime on ~10 GB VRAM (Sync Kernels for 1.0.27+). Weights download on first WanGP launch. Apply also sets INT8 KV cache."
       : Number(enhancerId) === 6
         ? "Heretic Q4 runs Prime on ~6.5 GB VRAM, Q8 (~11 GB) stays closest to full precision. Weights download on first WanGP launch."
         : Number(enhancerId) === 5

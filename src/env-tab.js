@@ -33,7 +33,7 @@ function refreshEnvUnlink(hasRepo) {
       if (restoreBtn) restoreBtn.style.display = "";
       if (reinstallBtn) reinstallBtn.style.display = "";
       btn.onclick = async () => {
-        if (!confirm('Uninstall environment "' + name + '"?')) return;
+        if (!(await askConfirm('Uninstall environment "' + name + '"?'))) return;
         btn.disabled = true;
         btn.textContent = "...";
         appendLog("[*] Uninstalling environment " + name + "...");
@@ -69,9 +69,9 @@ function refreshEnvUnlink(hasRepo) {
   if (restoreBtn) {
     restoreBtn.onclick = async () => {
       if (
-        !confirm(
+        !(await askConfirm(
           "Reinstall all packages from requirements.txt? This will restore pinned versions.",
-        )
+        ))
       )
         return;
       restoreBtn.disabled = true;
@@ -105,11 +105,11 @@ function refreshEnvUnlink(hasRepo) {
     reinstallBtn.onclick = async () => {
       const envType = window._activeEnvType || "uv";
       if (
-        !window.confirm(
+        !(await askConfirm(
           'Recreate the "' +
             name +
             '" environment from scratch?\n\nFresh venv, Python, PyTorch + CUDA, packages and kernels (takes a while — watch the console). Models, plugins and settings are kept.',
-        )
+        ))
       )
         return;
       reinstallBtn.disabled = true;

@@ -66,14 +66,14 @@ The home screen. Top to bottom:
 - New models are large (e.g. Qwen Image 2.1 ships bf16 + int8 safetensors plus encoder/VAE) and download on first use; the first H3 INT8 run also fetches its ConvRot VAE. Pre/post-processing checkpoints download on demand (upstream JIT), so the upfront footprint stays smaller than it looks.
 - H3 Video VAE on Auto follows your Transformer Quantization choice (16-bit → BF16, FP8 → FP8 mixed, INT8 → INT8 ConvRot decoder); explicit BF16/FP8/INT8 choices in the Memory panel override Auto and are preserved.
 
-**GPU Kernel Wheels card** — per-GPU wheels (torch, triton, sage/flash attention, nunchaku/GGUF) with installed versions. *↻ Update GPU Wheels* installs upstream's wanted set plus launcher fixes (sage safe build, GGUF floor that follows `setup_config.json` forward), *Restore GPU Wheels* reinstalls deepbeepmeep's pure upstream set. Sync follows your local checkout — if it is behind `origin/main`, the console warns you to update Wan2GP first, otherwise you install stale wheels. After every Wan2GP update the launcher also runs a compat check (setup_config shape + GGUF pins) and says so in the Console — re-run Sync when it reports new wheels.
+**GPU Kernel Wheels card** — per-GPU wheels (torch, triton, sage/flash attention, nunchaku/GGUF) with installed versions. *↻ Update GPU Wheels* installs upstream's wanted set plus launcher fixes (sage safe build, GGUF floor that follows `setup_config.json` forward), *Restore GPU Wheels* reinstalls deepbeepmeep's pure upstream set. Sync follows your local checkout — if it is behind `origin/main`, the console warns you to update Wan2GP first, otherwise you install stale wheels. After every Wan2GP update the launcher also runs a compat check (setup_config shape + GGUF pins) and says so in the Console — re-run Sync when it reports new wheels. Every wheel is downloaded, SHA-256-verified and only then handed to pip: the launcher ships pins for the exact assets it knows, falls back to GitHub's published digest for a newer version, and aborts the component on a mismatch. Each install prints the hash it computed and whose digest it matched — e.g. `sha256 <hash> — matches the sha256 deepbeepmeep/WGPKernels published for release v1.1.2 (launcher pin)`, named from the wheel's own repo since Nunchaku and SageAttention ship from theirs — so the check is readable in the Console instead of a bare "verified". Verified wheels live in the launcher data folder's `wheel-cache` (safe to delete; it only saves re-downloading), and reusing a cached wheel re-hashes it and prints the same evidence.
 
-**AMD and the experimental kernels (RX 9060 / 9070 series — gfx1200/gfx1201).** WGPKernels 1.1.2 ships a `rocm100` wheel that installs in place; only HIP GGUF still needs a separate env:
+**AMD and the experimental kernels (RX 9060 / 9070 series — gfx1200/gfx1201).** Both wheels now install straight into the installer's torch 2.13+rocm10 env — there is no separate environment any more:
 
-- **WGPKernels (INT8)** — the INT8 fast path. One-click on NVIDIA RTX 30/40/50 (the launcher picks `cu130`/`cu128` from your torch build) and on AMD RDNA4 (the `rocm100` build installs right in the installer's TheRock torch 2.13+rocm10 env — no separate env). *↻ Update GPU Wheels* also installs it now that upstream profiles list it.
-- **HIP GGUF (exp)** — the AMD build of the GGUF CUDA wheel, still on the `torch210rocm714` build, which needs **PyTorch 2.10.0+rocm7.14.0** — *not* the installer's env — so it refuses there.
+- **WGPKernels (INT8)** — the INT8 fast path. One-click on NVIDIA RTX 30/40/50 (the launcher picks `cu130`/`cu128` from your torch build) and on AMD RDNA4 (the `rocm100` build installs right in the installer's TheRock torch 2.13+rocm10 env). *↻ Update GPU Wheels* also installs it now that upstream profiles list it.
+- **HIP GGUF (exp)** — the AMD build of the GGUF wheel (1.0.27, `torch213rocm100py312`). It is built for **this** env — torch 2.13.0+rocm10.0.0 — and the wheel checks the ROCm torch build at import. *↻ Update GPU Wheels* lands it automatically on RDNA4; the button stays as a reinstall path.
 
-Only the HIP GGUF wheel must live in a **separate environment** (upstream: *"install into a separate AMD environment"*). Click **AMD setup (exp)** in the GPU Kernel Wheels card to copy the exact commands (torch 2.10 + rocm7.14, then the wheel). RDNA 1–3.5 cards have **no** WGPKernels/HIP wheel.
+RDNA 1–3.5 cards have **no** WGPKernels/HIP wheel. Upstream's own HIP validation is still pending (no RDNA4 board on their side), so treat the HIP path as experimental.
 
 **Active Environment card** — the selected Python env (`uv`, `venv` or `conda`):
 
@@ -116,7 +116,11 @@ Addresses*: Same-PC, Phone (same Wi-Fi), plus an *External* Tailscale IPv4
 row (Copy + QR) for off-LAN access — needs Tailscale on both ends and
 Phone-LAN mode. Address URLs are click-to-open in the real browser (login
 must happen in a tab — embedded views 403). Topbar shows a persistent
-Deepy Web LED (green = running, red = stopped) next to the Wan2GP LED.
+Deepy Web LED (green = running, red = stopped) next to the Wan2GP LED,
+and — once WanGP reports them at boot — two kernel pills
+(`INT8 · <backend>`, `FP8 · <backend>`) with the same kind of status dot:
+green = accelerated backend in use, amber = WanGP fell back to PyTorch,
+grey = not reported yet. A server exit clears both.
 *2 · Auth*: Off or Fixed passphrase (generator, length 4–64, remember
 30 days optional). *3 · Connection*: port — empty means auto (server port
 + 1) — plus LAN HTTPS (bring/create cert, CA guide) and reverse-proxy
@@ -140,7 +144,18 @@ their key actions live (enhancement mode + Apply, Disabled/Zero/Prime +
 Apply, LAN toggle + Deepy Start/Stop); Kernel/Env headers collapse clean.
 
 **DLSS 5 card** — optional NVIDIA upsampler runtimes. *Install DLSS 5…* opens a
-confirmation (Cancel / Install).
+confirmation (Cancel / Install). *Check compatibility* is read-only (GPU tier,
+installed files, HAGS, frame-gen probe) **and verifies the files**: it hashes each
+one and compares it with the SHA-256 Wan2GP's installer pins, so a row reads
+*✓ SHA … matches what Wan2GP pins* or *⚠ SHA … expected — this file hashes to …*.
+Until you run it, the rows print the pinned hash as **expected** rather than
+claiming a match — the panel only stats the files on open (hashing them streams a
+couple hundred MB, so it waits to be asked). *Check for updates* asks the sources
+that upstream's installer script pins (`RankFTW/rhi-repo`,
+`DeepBeepMeep/dlss5-visual-enhancer`, reshade.me) whether a newer component
+release exists — read-only, downloads nothing. The component versions
+themselves are pinned by that script, so a newer one arrives through
+*Update Wan2GP*, never from this card.
 
 **Advanced — pip packages card** — install any extra PyPI package into the
 active env, with a copy button for the equivalent command.
@@ -278,7 +293,11 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **Server Port** — default 7860.
 - **GPU Device** — `auto` or a pinned `cuda:N` for generation.
 - **Launcher GPU** — which GPU the launcher UI itself prefers.
-- **SageAttention wheel** — which Sage build to use.
+- **SageAttention wheel** — which Sage build to use: *Safe* prefers the launcher's
+  known-good build; *Upstream* installs `setup_config.json` exactly as published.
+  They resolve to the same `post6` wheel today, so the choice only starts to
+  matter (and say so in the Console) when upstream pins a different build in that
+  wheel family. Applies on next Sync / install.
 - **GGUF CUDA Kernel** — llama.cpp CUDA offload switch (matmul mode —
   packed MMVQ/MMQ or cuBLAS dense — short-batch mode for the Q4_K/PTQ1_0
   tensor-core path, or disable). Applies on next launch. Verified against wheel
@@ -348,7 +367,7 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 | **SpargeAttn** | RTX 30+ | — | sparsity-aware speed-up alongside Sage |
 | **FlashAttention** | `2.8.3` (RTX 30+, Ampere+) | `2.8.4` (ROCm/Triton, prebuilt wheel) | memory-efficient exact attention |
 | **Nunchaku** | `1.2.1` | — | SVD-quantized (NF4/SVDQ) runtime |
-| **GGUF llama.cpp** | CUDA `1.0.26` build (`cu130` or `cu128` per env) | HIP `1.0.26` build, experimental | 4-bit GGUF kernels (packed rows crossing quant blocks from 1.0.26 — fixes MiniMax H3 image-reference projections) |
+| **GGUF llama.cpp** | CUDA `1.0.27` build (`cu130` or `cu128` per env) | HIP `1.0.27` build (in-env ROCm 10, RDNA4, experimental) | 4-bit GGUF kernels (single-launch row loop from 1.0.27 — 2–10% faster decode, less VRAM; packed rows from 1.0.26 — fixes MiniMax H3 image-reference projections) |
 | **LightX2V** | RTX 50xx only | — | FP4 kernels (sm120+) |
 | **bitsandbytes NF4** | `0.49.2` (optional — *not* installed by the default set) | — | 8-bit / NF4 dequant (one-click install from the dashboard, pinned) |
 
@@ -400,7 +419,6 @@ Upstream v17 ships these off by default, asking every user to switch them on by 
 | VRAM Allocator | `vram_allocator` | `vmm_spill` | **Needs a restart.** Recycles unused VRAM; with spilling, a generation slightly too large for the card can still finish, slowly |
 | RAM Allocator | `ram_allocator` | nothing (manual) | **Needs a restart.** Hands the RAM of freed CPU tensors back to the system when the queue is done or RAM runs short, where PyTorch keeps it for the session (on Windows it can commit up to twice what a tensor needs). Windows/Linux with PyTorch 2.6–2.15; elsewhere WanGP falls back and says so at startup |
 | Attention Head Split | `attention_head_split` | `2` (Medium) under 12 GB, else Off | Upstream measures ~2 GB less VRAM for ≤3% slower steps on H3 1920×1088 / 362 frames. **Same quality, not identical output** — details, and sometimes motion, can differ. Only engages on long sequences (8192+ tokens) |
-| Read Ahead | `read_ahead` | on (Windows) | Reads model files ahead of use, so they are already in RAM on first load |
 | Smart Memory Pinning | `smart_memory_pinning` | on | 1–2 GB of Reserved RAM to reach the GPU nearly as fast. Changing it reloads the model |
 | VRAM Preload | `video/image/audio_preload_mode` | video `default`, image `dynamic` (Profiles 2, 4 and 5 only), audio `default` | See below — this is the one where video and image genuinely differ. Auto-Tune writes image `default` on Profiles 1, 3 and 3+, where upstream never engages a preload |
 | Reserved RAM for Pinning | `perc_reserved_mem_max` | `0` (Auto) | 0 = 40% on Windows, 60% on Linux (upstream v17.10 lowered Linux from 80%). Upstream treats this as a **percentage** since v17 |
@@ -424,6 +442,8 @@ Two caveats if you override video to `dynamic`: it **only engages with the MMGP 
 ## Manage → Plugins
 
 - **Installed & Available** — plugin list with enable/disable/install/remove.
+  Plugins by the launcher's author (GKartist75) are pinned to the top of their
+  group, marked 📌, whichever sort is active.
 - **Install from URL** — sideload a plugin from a link.
 - **★ Favourites** — starred plugins auto-install on fresh setup (stored in
   `desktop-config.json`). Nothing auto-installs otherwise: plugins come only

@@ -746,8 +746,11 @@ pub fn auto_tune_recommend(
             extra.insert("compile".into(), serde_json::json!("cudagraph"));
         }
     }
-    extra.insert("read_ahead".into(), serde_json::json!(cfg!(windows)));
-        extra.insert("smart_memory_pinning".into(), serde_json::json!(true));
+    extra.insert("smart_memory_pinning".into(), serde_json::json!(true));
+    // `read_ahead` is deliberately absent: upstream v18.19 dropped the setting
+    // and always uses the read-ahead copier (mmgp/offload.py picks
+    // _ReadAheadPinningCopier itself), so writing the key would only leave a
+    // dead toggle in wgp_config. Legacy values already on disk are ignored.
         // WanGP's own RAM/VRAM advice: "For image models, use Profile 4 or 5
         // with a Dynamic or Manual VRAM Preload ... Video steps are usually
         // long enough to hide the transfers." Audio rides P3+, which loads
@@ -2127,7 +2130,7 @@ pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool 
         // shared/attention_kit.py HEAD_SPLIT_CHOICES: int 0..3
         "attention_head_split" => matches!(val.as_u64(), Some(0..=3)),
         // bool knobs added with the MMGP v4 runtime
-        "read_ahead" | "smart_memory_pinning" => val.is_boolean(),
+        "smart_memory_pinning" => val.is_boolean(),
         // v18 WanGP Compute Cache (shared/cuda_memory.py COMPUTE_CACHE_KEY):
         // driver keeps its Blackwell-optimized kernels in WanGP's own folder.
         "compute_cache" => val.is_boolean(),
@@ -2177,7 +2180,9 @@ pub(crate) const MEMORY_OVERRIDE_KEYS: &[&str] = &[
     // v17.17 RAM allocator, beside the VRAM one it complements.
     "ram_allocator",
     "attention_head_split",
-    "read_ahead",
+    // `read_ahead` was removed here in v18.19 parity: upstream retired the
+    // setting (read-ahead is now unconditional), so the panel neither writes
+    // nor reads it back. Old configs keep the key; WanGP ignores it.
     "smart_memory_pinning",
     // v18 Compute Cache (Blackwell-only benefit, harmless elsewhere —
     // upstream applies it only when CUDA starts without HIP).
@@ -3023,7 +3028,6 @@ mod autotune_matrix_tests {
         for k in [
             "vram_allocator",
             "attention_head_split",
-            "read_ahead",
             "smart_memory_pinning",
             "image_preload_mode",
         ] {
@@ -3054,7 +3058,6 @@ mod autotune_matrix_tests {
             "vram_allocator": "vmm_spill",
             "attention_head_split": 2,
             "smart_memory_pinning": true,
-            "read_ahead": true,
             "video_preload_mode": "default",
             "image_preload_mode": "dynamic",
             "audio_preload_mode": "default",
@@ -3109,7 +3112,6 @@ mod autotune_matrix_tests {
             "vram_allocator",
             "ram_allocator",
             "attention_head_split",
-            "read_ahead",
             "smart_memory_pinning",
             "video_preload_mode",
             "image_preload_mode",
@@ -3139,7 +3141,6 @@ mod autotune_matrix_tests {
             ("vram_allocator", serde_json::json!("vmm_spill")),
             ("ram_allocator", serde_json::json!("mmgp")),
             ("attention_head_split", serde_json::json!(2)),
-            ("read_ahead", serde_json::json!(true)),
             ("smart_memory_pinning", serde_json::json!(true)),
             ("video_preload_mode", serde_json::json!("default")),
             ("image_preload_mode", serde_json::json!("dynamic")),
@@ -3158,6 +3159,13 @@ mod autotune_matrix_tests {
         assert!(
             settings.get("unrelated").is_none(),
             "unrelated keys must not leak into the panel"
+        );
+        // v18.19 retired `read_ahead` (read-ahead is unconditional upstream).
+        // A config that still carries it boots fine; the panel just must not
+        // paint a toggle that writes a dead key.
+        assert!(
+            settings.get("read_ahead").is_none(),
+            "read_ahead was retired upstream - never read it back"
         );
     }
 

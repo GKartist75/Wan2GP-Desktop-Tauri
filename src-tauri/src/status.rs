@@ -78,7 +78,7 @@ pub fn get_status() -> serde_json::Value {
                             if let Some(key) = k.as_str() {
                                 let (label, pip) = match key {
                                     "nunchaku_cu13" | "nunchaku" => ("Nunchaku", "nunchaku"),
-                                    "gguf" | "gguf_cu128" | "llamacpp_gguf_cuda" => {
+                                    "gguf" | "gguf_cu128" | "gguf_rocm10" | "llamacpp_gguf_cuda" => {
                                         ("GGUF (llamacpp)", "llamacpp_gguf_cuda")
                                     }
                                     "light2xv" | "lightx2v_kernel" => {
@@ -91,12 +91,39 @@ pub fn get_status() -> serde_json::Value {
                                     }
                                     _ => (key, key),
                                 };
-                                // configured version from setup_config.json components.kernels[key].cmd[win]
+                                // Configured version from setup_config.json
+                                // components.kernels[key].cmd[win]. GGUF ships
+                                // one build per (torch, python) and profiles
+                                // list the cu130 default (`gguf`), so resolve
+                                // the profile's own pair to the component it
+                                // actually installs (AMD → `gguf_rocm10`,
+                                // GTX_10 → `gguf_cu128`) — otherwise the
+                                // overview compares against a foreign build tag
+                                // and shows a permanent phantom mismatch.
+                                let comp_key = if key == "gguf" {
+                                    let t = prof.get("torch").and_then(|v| v.as_str()).unwrap_or("");
+                                    let p = prof.get("python").and_then(|v| v.as_str()).unwrap_or("");
+                                    match crate::hw::gguf_component_for(t, p) {
+                                        // Non-RDNA4 AMD maps to the ROCm wheel, but
+                                        // Sync skips it (gfx1200/1201 only) — claim
+                                        // no configured build rather than a phantom
+                                        // mismatch that can never clear.
+                                        Some("gguf_rocm10")
+                                            if !["AMD_GFX1200", "AMD_GFX1201"]
+                                                .contains(&profile.as_str()) =>
+                                        {
+                                            ""
+                                        }
+                                        other => other.unwrap_or("gguf"),
+                                    }
+                                } else {
+                                    key
+                                };
                                 let mut configured: Option<String> = None;
                                 if let Some(cmd) = cfg
                                     .get("components")
                                     .and_then(|c| c.get("kernels"))
-                                    .and_then(|m| m.get(key))
+                                    .and_then(|m| m.get(comp_key))
                                     .and_then(|e| e.get("cmd"))
                                     .and_then(|c| c.get("win"))
                                     .and_then(|u| u.as_str())
@@ -222,7 +249,19 @@ except Exception as e:
         .then(|| std::fs::read_to_string(&cfg_path).ok())
         .flatten()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|c| c.get("gpu_profiles").and_then(|p| p.get(&profile)).cloned())
+        .and_then(|c| {
+            // AMD sub-profiles (AMD_GFX1200/…) alias to upstream's unified
+            // `AMD` key — without this every Sparge/Flash/Triton/Sage tag reads
+            // "—" on an AMD box (same aliasing as the wheels list above).
+            let key = if profile.starts_with("AMD")
+                && c.get("gpu_profiles").and_then(|p| p.get(&profile)).is_none()
+            {
+                "AMD"
+            } else {
+                profile.as_str()
+            };
+            c.get("gpu_profiles").and_then(|p| p.get(key)).cloned()
+        })
         .unwrap_or(serde_json::json!({"sparge": null}));
     // Panels print the *expected* version beside the installed one; map the raw
     // upstream tags (v010_cu13, v210 …) to plain versions so no row ever reads

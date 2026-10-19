@@ -78,7 +78,7 @@ From `INSTALLATION.md` — the launcher automates all of this; listed so you kno
 | PyTorch | 2.10.0 + CUDA 13.0/13.1 (cu130, needs R580+ driver) | 2.7.1 + CUDA 12.8 (no R580 needed) | 2.13.0 ROCm 10 TheRock (stable whl-next, per-box device-gfx targets) | CPU / MPS (SDPA only) |
 | Triton | `triton-windows>=3.7.0.post26,<=3.7.1.post27` (torch 2.10, recommended since v18.18 — ships WanGP's prebuilt CUDA helper, no JIT helper compile, no antivirus exclusion needed on these builds); `>=3.6,<3.7` legacy (torch 2.10, launcher Repair/roll-back target); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | `triton-windows>=3.7.0.post26,<=3.7.1.post27` (torch 2.13; prebuilt HIP helper, experimental) | — |
 | Attention | Sage 2.2.0 (RTX 30+, Ampere+) / Sage 1.0.6 (RTX 20) / Flash 2.8.3 / Sparge 0.1.0 | SDPA | SDPA (default, AOTriton on RDNA3+) / Sage 1.0.6 / Flash 2.8.4 (ROCm/Triton) | SDPA |
-| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.26 (packed rows crossing quant blocks — fixes MiniMax H3 image-reference projections), LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2 (optional, manual), Comfy Kitchen via requirements, WGPKernels 1.1.2 (in setup_config: RTX 30+/RDNA4, recommended) | — | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back); HIP GGUF 1.0.26 wheel (gfx1201 opt-in, version-only bump) | — |
+| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.27 (single-launch row loop — 2–10% faster decode, less VRAM; packed rows crossing quant blocks — fixes MiniMax H3 image-reference projections), LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2 (optional, manual), Comfy Kitchen via requirements, WGPKernels 1.1.2 (in setup_config: RTX 30+/RDNA4, recommended) | — | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back); HIP GGUF 1.0.27 wheel (in-env ROCm 10, RDNA4 opt-in, version-only bump) | — |
 
 Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
 `int8_kernels`: Auto tries WGPKernels → Kitchen CUDA/HIP → Triton → PyTorch
@@ -94,9 +94,21 @@ install/update it from **GPU Kernel Wheels → WGPKernels (INT8)** or
 Sync); Auto prefers it once present.
 On AMD, RDNA4 (RX 9060/9060 XT gfx1200 + RX 9070/9070 XT/R9700 gfx1201) uses
 the experimental `rocm100` build, which loads in the installer's torch
-2.13+rocm10 env — no separate env. Only the HIP GGUF wheel still needs a
-**separate** PyTorch 2.10+rocm7.14 env. The **AMD setup (exp)** button copies
-the commands to build it. RDNA 1–3.5 cards have no WGPKernels/HIP wheel.
+2.13+rocm10 env — no separate env. The HIP GGUF wheel (1.0.27,
+`torch213rocm100py312`) is built for that same env and *↻ Update GPU Wheels*
+installs it automatically on RDNA4. RDNA 1–3.5 cards have no WGPKernels/HIP
+wheel.
+
+Every kernel wheel is downloaded over TLS, hashed and checked **before** pip
+runs. The launcher pins the SHA-256 of the exact assets above (trust on first
+use: a re-uploaded wheel under the same version fails loudly) and falls back to
+GitHub's published digest for anything newer, so a version bump still verifies;
+when neither is available it warns and records the hash it saw. A mismatch
+aborts that component and nothing is installed. Verified wheels are kept in
+**`<data folder>\wheel-cache`** (e.g. `C:\Wan2GP\wheel-cache`) so a re-sync
+re-hashes a local file instead of re-downloading 150 MB — the folder is a cache
+and safe to delete.
+
 Pinokio installs are detected and left
 untouched — the launcher can reuse their model library instead of re-downloading.
 
@@ -203,7 +215,7 @@ Don't regenerate a good scene — late-postprocess it: spatial upscale
 | Goal | Set in launcher | Set in WanGP UI |
 | --- | --- | --- |
 | Install / env / kernels / paths | Dashboard + Installer + GPU Wheels + Active Env | — |
-| VRAM/RAM profile 1-5, quant, attention | Auto-Tune writes `video/image/audio_profile`, `transformer_quantization`, `int8_kernels`, `kernel_precision`, `vae_config` | Fine-tune per task via `override_profile` |
+| VRAM/RAM profile 1-5, quant, attention | Auto-Tune writes `video/image/audio_profile`, `transformer_quantization`, `int8_kernels`, `kernel_precision`, `vae_config` | Fine-tune per task via `overrides` |
 | Model choice | — (update/sync only) | Model dropdown + toolbar search; finetune `+` tool |
 | Prompt + steps/frames/guidance/seed | — | Generation form per model |
 | LoRAs + multipliers, `.lset` | — (folders under `loras_root`) | Advanced -> Loras tab, `activated_loras` + `loras_multipliers` |
@@ -221,11 +233,13 @@ WanGP owns **model, prompt, generation, LoRA pick, control, post**.
 
 ---
 
-## Models reference — complete inventory (270 `defaults/*.json`)
+## Models reference — complete inventory (272 `defaults/*.json`)
 
-Reconciled live against upstream `defaults/` (270 files + ReadMe, WanGP v18.18 /
-fde3c7e — adds the 3D-gen wave, Kandinsky 6, Wan 2.2 Prism, camera control,
-H3 Veda, MOSS Image, Ming Image and the v2 Krea edit presets). Every id below is
+Reconciled live against upstream `defaults/` (272 files + ReadMe, WanGP v18.19 /
+22d1f26 — adds MOSS-TTS v1.5 (8B + Local 4B) and names the Krea 2 Edit v2 ids;
+the v18.18 reconciliation added the 3D-gen wave, Kandinsky 6, Wan 2.2 Prism,
+camera control, H3 Veda, MOSS Image, Ming Image and the v2 Krea edit presets).
+Every id below is
 a selectable `model_type`. Starred = guided-path starter; rest = same workflows,
 different speed/memory/quality trade (distilled/Turbo/Lightning/PDD/NVFP4/GGUF/
 Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar search.
@@ -286,7 +300,7 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 | `flux3_klein` ★, `flux3_klein_base`, `flux3_klein_nvfp4`, `flux3_klein_base_nvfp4` | ★ Flux 3 Klein 5.6B distilled (16 steps, no CFG) + Base (50 steps, CFG); up to 10 ordered references; NVFP4 variants |
 | `qwen_image_20B` ★, `qwen_image_21_7B` ★, `qwen_image_21_turbo_7B`, `qwen_image_2512_20B`, `qwen_image_edit_20B`, `qwen_image_edit_plus_20B` ★, `qwen_image_edit_plus2_20B`, `qwen_image_edit_plus_20B_nunchaku_r128_fp4/int4`, `qwen_image_layered_20B` | ★ base/edit-plus (multi-subject, long text); 2.1 new; 2.1 Turbo 7B (8-step distilled, Turbo scheduler at guidance 1, no acceleration LoRA); layered; Nunchaku quant |
 | `z_image` ★, `z_image_base`, `z_image_control`, `z_image_control2`, `z_image_control2_1`, `z_image_control2_1_8s`, `z_image_twinflow_turbo`, `z_image_nunchaku_r128_fp4/r256_int4` | ★ Turbo 6B fast; Control/Control2.x edit; TwinFlow; Nunchaku |
-| `krea2_raw` ★, `krea2_turbo` ★, `krea2_raw_edit`, `krea2_turbo_edit` (+`general`/`identity` **v2** full-rank edit LoRAs) | ★ RAW (CFG) / Turbo (distilled); Edit presets: General (recolor, relight, backgrounds, objects, text, restyle), Identity (2 refs + scene/pose/outfit restaging with likeness preserved; LanPaint inpaint/outpaint, NAG negatives) |
+| `krea2_raw` ★, `krea2_turbo` ★, `krea2_raw_edit`, `krea2_turbo_edit`, `krea2_turbo_general_edit_v2`, `krea2_turbo_identity_edit_v2` (+ per-model `general`/`identity` **v2** full-rank edit LoRAs) | ★ RAW (CFG) / Turbo (distilled); Edit presets: General (recolor, relight, backgrounds, objects, text, restyle), Identity (2 refs + scene/pose/outfit restaging with likeness preserved; LanPaint inpaint/outpaint, NAG negatives); the named `_v2` ids are the 8-step General/Identity Edit v2 models |
 | `moss_image`, `moss_image_sft` | MOSS Image 5B (OpenMOSS): text-to-image from plain language, tags or the Prompt Helper layout editor (boxes guide composition, not exact pixel masks); optional layout enhancer follows the selected canvas; Base & SFT (curated-data post-training), 50 steps CFG |
 | `ming_image_0_1_design`, `ming_image_0_1_design_layer` | Ming Image 0.1 Design 6B: text-rich designs/infographics/posters (text or structured JSON prompt, Prompt Helper layer arrangement, optional RGBA output, classic/JSON enhancers); Design-Layer splits a flattened design into transparent layers (each added to the gallery + a ZIP of the full set) |
 | `ideogram4` ★, `ideogram4_nf4`, `ideogram4_turbotime` | ★ typography/layout/JSON prompt (+Magic Prompt + visual helper); Turbo 4-8 steps |
@@ -317,6 +331,7 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 
 | Architecture ids | Model_type ids |
 | --- | --- |
+| `moss_tts_v1_5` ★, `moss_tts_local_v1_5` | MOSS-TTS v1.5 (OpenMOSS): 8B (★) and Local 4B multilingual speech with cloning of up to three voices, dialogue with adjustable pauses, optional script writing (Local 4B outputs 48 kHz stereo); BF16 / INT8 ConvRot and PyTorch / CUDA Graphs / vLLM |
 | `qwen3_tts_base` ★, `qwen3_tts_customvoice`, `qwen3_tts_voicedesign` | ★ Base (clone + 2-speaker, low VRAM); Custom Voice; Voice Design |
 | `index_tts2` ★, `index_tts25` | ★ expressive clone, tagged/auto emotion, long dialogue |
 | `fish_drama3` ★, `fish_drama3_int4` | ★ Fish Audio Drama 3 expressive speech/dialogue (optional voice ref + exact transcript); INT4 Experts halves RAM/VRAM |
@@ -369,25 +384,25 @@ Essentials (names as in `SETTINGS.md` / Export Settings JSON):
 | `image_start/end/refs` | Start, end, reference/injected frames | per path above |
 | `video_guide/mask`, `denoising/masking_strength` | Control + area | preview thumbnails first |
 | `audio_guide/guide2` | Voice/soundtrack refs | per audio path |
-| `override_profile` | Per-task `-1/1..5` memory profile | `-1` = use global |
+| `overrides` | Per-task config replacements as `name=value` pairs, comma-separated (`attention_mode='sage2', memory_profile=4`) | empty = global config |
 | `sliding_window_size/overlap` | Long-video chunking | test short first |
 
-### Complete settings key list (116 keys, `models/_settings.json`)
+### Complete settings key list (118 keys, `models/_settings.json`)
 
 Model handlers show/hide per model; Export Settings JSON is the per-model truth.
-Groups follow `SETTINGS.md`:
+Groups follow `SETTINGS.md`; `model_type`/`settings_version` are UI/export labels, not stored keys:
 
-* Model: `model_type`, `model_mode`, `settings_version`, `client_id`, `config`
+* Model/identity: `client_id`, `model_mode`, `config`
 * Prompt: `prompt`, `negative_prompt`, `alt_prompt`, `prompt_enhancer`, `multi_prompts_gen_type`, `multi_images_gen_type`, `custom_settings`
 * Shape: `image_mode`, `resolution`, `batch_size`, `video_length`, `duration_seconds`, `pause_seconds`, `force_fps`, `repeat_generation`, `output_filename`
-* Sampling: `seed`, `num_inference_steps`, `sample_solver`, `flow_shift`, `temperature`, `top_p`, `top_k`
+* Sampling: `seed`, `num_inference_steps`, `num_inference_steps2`, `sample_solver`, `flow_shift`, `temperature`, `top_p`, `top_k`
 * Guidance: `guidance_phases`, `model_switch_phase`, `switch_threshold`, `switch_threshold2`, `guidance_scale`, `guidance2_scale`, `guidance3_scale`, `audio_guidance_scale`, `embedded_guidance_scale`, `alt_guidance_scale`, `alt_scale`, `audio_scale`, `control_net_weight`, `control_net_weight2`, `control_net_weight_alt`
-* Image/video inputs: `image_prompt_type`, `image_start`, `image_end`, `image_refs`, `image_refs_relative_size`, `remove_background_images_ref`, `frames_positions`, `image_guide`, `image_mask`, `video_source`, `keep_frames_video_source`, `input_video_strength`, `video_prompt_type`, `video_guide`, `video_guide2`, `keep_frames_video_guide`, `denoising_strength`, `masking_strength`, `video_mask`, `mask_expand`, `custom_guide`, `video_guide_outpainting`, `video_guide_outpainting_ratio`, `min_frames_if_references`
-* Audio inputs: `audio_prompt_type`, `audio_guide`, `audio_guide2`, `audio_source`, `speakers_locations`, `replace_voice_sample`, `replace_voice_sample2`
-* Accel/cache: `skip_steps_cache_type` (`tea/mag/spectrum…`), `skip_steps_multiplier`, `skip_steps_start_step_perc`, `RIFLEx_setting`, `override_profile`, `override_attention`, `temporal_upsampling`, `spatial_upsampling`, `film_grain_intensity`, `film_grain_saturation`, `attention_sparsity`
-* Audio post: `postprocess_audio`, `postprocess_audio_prompt`, `postprocess_audio_neg_prompt`, `replace_voice_method`
+* Image/video inputs: `image_prompt_type`, `image_start`, `image_end`, `image_refs`, `image_refs_relative_size`, `remove_background_images_ref`, `frames_positions`, `image_guide`, `image_mask`, `video_source`, `keep_frames_video_source`, `input_video_strength`, `video_prompt_type`, `video_guide`, `video_guide2`, `video_guide3`, `keep_frames_video_guide`, `denoising_strength`, `masking_strength`, `video_mask`, `mask_expand`, `custom_guide`, `video_guide_outpainting`, `video_guide_outpainting_ratio`, `min_frames_if_references`
+* Audio inputs: `audio_prompt_type`, `audio_guide`, `audio_guide2`, `audio_guide3`, `audio_source`, `speakers_locations`, `replace_voice_method`, `replace_voice_sample`, `replace_voice_sample2`
+* Accel/cache: `skip_steps_cache_type` (`tea/mag/spectrum…`), `skip_steps_multiplier`, `skip_steps_start_step_perc`, `RIFLEx_setting`, `overrides` (replaces the old `override_profile`/`override_attention`/`override_compile` trio), `temporal_upsampling`, `spatial_upsampling`, `film_grain_intensity`, `film_grain_saturation`, `attention_sparsity`
+* Audio post: `postprocess_audio`, `postprocess_audio_prompt`, `postprocess_audio_neg_prompt`
 * Advanced sampling: `perturbation_switch/layers/start_perc/end_perc`, `apg_switch`, `cfg_star_switch`, `cfg_zero_step`, `NAG_scale/tau/alpha`, `self_refiner_setting/plan/f_uncertainty/certain_percentage`, `motion_amplitude`
-* Sliding windows: `sliding_window_size/overlap/color_correction_strength/overlap_noise/discard_last_frames/trim_first_frames`, `sub_parallel_window_size/overlap`, `keep_intermediate_sliding_windows`
+* Sliding windows: `sliding_window_size/overlap/color_correction_strength/overlap_noise/discard_last_frames/trim_first_frames`, `sub_parallel_window_size/overlap`
 * LoRAs: `activated_loras`, `loras_multipliers`
 * Spatial params: `spatial_upsampler_param/param2/prompt/reference_images`
 
@@ -615,10 +630,11 @@ to move); back up folder + media for portable archive.
   `submit_audio_remux/postprocessing`. Discovery: `list_model_defs/metadata`,
   `get_default_settings/schema/availability`.
 * MCP server: `python wgp.py --mcp --mcp-transport streamable-http --mcp-port 7866`
-  (v2 default; `--mcp-api-version 1` for historical clients). Gallery media IDs
+  (v2.1 default; `--mcp-api-version 2`/`1` for historical clients). Gallery media IDs
   work without filesystem access; direct paths need `--mcp-allow-read-file-system`.
   HTTP transports add short-lived upload/download URLs. Network MCP auth is OAuth
-  (`--mcp-auth`), separate from web login. Deepy Prime pins v2 internally.
+  (`--mcp-auth` + `--mcp-auth-url`, optional `--mcp-auth-password`), separate from web
+  login; `--mcp-webui` autostarts MCP with the normal web UI. Deepy Prime pins v2 internally.
 * Disclose WanGP use in any integrating product's UI + docs (license terms).
 
 ```mermaid
@@ -626,7 +642,7 @@ flowchart TD
   A["Want agents or scripts to drive WanGP?"]
   A --> P["Python app? Export Settings in UI, then init plus submit_task"]
   A --> H["Overnight jobs? Save Queue in UI, then wgp.py --process queue.zip"]
-  A --> M["Claude or OpenCode agent? wgp.py --mcp (v2, streamable-http on LAN)"]
+  A --> M["Claude or OpenCode agent? wgp.py --mcp (v2.1, streamable-http on LAN)"]
   P & H & M --> G["Gallery media IDs travel everywhere; direct paths need filesystem permission"]
 ```
 
@@ -644,8 +660,9 @@ flowchart TD
 * `--public-url https://host[:port]` pins one exact browser origin (scheme+host+port,
   no path) — needed when proxy rewrites Host or HTTP/HTTPS variants serve different
   apps; default accepts same-host HTTP/HTTPS. Mic recording may require trusted HTTPS.
-* MCP OAuth (`--mcp-auth`, separate passphrase, `--mcp-auth-url` public origin) —
-  browser cookie never authorizes MCP; tokens 1h, refresh ≤7d, restart revokes.
+* MCP OAuth (`--mcp-auth`, separate passphrase `--mcp-auth-password`/
+  `WANGP_MCP_AUTH_PASSWORD`, `--mcp-auth-url` public origin) — browser cookie never
+  authorizes MCP; tokens 1h, refresh ≤7d, restart revokes.
 
 ```mermaid
 flowchart TD
@@ -660,7 +677,7 @@ flowchart TD
 
 From `shared/cli_args.py` (launcher exposes the useful subset):
 
-### Complete launch-flag list (44 flags)
+### Complete launch-flag list (45 flags)
 
 | Flag | Use |
 | --- | --- |
@@ -674,7 +691,7 @@ From `shared/cli_args.py` (launcher exposes the useful subset):
 | `--server-port/--server-name/--listen/--share/--open-browser/--theme`, `--lock-config/--lock-model`, `--multiple-images` | Access + UI locks |
 | `--process queue.zip --dry-run --output-dir` | Headless batch; validate first |
 | `--ask-deepy`, `--deepy-server`, `--deepy-voice-language`, `--deepy-sessions-dir` | Deepy CLI / standalone web / dictation / sessions folder |
-| `--mcp --mcp-transport stdio/sse/streamable-http --mcp-host/--mcp-port --mcp-api-version 1/2 --mcp-async --mcp-console-output --mcp-allow-read-file-system` | Agent API (v2 default) |
+| `--mcp --mcp-transport stdio/sse/streamable-http --mcp-host/--mcp-port --mcp-api-version 1/2/2.1 --mcp-webui/--no-mcp-webui --mcp-async --mcp-console-output --mcp-allow-read-file-system` | Agent API (v2.1 default) |
 | `--auth/--no-auth/--auth-password`, `--public-url`, `--mcp-auth/--mcp-auth-password/--mcp-auth-url`, `--https-port/--ssl-certfile/--ssl-keyfile` | Login + TLS + proxy origin (see AUTH; `--public-url` = bare origin only, no path/query) |
 | `--loras/--lora-config/--check-loras/--lora-preset` | LoRA roots/overrides/preset |
 | `--settings/--config/--workspaces-dir/--output-dir` | Folders |

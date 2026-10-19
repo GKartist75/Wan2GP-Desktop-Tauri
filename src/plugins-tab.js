@@ -19,6 +19,27 @@ function refreshPluginsLazy() {
 }
 let _pluginQuery = "";
 let _pluginSort = { key: "name", dir: 1 };
+// The launcher author's own plugins (GKartist75) are kept at the top of their
+// group: the catalog is nearly all deepbeepmeep's, so an entry of ours sank into
+// the alphabetical run and was easy to miss in our own plugin manager. Matched
+// on the author *or* the repo URL, case-insensitively, because a catalog entry
+// carries `author` while a locally installed plugin may only carry the clone URL.
+const OWN_PLUGIN_HANDLE = "gkartist";
+function isOwnPlugin(p) {
+  if (!p) return false;
+  return ((p.author || "") + " " + (p.url || ""))
+    .toLowerCase()
+    .includes(OWN_PLUGIN_HANDLE);
+}
+// List order: group (community above system, as before), then our own plugins,
+// then the chosen column in the chosen direction. Pure so tests drive it.
+function pluginCompare(a, b, key, dir) {
+  const grp = (p) => (p.group === "system" ? 1 : 0);
+  const own = (p) => (isOwnPlugin(p) ? 0 : 1);
+  const x = (a[key] || "").toLowerCase(),
+    y = (b[key] || "").toLowerCase();
+  return grp(a) - grp(b) || own(a) - own(b) || (x < y ? -dir : x > y ? dir : 0);
+}
 $("pluginSearchInput")?.addEventListener("input", (e) => {
   _pluginQuery = e.target.value || "";
   renderPlugins();
@@ -88,16 +109,7 @@ function renderPlugins() {
         .includes(q),
   );
   const { key, dir } = _pluginSort;
-  const grp = (p) => (p.group === "system" ? 1 : 0);
-  arr = [...arr].sort(
-    (a, b) =>
-      grp(a) - grp(b) ||
-      (() => {
-        const x = (a[key] || "").toLowerCase(),
-          y = (b[key] || "").toLowerCase();
-        return x < y ? -dir : x > y ? dir : 0;
-      })(),
-  );
+  arr = [...arr].sort((a, b) => pluginCompare(a, b, key, dir));
   document.querySelectorAll(".plugin-sort").forEach((b) => {
     const active = b.dataset.sort === _pluginSort.key;
     b.classList.toggle("active", active);
@@ -155,6 +167,16 @@ function renderPlugins() {
       label.appendChild(ub);
     }
     label.appendChild(document.createTextNode(")"));
+    // Why this entry sits above the alphabetical run — the launcher author's own
+    // plugin. A glyph rather than a word keeps the name line from wrapping.
+    if (isOwnPlugin(p)) {
+      const ob = document.createElement("span");
+      ob.className = "plugin-own-badge";
+      ob.textContent = "📌";
+      ob.title =
+        "GKartist75 is the launcher's author — this plugin is kept at the top";
+      label.appendChild(ob);
+    }
     if (p.description) label.title = p.description;
     row.appendChild(label);
     // ★ favourite (auto-installed on fresh setup) — needs a URL to reinstall from
