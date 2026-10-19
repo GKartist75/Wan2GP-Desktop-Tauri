@@ -1034,7 +1034,7 @@ pub async fn adult_pack_fetch(ids: Vec<String>, app: AppHandle) -> Result<Value,
                 &["urls", "urls2"]
             };
             for key in keys {
-                let urls: Vec<String> = arr(f, *key)
+                let urls: Vec<String> = arr(f, key)
                     .iter()
                     .filter_map(|u| u.as_str().map(|s| s.to_string()))
                     .collect();

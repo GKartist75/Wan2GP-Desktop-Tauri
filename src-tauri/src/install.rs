@@ -7530,7 +7530,9 @@ pub async fn dlss5_verify_files() -> serde_json::Value {
                 if let Some(rows) = v["rows"].as_array() {
                     let mut files = serde_json::Map::new();
                     for row in rows {
-                        let Some(id) = row["id"].as_str() else { continue };
+                        let Some(id) = row["id"].as_str() else {
+                            continue;
+                        };
                         files.insert(
                             id.to_string(),
                             serde_json::json!({
@@ -8730,9 +8732,7 @@ pub fn dlss5_revert_workstation_fix() -> Result<serde_json::Value, String> {
 // this only mirrors its Downloading / verified / Installed lines to the UI.
 #[cfg(test)]
 mod dlss5_verify_tests {
-    use super::{
-        dlss5_verify_files_blocking, dlss_cache_row_valid, dlss_file_state, DLSS5_FILES,
-    };
+    use super::{dlss5_verify_files_blocking, dlss_cache_row_valid, dlss_file_state, DLSS5_FILES};
 
     #[test]
     fn state_classifies_existence_and_hash() {
