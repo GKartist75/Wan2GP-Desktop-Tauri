@@ -6391,43 +6391,38 @@ mod sync_transcript_tests {
         sage_needs_safe_swap, SAGE_SAFE_WIN_URL,
     };
 
-    /// A captured all-up-to-date *Sync* (RTX 3080, `env_uv`, upstream
-    /// `fdc63bdf`). A healthy box must be a no-op that says so — and the console
-    /// has to be readable as evidence of that, which is why these exact lines
-    /// are pinned here rather than left as loose `format!`s in the loop.
+    /// The whole block a healthy box prints, in order, as one golden fixture:
+    /// a captured all-up-to-date *Sync* (RTX 3080, `env_uv`, upstream
+    /// `fdc63bdf`). Kept as a single expected string so any change to any line —
+    /// or to the order — fails one obviously-named test with a readable diff,
+    /// instead of being lost among loose `format!`s in the sync loop.
     #[test]
-    fn an_all_current_run_reads_like_the_captured_transcript() {
-        assert_eq!(
+    fn the_whole_block_matches_the_captured_console() {
+        // Built from the same four helpers the loop calls, so this asserts the
+        // wording *and* the assembly order at once.
+        let block = [
             kernel_cfg_header_line("fdc63bdf", "1.0.27+torch210cu130py311"),
-            "[*] setup_config.json @ fdc63bdf (gguf 1.0.27+torch210cu130py311) — deepbeepmeep's wanted wheels\n"
-        );
-        assert_eq!(
             kernel_skip_line("wgpkernels", "1.1.2+cu130"),
-            "[*] sync kernel wgpkernels — already at 1.1.2+cu130, skipped\n"
-        );
-        assert_eq!(
             kernel_skip_line("nunchaku_cu13", "1.2.1+cu13.0torch2.10"),
-            "[*] sync kernel nunchaku_cu13 — already at 1.2.1+cu13.0torch2.10, skipped\n"
-        );
-        assert_eq!(
             kernel_skip_line("gguf", "1.0.27+torch210cu130py311"),
-            "[*] sync kernel gguf — already at 1.0.27+torch210cu130py311, skipped\n"
-        );
-        assert_eq!(
             kernel_skip_line("sage", "2.2.0+cu130torch2.10.0andhigher.post6"),
-            "[*] sync kernel sage — already at 2.2.0+cu130torch2.10.0andhigher.post6, skipped\n"
-        );
-        assert_eq!(
+            // Triton is handled by the no-downgrade guard *before* the skip
+            // branch, which is why the summary counts four kernels and the
+            // block never prints a `sync kernel triton` row.
             kernel_triton_keep_line("3.7.1.post27", "3.7.0"),
-            "[*] keeping installed triton 3.7.1.post27 (newer than wanted 3.7.0) — not downgrading (#2264); pin an older triton manually if the old build is required\n"
-        );
-        // Four kernels were already current; triton was handled by the
-        // no-downgrade guard before it could be counted, which is why the
-        // summary says four and never names a triton.
-        assert_eq!(
             kernel_sync_summary_line(0, 4, 0),
-            "[✓] kernel sync complete — 0 synced, 4 already current, 0 failed\n"
-        );
+        ]
+        .concat();
+        let expected = "\
+[*] setup_config.json @ fdc63bdf (gguf 1.0.27+torch210cu130py311) — deepbeepmeep's wanted wheels
+[*] sync kernel wgpkernels — already at 1.1.2+cu130, skipped
+[*] sync kernel nunchaku_cu13 — already at 1.2.1+cu13.0torch2.10, skipped
+[*] sync kernel gguf — already at 1.0.27+torch210cu130py311, skipped
+[*] sync kernel sage — already at 2.2.0+cu130torch2.10.0andhigher.post6, skipped
+[*] keeping installed triton 3.7.1.post27 (newer than wanted 3.7.0) — not downgrading (#2264); pin an older triton manually if the old build is required
+[✓] kernel sync complete — 0 synced, 4 already current, 0 failed
+";
+        assert_eq!(block, expected);
     }
 
     /// The sage row of that transcript is the safe-toggle evidence: upstream's
