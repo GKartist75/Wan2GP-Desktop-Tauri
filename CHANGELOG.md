@@ -2,7 +2,7 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
-## [Unreleased]
+## [0.10.15] — 2026-10-19
 
 - **Opt-in Adult (NSFW) model pack — Manage → 📦 Pack.** A new tab in Manage, deliberately
   **not** part of Setup: installing Wan2GP must never carry an opt-in adult-content decision.
@@ -74,6 +74,191 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
     *new version*, and headline chips answer "what do I already have".
   - Search and trending results carry their example images, version and release
     date too — a title alone tells you nothing about what a model produces.
+
+- **A finetune recipe can be created from the Pack panel without hand-writing JSON.**
+  The finetune manager could edit, link-check and delete recipes, but making a new one
+  meant writing `finetunes/<id>.json` by hand from upstream's `FINETUNES.md` — the one
+  part of the flow that required knowing the format. **＋ New finetune.json** now collects
+  it: id, name, base architecture (the picker is built from the manifest of the build you
+  have installed, so a recipe that could never load cannot be written), description, and
+  the source URLs one per line. The three WanGP fields worth having from the UI are
+  optional — **Second phase** (`URLs2`, for HIGH/LOW pairs such as Wan 2.2), **Model
+  notes** (`infos`) and **Prompt help** (`prompt_infos`), both Markdown — and are omitted
+  from the file when left empty, so a minimal t2v recipe stays minimal. The write goes
+  through the same `adult_pack_finetune_write` validation as every other path (name,
+  architecture, non-empty usable URLs, never a shipped `defaults/` model), and an id that
+  already exists is refused with *open it below and press Edit* rather than silently
+  replacing a definition. The guide documents the form and links upstream's
+  `docs/FINETUNES.md` for the full field list.
+
+- **Audit pass: confirmations, build metadata, and a warning-free backend.**
+  - Pack deletes (single row, bulk selection, saved recipe) now ask through the
+    launcher's native `askConfirm`; `window.confirm` is already replaced at boot
+    by an async plugin shim the ACL denies, so those three safety prompts were
+    being skipped.
+  - `Cargo.toml` declares the crate's real MIT license and `rust-version = 1.95`
+    (the actual floor imposed by `sysinfo` 0.39 / edition 2024); a `LICENSE`
+    file now exists and `package.json` carries the same SPDX id.
+  - Process-wide caches use `LazyLock` with their initializer declared in place
+    (no `get_or_init` scattered through accessors); dead `PREV_CPU` tracking is
+    gone. `cargo fmt --check` and `cargo clippy --all-targets` are both clean.
+  - README build prerequisites/asset names and the test counts were stale; the
+    guide now points at the current 272-model inventory.
+
+- **The Pack can now add models Wan2GP does not ship, and manage them like anything else.** The
+  tab shipped as a fixed catalog with a read-only recipe list, so every path a user actually needs
+  for their own models was missing. Three of them, all load-bearing:
+  - **Add by link.** Finding a model meant matching it against a keyword, so a name matching no
+    search term was unreachable. Pasting a HuggingFace repo (`owner/name` or its URL), a CivitAI
+    model URL or a bare CivitAI id now resolves **server-side** (`adult_pack_resolve_url` /
+    `parse_source_url`) into the same inspect → pick file → Add flow, and the renderer never
+    parses a URL itself. A multi-version CivitAI model gets a version picker, and the detected file
+    kind (LoRA vs checkpoint) is an editable select — a wrong guess can never file a model into the
+    wrong folder.
+  - **The architecture list, and the family, come from the build.** The picker was built from a
+    hardcoded map, so it offered architectures this build cannot load. It now prefers what the
+    build actually ships (`defaults/*.json` ∪ the curated map, via `adult_pack_arches`, with the
+    map as fallback), and a recipe naming an unknown architecture is refused at write time instead
+    of written and then unloadable-forever. The family folder (`wan` / `h3` / `ltx` / `image` /
+    `misc`) is derived server-side from that architecture (`family_for_arch`) instead of trusted
+    from the request. And a user-added LoRA was **invisible**: additions were filed under a
+    `custom` group that no group list contained, so the row was counted and never drawn — the
+    manifest now synthesizes it.
+  - **A manager, not a list.** Recipes open in the same form that creates them (**Form view**),
+    export to a shareable `.json`, and import back through the validated
+    `library_finetune_import` path. The LoRAs folder gets its own inventory (`Refresh files`) that
+    lists every weight on disk — catalog-known or not — and deletes one without a trip to Explorer,
+    confined to the LoRAs root (canonicalized, `..` refused) and always confirmed. **Check for
+    updates** now also chains the repos behind your own additions, and reports the ones it could
+    not reach instead of silently skipping them.
+  `tests/adult-pack-add-and-manage.test.js` pins the six paths its header names.
+
+- **Six ways the Pack could silently do the wrong thing.** A review pass over the panel where the
+  visible result disagreed with what actually happened:
+  - **"Apply updates" only wrote pins.** It called the guarded download wrapper from inside another
+    guarded action, and the busy guard is re-entrant-hostile: the nested call returned immediately,
+    so the new pin was recorded and nothing was ever fetched. It now calls the unwrapped fetch
+    worker, and the test fails if a `doFetch` call reappears there.
+  - **A HIGH/LOW half is pinned as its own file.** A `#low` id resolves its parent recipe and uses
+    the parent's `#low` pin key, so the second half verifies against its own hash and size rather
+    than the first half's.
+  - **A user-added file keeps a safe basename.** The stored name is the URL's basename — checked
+    again by `safe_file_name` — never the repo path.
+  - **CivitAI downloads use the file's real name and the hash CivitAI published.** The endpoint is
+    not a file name, and CivitAI's `sizeKB` is only a fallback for entries with no digest.
+  - **The source-page action cannot open a non-https scheme** — the raw page string never reaches
+    `openExternal` unvalidated.
+  - **The finetune manager stops listing a pack recipe twice** by stripping the `adultpack_` prefix
+    while de-duplicating; user additions are found by fetch, recipe-write and remove through one
+    `find_merged` helper, so adding one is not a second-class path.
+
+- **The Pack's downloads are a queue you can watch, not a wall of log lines.** *Download selected*
+  fetched sequentially and reported per file into the console, so "what is left?" meant reading
+  backwards through a scrolling log, and a batch of seven files looked identical on file 2 and file
+  7. The Downloads section now grows a small queue panel — one row per ticked item with its own
+  state (`queued` → downloading `1.2 GB / 3.0 GB` → `verifying…` → ✓, or **✗ failed**, or
+  **– not attempted**) under an `n / total done` header — and the progress line above the log gains
+  the same `[3/7]` position. The backend stamps every progress event with `queueIndex` /
+  `queueTotal` through one `QueueSink` wrapper — deliberately not `index` / `total`, because
+  `total` is already the byte count of the file being downloaded — and each item emits an explicit
+  `start` phase so its row appears before the first byte arrives. Rows are keyed by the *selected*
+  item, so a HIGH/LOW recipe's two files fold into the one row you ticked, and only an in-flight
+  batch is folded into: CivitAI downloads and the update-check probe share the same event channel
+  and could otherwise rewrite a finished run's rows. `Fetch missing only`, *Apply &
+  download* and every other fetch path drive the same queue, and a batch from an earlier visit is
+  cleared on open instead of left looking current. `tests/adult-pack-actions.test.js` pins the
+  position fields, the `start` events, the row keying and the in-flight gate.
+
+- **An installed, hash-matching DLSS 5 component is green again — an upstream update is news, not a
+  fault.** The 0.10.14 audit made a row's SHA a real check, but it also tinted a correct row amber
+  whenever the read-only probe found a newer build upstream, so a fully installed panel still read
+  as "something is wrong" — and for two components that is permanent, by design: upstream's own
+  `docs/DLSS5.md` keeps `renodx-dlss5 4.70` and `dlssnr 310.8.SF-v2` pinned to the versions it
+  tested ("newer development builds are announced in the official RenoDX Discord"), while DLSS
+  Super Resolution / Frame Generation are NVIDIA-signed builds WanGP has not validated (`310.9.16`
+  is live upstream; the installer pins the tested `310.8.0` / `310.7.0`). Green is now local truth
+  only: the dot follows *verified* / *matches what WanGP pins*, amber stays for a file that exists
+  but was never hashed, red for missing or wrong bytes. The `↻ upstream … — update Wan2GP` note
+  keeps its wording but is a muted span beside the verdict rather than a colour on it, and it
+  appears **only after you press Check for updates** — the startup TTL probe still refreshes the
+  data silently so the button answers instantly, it just no longer decorates a healthy panel on
+  launch.
+
+- **DLSS 5's Force setting is remembered across restarts.** It is not a per-run toggle: upstream's
+  installer keeps matching files and, when *different* files are already present, changes nothing
+  until you rerun `install_dlss5.bat -Force` (which backs up every file it replaces) — so losing
+  the tick on the next launch silently changed what an install would do. It now persists as
+  `dlss5.force` in the launcher config and is restored on load. The install modal's consent tick
+  (*I accept the copyright, licensing, and security risks above*) is deliberately **not**
+  remembered, because consent is per-install.
+
+- **The Pack's model list is workable in bulk now.** A hundred checkboxes you have to tick one at a
+  time is not a selection UI. A filter bar narrows the catalog by text, by *selected only* and by
+  *not downloaded*, and **Select shown** / **Deselect shown** act on exactly the filtered rows — so
+  "download everything I don't have yet" (filter → *Select shown* → *Download selected*) is two
+  clicks. The panel's tooling also sits in four flat sections — *Find models*, *Downloads*,
+  *Finetune recipes*, *LoRA files on disk* — rather than one long scroll, and the CivitAI source is
+  labelled *civitai.red*, the host the adult catalog actually publishes on (`civitai.com` became the
+  SFW library in April 2026) — the same token works on both.
+
+- **A DLSS 5 verdict now survives a restart.** *Check compatibility* hashes a couple hundred MB, so
+  its answer was good for one session only: the panel came back every launch with every row reading
+  *expected*, and the one thing it had learned — that these bytes are still the bytes it hashed —
+  was discarded. Comparisons are now cached in `dlss5-verified.json` in the data dir and a new
+  read-only `dlss5_cached_state` paints them on open, so the ticks are there before you ask. A
+  cached row is revalidated against the pin, the file's size **and** its mtime first: a re-download,
+  an installer run or a hand-copied file drops straight back to *expected* rather than showing a
+  stale tick. The upstream update probe's last answer is cached alongside it, but the
+  `↻ upstream` note still waits for **Check for updates** — a cached answer is data, not a paint.
+
+- **Launch credentials no longer sit in a batch file on disk.** Starting Wan2GP in a terminal wrote
+  `HF_TOKEN` / `ANTHROPIC_API_KEY` into `%TEMP%\wan2gp-terminal-*.bat` as literal `set …` lines, so
+  a crash — or a shared machine — left your HuggingFace and Anthropic tokens in the temp directory
+  in plain text. They are now staged in a separate `wan2gp-env-<millis>.txt` that the script reads
+  with `for /f` and deletes *before* the server starts, and `sweep_terminal_temp_files()` clears
+  both `wan2gp-terminal-*.bat` and `wan2gp-env-*.txt` on stop and at startup, so an interrupted run
+  leaves neither behind.
+
+- **The last five blocking commands moved off the invoke thread, and the backend shed its dead
+  surface.** `python_preflight` (spawns uv plus a Python probe), `auto_tune_detect` (`nvidia-smi`
+  and the registry), `llm_engines_list` (up to three cold `pip show` calls), `workspace_backup`
+  (`Compress-Archive`, which can run for minutes) and `troubleshoot_triton_repair` (a pip reinstall)
+  all ran synchronously on the IPC thread, so the window could not repaint while they worked; each
+  now wraps a `_blocking` twin in `spawn_blocking` and the UI stays live. In the same pass six
+  commands with no surviving caller were deleted — `greet`, `check_python`, `check_git`,
+  `open_external`, `popout_webview`, `preflight_check` — with their registrations and their dead
+  frontend listeners (`onSetupProfile`, `onBvNavState`, `onTermDockChanged`, `onOpenMigration`,
+  `onSystemThemeChange`, `onBvCrashRecovered`), and the dependencies only they needed left with
+  them: `tauri-plugin-fs`, `base64` and `image` (plus the `windows` crate), and the unused
+  `updater:default` ACL entry. The exe is smaller, the event bus no longer advertises events nothing
+  emits, and nothing in `src/` or `src-tauri/` still references a removed path.
+
+- **Frontend hardening, and a dev-harness path that could not escape its root.** The Library panel
+  assumed every backend list it received was an array, so one malformed payload threw and took the
+  whole table with it — `folders`, `items` and `sample` are now guarded (an absent list renders as
+  the empty table it is). The guide, safety and Deepy-checks panels dropped their private `esc()`
+  copies for the one shared `window.escHtml`, and the harness stub now answers with the real payload
+  shapes (`library_models` → `{root, files, bytes, truncated, sample}`, etc.) so those guards are
+  actually exercised instead of passing by luck. The dev server's traversal guard used
+  `file.startsWith(ROOT)`, which also accepts a sibling directory (`src2/…` beside `src/`); it now
+  compares `path.relative(ROOT, file)` and rejects `..` and absolute results. First-open hardware
+  probing also retried unconditionally after 2s — it now retries only when the first probe came back
+  empty, so a slow-but-successful probe is not run twice.
+
+- **The release script can no longer sign and publish the wrong artifact, and CI now runs the
+  suites.** The v0.10.14 flow fell back to "the newest `setup.exe`" when the versioned one was
+  missing — exactly how a stale installer gets published under a new version. `scripts/release-tauri.ps1`
+  now requires a versioned `*-setup.exe` **and** its `.sig` **and** a versioned `.msi`, runs
+  `npm test`, `cargo test`, `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check` as a
+  hard preflight that fails the run, refuses a detached HEAD, uncommitted tracked changes, or a
+  version that is not strictly greater than `package.json`'s, bumps all five version files together
+  (`package.json`, `package-lock.json`, `tauri.conf.json`, `Cargo.toml`, `Cargo.lock`), refuses if an
+  existing local or remote tag does not point at HEAD before pushing, publishes as a **draft** and
+  only then un-drafts it, and refuses outright if the release already exists. `scripts/live-tests.ps1` now
+  fails when its filter matches **zero** tests — `cargo test` exits 0 with none, which used to read
+  as a pass — and a new `.github/workflows/ci.yml` runs `npm test`, `cargo test`, clippy and
+  `fmt --check` on `windows-latest` for every push to `master` and every PR, with the Rust build
+  cached.
 
 ## [0.10.14] — 2026-10-19
 
