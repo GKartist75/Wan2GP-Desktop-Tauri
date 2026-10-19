@@ -14,7 +14,7 @@
 use std::io::{Read, Write};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Mutex, OnceLock,
+    LazyLock, Mutex,
 };
 
 struct LogServerState {
@@ -23,17 +23,17 @@ struct LogServerState {
     lan: bool,
 }
 
-static STATE: OnceLock<Mutex<LogServerState>> = OnceLock::new();
+static STATE: LazyLock<Mutex<LogServerState>> = LazyLock::new(|| {
+    Mutex::new(LogServerState {
+        running: false,
+        port: 0,
+        lan: false,
+    })
+});
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn state() -> &'static Mutex<LogServerState> {
-    STATE.get_or_init(|| {
-        Mutex::new(LogServerState {
-            running: false,
-            port: 0,
-            lan: false,
-        })
-    })
+    &STATE
 }
 
 fn load_ports() -> (u64, Option<u64>, Option<u64>) {
@@ -70,8 +70,7 @@ fn lan_ip() -> Option<String> {
 
 fn log_lines() -> Vec<String> {
     crate::base::LOG_HISTORY
-        .get()
-        .and_then(|m| m.lock().ok())
+        .lock()
         .map(|g| g.clone())
         .unwrap_or_default()
 }
@@ -137,7 +136,11 @@ fn serve_one(mut stream: std::net::TcpStream, port: u64) {
         // /logs.txt?n=600 — plain text tail, polled by the viewer page.
         let want = parse_log_tail(path);
         let lines = log_lines();
-        ("200 OK", "text/plain; charset=utf-8", tail_text(lines, want))
+        (
+            "200 OK",
+            "text/plain; charset=utf-8",
+            tail_text(lines, want),
+        )
     };
     let resp = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
@@ -167,9 +170,7 @@ fn spawn_listener(bind: String, port: u64, gen: u64) {
             }
             match listener.accept() {
                 Ok((stream, _)) => serve_one(stream, port),
-                Err(ref e)
-                    if e.kind() == std::io::ErrorKind::WouldBlock =>
-                {
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }
                 Err(_) => {
@@ -215,7 +216,9 @@ pub async fn log_server_start(
     };
     // Fail fast if the port is taken.
     if std::net::TcpListener::bind(&bind).is_err() {
-        return Err(format!("port {p} is already in use — pick another log port"));
+        return Err(format!(
+            "port {p} is already in use — pick another log port"
+        ));
     }
     let gen = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     spawn_listener(bind, p, gen);
@@ -304,10 +307,7 @@ mod tests {
         let lines: Vec<String> = (1..=10).map(|i| i.to_string()).collect();
         assert_eq!(tail_text(lines.clone(), 3), "8\n9\n10");
         // Asking for more than exist returns everything.
-        assert_eq!(
-            tail_text(lines, 100),
-            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10"
-        );
+        assert_eq!(tail_text(lines, 100), "1\n2\n3\n4\n5\n6\n7\n8\n9\n10");
     }
 
     #[test]

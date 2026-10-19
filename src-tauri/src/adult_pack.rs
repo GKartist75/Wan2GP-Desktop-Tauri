@@ -18,33 +18,52 @@
 use crate::base::*;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 use tauri::{AppHandle, Emitter};
 
 /// Pinned catalog. Regenerate with: node scripts/verify-adult-pack.mjs
 const MANIFEST_RAW: &str = include_str!("../../src/adult-pack-manifest.json");
 
-static MANIFEST: OnceLock<Value> = OnceLock::new();
+static MANIFEST: LazyLock<Value> = LazyLock::new(|| {
+    serde_json::from_str(MANIFEST_RAW).unwrap_or_else(|e| {
+        eprintln!("[adult-pack] embedded manifest is invalid JSON: {e}");
+        json!({ "groups": [], "loras": [], "finetunes": [], "civitai": [] })
+    })
+});
 
 fn manifest() -> &'static Value {
-    MANIFEST.get_or_init(|| {
-        serde_json::from_str(MANIFEST_RAW).unwrap_or_else(|e| {
-            eprintln!("[adult-pack] embedded manifest is invalid JSON: {e}");
-            json!({ "groups": [], "loras": [], "finetunes": [], "civitai": [] })
-        })
-    })
+    &MANIFEST
 }
 
 fn arr<'a>(v: &'a Value, key: &str) -> &'a [Value] {
-    v.get(key).and_then(|x| x.as_array()).map(|a| a.as_slice()).unwrap_or(&[])
+    v.get(key)
+        .and_then(|x| x.as_array())
+        .map(|a| a.as_slice())
+        .unwrap_or(&[])
 }
 
 fn find<'a>(v: &'a Value, key: &str, id: &str) -> Option<&'a Value> {
-    arr(v, key).iter().find(|x| x.get("id").and_then(|i| i.as_str()) == Some(id))
+    arr(v, key)
+        .iter()
+        .find(|x| x.get("id").and_then(|i| i.as_str()) == Some(id))
+}
+
+/// Pack entries and the user's own additions live in two files but must behave
+/// identically: every command that acts on an id resolves both.
+fn find_merged<'a>(
+    manifest: &'a Value,
+    custom: &'a Value,
+    key: &str,
+    id: &str,
+) -> Option<&'a Value> {
+    find(manifest, key, id).or_else(|| find(custom, key, id))
 }
 
 fn str_field(v: &Value, key: &str) -> String {
-    v.get(key).and_then(|x| x.as_str()).unwrap_or_default().to_string()
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .to_string()
 }
 
 // ── paths ───────────────────────────────────────────────────────────────────
@@ -136,6 +155,21 @@ fn basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
+/// Where a recipe entry's bytes live on disk. Recipes may hold a download URL
+/// (Wan2GP stores it under its basename in ckpts/), an absolute local path, or
+/// a bare file name written by an earlier launcher run.
+fn recipe_weight_path(u: &str, ckpts: &Path) -> PathBuf {
+    if u.starts_with("http://") || u.starts_with("https://") {
+        return ckpts.join(basename(u));
+    }
+    let p = PathBuf::from(u);
+    if p.is_absolute() {
+        p
+    } else {
+        ckpts.join(p)
+    }
+}
+
 // ── hashing ─────────────────────────────────────────────────────────────────
 
 fn sha256_file(path: &Path) -> Option<String> {
@@ -222,10 +256,24 @@ fn save_json_file(p: &Path, v: &Value) -> Result<(), String> {
 /// The hash and size to verify against: a pin override when one exists, else
 /// what the manifest shipped. `overridden` tells the UI the local pin is newer
 /// than the bundled one.
-fn effective_pin<'a>(id: &str, url: &'a str, sha: Option<&'a str>, bytes: u64, pins: &'a Value) -> (String, Option<String>, u64, bool) {
+fn effective_pin<'a>(
+    id: &str,
+    url: &'a str,
+    sha: Option<&'a str>,
+    bytes: u64,
+    pins: &'a Value,
+) -> (String, Option<String>, u64, bool) {
     if let Some(p) = pins.get(id) {
-        let u = p.get("url").and_then(|x| x.as_str()).unwrap_or(url).to_string();
-        let s = p.get("sha256").and_then(|x| x.as_str()).map(String::from).or(sha.map(String::from));
+        let u = p
+            .get("url")
+            .and_then(|x| x.as_str())
+            .unwrap_or(url)
+            .to_string();
+        let s = p
+            .get("sha256")
+            .and_then(|x| x.as_str())
+            .map(String::from)
+            .or(sha.map(String::from));
         let b = p.get("bytes").and_then(|x| x.as_u64()).unwrap_or(bytes);
         let overridden = sha.is_some() && s.as_deref() != sha;
         return (u, s, b, overridden);
@@ -276,14 +324,22 @@ async fn repo_files(client: &reqwest::Client, repo: &str) -> Result<(Value, Valu
 #[tauri::command]
 pub async fn adult_pack_updates(app: AppHandle) -> Result<Value, String> {
     let m = manifest();
+    let custom = load_custom();
     let pins = load_pins();
     let client = http_client();
 
-    // One lookup per repo, then answer for every file inside it.
+    // One lookup per repo, then answer for every file inside it. A user-added
+    // HuggingFace model is checked the same way the catalog is.
     let mut repos: Vec<String> = arr(m, "loras")
         .iter()
         .map(|l| str_field(l, "repo"))
         .chain(arr(m, "finetunes").iter().map(|f| str_field(f, "repo")))
+        .chain(arr(&custom, "loras").iter().map(|l| str_field(l, "repo")))
+        .chain(
+            arr(&custom, "finetunes")
+                .iter()
+                .map(|f| str_field(f, "repo")),
+        )
         .filter(|r| !r.is_empty())
         .collect();
     repos.sort();
@@ -302,7 +358,9 @@ pub async fn adult_pack_updates(app: AppHandle) -> Result<Value, String> {
         }
     }
     let lookup = |repo: &str| -> Option<(&Value, &Value)> {
-        live.iter().find(|(r, _, _)| r == repo).map(|(_, f, d)| (f, d))
+        live.iter()
+            .find(|(r, _, _)| r == repo)
+            .map(|(_, f, d)| (f, d))
     };
 
     let loras_dir = resolve_loras_dir().join("adult-pack");
@@ -310,14 +368,14 @@ pub async fn adult_pack_updates(app: AppHandle) -> Result<Value, String> {
     let mut items: Vec<Value> = vec![];
 
     let describe = |id: String,
-                        name: String,
-                        repo: String,
-                        path: String,
-                        pin_sha: Option<String>,
-                        pin_bytes: u64,
-                        dest: PathBuf,
-                        half: &str,
-                        pins: &Value|
+                    name: String,
+                    repo: String,
+                    path: String,
+                    pin_sha: Option<String>,
+                    pin_bytes: u64,
+                    dest: PathBuf,
+                    half: &str,
+                    pins: &Value|
      -> Value {
         let live_sha = lookup(&repo)
             .and_then(|(f, _)| f.get(&path))
@@ -375,9 +433,7 @@ pub async fn adult_pack_updates(app: AppHandle) -> Result<Value, String> {
 
     for l in arr(m, "loras") {
         let id = str_field(l, "id");
-        let dest = loras_dir
-            .join(family_dir(l))
-            .join(str_field(l, "file"));
+        let dest = loras_dir.join(family_dir(l)).join(str_field(l, "file"));
         items.push(describe(
             id,
             str_field(l, "name"),
@@ -420,13 +476,53 @@ pub async fn adult_pack_updates(app: AppHandle) -> Result<Value, String> {
                 low_name,
                 low_repo,
                 low,
-                f.get("sha256Low").and_then(|x| x.as_str()).map(String::from),
+                f.get("sha256Low")
+                    .and_then(|x| x.as_str())
+                    .map(String::from),
                 f.get("bytesLow").and_then(|x| x.as_u64()).unwrap_or(0),
                 low_dest,
                 "low",
                 &pins,
             ));
         }
+    }
+
+    // The user's own HuggingFace additions, checked exactly like the catalog.
+    // (CivitAI entries have no repo listing to compare against, so they are
+    // skipped rather than reported as unknown.)
+    for l in arr(&custom, "loras") {
+        let repo = str_field(l, "repo");
+        if repo.is_empty() {
+            continue;
+        }
+        items.push(describe(
+            str_field(l, "id"),
+            str_field(l, "name"),
+            repo,
+            str_field(l, "repoPath"),
+            l.get("sha256").and_then(|x| x.as_str()).map(String::from),
+            l.get("bytes").and_then(|x| x.as_u64()).unwrap_or(0),
+            loras_dir.join(family_dir(l)).join(str_field(l, "file")),
+            "high",
+            &pins,
+        ));
+    }
+    for f in arr(&custom, "finetunes") {
+        let repo = str_field(f, "repo");
+        if repo.is_empty() {
+            continue;
+        }
+        items.push(describe(
+            str_field(f, "id"),
+            str_field(f, "name"),
+            repo,
+            str_field(f, "repoPath"),
+            f.get("sha256").and_then(|x| x.as_str()).map(String::from),
+            f.get("bytes").and_then(|x| x.as_u64()).unwrap_or(0),
+            ckpts_dir.join(basename(&str_field(f, "file"))),
+            "high",
+            &pins,
+        ));
     }
 
     // The result is cached so "Update selected" works without asking the network
@@ -455,7 +551,7 @@ pub fn adult_pack_apply_updates(ids: Vec<String>) -> Result<Value, String> {
     let mut skipped: Vec<Value> = vec![];
     for it in arr(&check, "items") {
         let id = str_field(it, "id");
-        if !ids.iter().any(|x| *x == id) {
+        if !ids.contains(&id) {
             continue;
         }
         let live_sha = it.get("liveSha").and_then(|x| x.as_str()).unwrap_or("");
@@ -535,8 +631,8 @@ pub fn adult_pack_manifest() -> Value {
                     let on_disk = p.is_file();
                     // Compare against the size we would actually verify, so a
                     // file fetched after an update is not reported as missing.
-                    let same = on_disk
-                        && std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0) == eff_bytes;
+                    let same =
+                        on_disk && std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0) == eff_bytes;
                     o["installed"] = json!(same);
                     o["installedStale"] = json!(on_disk && !same);
                     o["overridden"] = json!(overridden);
@@ -556,12 +652,31 @@ pub fn adult_pack_manifest() -> Value {
     for extra_bucket in ["loras", "finetunes"] {
         for extra in arr(&custom, extra_bucket) {
             let id = str_field(extra, "id");
-            let list = if extra_bucket == "loras" { &mut loras } else { &mut fts_all };
+            let list = if extra_bucket == "loras" {
+                &mut loras
+            } else {
+                &mut fts_all
+            };
             if list.iter().any(|x| str_field(x, "id") == id) {
                 continue;
             }
             list.push(extra.clone());
         }
+    }
+
+    // A user-added LoRA is stored under `group: "custom"`. Without a matching
+    // group the row is counted but never rendered, so it must exist whenever
+    // there is at least one addition.
+    let mut groups: Vec<Value> = arr(m, "groups").to_vec();
+    if arr(&custom, "loras")
+        .iter()
+        .any(|l| !str_field(l, "id").is_empty())
+    {
+        groups.push(json!({
+            "id": "custom",
+            "title": "Your models",
+            "sub": "Added by you from HuggingFace or CivitAI — fetch, recipe and remove work the same"
+        }));
     }
 
     json!({
@@ -570,7 +685,7 @@ pub fn adult_pack_manifest() -> Value {
         "generatedAt": m.get("generatedAt").cloned().unwrap_or(json!("")),
         "verifiedAgainst": m.get("verifiedAgainst").cloned().unwrap_or(json!({})),
         "title": m.get("title").cloned().unwrap_or(json!("Adult (NSFW) model pack")),
-        "groups": m.get("groups").cloned().unwrap_or(json!([])),
+        "groups": groups,
         "archMap": m.get("archMap").cloned().unwrap_or(json!([])),
         "legal": arr(m, "legal"),
         "totals": m.get("totals").cloned().unwrap_or(json!({})),
@@ -628,6 +743,27 @@ fn family_dir(item: &Value) -> &'static str {
     }
 }
 
+/// Which catalog family an architecture belongs to. Derived here, once, so the
+/// folder layout, the Add flow and the catalog filter can never disagree about
+/// where a model lives.
+fn family_for_arch(arch: &str) -> &'static str {
+    let a = arch.to_ascii_lowercase();
+    if a.starts_with("minimax") || a.starts_with("h3") {
+        "h3"
+    } else if a.starts_with("ltx") {
+        "ltx"
+    } else if a.starts_with("z_image")
+        || a.starts_with("qwen")
+        || a.starts_with("flux")
+        || a.starts_with("krea")
+        || a.starts_with("moss")
+    {
+        "image"
+    } else {
+        "wan"
+    }
+}
+
 fn emit_progress(app: &AppHandle, payload: Value) {
     let _ = app.emit("adult-pack-progress", payload);
 }
@@ -648,6 +784,26 @@ impl ProgressSink for AppSink<'_> {
     }
 }
 
+/// Stamps every event with its position in a batch. The downloader has no idea
+/// it is part of a queue; the UI is what needs to draw "3 of 7". The keys are
+/// deliberately `queueIndex`/`queueTotal`, because `total` is already the byte
+/// count of the file being downloaded.
+struct QueueSink<'a> {
+    inner: &'a dyn ProgressSink,
+    index: usize,
+    total: usize,
+}
+
+impl ProgressSink for QueueSink<'_> {
+    fn emit(&self, mut payload: Value) {
+        if let Some(o) = payload.as_object_mut() {
+            o.insert("queueIndex".into(), json!(self.index));
+            o.insert("queueTotal".into(), json!(self.total));
+        }
+        self.inner.emit(payload);
+    }
+}
+
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent("wan2gp-launcher-adult-pack")
@@ -662,12 +818,17 @@ fn http_client() -> reqwest::Client {
 fn part_path(dest: &Path) -> PathBuf {
     dest.with_extension(format!(
         "{}part",
-        dest.extension().map(|e| format!("{}.", e.to_string_lossy())).unwrap_or_default()
+        dest.extension()
+            .map(|e| format!("{}.", e.to_string_lossy()))
+            .unwrap_or_default()
     ))
 }
 
 /// Resumable GET with SHA-256 verification. `.part` file + HTTP Range, so a
 /// dropped connection (or a closed launcher) costs nothing on the retry.
+// Callers pick sink + identity; a params struct would just relocate eight
+// fields without enforcing any invariant.
+#[allow(clippy::too_many_arguments)]
 async fn download_verified(
     client: &reqwest::Client,
     url: &str,
@@ -707,7 +868,10 @@ async fn download_verified(
     if have > 0 && !resumed {
         have = 0; // server ignored the range — start over
     }
-    let total = resp.content_length().map(|c| c + have).unwrap_or(expect_size);
+    let total = resp
+        .content_length()
+        .map(|c| c + have)
+        .unwrap_or(expect_size);
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -721,12 +885,15 @@ async fn download_verified(
     }
 
     let mut last = std::time::Instant::now();
-    sink.emit(json!({"id": id, "name": label, "phase": "download", "received": have, "total": total}));
+    sink.emit(
+        json!({"id": id, "name": label, "phase": "download", "received": have, "total": total}),
+    );
     let mut received = have;
     let mut res = resp;
     while let Some(chunk) = res.chunk().await.map_err(|e| format!("{label}: {e}"))? {
         use std::io::Write;
-        f.write_all(&chunk).map_err(|e| format!("{label}: disk write failed: {e}"))?;
+        f.write_all(&chunk)
+            .map_err(|e| format!("{label}: disk write failed: {e}"))?;
         received += chunk.len() as u64;
         if last.elapsed() >= std::time::Duration::from_millis(250) {
             sink.emit(
@@ -748,43 +915,70 @@ async fn download_verified(
         let got = sha256_file(&part).unwrap_or_default();
         if got != sha {
             let _ = std::fs::remove_file(&part);
-            return Err(format!("{label}: SHA-256 mismatch — file discarded (mirror may be corrupt)"));
+            return Err(format!(
+                "{label}: SHA-256 mismatch — file discarded (mirror may be corrupt)"
+            ));
         }
     }
     std::fs::rename(&part, dest).map_err(|e| format!("{label}: cannot finalize: {e}"))?;
-    sink.emit(json!({"id": id, "name": label, "phase": "done", "received": received, "total": received}));
+    sink.emit(
+        json!({"id": id, "name": label, "phase": "done", "received": received, "total": received}),
+    );
     Ok(received)
+}
+
+/// `foo#low` addresses the LOW half of the `foo` recipe; everything else is a
+/// whole recipe. The update checker lists halves separately, so fetch must
+/// understand the same id shape.
+fn finetune_target(id: &str) -> (&str, bool) {
+    match id.strip_suffix("#low") {
+        Some(base) => (base, true),
+        None => (id, false),
+    }
 }
 
 /// Fetch selected LoRAs and/or prefetch selected checkpoints. Per-item results
 /// are reported honestly — one bad mirror never aborts the rest, and it never
 /// aborts the base install (the caller decides that).
 #[tauri::command]
-pub async fn adult_pack_fetch(
-    ids: Vec<String>,
-    app: AppHandle,
-) -> Result<Value, String> {
+pub async fn adult_pack_fetch(ids: Vec<String>, app: AppHandle) -> Result<Value, String> {
     let m = manifest();
+    let custom = load_custom();
     let client = http_client();
     let pins = load_pins();
     let mut done: Vec<Value> = vec![];
     let mut failed: Vec<Value> = vec![];
     let mut bytes = 0u64;
 
-    for id in ids {
-        if let Some(l) = find(m, "loras", &id) {
+    // One sink for the whole batch, wrapped per item so every event carries its
+    // position. `ids` is consumed, so the length is captured first.
+    let total = ids.len();
+    let app_sink = AppSink(&app);
+
+    for (index, id) in ids.into_iter().enumerate() {
+        let queue = QueueSink {
+            inner: &app_sink,
+            index: index + 1,
+            total,
+        };
+        if let Some(l) = find_merged(m, &custom, "loras", &id) {
             let raw = str_field(l, "file");
             let Some(name) = safe_file_name(&raw) else {
-                failed.push(json!({"id": id, "error": format!("unsafe file name in manifest: {raw}")}));
+                failed.push(
+                    json!({"id": &id, "error": format!("unsafe file name in manifest: {raw}")}),
+                );
                 continue;
             };
             let dir = resolve_loras_dir().join("adult-pack").join(family_dir(l));
             let dest = dir.join(&name);
             if std::fs::create_dir_all(&dir).is_err() {
-                failed.push(json!({"id": id, "error": format!("cannot create {}", dir.to_string_lossy())}));
+                failed.push(
+                    json!({"id": &id, "error": format!("cannot create {}", dir.to_string_lossy())}),
+                );
                 continue;
             }
             let label = str_field(l, "name");
+            queue.emit(json!({"id": &id, "name": label, "phase": "start"}));
             // A pin override wins: after "Update selected" the upstream hash has
             // moved on, and verifying new bytes against the old pin would throw
             // the download away.
@@ -801,7 +995,7 @@ pub async fn adult_pack_fetch(
                 &dest,
                 sha.as_deref(),
                 want_bytes,
-                &AppSink(&app),
+                &queue,
                 &id,
                 &label,
             )
@@ -809,40 +1003,74 @@ pub async fn adult_pack_fetch(
             {
                 Ok(n) => {
                     bytes += n;
-                    done.push(json!({"id": id, "name": label, "bytes": n}));
+                    done.push(json!({"id": &id, "name": label, "bytes": n}));
                 }
-                Err(e) => failed.push(json!({"id": id, "name": label, "error": e})),
+                Err(e) => failed.push(json!({"id": &id, "name": label, "error": e})),
             }
-        } else if let Some(f) = find(m, "finetunes", &id) {
+        } else {
+            // The user's own additions are fetched exactly like catalog entries;
+            // only where the record lives differs.
+            let (parent, only_low) = finetune_target(&id);
+            let Some(f) = find_merged(m, &custom, "finetunes", parent) else {
+                continue;
+            };
             let dir = resolve_ckpts_dir();
             if std::fs::create_dir_all(&dir).is_err() {
-                failed.push(json!({"id": id, "error": format!("cannot create {}", dir.to_string_lossy())}));
+                failed.push(
+                    json!({"id": &id, "error": format!("cannot create {}", dir.to_string_lossy())}),
+                );
                 continue;
             }
             let label = str_field(f, "name");
+            queue.emit(json!({"id": &id, "name": label, "phase": "start"}));
             let mut item_bytes = 0u64;
+            let mut item_failed = false;
             // URLs2 = the second (LOW) half of a HIGH/LOW pair. Each half is
-            // sized and hashed on its own — the manifest never sums them.
-            for (slot, key) in [("urls", "urls"), ("urls2", "urls2")] {
-                let urls: Vec<String> = arr(f, key)
+            // sized and hashed (and pinned) on its own — the manifest never sums
+            // them. A `#low` id fetches just that half.
+            let keys: &[&str] = if only_low {
+                &["urls2"]
+            } else {
+                &["urls", "urls2"]
+            };
+            for key in keys {
+                let urls: Vec<String> = arr(f, *key)
                     .iter()
                     .filter_map(|u| u.as_str().map(|s| s.to_string()))
                     .collect();
-                let sha = f.get(if slot == "urls" { "sha256" } else { "sha256Low" }).and_then(|x| x.as_str());
-                let size = f.get(if slot == "urls" { "bytes" } else { "bytesLow" }).and_then(|x| x.as_u64()).unwrap_or(0);
+                let sha_key = if *key == "urls2" {
+                    "sha256Low"
+                } else {
+                    "sha256"
+                };
+                let bytes_key = if *key == "urls2" { "bytesLow" } else { "bytes" };
+                let pin_key = if *key == "urls2" {
+                    format!("{parent}#low")
+                } else {
+                    parent.to_string()
+                };
                 for u in urls {
                     let Some(name) = safe_file_name(&basename(&u)) else {
-                        failed.push(json!({"id": id, "error": "unsafe file name in manifest URL"}));
+                        failed
+                            .push(json!({"id": &id, "error": "unsafe file name in manifest URL"}));
+                        item_failed = true;
                         continue;
                     };
-                    let suffix = if slot == "urls2" { " (low)" } else { "" };
+                    let (url, sha, size, _) = effective_pin(
+                        &pin_key,
+                        &u,
+                        f.get(sha_key).and_then(|x| x.as_str()),
+                        f.get(bytes_key).and_then(|x| x.as_u64()).unwrap_or(0),
+                        &pins,
+                    );
+                    let suffix = if *key == "urls2" { " (low)" } else { "" };
                     match download_verified(
                         &client,
-                        &u,
+                        &url,
                         &dir.join(&name),
-                        sha,
+                        sha.as_deref(),
                         size,
-                        &AppSink(&app),
+                        &queue,
                         &id,
                         &format!("{label}{suffix}"),
                     )
@@ -852,11 +1080,16 @@ pub async fn adult_pack_fetch(
                             bytes += n;
                             item_bytes += n;
                         }
-                        Err(e) => failed.push(json!({"id": id, "name": label, "error": e})),
+                        Err(e) => {
+                            item_failed = true;
+                            failed.push(json!({"id": &id, "name": label, "error": e}));
+                        }
                     }
                 }
             }
-            done.push(json!({"id": id, "name": label, "bytes": item_bytes}));
+            if !item_failed {
+                done.push(json!({"id": &id, "name": label, "bytes": item_bytes}));
+            }
         }
     }
 
@@ -909,7 +1142,11 @@ pub(crate) fn build_finetune_json(ft: &Value, urls: Vec<String>) -> Value {
             root["sampler"] = json!(s);
         }
     }
-    if let Some(n) = ft.get("licenseNote").and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
+    if let Some(n) = ft
+        .get("licenseNote")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+    {
         root["infos"] = json!(format!("{n}\n\nFetched by the Wan2GP launcher adult pack."));
     }
     root
@@ -918,19 +1155,23 @@ pub(crate) fn build_finetune_json(ft: &Value, urls: Vec<String>) -> Value {
 fn finetune_id_valid(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
-        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 #[tauri::command]
 pub fn adult_pack_write_finetunes(ids: Vec<String>) -> Result<Value, String> {
     let m = manifest();
+    let custom = load_custom();
     let dir = finetunes_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.to_string_lossy()))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("cannot create {}: {e}", dir.to_string_lossy()))?;
     let mut written: Vec<Value> = vec![];
     let mut skipped: Vec<Value> = vec![];
     for id in ids {
-        let Some(ft) = find(m, "finetunes", &id) else {
-            skipped.push(json!({"id": id, "reason": "not in manifest"}));
+        let Some(ft) = find_merged(m, &custom, "finetunes", &id) else {
+            skipped.push(json!({"id": id, "reason": "not in the catalog or your additions"}));
             continue;
         };
         if !finetune_id_valid(&id) {
@@ -968,7 +1209,10 @@ pub async fn adult_pack_civitai_verify(token: String) -> Result<Value, String> {
     };
     let resp = client
         .get(&url)
-        .header("Authorization", format!("Bearer {}", token.trim().trim_start_matches("Bearer ")))
+        .header(
+            "Authorization",
+            format!("Bearer {}", token.trim().trim_start_matches("Bearer ")),
+        )
         .send()
         .await
         .map_err(|e| format!("cannot reach CivitAI: {e}"))?;
@@ -979,7 +1223,9 @@ pub async fn adult_pack_civitai_verify(token: String) -> Result<Value, String> {
             "username": v.get("username").and_then(|x| x.as_str()).unwrap_or(""),
         }))
     } else {
-        Ok(json!({"ok": false, "error": format!("CivitAI rejected the token (HTTP {})", resp.status())}))
+        Ok(
+            json!({"ok": false, "error": format!("CivitAI rejected the token (HTTP {})", resp.status())}),
+        )
     }
 }
 
@@ -987,7 +1233,7 @@ pub async fn adult_pack_civitai_verify(token: String) -> Result<Value, String> {
 /// filter), so "today's release" is resolved live instead of going stale.
 async fn civitai_resolve_version(client: &reqwest::Client, id: &str) -> Result<Value, String> {
     let m = manifest();
-    let Some(spec) = find(m, "civitai", &id) else {
+    let Some(spec) = find(m, "civitai", id) else {
         return Err(format!("unknown civitai item {id}"));
     };
     let pinned = pack_config()
@@ -1034,7 +1280,11 @@ async fn civitai_resolve_version(client: &reqwest::Client, id: &str) -> Result<V
     let Some((mo, ver)) = best else {
         return Err(format!(
             "no CivitAI release found for \"{query}\"{} — update scripts/adult-pack-sources.json",
-            if filter.is_empty() { String::new() } else { format!(" ({filter})") }
+            if filter.is_empty() {
+                String::new()
+            } else {
+                format!(" ({filter})")
+            }
         ));
     };
     Ok(json!({
@@ -1056,6 +1306,26 @@ fn urlencode(s: &str) -> String {
         .collect()
 }
 
+/// The name a CivitAI file should land under. `downloadUrl` is an API endpoint,
+/// not a filename, so prefer the file object's `name` and only fall back to a
+/// query-stripped endpoint as a last resort.
+fn civitai_file_name(f: &Value, download_url: &str) -> String {
+    f.get("name")
+        .and_then(|x| x.as_str())
+        .map(basename)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| basename(download_url.split('?').next().unwrap_or(download_url)))
+}
+
+/// CivitAI publishes its own SHA-256 for most files. Use it when it is a real
+/// hash; anything shorter cannot be verified against a downloaded file.
+fn civitai_sha(f: &Value) -> Option<&str> {
+    f.get("hashes")
+        .and_then(|h| h.get("SHA256"))
+        .and_then(|x| x.as_str())
+        .filter(|s| s.len() == 64)
+}
+
 /// Download a token-gated release into ckpts/ and write a local-path finetune.
 /// The launcher never re-hosts these — it fetches them with the user's token
 /// and records only where they landed.
@@ -1065,7 +1335,9 @@ pub async fn adult_pack_civitai_download(
     token: Option<String>,
     app: AppHandle,
 ) -> Result<Value, String> {
-    let tok = token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let tok = token
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
     let Some(tok) = tok.or_else(|| {
         let stored = read_token();
         if stored.is_empty() {
@@ -1104,20 +1376,42 @@ pub async fn adult_pack_civitai_download(
         return Err("this CivitAI release has no downloadable files".into());
     }
     let dir = resolve_ckpts_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.to_string_lossy()))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("cannot create {}: {e}", dir.to_string_lossy()))?;
 
     let mut saved: Vec<String> = vec![];
+    let mut local_paths: Vec<String> = vec![];
     let mut bytes = 0u64;
     for f in &files {
         let Some(dl) = f.get("downloadUrl").and_then(|x| x.as_str()) else {
             continue;
         };
-        let Some(name) = safe_file_name(&basename(dl)) else {
-            return Err("unsafe file name from CivitAI".into());
+        // `downloadUrl` is an API endpoint (usually `/api/download/models/123`,
+        // sometimes with a query), so it is not a file name. The file object
+        // carries the real one, extension and all.
+        let raw = civitai_file_name(f, dl);
+        let Some(name) = safe_file_name(&raw) else {
+            return Err(format!("unsafe file name from CivitAI: {raw}"));
         };
-        let expect = f.get("sizeKB").and_then(|x| x.as_f64()).unwrap_or(0.0) as u64 * 1024;
-        download_verified(&client, dl, &dir.join(&name), None, expect, &AppSink(&app), &id, &name).await?;
-        bytes += expect;
+        // CivitAI reports the SHA-256 it computed; use it when present. The
+        // size from `sizeKB` is only a fallback for entries without a hash.
+        let sha = civitai_sha(f);
+        let expect =
+            (f.get("sizeKB").and_then(|x| x.as_f64()).unwrap_or(0.0) * 1024.0).round() as u64;
+        let dest = dir.join(&name);
+        let n = download_verified(
+            &client,
+            dl,
+            &dest,
+            sha,
+            if sha.is_some() { 0 } else { expect },
+            &AppSink(&app),
+            &id,
+            &name,
+        )
+        .await?;
+        bytes += n;
+        local_paths.push(dest.to_string_lossy().to_string());
         saved.push(name);
     }
     if saved.is_empty() {
@@ -1133,10 +1427,11 @@ pub async fn adult_pack_civitai_download(
     let _ = save_pack_config(cfg);
 
     // Finetune points at the local files (nothing is re-uploaded anywhere).
+    // Absolute paths are what Wan2GP uses for locally quantized models; a bare
+    // file name would be resolved against Wan2GP's working directory, not ckpts/.
     let mut ft = spec.clone();
-    ft["urls"] = json!(saved.iter().map(|n| n.clone()).collect::<Vec<_>>());
     ft["urls2"] = json!([]);
-    let doc = build_finetune_json(&ft, saved.clone());
+    let doc = build_finetune_json(&ft, local_paths);
     let body = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
     let p = finetunes_dir().join(format!("adultpack_{id}.json"));
     std::fs::create_dir_all(finetunes_dir()).ok();
@@ -1192,9 +1487,8 @@ pub fn adult_pack_status() -> Value {
                 ckpts.join(n).is_file()
                     || std::fs::read_dir(&ckpts)
                         .map(|rd| {
-                            rd.flatten().any(|e| {
-                                e.file_name().to_string_lossy().eq_ignore_ascii_case(n)
-                            })
+                            rd.flatten()
+                                .any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(n))
                         })
                         .unwrap_or(false)
             });
@@ -1229,7 +1523,9 @@ pub fn adult_pack_status() -> Value {
 /// most informative media there is — this is what feeds the sample reel.
 fn is_image(p: &str) -> bool {
     let p = p.to_ascii_lowercase();
-    [".png", ".jpg", ".jpeg", ".webp", ".gif"].iter().any(|e| p.ends_with(e))
+    [".png", ".jpg", ".jpeg", ".webp", ".gif"]
+        .iter()
+        .any(|e| p.ends_with(e))
 }
 
 fn is_video(p: &str) -> bool {
@@ -1241,7 +1537,9 @@ fn media_files(files: &[serde_json::Value]) -> (Vec<String>, Vec<String>) {
     let mut images: Vec<(String, u64)> = Vec::new();
     let mut videos: Vec<(String, u64)> = Vec::new();
     for f in files {
-        let Some(path) = f.get("path").and_then(|x| x.as_str()) else { continue };
+        let Some(path) = f.get("path").and_then(|x| x.as_str()) else {
+            continue;
+        };
         if path.starts_with('.') || path.to_lowercase().contains("undefined") {
             continue;
         }
@@ -1255,7 +1553,7 @@ fn media_files(files: &[serde_json::Value]) -> (Vec<String>, Vec<String>) {
     // Smallest-first for images (a thumbnail beats a promo render); largest
     // first for video, since a bigger clip is usually the polished sample.
     images.sort_by_key(|(_, s)| *s);
-    videos.sort_by(|a, b| b.1.cmp(&a.1));
+    videos.sort_by_key(|a| std::cmp::Reverse(a.1));
     (
         images.into_iter().take(12).map(|(p, _)| p).collect(),
         videos.into_iter().take(6).map(|(p, _)| p).collect(),
@@ -1302,6 +1600,48 @@ fn repo_id_ok(repo: &str) -> bool {
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
     };
     ok_part(owner) && ok_part(name)
+}
+
+/// Turn whatever the user pasted into a source + id. HuggingFace accepts a bare
+/// `owner/name` or any of its URLs; CivitAI accepts a model URL on either host
+/// or the bare numeric model id. Everything else is refused, so a typo cannot
+/// become a request to an unvalidated host.
+fn parse_source_url(input: &str) -> Option<(String, String)> {
+    let s = input.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let low = s.to_ascii_lowercase();
+    const HF: &str = "https://huggingface.co/";
+    if low.starts_with(HF) {
+        let orig = &s[HF.len()..];
+        let mut parts = orig.split(['/', '?', '#']);
+        let owner = parts.next().unwrap_or("");
+        let repo = parts.next().unwrap_or("");
+        let id = format!("{owner}/{repo}");
+        return repo_id_ok(&id).then_some(("hf".to_string(), id));
+    }
+    for host in ["https://civitai.red/models/", "https://civitai.com/models/"] {
+        if low.starts_with(host) {
+            let id: String = s[host.len()..]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if !id.is_empty() {
+                return Some(("civitai".to_string(), id));
+            }
+        }
+    }
+    // A bare id: `owner/name` is a HuggingFace repo, digits alone are CivitAI.
+    if !s.contains("://") {
+        if repo_id_ok(s) {
+            return Some(("hf".to_string(), s.to_string()));
+        }
+        if s.chars().all(|c| c.is_ascii_digit()) {
+            return Some(("civitai".to_string(), s.to_string()));
+        }
+    }
+    None
 }
 
 /// Live gallery for a repo, pinned to the same commit the manifest hashed.
@@ -1378,13 +1718,27 @@ pub async fn adult_pack_civitai_gallery(id: String) -> Result<Value, String> {
     } else {
         // Search by the declared query, then take the first version's images.
         let q = str_field(spec, "query");
-        let url = format!("https://civitai.red/api/v1/models?query={}&limit=5", urlencode(&q));
+        let url = format!(
+            "https://civitai.red/api/v1/models?query={}&limit=5",
+            urlencode(&q)
+        );
         match client.get(&url).send().await {
             Ok(r) if r.status().is_success() => match r.json::<Value>().await {
                 Ok(v) => {
+                    // Same base-model filter as the downloader: showing another
+                    // model's renders would confirm the wrong purchase.
+                    let filter = str_field(spec, "baseModelFilter").to_lowercase();
                     let first = arr(&v, "items")
                         .iter()
-                        .next()
+                        .find(|mo| {
+                            filter.is_empty()
+                                || mo
+                                    .get("baseModel")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("")
+                                    .to_lowercase()
+                                    .contains(&filter)
+                        })
                         .cloned()
                         .unwrap_or(json!({}));
                     match first.get("id").and_then(|x| x.as_u64()) {
@@ -1540,14 +1894,22 @@ fn civitai_types(kind: &str) -> &'static str {
 /// One place that decides whether a result is usable, so browse and search can
 /// never disagree about what this Wan2GP build can load.
 fn map_hf_hit(m: &Value) -> Option<Value> {
-    let id = m.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let id = m
+        .get("id")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     if !repo_id_ok(&id) {
         return None;
     }
     let tags: Vec<String> = m
         .get("tags")
         .and_then(|x| x.as_array())
-        .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| t.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let haystack = format!("{} {}", id, tags.join(" "));
     let arch = match_arch(&haystack)?;
@@ -1557,13 +1919,23 @@ fn map_hf_hit(m: &Value) -> Option<Value> {
     let preview = m
         .get("cardData")
         .and_then(|c| {
-            let w = c.get("widget").and_then(|x| x.as_array()).and_then(|a| a.first());
+            let w = c
+                .get("widget")
+                .and_then(|x| x.as_array())
+                .and_then(|a| a.first());
             c.get("image_url")
                 .and_then(|x| x.as_str())
                 .map(String::from)
-                .or_else(|| c.get("cover_image_url").and_then(|x| x.as_str()).map(String::from))
                 .or_else(|| {
-                    w.and_then(|w| w.get("output")).and_then(|o| o.get("url")).and_then(|u| u.as_str()).map(String::from)
+                    c.get("cover_image_url")
+                        .and_then(|x| x.as_str())
+                        .map(String::from)
+                })
+                .or_else(|| {
+                    w.and_then(|w| w.get("output"))
+                        .and_then(|o| o.get("url"))
+                        .and_then(|u| u.as_str())
+                        .map(String::from)
                 })
         })
         .unwrap_or_default();
@@ -1669,7 +2041,11 @@ pub async fn adult_pack_browse(
             hf_sort(&sort),
             hf_filter
         );
-        let resp = client.get(&url).send().await.map_err(|e| format!("cannot reach HuggingFace: {e}"))?;
+        let resp = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("cannot reach HuggingFace: {e}"))?;
         if !resp.status().is_success() {
             return Err(format!("HuggingFace HTTP {}", resp.status()));
         }
@@ -1687,7 +2063,11 @@ pub async fn adult_pack_browse(
             n,
             civitai_types(&kind)
         );
-        let resp = client.get(&url).send().await.map_err(|e| format!("cannot reach CivitAI: {e}"))?;
+        let resp = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("cannot reach CivitAI: {e}"))?;
         if !resp.status().is_success() {
             return Err(format!("CivitAI HTTP {}", resp.status()));
         }
@@ -1797,7 +2177,9 @@ pub async fn adult_pack_search(
         items.retain(|it| str_field(it, "family") == f);
     }
 
-    Ok(json!({"ok": true, "source": source, "query": q, "kind": kind, "items": items, "count": items.len()}))
+    Ok(
+        json!({"ok": true, "source": source, "query": q, "kind": kind, "items": items, "count": items.len()}),
+    )
 }
 
 /// Look inside a search hit and return the files Wan2GP could actually load,
@@ -1807,17 +2189,21 @@ pub async fn adult_pack_inspect(
     source: String,
     id: String,
     architecture: String,
+    version: Option<String>,
 ) -> Result<Value, String> {
     let client = http_client();
     let arch_ok = installed_model_ids();
     let mut files: Vec<Value> = vec![];
     let mut samples: Vec<Value> = vec![];
-    let (title, preview, repo_page) = if source == "hf" {
+    let (title, preview, repo_page, version_id, version_name, versions_meta) = if source == "hf" {
         if !repo_id_ok(&id) {
             return Err("Invalid repository id".into());
         }
         let resp = client
-            .get(&format!("https://huggingface.co/api/models/{}/tree/main?recursive=true", id))
+            .get(format!(
+                "https://huggingface.co/api/models/{}/tree/main?recursive=true",
+                id
+            ))
             .send()
             .await
             .map_err(|e| format!("cannot reach HuggingFace: {e}"))?;
@@ -1840,10 +2226,21 @@ pub async fn adult_pack_inspect(
                 json!({"url": format!("https://huggingface.co/{}/resolve/main/{}", id, encode_repo_path(p)), "name": basename(p)})
             })
             .collect();
-        let pv = imgs
-            .first()
-            .map(|p| format!("https://huggingface.co/{}/resolve/main/{}", id, encode_repo_path(p)));
-        (id.clone(), pv, format!("https://huggingface.co/{}", id))
+        let pv = imgs.first().map(|p| {
+            format!(
+                "https://huggingface.co/{}/resolve/main/{}",
+                id,
+                encode_repo_path(p)
+            )
+        });
+        (
+            id.clone(),
+            pv,
+            format!("https://huggingface.co/{}", id),
+            json!(null),
+            json!(""),
+            json!([]),
+        )
     } else {
         let url = format!("{}/models/{}", CIVITAI_API, id);
         let resp = client
@@ -1855,15 +2252,37 @@ pub async fn adult_pack_inspect(
             return Err(format!("CivitAI HTTP {}", resp.status()));
         }
         let v: Value = resp.json().await.map_err(|e| e.to_string())?;
-        let version = v
+        // A model has many versions. The caller may pin one (a search hit
+        // carries its versionId); otherwise the first is used. The whole list is
+        // returned so the picker can offer the others.
+        let all_versions: Vec<Value> = v
             .get("modelVersions")
             .and_then(|x| x.as_array())
-            .and_then(|a| a.first())
+            .cloned()
+            .unwrap_or_default();
+        let versions_meta: Vec<Value> = all_versions
+            .iter()
+            .map(|vv| {
+                json!({
+                    "id": vv.get("id").cloned().unwrap_or(json!(0)),
+                    "name": vv.get("name").cloned().unwrap_or(json!("")),
+                    "baseModel": vv.get("baseModel").cloned().unwrap_or(json!("")),
+                    "fileCount": arr(vv, "files").len(),
+                })
+            })
+            .collect();
+        let want = version.as_deref().and_then(|x| x.parse::<u64>().ok());
+        let chosen = all_versions
+            .iter()
+            .find(|vv| vv.get("id").and_then(|x| x.as_u64()) == want)
+            .or_else(|| all_versions.first())
             .cloned()
             .unwrap_or(json!({}));
         let mut out = vec![];
-        for f in arr(&version, "files") {
-            let Some(name) = f.get("name").and_then(|x| x.as_str()) else { continue };
+        for f in arr(&chosen, "files") {
+            let Some(name) = f.get("name").and_then(|x| x.as_str()) else {
+                continue;
+            };
             let bytes = (f.get("sizeKB").and_then(|x| x.as_f64()).unwrap_or(0.0) * 1024.0) as u64;
             let kind = classify_file(name, bytes);
             out.push(json!({
@@ -1876,23 +2295,32 @@ pub async fn adult_pack_inspect(
                 "needsToken": f.get("downloadUrl").is_some(),
             }));
         }
-        let img = arr(&version, "images")
+        let img = arr(&chosen, "images")
             .iter()
             .find_map(|i| i.get("url").and_then(|x| x.as_str()).map(String::from));
         files = out;
         (
-            v.get("name").and_then(|x| x.as_str()).unwrap_or("CivitAI model").to_string(),
+            v.get("name")
+                .and_then(|x| x.as_str())
+                .unwrap_or("CivitAI model")
+                .to_string(),
             img,
             format!("https://civitai.red/models/{}", id),
+            chosen.get("id").cloned().unwrap_or(json!(null)),
+            chosen.get("name").cloned().unwrap_or(json!("")),
+            json!(versions_meta),
         )
     };
 
     files.sort_by(|a, b| {
         let ka = str_field(a, "kind");
         let kb = str_field(b, "kind");
-        ka.as_str()
-            .cmp(kb.as_str())
-            .then(a["bytes"].as_u64().unwrap_or(0).cmp(&b["bytes"].as_u64().unwrap_or(0)))
+        ka.as_str().cmp(kb.as_str()).then(
+            a["bytes"]
+                .as_u64()
+                .unwrap_or(0)
+                .cmp(&b["bytes"].as_u64().unwrap_or(0)),
+        )
     });
 
     Ok(json!({
@@ -1905,6 +2333,9 @@ pub async fn adult_pack_inspect(
         "architecture": architecture,
         "architectureKnown": arch_ok.is_empty() || arch_ok.contains(&architecture),
         "wan2gpIds": installed_model_ids(),
+        "versionId": version_id,
+        "versionName": version_name,
+        "versions": versions_meta,
         "files": files,
         "samples": samples,
     }))
@@ -1932,7 +2363,10 @@ fn weight_files(files: &[serde_json::Value], repo: &str, rev: &str) -> Vec<Value
         .filter(|f| {
             f.get("path")
                 .and_then(|p| p.as_str())
-                .map(|p| p.to_lowercase().ends_with(".safetensors") || p.to_lowercase().ends_with(".gguf"))
+                .map(|p| {
+                    p.to_lowercase().ends_with(".safetensors")
+                        || p.to_lowercase().ends_with(".gguf")
+                })
                 .unwrap_or(false)
         })
         .filter_map(|f| {
@@ -1956,6 +2390,65 @@ fn weight_files(files: &[serde_json::Value], repo: &str, rev: &str) -> Vec<Value
 
 // ── user-added models (search & add) ───────────────────────────────────────
 
+/// Every architecture a recipe can target: what this Wan2GP build actually
+/// ships (`defaults/*.json`) plus the pack's curated map. The New-recipe form
+/// and the Add-by-URL flow both read this, so a user is never limited to the
+/// pack's own catalogue.
+#[tauri::command]
+pub fn adult_pack_arches() -> Value {
+    let mut out: Vec<Value> = vec![];
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for id in installed_model_ids() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        let label = defaults_label(&id).unwrap_or_else(|| id.clone());
+        out.push(json!({
+            "id": id, "label": label, "family": family_for_arch(&id),
+            "installed": true, "wan2gpIds": [id],
+        }));
+    }
+    for e in arr(manifest(), "archMap") {
+        let id = str_field(e, "architecture");
+        if id.is_empty() || !seen.insert(id.clone()) {
+            continue;
+        }
+        out.push(json!({
+            "id": id, "label": str_field(e, "label"), "family": family_for_arch(&id),
+            "installed": false, "wan2gpIds": arr(e, "wan2gpIds"),
+        }));
+    }
+    out.sort_by(|a, b| {
+        str_field(a, "family")
+            .cmp(&str_field(b, "family"))
+            .then(str_field(a, "id").cmp(&str_field(b, "id")))
+    });
+    json!({"ok": true, "items": out})
+}
+
+/// The display name a shipped architecture carries, when defaults/ says.
+fn defaults_label(id: &str) -> Option<String> {
+    let p = get_repo_dir().join("defaults").join(format!("{id}.json"));
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()?;
+    let n = v
+        .get("model")
+        .and_then(|m| m.get("name"))
+        .and_then(|x| x.as_str())
+        .or_else(|| v.get("name").and_then(|x| x.as_str()))?;
+    (!n.is_empty()).then(|| n.to_string())
+}
+
+/// Resolve whatever the user pasted into a source + id, so a model whose name
+/// does not match any keyword can still be added.
+#[tauri::command]
+pub fn adult_pack_resolve_url(input: String) -> Result<Value, String> {
+    parse_source_url(&input)
+        .map(|(source, id)| json!({"ok": true, "source": source, "id": id}))
+        .ok_or_else(|| {
+            "Paste a HuggingFace repo (owner/name or its URL), a CivitAI model URL, or a CivitAI model id".to_string()
+        })
+}
+
 /// Additions the user made themselves live OUTSIDE the bundled manifest: an app
 /// update must never silently drop something someone installed, and the shipped
 /// manifest stays reproducible from its sources file.
@@ -1978,6 +2471,18 @@ fn save_custom(v: &Value) -> Result<(), String> {
     .map_err(|e| format!("Cannot save custom models: {e}"))
 }
 
+/// Forget a user-added model. Deleting its files alone is not enough: the
+/// catalog would keep offering a row whose bytes are gone.
+fn drop_custom_entry(id: &str) -> Result<(), String> {
+    let mut custom = load_custom();
+    for bucket in ["loras", "finetunes"] {
+        if let Some(list) = custom.get_mut(bucket).and_then(|v| v.as_array_mut()) {
+            list.retain(|x| str_field(x, "id") != id);
+        }
+    }
+    save_custom(&custom)
+}
+
 /// Add a searched model to the user's own list. `entry` is the shape the
 /// inspector produced, so nothing is invented here: the user picked the file,
 /// the launcher records exactly what the source reported.
@@ -1991,7 +2496,11 @@ pub fn adult_pack_add(entry: Value) -> Result<Value, String> {
     if !url.starts_with("https://") {
         return Err("A download URL is required".into());
     }
-    let file = str_field(&entry, "file");
+    // The inspector reports the repo-relative path (a HuggingFace repo can keep
+    // weights in `I2V/v2.1/High/`). A recipe and a LoRA folder need a file name,
+    // so store the basename and keep the path for display/provenance.
+    let repo_path = str_field(&entry, "file");
+    let file = basename(&repo_path);
     if safe_file_name(&file).is_none() {
         return Err("Unsafe file name".into());
     }
@@ -2000,6 +2509,16 @@ pub fn adult_pack_add(entry: Value) -> Result<Value, String> {
         return Err("Pick the Wan2GP architecture first".into());
     }
     let kind = str_field(&entry, "kind");
+    // The architecture decides the family: never trust the client's copy, or a
+    // mis-labelled add would file the download where Wan2GP will not look.
+    let family = family_for_arch(&arch);
+    // The source id is the HuggingFace repo; it is what an update check needs to
+    // re-read the file's live hash. CivitAI ids are not repos.
+    let repo_field = if source == "hf" {
+        str_field(&entry, "id")
+    } else {
+        String::new()
+    };
     let id = format!(
         "custom_{}_{}",
         if source == "hf" { "hf" } else { "civitai" },
@@ -2012,14 +2531,13 @@ pub fn adult_pack_add(entry: Value) -> Result<Value, String> {
         if bucket != want {
             continue;
         }
-        let list = custom[bucket]
-            .as_array_mut()
-            .cloned()
-            .unwrap_or_default();
+        let list = custom[bucket].as_array_mut().cloned().unwrap_or_default();
         let item = if kind == "lora" {
             json!({
-                "id": id, "group": "custom", "family": str_field(&entry, "family"),
+                "id": id, "group": "custom", "family": family,
                 "name": str_field(&entry, "title"), "file": file,
+                "repoPath": repo_path,
+                "repo": repo_field.clone(),
                 "url": url,
                 "sha256": entry.get("sha256").cloned().unwrap_or(json!(null)),
                 "bytes": entry.get("bytes").cloned().unwrap_or(json!(0)),
@@ -2035,7 +2553,7 @@ pub fn adult_pack_add(entry: Value) -> Result<Value, String> {
             })
         } else {
             json!({
-                "id": id, "family": str_field(&entry, "family"),
+                "id": id, "family": family,
                 "architecture": arch,
                 "name": format!("{} ({})", str_field(&entry, "title"), precision_of(&file)),
                 "precisionToken": precision_of(&file),
@@ -2043,7 +2561,8 @@ pub fn adult_pack_add(entry: Value) -> Result<Value, String> {
                 "urls": [url],
                 "urls2": [],
                 "file": file,
-                "repo": str_field(&entry, "repo"),
+                "repoPath": repo_path,
+                "repo": repo_field.clone(),
                 "bytes": entry.get("bytes").cloned().unwrap_or(json!(0)),
                 "sha256": entry.get("sha256").cloned().unwrap_or(json!(null)),
                 "source": source,
@@ -2085,8 +2604,8 @@ fn precision_of(file: &str) -> String {
     let n = file.to_lowercase();
     if n.ends_with(".gguf") {
         for level in [
-            "q4_k_m", "q4_k_s", "q4_k", "q4_1", "q4_0", "q5_k_m", "q5_k", "q6_k", "q8_0",
-            "iq3_s", "iq4_xs", "iq4_nl", "q2_k",
+            "q4_k_m", "q4_k_s", "q4_k", "q4_1", "q4_0", "q5_k_m", "q5_k", "q6_k", "q8_0", "iq3_s",
+            "iq4_xs", "iq4_nl", "q2_k",
         ] {
             if n.contains(level) {
                 return format!("gguf_{level}");
@@ -2154,11 +2673,19 @@ pub fn adult_pack_finetune_list() -> Value {
             if p.extension().and_then(|x| x.to_str()) != Some("json") {
                 continue;
             }
-            let Some(id) = p.file_stem().and_then(|x| x.to_str()) else { continue };
-            if seen.iter().any(|s| s == id) {
+            let Some(id) = p.file_stem().and_then(|x| x.to_str()) else {
+                continue;
+            };
+            // Pack recipes are written as `adultpack_<id>.json`; without this
+            // strip the manager would show every pack recipe twice (once from
+            // the manifest, once as a "local" file).
+            let bare = id.strip_prefix("adultpack_").unwrap_or(id);
+            if seen.iter().any(|s| s == id || s == bare) {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(&p) else { continue };
+            let Ok(text) = std::fs::read_to_string(&p) else {
+                continue;
+            };
             let parsed: Value = serde_json::from_str(&text).unwrap_or(json!({}));
             let model = parsed.get("model").cloned().unwrap_or(json!({}));
             items.push(json!({
@@ -2166,7 +2693,7 @@ pub fn adult_pack_finetune_list() -> Value {
                 "name": str_field(&model, "name"),
                 "architecture": str_field(&model, "architecture"),
                 "description": str_field(&model, "description"),
-                "urlCount": arr(&model, "URLs").len(),
+                "urlCount": arr(&model, "URLs").len() + arr(&model, "URLs2").len(),
                 "bytes": 0,
                 "written": true,
                 "origin": "local",
@@ -2176,7 +2703,11 @@ pub fn adult_pack_finetune_list() -> Value {
             }));
         }
     }
-    items.sort_by(|a, b| str_field(a, "name").to_lowercase().cmp(&str_field(b, "name").to_lowercase()));
+    items.sort_by(|a, b| {
+        str_field(a, "name")
+            .to_lowercase()
+            .cmp(&str_field(b, "name").to_lowercase())
+    });
     json!({"ok": true, "dir": dir.to_string_lossy(), "ckpts": ckpts.to_string_lossy(), "items": items, "count": items.len()})
 }
 
@@ -2192,11 +2723,7 @@ fn finetune_summary(ft: &Value, dir: &Path, ckpts: &Path, origin: &str, written:
     let mut local_bytes = 0u64;
     let mut local_files = 0u32;
     for u in urls.drain(..) {
-        let p = if u.starts_with("http") {
-            ckpts.join(&basename(&u))
-        } else {
-            PathBuf::from(&u)
-        };
+        let p = recipe_weight_path(&u, ckpts);
         if let Ok(m) = std::fs::metadata(&p) {
             if m.is_file() {
                 local_bytes += m.len();
@@ -2244,6 +2771,16 @@ fn validate_finetune_doc(doc: &Value) -> Result<(String, String), String> {
     if name.is_empty() || arch.is_empty() {
         return Err("\"model\" needs both name and architecture".into());
     }
+    // The architecture is what Wan2GP loads the weights through: a recipe for
+    // one this build does not ship is a model that silently never appears.
+    // An empty installed list means the repo is not initialised yet, so nothing
+    // can be checked and the write is allowed (matching the pack's own rows).
+    let installed = installed_model_ids();
+    if !installed.is_empty() && !installed.iter().any(|x| x == &arch) {
+        return Err(format!(
+            "\"{arch}\" is not an architecture this Wan2GP build ships — pick one from the list, or update Wan2GP first"
+        ));
+    }
     let urls = arr(model, "URLs");
     if urls.is_empty() {
         return Err("\"model.URLs\" is empty — Wan2GP would have nothing to load".into());
@@ -2253,7 +2790,12 @@ fn validate_finetune_doc(doc: &Value) -> Result<(String, String), String> {
         if s.is_empty() {
             return Err("\"model.URLs\" has an empty entry".into());
         }
-        if !(s.starts_with("http://") || s.starts_with("https://") || s.contains(":\\") || s.contains(":/")) {
+        if !(s.starts_with("http://")
+            || s.starts_with("https://")
+            || s.starts_with('/')
+            || s.contains(":\\")
+            || s.contains(":/"))
+        {
             return Err(format!("Unusable URL or path: {s}"));
         }
     }
@@ -2266,22 +2808,32 @@ pub fn adult_pack_finetune_write(id: String, content: String) -> Result<Value, S
         return Err("Invalid finetune id".into());
     }
     let doc: Value = serde_json::from_str(&content).map_err(|e| format!("Not valid JSON: {e}"))?;
-    let (name, arch) = validate_finetune_doc(&doc)?;
     // Never overwrite a shipped base model: `defaults/` is owned by upstream
     // and an override there would be silently reverted on the next update.
-    if get_repo_dir().join("defaults").join(format!("{id}.json")).is_file() {
+    // Checked before validation so the reason the user sees is the real one.
+    if get_repo_dir()
+        .join("defaults")
+        .join(format!("{id}.json"))
+        .is_file()
+    {
         return Err(format!(
             "{id}.json also exists in defaults/ — that is an upstream base model. Rename this one."
         ));
     }
+    let (name, arch) = validate_finetune_doc(&doc)?;
     // An edit to an existing recipe must land in the file that was read, whatever
     // it is called: `adultpack_<id>.json` for pack recipes, `<id>.json` for one
     // the user created. Writing `<id>.json` blindly would leave the real recipe
     // in place and add a second, shadowed copy beside it.
     let p = finetune_path(&id).unwrap_or_else(|| finetunes_dir().join(format!("{id}.json")));
-    atomic_write(&p, &serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("{}: {e}", p.to_string_lossy()))?;
-    Ok(json!({"ok": true, "id": id, "name": name, "architecture": arch, "path": p.to_string_lossy()}))
+    atomic_write(
+        &p,
+        &serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("{}: {e}", p.to_string_lossy()))?;
+    Ok(
+        json!({"ok": true, "id": id, "name": name, "architecture": arch, "path": p.to_string_lossy()}),
+    )
 }
 
 /// Check that a recipe's URLs still resolve — the one thing that silently rots
@@ -2293,7 +2845,9 @@ pub async fn adult_pack_finetune_check(id: String) -> Result<Value, String> {
             let text = str_field(&r, "content");
             serde_json::from_str::<Value>(&text).unwrap_or(json!({}))
         }
-        Err(_) => find(manifest(), "finetunes", &id).cloned().unwrap_or(json!({})),
+        Err(_) => find(manifest(), "finetunes", &id)
+            .cloned()
+            .unwrap_or(json!({})),
     };
     let model = doc.get("model").cloned().unwrap_or(json!({}));
     let urls: Vec<String> = arr(&model, "URLs")
@@ -2304,8 +2858,8 @@ pub async fn adult_pack_finetune_check(id: String) -> Result<Value, String> {
     let client = http_client();
     let mut results = vec![];
     for u in urls {
-        if !u.starts_with("http") {
-            let p = PathBuf::from(&u);
+        if !(u.starts_with("http://") || u.starts_with("https://")) {
+            let p = recipe_weight_path(&u, &resolve_ckpts_dir());
             results.push(json!({"url": u, "local": true, "ok": p.is_file()}));
             continue;
         }
@@ -2325,22 +2879,34 @@ pub async fn adult_pack_finetune_check(id: String) -> Result<Value, String> {
 #[tauri::command]
 pub fn adult_pack_remove(ids: Vec<String>) -> Result<Value, String> {
     let m = manifest();
+    let custom = load_custom();
     let loras_root = resolve_loras_dir().join("adult-pack");
     let ckpts = resolve_ckpts_dir();
     let mut removed = vec![];
     for id in ids {
-        if let Some(l) = find(m, "loras", &id) {
-            let p = loras_root.join(family_dir(l)).join(str_field(l, "file"));
+        if let Some(l) = find_merged(m, &custom, "loras", &id) {
+            let Some(name) = safe_file_name(&str_field(l, "file")) else {
+                continue;
+            };
+            let p = loras_root.join(family_dir(l)).join(&name);
+            let custom_item = find(&custom, "loras", &id).is_some();
             if p.is_file() {
                 let n = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
                 std::fs::remove_file(&p).map_err(|e| e.to_string())?;
-                removed.push(json!({"id": id, "bytes": n}));
+                removed.push(json!({"id": &id, "bytes": n}));
+            } else if custom_item {
+                removed.push(json!({"id": &id, "bytes": 0}));
             }
-        } else if let Some(ft) = find(m, "finetunes", &id) {
+            if custom_item {
+                drop_custom_entry(&id)?;
+            }
+        } else if let Some(ft) = find_merged(m, &custom, "finetunes", &id) {
             let p = finetunes_dir().join(format!("adultpack_{id}.json"));
             if p.is_file() {
                 std::fs::remove_file(&p).map_err(|e| e.to_string())?;
-                removed.push(json!({"id": id, "bytes": 0}));
+                removed.push(json!({"id": &id, "bytes": 0}));
+            } else if find(&custom, "finetunes", &id).is_some() {
+                removed.push(json!({"id": &id, "bytes": 0}));
             }
             for key in ["urls", "urls2"] {
                 for u in arr(ft, key) {
@@ -2353,14 +2919,148 @@ pub fn adult_pack_remove(ids: Vec<String>) -> Result<Value, String> {
                     }
                 }
             }
+            if find(&custom, "finetunes", &id).is_some() {
+                drop_custom_entry(&id)?;
+            }
         } else if find(m, "civitai", &id).is_some() {
             let p = finetunes_dir().join(format!("adultpack_{id}.json"));
             if p.is_file() {
                 std::fs::remove_file(&p).ok();
+                removed.push(json!({"id": &id, "bytes": 0}));
+            }
+        } else if finetune_id_valid(&id) {
+            // A hand-written recipe (or one created in the editor) is not in
+            // either catalog. The editor's Delete still has to work, so treat
+            // `<id>.json` as the user's own file and remove exactly that.
+            let p = finetunes_dir().join(format!("{id}.json"));
+            if p.is_file() {
+                std::fs::remove_file(&p).map_err(|e| e.to_string())?;
+                removed.push(json!({"id": &id, "bytes": 0}));
             }
         }
     }
     Ok(json!({"ok": true, "removed": removed}))
+}
+
+/// Direct LoRA weights under the LoRAs root, so a file the user copied in by
+/// hand (or Wan2GP downloaded itself) is visible next to the catalog rows —
+/// and can be deleted without hunting through Explorer.
+#[tauri::command]
+pub fn adult_pack_lora_inventory() -> Value {
+    let root = resolve_loras_dir();
+    let custom = load_custom();
+    // Catalog files, keyed by their path relative to the LoRAs root.
+    let mut known: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for l in arr(manifest(), "loras")
+        .iter()
+        .chain(arr(&custom, "loras").iter())
+    {
+        let id = str_field(l, "id");
+        if id.is_empty() {
+            continue;
+        }
+        known.insert(
+            format!("adult-pack/{}/{}", family_dir(l), str_field(l, "file")),
+            id,
+        );
+    }
+    let mut files: Vec<Value> = vec![];
+    let mut bytes = 0u64;
+    collect_lora_files(&root, &root, &known, &mut files, &mut bytes);
+    files.sort_by(|a, b| {
+        str_field(a, "rel")
+            .to_lowercase()
+            .cmp(&str_field(b, "rel").to_lowercase())
+    });
+    json!({
+        "ok": true,
+        "root": root.to_string_lossy(),
+        "files": files,
+        "count": files.len(),
+        "bytes": bytes,
+    })
+}
+
+fn is_weight_file(name: &str) -> bool {
+    let l = name.to_ascii_lowercase();
+    l.ends_with(".safetensors")
+        || l.ends_with(".sft")
+        || l.ends_with(".gguf")
+        || l.ends_with(".pt")
+        || l.ends_with(".pth")
+        || l.ends_with(".bin")
+        || l.ends_with(".ckpt")
+}
+
+fn collect_lora_files(
+    root: &Path,
+    dir: &Path,
+    known: &std::collections::HashMap<String, String>,
+    out: &mut Vec<Value>,
+    bytes: &mut u64,
+) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in rd.filter_map(|x| x.ok()) {
+        let p = e.path();
+        if p.is_dir() {
+            // The root and the pack folder are walked; a deeper tree is not ours.
+            let descend =
+                dir == root || dir.file_name().map(|n| n == "adult-pack").unwrap_or(false);
+            if descend {
+                collect_lora_files(root, &p, known, out, bytes);
+            }
+            continue;
+        }
+        if !p.is_file() {
+            continue;
+        }
+        let name = e.file_name().to_string_lossy().to_string();
+        if !is_weight_file(&name) {
+            continue;
+        }
+        let len = e.metadata().map(|m| m.len()).unwrap_or(0);
+        *bytes += len;
+        let rel = p
+            .strip_prefix(root)
+            .map(|r| r.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| name.clone());
+        let catalog_id = known.get(&rel).cloned().unwrap_or_default();
+        out.push(json!({
+            "rel": rel,
+            "name": name,
+            "bytes": len,
+            "catalogId": if catalog_id.is_empty() { json!(null) } else { json!(catalog_id) },
+            "known": !catalog_id.is_empty(),
+        }));
+    }
+}
+
+/// Delete one file the inventory listed, by its path relative to the LoRAs
+/// root. Confined to that root: a path is never taken on trust from the UI.
+#[tauri::command]
+pub fn adult_pack_lora_delete(rel: String) -> Result<Value, String> {
+    if rel.is_empty()
+        || rel.contains("..")
+        || rel.starts_with('/')
+        || rel.starts_with('\\')
+        || rel.contains('\\')
+        || rel.contains(':')
+    {
+        return Err("Invalid path".into());
+    }
+    let root = resolve_loras_dir();
+    let target = root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+    let canon_root =
+        std::fs::canonicalize(&root).map_err(|e| format!("{}: {e}", root.to_string_lossy()))?;
+    let canon =
+        std::fs::canonicalize(&target).map_err(|e| format!("{}: {e}", target.to_string_lossy()))?;
+    if !canon.starts_with(&canon_root) || !canon.is_file() {
+        return Err("Refusing to delete outside the LoRAs folder".into());
+    }
+    std::fs::remove_file(&canon).map_err(|e| e.to_string())?;
+    Ok(json!({"ok": true, "removed": rel}))
 }
 
 #[cfg(test)]
@@ -2368,17 +3068,57 @@ mod tests {
     use super::*;
 
     #[test]
+    fn queue_sink_stamps_position_without_clobbering_the_byte_total() {
+        // The UI needs "3 of 7" on every event, but `total` is already spoken
+        // for: it is the size of the file being downloaded. Overloading it
+        // would make a 4 KB file report as item 4 of 4.
+        struct Collect(std::sync::Mutex<Vec<Value>>);
+        impl ProgressSink for Collect {
+            fn emit(&self, p: Value) {
+                self.0.lock().unwrap().push(p);
+            }
+        }
+
+        let inner = Collect(std::sync::Mutex::new(vec![]));
+        let queue = QueueSink {
+            inner: &inner,
+            index: 3,
+            total: 7,
+        };
+        queue.emit(json!({"id": "x", "phase": "download", "received": 10, "total": 4096}));
+        queue.emit(json!({"id": "x", "phase": "done"}));
+
+        let events = inner.0.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        for ev in events.iter() {
+            assert_eq!(ev["queueIndex"], json!(3));
+            assert_eq!(ev["queueTotal"], json!(7));
+        }
+        assert_eq!(events[0]["total"], json!(4096), "byte total must survive");
+        assert_eq!(events[0]["received"], json!(10));
+    }
+
+    #[test]
     fn embedded_manifest_is_valid_and_complete() {
         let m = manifest();
         assert!(arr(m, "loras").len() > 20, "expected a populated lora tier");
-        assert!(arr(m, "finetunes").len() >= 8, "expected the checkpoint tier");
+        assert!(
+            arr(m, "finetunes").len() >= 8,
+            "expected the checkpoint tier"
+        );
         for l in arr(m, "loras") {
             assert!(!str_field(l, "url").is_empty(), "lora missing url: {l}");
             assert!(l.get("bytes").and_then(|b| b.as_u64()).unwrap_or(0) > 0);
-            assert!(safe_file_name(&str_field(l, "file")).is_some(), "unsafe lora file name");
+            assert!(
+                safe_file_name(&str_field(l, "file")).is_some(),
+                "unsafe lora file name"
+            );
         }
         for f in arr(m, "finetunes") {
-            assert!(!str_field(f, "architecture").is_empty(), "finetune missing architecture");
+            assert!(
+                !str_field(f, "architecture").is_empty(),
+                "finetune missing architecture"
+            );
             assert!(!arr(f, "urls").is_empty(), "finetune missing URLs");
         }
     }
@@ -2390,7 +3130,10 @@ mod tests {
         for key in ["loras", "finetunes"] {
             for it in arr(manifest(), key) {
                 let id = str_field(it, "id");
-                assert!(!str_field(it, "version").is_empty(), "{key}/{id} has no version");
+                assert!(
+                    !str_field(it, "version").is_empty(),
+                    "{key}/{id} has no version"
+                );
                 assert!(
                     !str_field(it, "releasedAt").is_empty(),
                     "{key}/{id} has no release date"
@@ -2399,11 +3142,17 @@ mod tests {
                 // must say where they came from.
                 if let Some(ex) = arr(it, "examples").first() {
                     assert!(
-                        ex.get("url").and_then(|u| u.as_str()).unwrap_or("").starts_with("https://"),
+                        ex.get("url")
+                            .and_then(|u| u.as_str())
+                            .unwrap_or("")
+                            .starts_with("https://"),
                         "{key}/{id} example without an https URL"
                     );
                     let kind = ex.get("kind").and_then(|k| k.as_str()).unwrap_or("");
-                    assert!(kind == "image" || kind == "video", "{key}/{id} example kind");
+                    assert!(
+                        kind == "image" || kind == "video",
+                        "{key}/{id} example kind"
+                    );
                     assert!(
                         !str_field(it, "civitaiPage").is_empty(),
                         "{key}/{id} shows CivitAI examples with no link back"
@@ -2474,7 +3223,11 @@ mod tests {
         // It lands where Wan2GP looks, under a name that cannot collide with a
         // shipped base model in defaults/.
         let path = finetunes_dir().join(format!("adultpack_{ft_id}.json"));
-        assert!(path.is_file(), "recipe must exist at {}", path.to_string_lossy());
+        assert!(
+            path.is_file(),
+            "recipe must exist at {}",
+            path.to_string_lossy()
+        );
 
         // 2. Load: the doc parses and carries what Wan2GP needs to fetch it.
         let doc: Value =
@@ -2489,7 +3242,10 @@ mod tests {
             .iter()
             .filter_map(|u| u.as_str().map(String::from))
             .collect();
-        assert!(!urls.is_empty(), "a recipe with no URL gives Wan2GP nothing to download");
+        assert!(
+            !urls.is_empty(),
+            "a recipe with no URL gives Wan2GP nothing to download"
+        );
         assert!(
             urls.iter().all(|u| u.starts_with("https://")),
             "catalog recipes must reference https sources: {urls:?}"
@@ -2522,19 +3278,15 @@ mod tests {
             serde_json::to_string_pretty(&edited).unwrap(),
         )
         .expect("valid edit is accepted");
-        let reread: Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let reread: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(str_field(&reread["model"], "name"), "Edited by the test");
         // Editing must not lose the URLs: that is what makes it downloadable.
         assert_eq!(arr(&reread["model"], "URLs").len(), urls.len());
 
         // 6. A broken edit is refused, and the file on disk is untouched.
         let bad = json!({"model": {"name": "", "architecture": "", "URLs": []}});
-        let err = adult_pack_finetune_write(
-            ft_id.clone(),
-            serde_json::to_string(&bad).unwrap(),
-        )
-        .expect_err("a recipe with no name/architecture/URLs must be refused");
+        let err = adult_pack_finetune_write(ft_id.clone(), serde_json::to_string(&bad).unwrap())
+            .expect_err("a recipe with no name/architecture/URLs must be refused");
         assert!(!err.is_empty());
         let still: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
@@ -2542,6 +3294,22 @@ mod tests {
             "Edited by the test",
             "a refused edit must not overwrite the good file"
         );
+
+        // 6b. The id is a file name: traversal can never escape finetunes/.
+        assert!(
+            adult_pack_finetune_write("../escape".into(), "{}".into()).is_err(),
+            "a traversal id must be refused before any write"
+        );
+
+        // 6c. A shipped base model with the same id must not be shadowed.
+        let defaults = get_repo_dir().join("defaults");
+        std::fs::create_dir_all(&defaults).unwrap();
+        let shadow = defaults.join(format!("{ft_id}.json"));
+        std::fs::write(&shadow, "{}").unwrap();
+        let err = adult_pack_finetune_write(ft_id.clone(), serde_json::to_string(&edited).unwrap())
+            .expect_err("a defaults/ base model must not be overwritten");
+        assert!(err.contains("base model"));
+        std::fs::remove_file(&shadow).unwrap();
 
         // 7. Delete removes only the recipe, never a defaults/ base model.
         let defaults_before = std::fs::read_dir(get_repo_dir().join("defaults"))
@@ -2553,7 +3321,44 @@ mod tests {
         let defaults_after = std::fs::read_dir(get_repo_dir().join("defaults"))
             .map(|rd| rd.flatten().count())
             .unwrap_or(0);
-        assert_eq!(defaults_before, defaults_after, "defaults/ must never be touched");
+        assert_eq!(
+            defaults_before, defaults_after,
+            "defaults/ must never be touched"
+        );
+    }
+
+    #[test]
+    fn a_created_recipe_reports_both_url_halves_in_the_list() {
+        // The create form writes `URLs` and, for HIGH/LOW models such as Wan
+        // 2.2, `URLs2`. The manager row counts sources, so a two-half recipe
+        // reporting "1 source" would read as a half-imported model.
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+        let doc = json!({
+            "model": {
+                "name": "Two halves",
+                "architecture": "i2v_2_2",
+                "URLs": ["https://example.com/high_bf16.safetensors"],
+                "URLs2": ["https://example.com/low_bf16.safetensors"],
+            }
+        });
+        adult_pack_finetune_write(
+            "two_halves_smoke".into(),
+            serde_json::to_string(&doc).unwrap(),
+        )
+        .expect("a two-half recipe is valid");
+
+        let list = adult_pack_finetune_list();
+        let hit = arr(&list, "items")
+            .iter()
+            .find(|x| str_field(x, "id") == "two_halves_smoke")
+            .expect("the created recipe must be listed");
+        assert_eq!(
+            hit["urlCount"].as_u64(),
+            Some(2),
+            "both URL halves must be counted: {hit}"
+        );
+        assert_eq!(hit["origin"].as_str(), Some("local"));
     }
 
     #[test]
@@ -2582,9 +3387,16 @@ mod tests {
         }
         // A HIGH/LOW recipe keeps its halves addressable, not merged.
         if !str_field(&ft, "fileLow").is_empty() {
-            assert_eq!(arr(&ft, "urls2").len(), 1, "the low half must have its own URL");
+            assert_eq!(
+                arr(&ft, "urls2").len(),
+                1,
+                "the low half must have its own URL"
+            );
             assert!(
-                ft.get("sha256Low").and_then(|s| s.as_str()).map(|s| !s.is_empty()).unwrap_or(false),
+                ft.get("sha256Low")
+                    .and_then(|s| s.as_str())
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false),
                 "the low half must be hash-verified on its own"
             );
         }
@@ -2631,9 +3443,20 @@ mod tests {
         let sink = Collect::default();
 
         // 1. Cold download lands the exact pinned bytes.
-        let n = rt.block_on(async { download_verified(
-            &http_client(), &url, &dest, Some(&sha), bytes, &sink, "net", "net-test",
-        ).await.expect("download") });
+        let n = rt.block_on(async {
+            download_verified(
+                &http_client(),
+                &url,
+                &dest,
+                Some(&sha),
+                bytes,
+                &sink,
+                "net",
+                "net-test",
+            )
+            .await
+            .expect("download")
+        });
         assert_eq!(n, bytes, "downloaded size must equal the pinned size");
         assert_eq!(
             sha256_file(&dest).as_deref(),
@@ -2651,9 +3474,20 @@ mod tests {
 
         // 2. A second call is served from disk, not the network.
         let before = sink.events().len();
-        let again = rt.block_on(async { download_verified(
-            &http_client(), &url, &dest, Some(&sha), bytes, &sink, "net", "net-test",
-        ).await.expect("cached") });
+        let again = rt.block_on(async {
+            download_verified(
+                &http_client(),
+                &url,
+                &dest,
+                Some(&sha),
+                bytes,
+                &sink,
+                "net",
+                "net-test",
+            )
+            .await
+            .expect("cached")
+        });
         assert_eq!(again, bytes);
         assert!(
             sink.events()[before..]
@@ -2669,9 +3503,20 @@ mod tests {
         std::fs::remove_file(&dest).unwrap();
         let keep_bytes = keep as u64;
         let before = sink.events().len();
-        let resumed = rt.block_on(async { download_verified(
-            &http_client(), &url, &dest, Some(&sha), bytes, &sink, "net", "net-test",
-        ).await.expect("resume") });
+        let resumed = rt.block_on(async {
+            download_verified(
+                &http_client(),
+                &url,
+                &dest,
+                Some(&sha),
+                bytes,
+                &sink,
+                "net",
+                "net-test",
+            )
+            .await
+            .expect("resume")
+        });
         assert_eq!(resumed, bytes);
         assert_eq!(sha256_file(&dest).as_deref(), Some(sha.as_str()));
         // Proof it resumed rather than re-downloaded: the very first progress
@@ -2692,11 +3537,24 @@ mod tests {
         // 4. A wrong hash is refused and leaves nothing behind.
         std::fs::remove_file(&dest).unwrap();
         let bad = "0".repeat(64);
-        let err = rt.block_on(async { download_verified(
-            &http_client(), &url, &dest, Some(&bad), bytes, &sink, "net", "net-test",
-        ).await });
+        let err = rt.block_on(async {
+            download_verified(
+                &http_client(),
+                &url,
+                &dest,
+                Some(&bad),
+                bytes,
+                &sink,
+                "net",
+                "net-test",
+            )
+            .await
+        });
         assert!(err.is_err(), "a hash mismatch must fail the download");
-        assert!(!dest.exists(), "a corrupt file must never be left where Wan2GP would load it");
+        assert!(
+            !dest.exists(),
+            "a corrupt file must never be left where Wan2GP would load it"
+        );
         assert!(
             !part.exists(),
             "the rejected .part must be discarded, not left to resume later"
@@ -2704,7 +3562,7 @@ mod tests {
         // Clean up both names: leaving the .part behind would leak a full model
         // copy into the temp folder on every run.
         let _ = std::fs::remove_file(&dest);
-        let _ = std::fs::remove_file(&part_path(&dest));
+        let _ = std::fs::remove_file(part_path(&dest));
     }
 
     #[test]
@@ -2739,20 +3597,33 @@ mod tests {
                 .chain(arr(model, "URLs2").iter())
                 .filter_map(|u| u.as_str().map(String::from))
                 .collect();
-            assert!(!urls.is_empty(), "{id}: a recipe with no URL downloads nothing");
+            assert!(
+                !urls.is_empty(),
+                "{id}: a recipe with no URL downloads nothing"
+            );
 
             // The size the manifest pins for this exact file (HIGH, or LOW).
-            let ft = find(manifest(), "finetunes", id).cloned().unwrap_or(json!({}));
+            let ft = find(manifest(), "finetunes", id)
+                .cloned()
+                .unwrap_or(json!({}));
             let pinned_by_url: Vec<(String, u64)> = arr(&ft, "urls")
                 .iter()
                 .filter_map(|u| u.as_str())
-                .map(|u| (u.to_string(), ft.get("bytes").and_then(|b| b.as_u64()).unwrap_or(0)))
+                .map(|u| {
+                    (
+                        u.to_string(),
+                        ft.get("bytes").and_then(|b| b.as_u64()).unwrap_or(0),
+                    )
+                })
                 .chain(
                     arr(&ft, "urls2")
                         .iter()
                         .filter_map(|u| u.as_str())
                         .map(|u| {
-                            (u.to_string(), ft.get("bytesLow").and_then(|b| b.as_u64()).unwrap_or(0))
+                            (
+                                u.to_string(),
+                                ft.get("bytesLow").and_then(|b| b.as_u64()).unwrap_or(0),
+                            )
                         }),
                 )
                 .collect();
@@ -2812,7 +3683,10 @@ mod tests {
                     && o.get("defaultSelected").and_then(|v| v.as_bool()) == Some(true)
             });
             if other {
-                assert!(partner_selected, "{src}: selected {pair} without its partner half");
+                assert!(
+                    partner_selected,
+                    "{src}: selected {pair} without its partner half"
+                );
             }
         }
     }
@@ -2865,15 +3739,24 @@ mod tests {
         let (images, videos) = media_files(&files);
         assert_eq!(images, vec!["preview.png"], "oversized/junk images dropped");
         // Largest first: the polished sample clip is usually the biggest.
-        assert_eq!(videos, vec!["TEST__00035-audio.mp4", "TEST__00036-audio.mp4"]);
+        assert_eq!(
+            videos,
+            vec!["TEST__00035-audio.mp4", "TEST__00036-audio.mp4"]
+        );
     }
 
     #[test]
     fn gallery_paths_are_encoded_without_double_encoding() {
         assert_eq!(encode_repo_path("a b.safetensors"), "a%20b.safetensors");
         // A literal "%20" in a repo filename must stay literal, not "%2520".
-        assert_eq!(encode_repo_path("iGoon%20-%20Blink.safetensors"), "iGoon%2520-%2520Blink.safetensors");
-        assert_eq!(encode_repo_path("抽屉.safetensors"), "%E6%8A%BD%E5%B1%89.safetensors");
+        assert_eq!(
+            encode_repo_path("iGoon%20-%20Blink.safetensors"),
+            "iGoon%2520-%2520Blink.safetensors"
+        );
+        assert_eq!(
+            encode_repo_path("抽屉.safetensors"),
+            "%E6%8A%BD%E5%B1%89.safetensors"
+        );
         assert_eq!(encode_repo_path("v1.8/file.gguf"), "v1.8/file.gguf");
     }
 
@@ -2891,12 +3774,40 @@ mod tests {
     fn architecture_mapping_picks_the_most_specific_family() {
         // "minimax h3" must beat the generic "minimax" style entries, and an
         // unmappable model must not be offered at all (no valid recipe exists).
-        assert_eq!(match_arch("DaSiWa_MiniMax_H3_V4_int8").map(|e| str_field(e, "architecture")).as_deref(), Some("minimax_h3_ref2va_pruned"));
-        assert_eq!(match_arch("WAN2.2-14B-Rapid-AllInOne-GGUF-NSFW").map(|e| str_field(e, "architecture")).as_deref(), Some("i2v_2_2"));
-        assert_eq!(match_arch("PinkCherry NSFW LTX 2.3").map(|e| str_field(e, "architecture")).as_deref(), Some("ltx2_22B"));
-        assert_eq!(match_arch("Krea 2 Turbo NSFW AIO").map(|e| str_field(e, "architecture")).as_deref(), Some("krea2_turbo"));
-        assert_eq!(match_arch("flux-3-image-klein").map(|e| str_field(e, "architecture")).as_deref(), Some("flux3_klein"));
-        assert!(match_arch("Stable Diffusion XL Pony").is_none(), "unsupported family must not map");
+        assert_eq!(
+            match_arch("DaSiWa_MiniMax_H3_V4_int8")
+                .map(|e| str_field(e, "architecture"))
+                .as_deref(),
+            Some("minimax_h3_ref2va_pruned")
+        );
+        assert_eq!(
+            match_arch("WAN2.2-14B-Rapid-AllInOne-GGUF-NSFW")
+                .map(|e| str_field(e, "architecture"))
+                .as_deref(),
+            Some("i2v_2_2")
+        );
+        assert_eq!(
+            match_arch("PinkCherry NSFW LTX 2.3")
+                .map(|e| str_field(e, "architecture"))
+                .as_deref(),
+            Some("ltx2_22B")
+        );
+        assert_eq!(
+            match_arch("Krea 2 Turbo NSFW AIO")
+                .map(|e| str_field(e, "architecture"))
+                .as_deref(),
+            Some("krea2_turbo")
+        );
+        assert_eq!(
+            match_arch("flux-3-image-klein")
+                .map(|e| str_field(e, "architecture"))
+                .as_deref(),
+            Some("flux3_klein")
+        );
+        assert!(
+            match_arch("Stable Diffusion XL Pony").is_none(),
+            "unsupported family must not map"
+        );
     }
 
     #[test]
@@ -2904,11 +3815,26 @@ mod tests {
         // The wrong answer files a checkpoint under loras/ where Wan2GP never
         // looks, or an adapter under ckpts/.
         let gb = 1024u64 * 1024 * 1024;
-        assert_eq!(classify_file("model_int8_convrot.safetensors", 21 * gb), "checkpoint");
-        assert_eq!(classify_file("H3_DR34ML4Y_P1.safetensors", 564 * 1024 * 1024), "lora");
-        assert_eq!(classify_file("some_lightx2v_4step.safetensors", 4 * gb), "lora");
-        assert_eq!(classify_file("adapter_rank128.safetensors", 900 * 1024 * 1024), "lora");
-        assert_eq!(classify_file("z_image_nsfw_v2-Q8_0.gguf", 7 * gb), "checkpoint");
+        assert_eq!(
+            classify_file("model_int8_convrot.safetensors", 21 * gb),
+            "checkpoint"
+        );
+        assert_eq!(
+            classify_file("H3_DR34ML4Y_P1.safetensors", 564 * 1024 * 1024),
+            "lora"
+        );
+        assert_eq!(
+            classify_file("some_lightx2v_4step.safetensors", 4 * gb),
+            "lora"
+        );
+        assert_eq!(
+            classify_file("adapter_rank128.safetensors", 900 * 1024 * 1024),
+            "lora"
+        );
+        assert_eq!(
+            classify_file("z_image_nsfw_v2-Q8_0.gguf", 7 * gb),
+            "checkpoint"
+        );
     }
 
     #[test]
@@ -2920,8 +3846,14 @@ mod tests {
 
     #[test]
     fn precision_tokens_follow_wan2gp_naming() {
-        assert_eq!(precision_of("a_quanto_bf16_int8.safetensors"), "quanto_bf16_int8");
-        assert_eq!(precision_of("a_int8_convrot.safetensors"), "quanto_bf16_int8");
+        assert_eq!(
+            precision_of("a_quanto_bf16_int8.safetensors"),
+            "quanto_bf16_int8"
+        );
+        assert_eq!(
+            precision_of("a_int8_convrot.safetensors"),
+            "quanto_bf16_int8"
+        );
         assert_eq!(precision_of("m-Q8_0.gguf"), "gguf_q8_0");
         assert_eq!(precision_of("m-Q4_K_M.gguf"), "gguf_q4_k_m");
         assert_eq!(precision_of("plain.safetensors"), "bf16");
@@ -2930,7 +3862,10 @@ mod tests {
     #[test]
     fn added_ids_are_filesystem_and_url_safe() {
         let id = slugify("pink/cherry: H3 v1.5 Q4_K_M.safetensors");
-        assert!(!id.contains('/') && !id.contains(':') && !id.contains(' '), "id {id}");
+        assert!(
+            !id.contains('/') && !id.contains(':') && !id.contains(' '),
+            "id {id}"
+        );
         assert!(id.len() <= 48);
     }
 
@@ -2939,5 +3874,364 @@ mod tests {
         assert_eq!(urlencode("TastySin v8"), "TastySin%20v8");
         assert_eq!(urlencode("a-b_c.d~e"), "a-b_c.d~e");
         assert_eq!(urlencode("x&y=z"), "x%26y%3Dz");
+    }
+
+    #[test]
+    fn low_half_ids_and_pins_address_the_parent_recipe() {
+        // The update checker lists a HIGH/LOW half as its own row; fetch must
+        // resolve the same shape and verify the low half against its own pin.
+        assert_eq!(finetune_target("wan_remix#low"), ("wan_remix", true));
+        assert_eq!(finetune_target("wan_remix"), ("wan_remix", false));
+
+        let pins = json!({"wan_remix#low": {"sha256": "bbbb", "bytes": 22}});
+        let (_u, sha, bytes, over) =
+            effective_pin("wan_remix#low", "https://x/low", Some("aaaa"), 11, &pins);
+        assert_eq!(sha.as_deref(), Some("bbbb"));
+        assert_eq!(bytes, 22);
+        assert!(over);
+    }
+
+    #[test]
+    fn user_added_entries_are_found_like_catalog_entries() {
+        let custom = json!({
+            "loras": [{"id": "custom_hf-x", "file": "x.safetensors", "url": "https://h/x"}],
+            "finetunes": [{"id": "custom_hf-y", "file": "y.gguf", "urls": ["https://h/y"]}],
+        });
+        assert!(find_merged(manifest(), &custom, "loras", "custom_hf-x").is_some());
+        assert!(find_merged(manifest(), &custom, "finetunes", "custom_hf-y").is_some());
+        assert!(find_merged(manifest(), &custom, "loras", "not-there").is_none());
+    }
+
+    #[test]
+    fn a_custom_lora_is_added_downloaded_to_and_removed_from_its_pack_folder() {
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+
+        // The inspector reports a repo-relative path; add must store a safe
+        // basename (URL keeps the directory).
+        let added = adult_pack_add(json!({
+            "source": "hf",
+            "url": "https://huggingface.co/owner/repo/resolve/main/sub/adapter.safetensors",
+            "file": "sub/adapter.safetensors",
+            "title": "My Adapter",
+            "architecture": "t2v_2_2",
+            "family": "wan",
+            "kind": "lora",
+            "sha256": "a".repeat(64),
+            "bytes": 42,
+        }))
+        .expect("add lora");
+        let id = str_field(&added, "id");
+        let custom = load_custom();
+        let stored = find(&custom, "loras", &id).expect("stored in the custom file");
+        assert_eq!(str_field(stored, "file"), "adapter.safetensors");
+
+        let p = resolve_loras_dir()
+            .join("adult-pack")
+            .join("wan")
+            .join("adapter.safetensors");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, b"weights").unwrap();
+
+        let removed = adult_pack_remove(vec![id.clone()]).expect("remove custom lora");
+        assert_eq!(removed["removed"].as_array().map(|a| a.len()), Some(1));
+        assert!(!p.exists(), "the downloaded file must be gone");
+        assert!(
+            find(&load_custom(), "loras", &id).is_none(),
+            "a removed entry must not stay in the catalog"
+        );
+    }
+
+    #[test]
+    fn a_custom_checkpoint_can_write_a_recipe_and_is_listed_once() {
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+
+        let added = adult_pack_add(json!({
+            "source": "hf",
+            "url": "https://huggingface.co/owner/repo/resolve/main/sub/model.safetensors",
+            "file": "sub/model.safetensors",
+            "title": "My Checkpoint",
+            "architecture": "i2v_2_2",
+            "family": "wan",
+            "kind": "checkpoint",
+            "sha256": "b".repeat(64),
+            "bytes": 1024,
+        }))
+        .expect("add checkpoint");
+        let id = str_field(&added, "id");
+
+        let written = adult_pack_write_finetunes(vec![id.clone()]).expect("write recipe");
+        assert_eq!(written["written"].as_array().map(|a| a.len()), Some(1));
+        let recipe = finetunes_dir().join(format!("adultpack_{id}.json"));
+        assert!(
+            recipe.is_file(),
+            "recipe must exist at {}",
+            recipe.to_string_lossy()
+        );
+
+        // The directory scan must not add `adultpack_<id>.json` as a second,
+        // "local" copy of the same recipe.
+        let list = adult_pack_finetune_list();
+        let hits = arr(&list, "items")
+            .iter()
+            .filter(|x| str_field(x, "id") == id)
+            .count();
+        assert_eq!(hits, 1, "a custom recipe must be listed exactly once");
+
+        adult_pack_remove(vec![id.clone()]).expect("remove custom checkpoint");
+        assert!(!recipe.exists());
+        assert!(find(&load_custom(), "finetunes", &id).is_none());
+    }
+
+    #[test]
+    fn pack_recipes_are_not_listed_twice_after_being_written() {
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+        let id = str_field(&arr(manifest(), "finetunes")[0], "id");
+        adult_pack_write_finetunes(vec![id.clone()]).expect("write recipe");
+        let list = adult_pack_finetune_list();
+        let hits = arr(&list, "items")
+            .iter()
+            .filter(|x| str_field(x, "id") == id)
+            .count();
+        assert_eq!(hits, 1, "the pack recipe must not appear as a duplicate");
+    }
+
+    #[test]
+    fn civitai_files_use_their_real_name_and_published_hash() {
+        let sha = "c".repeat(64);
+        let f = json!({
+            "name": "model_Q8_0.gguf",
+            "downloadUrl": "https://civitai.red/api/download/models/123?type=Model&format=GGUF",
+            "hashes": {"SHA256": sha.clone()},
+        });
+        assert_eq!(
+            civitai_file_name(&f, "https://civitai.red/api/download/models/123?type=Model"),
+            "model_Q8_0.gguf"
+        );
+        assert_eq!(civitai_sha(&f), Some(sha.as_str()));
+
+        // An endpoint-only file still gets a safe name, never a query string.
+        let bare = json!({"downloadUrl": "https://civitai.red/api/download/models/456?type=Model"});
+        assert_eq!(
+            civitai_file_name(
+                &bare,
+                "https://civitai.red/api/download/models/456?type=Model"
+            ),
+            "456"
+        );
+        assert!(civitai_sha(&bare).is_none());
+    }
+
+    #[test]
+    fn a_pasted_link_resolves_to_a_source_and_id() {
+        // HuggingFace: a bare repo, and the URL shapes people paste.
+        assert_eq!(
+            parse_source_url("owner/repo"),
+            Some(("hf".to_string(), "owner/repo".to_string()))
+        );
+        assert_eq!(
+            parse_source_url("https://huggingface.co/owner/repo"),
+            Some(("hf".to_string(), "owner/repo".to_string()))
+        );
+        assert_eq!(
+            parse_source_url("https://huggingface.co/owner/repo/tree/main/sub"),
+            Some(("hf".to_string(), "owner/repo".to_string()))
+        );
+        assert_eq!(
+            parse_source_url("  https://huggingface.co/owner/repo/blob/main/a.safetensors?raw=1  "),
+            Some(("hf".to_string(), "owner/repo".to_string()))
+        );
+        // CivitAI: either host, and the bare model id.
+        assert_eq!(
+            parse_source_url("https://civitai.red/models/789"),
+            Some(("civitai".to_string(), "789".to_string()))
+        );
+        assert_eq!(
+            parse_source_url("https://civitai.com/models/456?modelVersionId=9"),
+            Some(("civitai".to_string(), "456".to_string()))
+        );
+        assert_eq!(
+            parse_source_url("12345"),
+            Some(("civitai".to_string(), "12345".to_string()))
+        );
+        // Garbage is refused rather than guessed at, so a typo cannot become a
+        // request to an unvalidated host.
+        for bad in [
+            "",
+            "   ",
+            "not a link",
+            "ftp://x/y",
+            "https://example.com/models/1",
+            "../../etc/passwd",
+        ] {
+            assert!(parse_source_url(bad).is_none(), "must refuse {bad:?}");
+        }
+    }
+
+    #[test]
+    fn family_is_derived_from_the_architecture() {
+        assert_eq!(family_for_arch("i2v_2_2"), "wan");
+        assert_eq!(family_for_arch("t2v_2_2"), "wan");
+        assert_eq!(family_for_arch("minimax_h3_ref2va_pruned"), "h3");
+        assert_eq!(family_for_arch("ltx2_22B"), "ltx");
+        assert_eq!(family_for_arch("z_image"), "image");
+        assert_eq!(family_for_arch("qwen_image_20B"), "image");
+        assert_eq!(family_for_arch("flux2_klein_9b"), "image");
+        assert_eq!(family_for_arch("krea2_turbo"), "image");
+        assert_eq!(family_for_arch("moss_image"), "image");
+    }
+
+    #[test]
+    fn the_architecture_list_covers_installed_and_mapped_families() {
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+        let defaults = get_repo_dir().join("defaults");
+        std::fs::create_dir_all(&defaults).unwrap();
+        // A build that ships an architecture the pack's curated map does not
+        // know about: the recipe form must still be able to target it.
+        std::fs::write(
+            defaults.join("my_future_arch.json"),
+            r#"{"model": {"name": "My Future Arch"}}"#,
+        )
+        .unwrap();
+
+        let list = adult_pack_arches();
+        let items = arr(&list, "items");
+        let find = |id: &str| items.iter().find(|x| str_field(x, "id") == id);
+
+        let installed = find("my_future_arch").expect("an installed arch must be offered");
+        assert_eq!(str_field(installed, "label"), "My Future Arch");
+        assert_eq!(installed["installed"], json!(true));
+
+        // A curated archMap entry that is not installed is still offered, marked.
+        let mapped = find("i2v_2_2").expect("an archMap arch must be offered");
+        assert_eq!(mapped["installed"], json!(false));
+
+        // No duplicates.
+        let mut ids: Vec<String> = items.iter().map(|x| str_field(x, "id")).collect();
+        let before = ids.len();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), before, "architectures must be unique");
+    }
+
+    #[test]
+    fn a_recipe_for_an_architecture_this_build_lacks_is_refused() {
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+        let defaults = get_repo_dir().join("defaults");
+        std::fs::create_dir_all(&defaults).unwrap();
+        std::fs::write(defaults.join("only_this.json"), "{}").unwrap();
+
+        let good = json!({
+            "model": {"name": "Good", "architecture": "only_this", "URLs": ["https://h/a"]}
+        });
+        assert!(
+            validate_finetune_doc(&good).is_ok(),
+            "an installed architecture must pass"
+        );
+
+        let bad = json!({
+            "model": {"name": "Bad", "architecture": "not_installed", "URLs": ["https://h/a"]}
+        });
+        let err = validate_finetune_doc(&bad).expect_err("an unknown architecture must be refused");
+        assert!(
+            err.contains("not_installed"),
+            "the message must name the architecture: {err}"
+        );
+    }
+
+    #[test]
+    fn a_user_added_lora_gets_its_own_group_so_it_can_be_seen() {
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+        // Before any addition the catalog has only the curated groups.
+        assert!(
+            !arr(&adult_pack_manifest(), "groups")
+                .iter()
+                .any(|g| str_field(g, "id") == "custom"),
+            "no custom group until something is added"
+        );
+
+        adult_pack_add(json!({
+            "source": "hf",
+            "url": "https://huggingface.co/owner/repo/resolve/main/a.safetensors",
+            "file": "a.safetensors",
+            "title": "Mine",
+            "architecture": "t2v_2_2",
+            "kind": "lora",
+            "sha256": "d".repeat(64),
+            "bytes": 7,
+        }))
+        .expect("add lora");
+
+        let m = adult_pack_manifest();
+        // Without the group the row is counted but never rendered, so the group
+        // is what makes a user-added LoRA visible at all.
+        assert!(
+            arr(&m, "groups")
+                .iter()
+                .any(|g| str_field(g, "id") == "custom"),
+            "adding a LoRA must create the group it is rendered under"
+        );
+        assert!(
+            arr(&m, "loras")
+                .iter()
+                .any(|l| str_field(l, "group") == "custom"),
+            "the added LoRA must be present in the catalog"
+        );
+    }
+
+    #[test]
+    fn lora_inventory_lists_files_and_deletes_only_inside_the_root() {
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+        let root = resolve_loras_dir();
+
+        // One file the catalog knows about, one it does not.
+        let first = &arr(manifest(), "loras")[0];
+        let known_rel = format!(
+            "adult-pack/{}/{}",
+            family_dir(first),
+            str_field(first, "file")
+        );
+        let known_path = root.join(known_rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+        std::fs::create_dir_all(known_path.parent().unwrap()).unwrap();
+        std::fs::write(&known_path, b"1234").unwrap();
+        std::fs::write(
+            known_path.parent().unwrap().join("stray.safetensors"),
+            b"12",
+        )
+        .unwrap();
+
+        let inv = adult_pack_lora_inventory();
+        let files = arr(&inv, "files");
+        assert_eq!(files.len(), 2, "both weights must be listed");
+        assert_eq!(inv["bytes"], json!(6));
+
+        let known = files
+            .iter()
+            .find(|f| str_field(f, "name") == str_field(first, "file"))
+            .expect("catalog file present");
+        assert_eq!(known["known"], json!(true));
+        assert_eq!(str_field(known, "catalogId"), str_field(first, "id"));
+
+        let stray = files
+            .iter()
+            .find(|f| str_field(f, "name") == "stray.safetensors")
+            .expect("stray file present");
+        assert_eq!(stray["known"], json!(false));
+
+        // A path that climbs out of the LoRAs root is refused outright.
+        assert!(adult_pack_lora_delete("../../evil.safetensors".into()).is_err());
+
+        adult_pack_lora_delete(str_field(stray, "rel")).expect("delete stray file");
+        assert!(!known_path
+            .parent()
+            .unwrap()
+            .join("stray.safetensors")
+            .exists());
     }
 }

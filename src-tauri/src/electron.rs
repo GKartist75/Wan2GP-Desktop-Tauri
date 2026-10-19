@@ -75,8 +75,8 @@ pub fn detect_electron() -> serde_json::Value {
             flush(
                 &mut name, &mut ver, &mut un, &mut quiet, &mut loc, &mut best,
             );
-            if best.is_some() {
-                return best.unwrap();
+            if let Some(best) = best {
+                return best;
             }
         }
         // 2) filesystem fallback: per-user Programs dir (Electron Builder default)

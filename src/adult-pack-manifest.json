@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "title": "Adult (NSFW) model pack",
-  "generatedAt": "2026-10-18T10:15:04.615Z",
+  "generatedAt": "2026-10-19T16:26:16.106Z",
   "verifiedAgainst": {
     "wan2gp": "v18.17",
     "inventoryCount": 270,
@@ -19,56 +19,56 @@
       "sha": "aeef17d7fa51d753ab7d1004ddb4f218a95d756d",
       "lastModified": "2025-09-17T03:18:48.000Z",
       "createdAt": "2025-09-17T03:01:26.000Z",
-      "downloads": 171337,
+      "downloads": 165909,
       "cardPreview": "https://huggingface.co/lopi999/Wan2.2-I2V_General-NSFW-LoRA/resolve/main/images/WanVideo2_2_I2V_00205.webp"
     },
     "luoruikun/Wan2.2-I2V_DR34ML4Y-LoRA": {
       "sha": "6b231aeba37d4dd8ee7e1d65877fbdecd0e617d1",
       "lastModified": "2026-08-07T16:56:42.000Z",
       "createdAt": "2026-08-07T16:56:09.000Z",
-      "downloads": 1261,
+      "downloads": 1288,
       "cardPreview": null
     },
     "lynaNSFW/F4C3CR34M_Cumshot_K3NK": {
       "sha": "72ec49a43f27dc982ba5d714ad43f803c1bac0a8",
       "lastModified": "2026-01-29T11:57:23.000Z",
       "createdAt": "2026-01-29T11:50:04.000Z",
-      "downloads": 155,
+      "downloads": 116,
       "cardPreview": "https://huggingface.co/lynaNSFW/F4C3CR34M_Cumshot_K3NK/resolve/main/images/Screenshot%202026-01-29%20124825.png"
     },
     "lynaNSFW/minimaxH3_Collection": {
       "sha": "71b59f16567fb3252798c7a63746103659f0ea19",
       "lastModified": "2026-09-29T11:45:52.000Z",
       "createdAt": "2026-08-26T07:08:41.000Z",
-      "downloads": 7124,
+      "downloads": 7021,
       "cardPreview": "https://huggingface.co/lynaNSFW/minimaxH3_Collection/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/mysticxxx_MM_H3": {
       "sha": "4d5e12c3d80a4df9e17125a6cf1b597a0c358a3b",
       "lastModified": "2026-08-26T06:55:06.000Z",
       "createdAt": "2026-08-21T09:01:29.000Z",
-      "downloads": 11481,
+      "downloads": 11226,
       "cardPreview": "https://huggingface.co/lynaNSFW/mysticxxx_MM_H3/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/MMh3_Synth_Pussy": {
       "sha": "48473688acd4109f6601f0a77208240d6a6a9547",
       "lastModified": "2026-08-13T19:29:38.000Z",
       "createdAt": "2026-08-13T19:28:13.000Z",
-      "downloads": 453,
+      "downloads": 446,
       "cardPreview": "https://huggingface.co/lynaNSFW/MMh3_Synth_Pussy/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/MMh3_VBVR": {
       "sha": "e04074b1b447b11dce36c7c69bcde1d26c903321",
       "lastModified": "2026-08-13T19:42:56.000Z",
       "createdAt": "2026-08-13T19:41:55.000Z",
-      "downloads": 219,
+      "downloads": 217,
       "cardPreview": "https://huggingface.co/lynaNSFW/MMh3_VBVR/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/MMH3_moawxx": {
       "sha": "f7de63bce58f3f1ce937620eda72a6dfc01037cc",
       "lastModified": "2026-08-16T18:23:18.000Z",
       "createdAt": "2026-08-16T18:22:40.000Z",
-      "downloads": 335,
+      "downloads": 330,
       "cardPreview": "https://huggingface.co/lynaNSFW/MMH3_moawxx/resolve/main/images/undefined_image%20(1).png"
     },
     "GoSilla/DR34ML4Y_H3": {
@@ -82,35 +82,35 @@
       "sha": "43a74557ac3f6539db8e0f2a959d03feb7a81480",
       "lastModified": "2026-08-08T20:07:30.000Z",
       "createdAt": "2026-08-05T21:58:56.000Z",
-      "downloads": 205814,
+      "downloads": 205560,
       "cardPreview": null
     },
     "SexGod1979/AfterMidnight-MiniMax-H3-NSFW": {
       "sha": "4b325f60229c136b97501f5830bb277aace738b6",
       "lastModified": "2026-08-19T03:21:29.000Z",
       "createdAt": "2026-08-18T00:27:13.000Z",
-      "downloads": 642,
+      "downloads": 628,
       "cardPreview": null
     },
     "SexGod1979/NaughtyTimes-MiniMax-H3": {
       "sha": "cc027ae9e393578cf646f228d37c29b81bbf6cce",
       "lastModified": "2026-09-07T21:21:51.000Z",
       "createdAt": "2026-09-07T03:05:30.000Z",
-      "downloads": 196,
+      "downloads": 191,
       "cardPreview": null
     },
     "SexGod1979/PinkFluffyBunny-MiniMax-H3": {
       "sha": "c943580f34193de759e1192473980905cb9d71e2",
       "lastModified": "2026-08-17T20:23:29.000Z",
       "createdAt": "2026-08-05T07:34:52.000Z",
-      "downloads": 103,
+      "downloads": 104,
       "cardPreview": null
     },
     "DeepBeepMeep/MiniMax-H3": {
       "sha": "630975da14fd3c84169d6cd5092da3ce1287d137",
       "lastModified": "2026-10-15T20:59:18.000Z",
       "createdAt": "2026-08-02T14:32:59.000Z",
-      "downloads": 674124,
+      "downloads": 673943,
       "cardPreview": null
     },
     "maximsobolev275/Dasiwa-HybridV3-LoRA": {
@@ -124,147 +124,189 @@
       "sha": "147019ee320e795b9a0f8a48ba96b5d9034a66e3",
       "lastModified": "2026-08-14T20:39:26.000Z",
       "createdAt": "2026-05-08T06:28:53.000Z",
-      "downloads": 2193,
+      "downloads": 2182,
       "cardPreview": "https://huggingface.co/lynaNSFW/DR34ML4Y_AIO_NSFW_LTX23/resolve/main/images/undefined_image%20(1).png"
     },
     "Muapi/dr34ml4y-all-in-one-nsfw-wan-ltx2": {
       "sha": "1282c0827ed85c377efa564b1b3625fd84d706e0",
       "lastModified": "2026-05-23T00:49:06.000Z",
       "createdAt": "2026-05-23T00:48:46.000Z",
-      "downloads": 2503,
+      "downloads": 2863,
       "cardPreview": null
     },
     "lynaNSFW/LTX2.3_NSFW_motion": {
       "sha": "82b97a73e0d307bac647ba9cf86e3052d5c81d21",
       "lastModified": "2026-03-25T12:45:24.000Z",
       "createdAt": "2026-03-25T12:45:03.000Z",
-      "downloads": 3002,
+      "downloads": 2985,
       "cardPreview": "https://huggingface.co/lynaNSFW/LTX2.3_NSFW_motion/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/ultimate-deepthroat-general-nsfw-ltx2.3-video-lora-k3nk": {
       "sha": "295fb91a542d153d1efecfe0b0c972f8c842268e",
       "lastModified": "2026-05-26T11:40:53.000Z",
       "createdAt": "2026-05-26T11:35:28.000Z",
-      "downloads": 1623,
+      "downloads": 1579,
       "cardPreview": "https://huggingface.co/lynaNSFW/ultimate-deepthroat-general-nsfw-ltx2.3-video-lora-k3nk/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/MultiPurposeSexLoraLTX2.3": {
       "sha": "1f891da1acec25e25376b7d797180ce731e3e3b5",
       "lastModified": "2026-05-20T21:15:22.000Z",
       "createdAt": "2026-05-20T20:32:12.000Z",
-      "downloads": 1854,
+      "downloads": 1856,
       "cardPreview": "https://huggingface.co/lynaNSFW/MultiPurposeSexLoraLTX2.3/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/CowgirlLTX": {
       "sha": "ecbc7a6b45edf190d2765d4b6690e2453e929f44",
       "lastModified": "2026-09-09T11:02:08.000Z",
       "createdAt": "2026-09-09T11:01:41.000Z",
-      "downloads": 1489,
+      "downloads": 1488,
       "cardPreview": "https://huggingface.co/lynaNSFW/CowgirlLTX/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/POVMissionLTX25": {
       "sha": "d9a84797fad925b28e39a50385a64731d0daebef",
       "lastModified": "2026-09-09T11:14:11.000Z",
       "createdAt": "2026-09-09T11:13:46.000Z",
-      "downloads": 1155,
+      "downloads": 1153,
       "cardPreview": "https://huggingface.co/lynaNSFW/POVMissionLTX25/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/ltx2.3_handjobs": {
       "sha": "547db99c4e9fcf79fcd64fedacf9ac9a1bc4391b",
       "lastModified": "2026-04-24T14:32:58.000Z",
       "createdAt": "2026-04-24T14:32:02.000Z",
-      "downloads": 1338,
+      "downloads": 1357,
       "cardPreview": "https://huggingface.co/lynaNSFW/ltx2.3_handjobs/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/LTX23_CumShot": {
       "sha": "c2aa595f22d9f873f1eab8e85ee598616716f20c",
       "lastModified": "2026-06-15T14:03:57.000Z",
       "createdAt": "2026-05-08T19:37:17.000Z",
-      "downloads": 1083,
+      "downloads": 1084,
       "cardPreview": "https://huggingface.co/lynaNSFW/LTX23_CumShot/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/NSFW_Cumshot_Joyshot": {
       "sha": "2e3c3e9ce8c9ed959f079871ca8d450fde68642a",
       "lastModified": "2026-06-22T09:56:55.000Z",
       "createdAt": "2026-06-22T09:56:26.000Z",
-      "downloads": 1588,
+      "downloads": 1587,
       "cardPreview": "https://huggingface.co/lynaNSFW/NSFW_Cumshot_Joyshot/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/LTX2.3_Creampie": {
       "sha": "3056e7a7b157a82cf0024c1e5db9b645f2a404eb",
       "lastModified": "2026-04-24T14:07:15.000Z",
       "createdAt": "2026-04-24T14:07:07.000Z",
-      "downloads": 455,
+      "downloads": 459,
       "cardPreview": "https://huggingface.co/lynaNSFW/LTX2.3_Creampie/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/LTX2.3Futa_Masturbation": {
       "sha": "d0d5602057df368bddf0fdbcb7aaede0bbe269ad",
       "lastModified": "2026-04-27T11:58:06.000Z",
       "createdAt": "2026-04-27T11:56:59.000Z",
-      "downloads": 1135,
+      "downloads": 1133,
       "cardPreview": "https://huggingface.co/lynaNSFW/LTX2.3Futa_Masturbation/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/LTX_23SexFromBehind": {
       "sha": "b45644ae06ce7f57891321da7c24edd9cf67742e",
       "lastModified": "2026-05-20T14:39:20.000Z",
       "createdAt": "2026-05-20T14:38:51.000Z",
-      "downloads": 633,
+      "downloads": 640,
       "cardPreview": "https://huggingface.co/lynaNSFW/LTX_23SexFromBehind/resolve/main/images/undefined_image%20(1).png"
     },
     "ScottzillaSystems/qwen-image-edit-plus-nsfw-lora": {
       "sha": "66e89e998dd4ea1a359c4bf0dd5e17d2f0b06ef0",
       "lastModified": "2026-04-26T07:43:11.000Z",
       "createdAt": "2026-03-16T07:29:35.000Z",
-      "downloads": 201710,
+      "downloads": 192714,
       "cardPreview": null
     },
     "thutes-gbr25/NSFW-MASTER-Z-IMAGE-TURBO": {
       "sha": "5414c6fc364836eb4bdbde3676087c0c2aea6781",
       "lastModified": "2026-02-17T01:31:49.000Z",
       "createdAt": "2026-02-17T01:31:35.000Z",
-      "downloads": 13799,
+      "downloads": 14405,
       "cardPreview": "https://huggingface.co/thutes-gbr25/NSFW-MASTER-Z-IMAGE-TURBO/resolve/main/images/z-image_00056_.webp"
     },
     "lynaNSFW/QWEN4PLAY_NSFW": {
       "sha": "77bf0ff955b5f6ec90990c8f2890f748b1a14ae1",
       "lastModified": "2026-07-14T13:03:25.000Z",
       "createdAt": "2026-07-14T13:02:50.000Z",
-      "downloads": 230,
+      "downloads": 224,
       "cardPreview": "https://huggingface.co/lynaNSFW/QWEN4PLAY_NSFW/resolve/main/images/undefined_image%20(1).png"
     },
     "uzumix/krea2_nsfw": {
       "sha": "1dce90b8b4207f74bc0ee19bc62ae8001e5e5838",
       "lastModified": "2026-07-07T17:42:25.000Z",
       "createdAt": "2026-07-07T17:41:56.000Z",
-      "downloads": 4030,
+      "downloads": 4016,
       "cardPreview": "https://huggingface.co/uzumix/krea2_nsfw/resolve/main/images/e1755592-1528-4de1-a027-8510544f0feb.png"
     },
     "AntiLeecher/Flux-Klein-NSFW-Lora": {
       "sha": "61e5782aa6e1494b39bdcabe4eb78555b36dcb86",
       "lastModified": "2026-02-11T17:05:33.000Z",
       "createdAt": "2026-02-11T17:05:20.000Z",
-      "downloads": 7184,
+      "downloads": 7167,
       "cardPreview": "https://huggingface.co/AntiLeecher/Flux-Klein-NSFW-Lora/resolve/main/images/ComfyUI_20013_.jpeg"
+    },
+    "TenStrip/Wan2.2-I2V_Reveal_Penis": {
+      "sha": "882361d291d7e454fb8f70e28db027dd2f1e1b32",
+      "lastModified": "2025-12-18T21:50:55.000Z",
+      "createdAt": "2025-12-13T20:21:45.000Z",
+      "downloads": 0,
+      "cardPreview": null
+    },
+    "TenStrip/Wan2.2_H3_Motion_Lora": {
+      "sha": "8177789aec8fea2135ab96b92582c9a8fa89b7e7",
+      "lastModified": "2026-08-09T02:09:40.000Z",
+      "createdAt": "2026-08-09T01:56:12.000Z",
+      "downloads": 0,
+      "cardPreview": null
+    },
+    "TenStrip/Krea2-H3-Style-Lora": {
+      "sha": "6e80e180d04d92c2b092a790110ec6f8b11226b9",
+      "lastModified": "2026-08-08T22:06:59.000Z",
+      "createdAt": "2026-08-08T20:27:08.000Z",
+      "downloads": 0,
+      "cardPreview": null
+    },
+    "TenStrip/Minimax-h3_Singularity-Lora": {
+      "sha": "c9879703f486bbb9b8cdf9c980a29c77d8f5d1ef",
+      "lastModified": "2026-09-08T01:09:01.000Z",
+      "createdAt": "2026-09-08T01:02:43.000Z",
+      "downloads": 0,
+      "cardPreview": null
+    },
+    "TenStrip/LTX2.3_DMD_Lora": {
+      "sha": "77203c27a1d4022dab97d4f5a2280656b228fc2a",
+      "lastModified": "2026-07-31T03:07:38.000Z",
+      "createdAt": "2026-06-28T22:08:53.000Z",
+      "downloads": 0,
+      "cardPreview": null
+    },
+    "TenStrip/LTX2.3_JoyAI_Lora_Extracted": {
+      "sha": "dac7bf7c20d2c016aa4d45deea0e6326203648ba",
+      "lastModified": "2026-06-27T23:08:26.000Z",
+      "createdAt": "2026-06-21T00:57:48.000Z",
+      "downloads": 0,
+      "cardPreview": null
     },
     "desirel/WAN2.2-14B-Rapid-AllInOne-GGUF-NSFW-v10": {
       "sha": "4502c7f3de51fd728d851b37eda262f2be2a5628",
       "lastModified": "2026-07-08T10:55:46.000Z",
       "createdAt": "2026-07-08T10:55:46.000Z",
-      "downloads": 19332,
+      "downloads": 21611,
       "cardPreview": null
     },
     "BigDannyPt/Wan-2.2-Remix-GGUF": {
       "sha": "9ca395473c002e5f3aac04a3e8dff4122cd33021",
       "lastModified": "2026-03-30T16:27:22.000Z",
       "createdAt": "2025-11-02T10:51:30.000Z",
-      "downloads": 95258,
+      "downloads": 95317,
       "cardPreview": null
     },
     "NSFW-API/NSFW_Wan_14b": {
       "sha": "0fce98c7e7c9876d13b717ff317001596275f2b7",
       "lastModified": "2025-07-01T19:20:18.000Z",
       "createdAt": "2025-06-24T07:12:21.000Z",
-      "downloads": 8761,
+      "downloads": 8781,
       "cardPreview": null
     },
     "jeuzu/Dasiwa_MiniMax_H3_V4_int8": {
@@ -278,85 +320,92 @@
       "sha": "4e9bd368dd3697eb78cc518f749cab0848ba6170",
       "lastModified": "2026-10-02T17:18:30.000Z",
       "createdAt": "2026-10-02T16:20:31.000Z",
-      "downloads": 11100,
+      "downloads": 11110,
       "cardPreview": "https://huggingface.co/lynaNSFW/DaSiWa_MMH3_HybridTurbo_V3/resolve/main/images/undefined_image%20(1).png"
     },
     "lynaNSFW/DaSiWa_MiniMax_H3": {
       "sha": "b324a3acfae8cbe591ff1a66cdd33de028bda9a3",
       "lastModified": "2026-08-31T10:02:46.000Z",
       "createdAt": "2026-08-31T09:39:03.000Z",
-      "downloads": 532,
+      "downloads": 526,
       "cardPreview": "https://huggingface.co/lynaNSFW/DaSiWa_MiniMax_H3/resolve/main/images/undefined_image%20(1).png"
     },
     "WarmBloodAban/Minimax-h3_Singularity": {
       "sha": "af671d9214a6e41ab8c2f43e9f871ea56246115f",
       "lastModified": "2026-09-18T16:17:02.000Z",
       "createdAt": "2026-09-05T18:51:01.000Z",
-      "downloads": 648116,
+      "downloads": 662595,
       "cardPreview": null
     },
     "MATLOWAI/minimax-h3-fused-turbo-int8-convrot": {
       "sha": "8a8dffaa0cd99c6184833ae0a3b4e9b0089c17b3",
       "lastModified": "2026-08-30T01:25:46.000Z",
       "createdAt": "2026-08-29T22:04:12.000Z",
-      "downloads": 536628,
+      "downloads": 527173,
       "cardPreview": null
     },
     "SexGod1979/PinkCherry-NSFW_MiniMax-H3": {
       "sha": "08ac92dbd56a8523beea55aafaaba1a1d72c45cb",
       "lastModified": "2026-10-08T15:04:18.000Z",
       "createdAt": "2026-08-05T19:05:53.000Z",
-      "downloads": 773,
+      "downloads": 809,
       "cardPreview": null
     },
     "SexGod1979/PinkCherry_NSFW_LTX23": {
       "sha": "aa5e3192dacd58e8c807e4198e3fcecc53db9f80",
       "lastModified": "2026-08-09T11:35:17.000Z",
       "createdAt": "2026-06-26T13:15:16.000Z",
-      "downloads": 63295,
+      "downloads": 63326,
       "cardPreview": null
     },
     "Civitai/Sulphur-2-distilled-fp8": {
       "sha": "f5bc33f124af9e93dbdea5f3757f918dd102d53a",
       "lastModified": "2026-05-06T19:11:53.000Z",
       "createdAt": "2026-05-06T19:03:36.000Z",
-      "downloads": 1899,
+      "downloads": 2025,
       "cardPreview": null
     },
     "TenStrip/LTX2.3-10Eros": {
       "sha": "84a05a13610d78dbe4340d1be23fd8185e10f697",
       "lastModified": "2026-08-06T20:06:19.000Z",
       "createdAt": "2026-04-29T17:08:26.000Z",
-      "downloads": 70941,
+      "downloads": 81815,
       "cardPreview": null
     },
     "ModdiAdam/Wild_Krea-2-turbo_NSFW": {
       "sha": "0ab4fdb1f0b72f2acb31a9d4281ec7544843c606",
       "lastModified": "2026-08-21T08:27:43.000Z",
       "createdAt": "2026-08-15T18:30:50.000Z",
-      "downloads": 7783,
+      "downloads": 7954,
       "cardPreview": null
     },
     "ModdiAdam/Lusty_Krea-2_NSFW": {
       "sha": "9ef886092b2ffdb08b26e73cf432b2c05a92b054",
       "lastModified": "2026-10-07T17:33:37.000Z",
       "createdAt": "2026-10-06T09:35:53.000Z",
-      "downloads": 6128,
+      "downloads": 6299,
       "cardPreview": null
     },
     "lesliemore/z-image-turbo-nsfw-v2-GGUF": {
       "sha": "7567e753c45bdd16ea9c1c052af97c27a8a4a071",
       "lastModified": "2026-08-16T06:41:04.000Z",
       "createdAt": "2026-08-16T06:17:17.000Z",
-      "downloads": 66520,
+      "downloads": 64347,
       "cardPreview": null
     },
     "lynaNSFW/Krea2turboNSFWAIO": {
       "sha": "aa6c83c32c1454c9234a73212f17480ada4a3ca7",
       "lastModified": "2026-08-08T08:00:32.000Z",
       "createdAt": "2026-08-08T07:55:39.000Z",
-      "downloads": 15374,
+      "downloads": 17448,
       "cardPreview": "https://huggingface.co/lynaNSFW/Krea2turboNSFWAIO/resolve/main/images/undefined_image%20(1).png"
+    },
+    "TenStrip/10Eros-Max": {
+      "sha": "84c820586c62701c2a29a6eafb94416d490564ed",
+      "lastModified": "2026-10-13T09:03:34.000Z",
+      "createdAt": "2026-08-04T03:15:02.000Z",
+      "downloads": 0,
+      "cardPreview": null
     }
   },
   "groups": [
@@ -582,10 +631,10 @@
     }
   ],
   "totals": {
-    "loraFiles": 108,
-    "loraBytes": 63988992448,
-    "loraDefaultFiles": 49,
-    "loraDefaultBytes": 18552983754,
+    "loraFiles": 114,
+    "loraBytes": 78442815410,
+    "loraDefaultFiles": 53,
+    "loraDefaultBytes": 22920991796,
     "prefetchBytes": 10849052416
   },
   "loras": [
@@ -4145,6 +4194,199 @@
       "defaultSelected": true,
       "civitaiSearch": "https://civitai.red/models?query=Flux%20Klein%20-%20NSFW%20v2&nsfw=1",
       "releasedAt": "2026-02-11T17:05:20.000Z"
+    },
+    {
+      "id": "ts_wan_reveal_penis",
+      "sourceId": "ts_wan_reveal_penis",
+      "group": "wan",
+      "family": "wan",
+      "repo": "TenStrip/Wan2.2-I2V_Reveal_Penis",
+      "repoSha": "882361d291d7e454fb8f70e28db027dd2f1e1b32",
+      "preview": null,
+      "version": "2025-12-18",
+      "sourceUpdatedAt": "2025-12-18T21:50:55.000Z",
+      "filePage": "https://huggingface.co/TenStrip/Wan2.2-I2V_Reveal_Penis/blob/main/2.2-I2V%20Reveal%20Penis_000003000_high_noise.safetensors",
+      "repoPage": "https://huggingface.co/TenStrip/Wan2.2-I2V_Reveal_Penis",
+      "name": "Wan 2.2 I2V Reveal Penis (HIGH+LOW)",
+      "file": "2.2-I2V Reveal Penis_000003000_high_noise.safetensors",
+      "url": "https://huggingface.co/TenStrip/Wan2.2-I2V_Reveal_Penis/resolve/main/2.2-I2V%20Reveal%20Penis_000003000_high_noise.safetensors",
+      "sha256": "fe81f1c4ed091a701bac37e87d1a824f55e7d7b7c927158d640bb7e1a5c74879",
+      "bytes": 613517160,
+      "pair": "high",
+      "pairId": null,
+      "note": "HIGH+LOW pair. TenStrip LoRA for Wan 2.2 I2V.",
+      "trigger": "",
+      "license": "hf-mirror",
+      "licenseNote": "",
+      "wan2gpIds": [
+        "i2v_2_2"
+      ],
+      "defaultSelected": true,
+      "civitaiSearch": "https://civitai.red/models?query=2.2-I2V%20Reveal%20Penis_000003000%20_noise&nsfw=1",
+      "releasedAt": "2025-12-13T20:21:45.000Z"
+    },
+    {
+      "id": "ts_h3_wan22_motion",
+      "sourceId": "ts_h3_wan22_motion",
+      "group": "h3",
+      "family": "h3",
+      "repo": "TenStrip/Wan2.2_H3_Motion_Lora",
+      "repoSha": "8177789aec8fea2135ab96b92582c9a8fa89b7e7",
+      "preview": null,
+      "version": "2026-08-09",
+      "sourceUpdatedAt": "2026-08-09T02:09:40.000Z",
+      "filePage": "https://huggingface.co/TenStrip/Wan2.2_H3_Motion_Lora/blob/main/H3_Wan2.2_i2v_motion_rank1024_test1.safetensors",
+      "repoPage": "https://huggingface.co/TenStrip/Wan2.2_H3_Motion_Lora",
+      "name": "H3↔Wan2.2 Motion Bridge (rank1024)",
+      "file": "H3_Wan2.2_i2v_motion_rank1024_test1.safetensors",
+      "url": "https://huggingface.co/TenStrip/Wan2.2_H3_Motion_Lora/resolve/main/H3_Wan2.2_i2v_motion_rank1024_test1.safetensors",
+      "sha256": "14c3a6a73eb9030b3dadf2a0366d4ca8d68d49b352bcb3ca16433b4a94fb67df",
+      "bytes": 1376265282,
+      "pair": null,
+      "pairId": null,
+      "note": "H3↔Wan2.2 motion bridge LoRA (rank1024). Also available: rank512 (0.69 GB).",
+      "trigger": "",
+      "license": "hf-mirror",
+      "licenseNote": "",
+      "wan2gpIds": [
+        "minimax_h3_ref2va_pruned",
+        "minimax_h3_fl2va_pruned"
+      ],
+      "defaultSelected": true,
+      "civitaiSearch": "https://civitai.red/models?query=H3_Wan2.2_i2v_motion_rank1024_test1&nsfw=1",
+      "releasedAt": "2026-08-09T01:56:12.000Z"
+    },
+    {
+      "id": "ts_krea2_h3_style",
+      "sourceId": "ts_krea2_h3_style",
+      "group": "h3",
+      "family": "h3",
+      "repo": "TenStrip/Krea2-H3-Style-Lora",
+      "repoSha": "6e80e180d04d92c2b092a790110ec6f8b11226b9",
+      "preview": null,
+      "version": "2026-08-08",
+      "sourceUpdatedAt": "2026-08-08T22:06:59.000Z",
+      "filePage": "https://huggingface.co/TenStrip/Krea2-H3-Style-Lora/blob/main/H3_krea_style_test1_rank512.safetensors",
+      "repoPage": "https://huggingface.co/TenStrip/Krea2-H3-Style-Lora",
+      "name": "Krea2 Style on H3 (rank512)",
+      "file": "H3_krea_style_test1_rank512.safetensors",
+      "url": "https://huggingface.co/TenStrip/Krea2-H3-Style-Lora/resolve/main/H3_krea_style_test1_rank512.safetensors",
+      "sha256": "cd615c3c050bea8d517023c076b9ec1f4b8d27326c3590ef753607ccfcb5ade9",
+      "bytes": 1101019360,
+      "pair": null,
+      "pairId": null,
+      "note": "Krea2 style transferred to H3 (rank512). Also available: rank128 (0.28 GB).",
+      "trigger": "",
+      "license": "hf-mirror",
+      "licenseNote": "",
+      "wan2gpIds": [
+        "minimax_h3_ref2va_pruned",
+        "minimax_h3_fl2va_pruned"
+      ],
+      "defaultSelected": true,
+      "civitaiSearch": "https://civitai.red/models?query=H3_krea_style_test1_rank512&nsfw=1",
+      "releasedAt": "2026-08-08T20:27:08.000Z"
+    },
+    {
+      "id": "ts_h3_singularity",
+      "sourceId": "ts_h3_singularity",
+      "group": "h3",
+      "family": "h3",
+      "repo": "TenStrip/Minimax-h3_Singularity-Lora",
+      "repoSha": "c9879703f486bbb9b8cdf9c980a29c77d8f5d1ef",
+      "preview": null,
+      "version": "2026-09-08",
+      "sourceUpdatedAt": "2026-09-08T01:09:01.000Z",
+      "filePage": "https://huggingface.co/TenStrip/Minimax-h3_Singularity-Lora/blob/main/Minimax-h3_Singularity_128spect-fro95_lora.safetensors",
+      "repoPage": "https://huggingface.co/TenStrip/Minimax-h3_Singularity-Lora",
+      "name": "H3 Singularity LoRA (r128)",
+      "file": "Minimax-h3_Singularity_128spect-fro95_lora.safetensors",
+      "url": "https://huggingface.co/TenStrip/Minimax-h3_Singularity-Lora/resolve/main/Minimax-h3_Singularity_128spect-fro95_lora.safetensors",
+      "sha256": "e6d5888d2f90ab3f08e7a3f55cc2b2d5183d33e73014a17d8b755cbde4d7b2f3",
+      "bytes": 1277206240,
+      "pair": null,
+      "pairId": null,
+      "note": "H3 Singularity LoRA (r128). Also available: r64 (0.66 GB).",
+      "trigger": "",
+      "license": "hf-mirror",
+      "licenseNote": "",
+      "wan2gpIds": [
+        "minimax_h3_ref2va_pruned",
+        "minimax_h3_fl2va_pruned"
+      ],
+      "defaultSelected": true,
+      "civitaiSearch": "https://civitai.red/models?query=Minimax-h3_Singularity_128spect-fro95_lora&nsfw=1",
+      "releasedAt": "2026-09-08T01:02:43.000Z"
+    },
+    {
+      "id": "ts_ltx_dmd",
+      "sourceId": "ts_ltx_dmd",
+      "group": "ltx",
+      "family": "ltx",
+      "repo": "TenStrip/LTX2.3_DMD_Lora",
+      "repoSha": "77203c27a1d4022dab97d4f5a2280656b228fc2a",
+      "preview": null,
+      "version": "v2",
+      "sourceUpdatedAt": "2026-07-31T03:07:38.000Z",
+      "filePage": "https://huggingface.co/TenStrip/LTX2.3_DMD_Lora/blob/main/LTX2.3_DMD_hybrid_v2.safetensors",
+      "repoPage": "https://huggingface.co/TenStrip/LTX2.3_DMD_Lora",
+      "name": "LTX 2.3 DMD Hybrid v2 (r256)",
+      "file": "LTX2.3_DMD_hybrid_v2.safetensors",
+      "url": "https://huggingface.co/TenStrip/LTX2.3_DMD_Lora/resolve/main/LTX2.3_DMD_hybrid_v2.safetensors",
+      "sha256": "db418249c95eba25ed7d7d24f74a17e7cdc82c03b0ef34a477abdccb1d7a2915",
+      "bytes": 5095398920,
+      "pair": null,
+      "pairId": null,
+      "note": "DMD hybrid LoRA for LTX 2.3 (r256, 5.10 GB). Also: hybrid_v1, reshaped_r256.",
+      "trigger": "",
+      "license": "hf-mirror",
+      "licenseNote": "",
+      "wan2gpIds": [
+        "ltx2_22B"
+      ],
+      "defaultSelected": false,
+      "examples": [
+        {
+          "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/0c245073-b498-495c-b28f-565bf6399036/original=true/138980166.jpeg",
+          "kind": "image"
+        }
+      ],
+      "releasedAt": "2026-08-07T03:06:14.105Z",
+      "civitaiId": 2839639,
+      "civitaiName": "LTX2.3_DMD_hybrid_v2.safetensors",
+      "civitaiVersion": "v1.0",
+      "civitaiPage": "https://civitai.red/models/2839639",
+      "civitaiSearch": "https://civitai.red/models?query=LTX2.3_DMD_hybrid_v2&nsfw=1"
+    },
+    {
+      "id": "ts_ltx_joyai",
+      "sourceId": "ts_ltx_joyai",
+      "group": "ltx",
+      "family": "ltx",
+      "repo": "TenStrip/LTX2.3_JoyAI_Lora_Extracted",
+      "repoSha": "dac7bf7c20d2c016aa4d45deea0e6326203648ba",
+      "preview": null,
+      "version": "2026-06-27",
+      "sourceUpdatedAt": "2026-06-27T23:08:26.000Z",
+      "filePage": "https://huggingface.co/TenStrip/LTX2.3_JoyAI_Lora_Extracted/blob/main/JoyAI-Echo_r256.safetensors",
+      "repoPage": "https://huggingface.co/TenStrip/LTX2.3_JoyAI_Lora_Extracted",
+      "name": "JoyAI-Echo Extracted (r256)",
+      "file": "JoyAI-Echo_r256.safetensors",
+      "url": "https://huggingface.co/TenStrip/LTX2.3_JoyAI_Lora_Extracted/resolve/main/JoyAI-Echo_r256.safetensors",
+      "sha256": "7ef0944cca37127a1f7b9884a2a2d024df7c94d829775a9f1961eb53dbabe22f",
+      "bytes": 4990416000,
+      "pair": null,
+      "pairId": null,
+      "note": "JoyAI-Echo extracted LoRA (r256, 4.99 GB). Also: content variant (5.10 GB).",
+      "trigger": "",
+      "license": "hf-mirror",
+      "licenseNote": "",
+      "wan2gpIds": [
+        "ltx2_22B"
+      ],
+      "defaultSelected": false,
+      "civitaiSearch": "https://civitai.red/models?query=JoyAI-Echo_r256&nsfw=1",
+      "releasedAt": "2026-06-21T00:57:48.000Z"
     }
   ],
   "finetunes": [
@@ -4995,6 +5237,47 @@
       "sha256Low": null,
       "civitaiSearch": "https://civitai.red/models?query=krea2TurboNSFWAIO_v10&nsfw=1",
       "releasedAt": "2026-08-08T07:55:39.000Z"
+    },
+    {
+      "id": "h3_10eros_max",
+      "family": "h3",
+      "architecture": "minimax_h3_ref2va_pruned",
+      "name": "10Eros-Max — H3 8-step Turbo (int8 ConvRot) - quanto_bf16_int8",
+      "precisionToken": "quanto_bf16_int8",
+      "quant": "int8_convrot",
+      "description": "TenStrip 10Eros ported to MiniMax H3 — 8-step turbo, reference deltas at full-block level, viggle deltas, fastv2 structured 8+4 step turbos. Multi-LoRA composition with strength cap (25+ LoRAs).",
+      "urls": [
+        "https://huggingface.co/TenStrip/10Eros-Max/resolve/main/10Eros_Max_h3_TURBO-hybrid_beta3_int8_convrot.safetensors"
+      ],
+      "bytes": 20975924960,
+      "sha256": "96eb49aed36a069f97bc77efe0152a534da3d3b162861e977cd213c04a4fe481",
+      "file": "10Eros_Max_h3_TURBO-hybrid_beta3_int8_convrot.safetensors",
+      "repo": "TenStrip/10Eros-Max",
+      "repoSha": "84c820586c62701c2a29a6eafb94416d490564ed",
+      "preview": "https://huggingface.co/TenStrip/10Eros-Max/resolve/84c820586c62701c2a29a6eafb94416d490564ed/beta6_sampling_example.png",
+      "version": "beta3",
+      "sourceUpdatedAt": "2026-10-13T09:03:34.000Z",
+      "filePage": "https://huggingface.co/TenStrip/10Eros-Max/blob/main/10Eros_Max_h3_TURBO-hybrid_beta3_int8_convrot.safetensors",
+      "repoPage": "https://huggingface.co/TenStrip/10Eros-Max",
+      "urls2": null,
+      "recommended": null,
+      "preloadLoras": [],
+      "loraMultipliers": null,
+      "wan2gpIds": [
+        "minimax_h3_ref2va_pruned",
+        "minimax_h3_fl2va_pruned",
+        "minimax_h3_ref2va_pruned_veda",
+        "minimax_h3_fl2va_pruned_veda"
+      ],
+      "license": "hf-mirror",
+      "licenseNote": "TenStrip HuggingFace repo — gated, requires account.",
+      "source": "hf",
+      "prefetchDefault": false,
+      "defaultSelected": false,
+      "bytesLow": 0,
+      "sha256Low": null,
+      "civitaiSearch": "https://civitai.red/models?query=10Eros_Max_h3_TURBO-hybrid_beta3&nsfw=1",
+      "releasedAt": "2026-08-04T03:15:02.000Z"
     }
   ],
   "civitai": [
@@ -5034,6 +5317,70 @@
       ],
       "licenseNote": "Author/CivitAI release with no redistribution — fetched with your own token, never re-hosted.",
       "prefetchDefault": true,
+      "defaultSelected": false
+    },
+    {
+      "id": "civ_h3_nsfw_unlocked",
+      "family": "h3",
+      "architecture": "minimax_h3_ref2va_pruned",
+      "name": "MiniMax H3 NSFW Unlocked (LoRA)",
+      "query": "MiniMax H3 NSFW Unlocked",
+      "baseModelFilter": "MiniMax H3",
+      "civitaiModelId": null,
+      "civitaiVersionId": null,
+      "bytesEstimate": 284000000,
+      "description": "Removes generation guardrails — explicit/sensual/uncensored video with fluid motion, authentic skin texture, character stability. V2.1 improves anal details from text prompts.",
+      "recommended": null,
+      "wan2gpIds": [
+        "minimax_h3_ref2va_pruned",
+        "minimax_h3_fl2va_pruned",
+        "minimax_h3_ref2va_pruned_veda",
+        "minimax_h3_fl2va_pruned_veda"
+      ],
+      "licenseNote": "Author/CivitAI release — fetched with your own token, never re-hosted.",
+      "prefetchDefault": true,
+      "defaultSelected": false
+    },
+    {
+      "id": "civ_h3_dr34ml4y",
+      "family": "h3",
+      "architecture": "minimax_h3_ref2va_pruned",
+      "name": "DR34ML4Y — All-In-One NSFW (H3 P1)",
+      "query": "DR34ML4Y",
+      "baseModelFilter": "MiniMax H3",
+      "civitaiModelId": null,
+      "civitaiVersionId": null,
+      "bytesEstimate": 564000000,
+      "description": "Preview 1 — H3 port of the DR34ML4Y all-in-one NSFW LoRA. Triggers: m15510n4ry, bl0wj0b, d0ubl3_bj, d0gg1e, c0wg1rl. Requires H3-style prompting.",
+      "recommended": null,
+      "wan2gpIds": [
+        "minimax_h3_ref2va_pruned",
+        "minimax_h3_fl2va_pruned",
+        "minimax_h3_ref2va_pruned_veda",
+        "minimax_h3_fl2va_pruned_veda"
+      ],
+      "licenseNote": "Author/CivitAI release — fetched with your own token, never re-hosted.",
+      "prefetchDefault": true,
+      "defaultSelected": false
+    },
+    {
+      "id": "civ_h3_eros_max",
+      "family": "h3",
+      "architecture": "minimax_h3_fl2va_pruned",
+      "name": "H3 Eros Max beta6 (int8)",
+      "query": "H3 Eros Max",
+      "baseModelFilter": "MiniMax H3",
+      "civitaiModelId": null,
+      "civitaiVersionId": null,
+      "bytesEstimate": 20704000000,
+      "description": "Completely rebuilt off base full unpruned fl2va H3. Reference deltas at full-block level, viggle deltas, fastv2 structured 8+4 step turbos fused (8-12 step, 10/3 shift). Multi-LoRA composition with strength cap (25+ LoRAs).",
+      "recommended": null,
+      "wan2gpIds": [
+        "minimax_h3_fl2va_pruned",
+        "minimax_h3_fl2va_pruned_veda"
+      ],
+      "licenseNote": "Civitai checkpoint — fetched with your own token, never re-hosted.",
+      "prefetchDefault": false,
       "defaultSelected": false
     }
   ]

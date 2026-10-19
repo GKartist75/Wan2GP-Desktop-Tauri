@@ -1,6 +1,6 @@
 //! GPU / hardware probing and system metrics.
 use crate::base::*;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex};
 
 // ── GPU helpers ──
 pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
@@ -595,11 +595,7 @@ pub(crate) fn gguf_wheel_version(url: &str) -> Option<String> {
     if !file.starts_with("llamacpp_gguf_cuda-") {
         return None;
     }
-    let ver = file
-        .split('-')
-        .nth(1)?
-        .split(['+', '%'])
-        .next()?;
+    let ver = file.split('-').nth(1)?.split(['+', '%']).next()?;
     if ver.is_empty() || !ver.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         return None;
     }
@@ -610,10 +606,7 @@ pub(crate) fn gguf_wheel_version(url: &str) -> Option<String> {
 /// (`gguf` + `gguf_cu128` win cmds). None when absent/unparseable — callers
 /// keep the hardcoded floor. Pure + unit-tested.
 pub(crate) fn setup_config_gguf_version(cfg: &serde_json::Value) -> Option<String> {
-    let kernels = cfg
-        .get("components")?
-        .get("kernels")?
-        .as_object()?;
+    let kernels = cfg.get("components")?.get("kernels")?.as_object()?;
     let mut best: Option<String> = None;
     for key in ["gguf", "gguf_cu128"] {
         let v = kernels
@@ -659,9 +652,7 @@ pub(crate) fn validate_setup_config_shape(cfg: &serde_json::Value) -> Vec<String
         return out;
     }
     let comps = comps.unwrap();
-    let kernels = comps
-        .get("kernels")
-        .and_then(|k| k.as_object());
+    let kernels = comps.get("kernels").and_then(|k| k.as_object());
     let profiles = cfg.get("gpu_profiles").and_then(|p| p.as_object());
     match profiles {
         None => out.push(
@@ -1230,7 +1221,10 @@ mod gguf_override_tests {
     fn floor_catches_all_stale_builds() {
         // #2274 (1.0.2 silent SDPA fallback), #2235, #2249 (1.0.13 404):
         // anything below 1.0.27 resolves to the known-good wheel.
-        for v in ["1.0.2", "1.0.7", "1.0.12", "1.0.13", "1.0.14", "1.0.21", "1.0.22", "1.0.23", "1.0.24", "1.0.25", "1.0.26"] {
+        for v in [
+            "1.0.2", "1.0.7", "1.0.12", "1.0.13", "1.0.14", "1.0.21", "1.0.22", "1.0.23", "1.0.24",
+            "1.0.25", "1.0.26",
+        ] {
             let u = format!("https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-{v}+torch210cu130py311-cp311-cp311-win_amd64.whl");
             let out = apply_gguf_override(&u);
             assert!(
@@ -1274,7 +1268,12 @@ mod gguf_override_tests {
         assert_eq!(gguf_component_for("rocm10", "3.12"), Some("gguf_rocm10"));
         assert_eq!(gguf_component_for("rocm100", "3.12"), Some("gguf_rocm10"));
         // Unpublished pairs: upstream skips the component instead.
-        for (t, p) in [("cu130", "3.10"), ("cu128", "3.11"), ("rocm100", "3.11"), ("", "")] {
+        for (t, p) in [
+            ("cu130", "3.10"),
+            ("cu128", "3.11"),
+            ("rocm100", "3.11"),
+            ("", ""),
+        ] {
             assert_eq!(gguf_component_for(t, p), None, "{t}/{p}");
         }
     }
@@ -1304,7 +1303,7 @@ mod gguf_override_tests {
         // Stale checkout (1.0.14 pins, no cu128): hardcoded floor still applies.
         let stale = serde_json::json!({
             "components": { "kernels": {
-                "gguf": { "cmd": { "win": "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.14+torch210cu130py311-cp311-cp311-win_amd64.whl" } } 
+                "gguf": { "cmd": { "win": "https://github.com/deepbeepmeep/kernels/releases/download/GGUF_Kernels/llamacpp_gguf_cuda-1.0.14+torch210cu130py311-cp311-cp311-win_amd64.whl" } }
             } }
         });
         assert_eq!(effective_gguf_floor(&stale), super::GGUF_FLOOR);
@@ -1562,17 +1561,7 @@ pub fn detect_hardware() -> serde_json::Value {
     };
     // CPU/RAM via sysinfo — ~0ms vs 800ms powershell; brand string is equivalent to WMI Name
     let (cpu, ram) = {
-        use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
-        let mut sys = SYSINFO_CACHE
-            .get_or_init(|| {
-                Mutex::new(System::new_with_specifics(
-                    RefreshKind::nothing()
-                        .with_cpu(CpuRefreshKind::everything())
-                        .with_memory(MemoryRefreshKind::everything()),
-                ))
-            })
-            .lock()
-            .unwrap();
+        let mut sys = SYSINFO_CACHE.lock().unwrap();
         // refresh only if stale (>4s) to avoid re-allocating every detect_hardware call
         sys.refresh_memory();
         sys.refresh_cpu_all();
@@ -2011,11 +2000,10 @@ pub(crate) fn hardware_profile_detail_with_ram(
     })
 }
 
-static PREV_CPU: OnceLock<Mutex<Option<(u64, u64)>>> = OnceLock::new();
-static LAST_NVIDIA: OnceLock<Mutex<Option<serde_json::Value>>> = OnceLock::new();
+static LAST_NVIDIA: LazyLock<Mutex<Option<serde_json::Value>>> = LazyLock::new(|| Mutex::new(None));
 pub(crate) fn get_cached_igpu() -> Option<serde_json::Value> {
     // ponytail: WMI probed once, cached forever — was running powershell every 2s in hot loop
-    let m = CACHED_IGPU.get_or_init(|| Mutex::new(None));
+    let m = &CACHED_IGPU;
     if let Ok(g) = m.lock() {
         if let Some(v) = g.clone() {
             return Some(v);
@@ -2056,27 +2044,17 @@ pub(crate) fn get_cached_igpu() -> Option<serde_json::Value> {
 #[tauri::command]
 pub fn get_system_metrics() -> serde_json::Value {
     // throttle: if called <1.2s ago, return cached metrics (prevents double-fire from dashboard+polling)
-    if let Some(m) = METRICS_CACHE.get() {
-        if let Ok(g) = m.lock() {
-            if let Some((t, v)) = g.as_ref() {
-                if t.elapsed() < std::time::Duration::from_millis(1200) {
-                    return v.clone();
-                }
+    if let Ok(g) = METRICS_CACHE.lock() {
+        if let Some((t, v)) = g.as_ref() {
+            if t.elapsed() < std::time::Duration::from_millis(1200) {
+                return v.clone();
             }
         }
     }
     let mut result = serde_json::json!({"ramFree": null, "vramFree": null, "cpu": null, "gpu": null, "ramUsed": null, "ramTotal": null, "vramUsed": null, "vramTotal": null, "ram": null, "vram": null, "gpus": [], "gpu2": null, "vram2": null, "vramFree2": null, "vramUsed2": null, "vramTotal2": null});
     // RAM/CPU via reused sysinfo instance (no alloc per tick)
     {
-        use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind};
-        let m = SYSINFO_CACHE.get_or_init(|| {
-            Mutex::new(sysinfo::System::new_with_specifics(
-                RefreshKind::nothing()
-                    .with_cpu(CpuRefreshKind::everything())
-                    .with_memory(MemoryRefreshKind::everything()),
-            ))
-        });
-        let mut sys = m.lock().unwrap();
+        let mut sys = SYSINFO_CACHE.lock().unwrap();
         sys.refresh_memory();
         sys.refresh_cpu_usage();
         let total = sys.total_memory();
@@ -2093,7 +2071,6 @@ pub fn get_system_metrics() -> serde_json::Value {
         if cpu > 0 {
             result["cpu"] = serde_json::json!(cpu);
         }
-        let _ = PREV_CPU.get_or_init(|| Mutex::new(None));
     }
     // nvidia-smi for VRAM/GPU — per-GPU breakdown + WMI iGPU fallback (mirrors Electron main.js)
     {
@@ -2199,17 +2176,9 @@ pub fn get_system_metrics() -> serde_json::Value {
                                 .unwrap_or(serde_json::Value::Null);
                         }
                     }
-                    let _ = LAST_NVIDIA
-                        .get_or_init(|| Mutex::new(None))
-                        .lock()
-                        .unwrap()
-                        .replace(result.clone());
+                    LAST_NVIDIA.lock().unwrap().replace(result.clone());
                 }
-            } else if let Some(last) = LAST_NVIDIA
-                .get()
-                .and_then(|m| m.lock().ok())
-                .and_then(|g| g.clone())
-            {
+            } else if let Some(last) = LAST_NVIDIA.lock().ok().and_then(|g| g.clone()) {
                 result["vramFree"] = last["vramFree"].clone();
                 result["vramUsed"] = last["vramUsed"].clone();
                 result["vramTotal"] = last["vramTotal"].clone();
@@ -2253,7 +2222,7 @@ pub fn get_system_metrics() -> serde_json::Value {
         }
     }
     // cache for throttle
-    if let Ok(mut g) = METRICS_CACHE.get_or_init(|| Mutex::new(None)).lock() {
+    if let Ok(mut g) = METRICS_CACHE.lock() {
         *g = Some((std::time::Instant::now(), result.clone()));
     }
     result
@@ -2334,7 +2303,10 @@ mod amd_sim_tests {
         let (primary, staging) =
             crate::install::amd_therock_torch_cmds("AMD_GFX1201", "AMD Radeon AI PRO R9700")
                 .unwrap();
-        assert!(primary.contains("stable.repo.amd.com/rocm/whl-next/"), "got {primary}");
+        assert!(
+            primary.contains("stable.repo.amd.com/rocm/whl-next/"),
+            "got {primary}"
+        );
         assert!(primary.contains("2.13.0+rocm10.0.0"), "got {primary}");
         assert!(primary.contains("device-gfx1201"), "got {primary}");
         assert!(
@@ -2398,11 +2370,36 @@ mod overview_pid_tests {
     fn upstream_parity_pid() {
         // Mirrors setup.py create_wgp_config thresholds (ram>60/>30,
         // vram>22/>11).
-        assert_eq!(pnum("AMD", "AMD Radeon RX 9070 XT", 16.0 * 1024.0, Some(80.0)), 2);
-        assert_eq!(pnum("AMD", "AMD Radeon RX 9070 XT", 16.0 * 1024.0, Some(32.0)), 4);
-        assert_eq!(pnum("AMD", "AMD Radeon RX 9060 XT", 16.0 * 1024.0, Some(16.0)), 5);
-        assert_eq!(pnum("NVIDIA", "NVIDIA GeForce RTX 4090", 24.0 * 1024.0, Some(80.0)), 1);
-        assert_eq!(pnum("NVIDIA", "NVIDIA GeForce RTX 4090", 24.0 * 1024.0, Some(32.0)), 3);
+        assert_eq!(
+            pnum("AMD", "AMD Radeon RX 9070 XT", 16.0 * 1024.0, Some(80.0)),
+            2
+        );
+        assert_eq!(
+            pnum("AMD", "AMD Radeon RX 9070 XT", 16.0 * 1024.0, Some(32.0)),
+            4
+        );
+        assert_eq!(
+            pnum("AMD", "AMD Radeon RX 9060 XT", 16.0 * 1024.0, Some(16.0)),
+            5
+        );
+        assert_eq!(
+            pnum(
+                "NVIDIA",
+                "NVIDIA GeForce RTX 4090",
+                24.0 * 1024.0,
+                Some(80.0)
+            ),
+            1
+        );
+        assert_eq!(
+            pnum(
+                "NVIDIA",
+                "NVIDIA GeForce RTX 4090",
+                24.0 * 1024.0,
+                Some(32.0)
+            ),
+            3
+        );
     }
     #[test]
     fn unknown_ram_never_overpromises() {
@@ -2423,7 +2420,10 @@ mod overview_pid_tests {
             Some(32.0),
         );
         assert!(
-            rtx20["detail"]["triton"].as_str().unwrap().contains("3.2.x"),
+            rtx20["detail"]["triton"]
+                .as_str()
+                .unwrap()
+                .contains("3.2.x"),
             "RTX_20 triton: {}",
             rtx20["detail"]["triton"]
         );
@@ -2436,7 +2436,11 @@ mod overview_pid_tests {
             24.0 * 1024.0,
             Some(64.0),
         );
-        assert!(rtx40["detail"]["triton"].as_str().unwrap().contains("3.7"), "RTX_40 triton: {}", rtx40["detail"]["triton"]);
+        assert!(
+            rtx40["detail"]["triton"].as_str().unwrap().contains("3.7"),
+            "RTX_40 triton: {}",
+            rtx40["detail"]["triton"]
+        );
         assert!(rtx40["detail"]["flash"].as_str().unwrap().contains("2.8.3"));
         // AMD pins triton v38 (3.7.x, Rocm line) and ships the ROCm flash wheel.
         let amd = hardware_profile_detail_with_ram(

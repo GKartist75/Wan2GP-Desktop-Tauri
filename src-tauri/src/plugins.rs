@@ -4,7 +4,7 @@
 //! - installed: <repo>/plugins/<id>/ (+ plugin_info.json for name/version)
 //! - enabled: `enabled_plugins` in <repo>/wgp_config.json (+ SYSTEM_PLUGINS always on)
 use crate::base::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::Emitter;
 
 const SYSTEM_PLUGINS: &[&str] = &[
@@ -36,7 +36,7 @@ fn plugin_id_from_url(url: &str) -> String {
     t.rsplit('/').next().unwrap_or("").trim().to_string()
 }
 
-fn read_wgp_config(repo: &PathBuf) -> serde_json::Value {
+fn read_wgp_config(repo: &Path) -> serde_json::Value {
     let p = repo.join("wgp_config.json");
     if p.exists() {
         if let Ok(s) = std::fs::read_to_string(&p) {
@@ -59,7 +59,7 @@ fn str_list(v: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn read_local_catalog(repo: &PathBuf) -> std::collections::HashMap<String, serde_json::Value> {
+fn read_local_catalog(repo: &Path) -> std::collections::HashMap<String, serde_json::Value> {
     let mut map = std::collections::HashMap::new();
     if let Ok(s) = std::fs::read_to_string(repo.join("plugins_local.json")) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
@@ -273,7 +273,7 @@ fn env_python() -> Option<PathBuf> {
     py.exists().then_some(py)
 }
 
-fn scrub_config_lists(repo: &PathBuf, id: &str) -> Result<(), String> {
+fn scrub_config_lists(repo: &Path, id: &str) -> Result<(), String> {
     let p = repo.join("wgp_config.json");
     let mut cfg = read_wgp_config(repo);
     for key in [
@@ -346,9 +346,9 @@ async fn install_plugin_inner(app: &tauri::AppHandle, url: &str) -> Result<Strin
 
 async fn install_requirements(
     app: &tauri::AppHandle,
-    repo: &PathBuf,
+    repo: &Path,
     id: &str,
-    target: &PathBuf,
+    target: &Path,
     log: &impl Fn(&str),
 ) {
     use tauri_plugin_shell::process::CommandEvent;

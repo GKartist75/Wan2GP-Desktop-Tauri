@@ -125,8 +125,10 @@ $("dlss5ConfirmBtn")?.addEventListener("click", async () => {
   const orig = btn.textContent;
   btn.textContent = "Installing…";
   appendLog("[*] Installing DLSS 5 runtime — progress below…");
+  let complete = false;
   try {
     const r = await window.w2gp.installDlss5(force);
+    complete = !!(r && r.ok && r.complete);
     if (r && r.ok)
       showToast(
         r.complete
@@ -140,8 +142,37 @@ $("dlss5ConfirmBtn")?.addEventListener("click", async () => {
     btn.disabled = false;
     btn.textContent = orig;
     refreshDlss5();
+    // Persist a real hash pass now, so the next launcher start shows the
+    // installed files green instead of "expected" until a manual check.
+    if (complete) verifyDlss5Files().catch(() => {});
   }
 });
+// The Force flag is a setting, not a per-run toggle: remember it so a reinstall
+// does not silently revert to "leave existing files alone". The consent
+// checkbox above is deliberately not remembered — that is re-confirmed every
+// time, because consent is per-install.
+async function loadDlss5Prefs() {
+  const chk = $("dlss5ForceChk");
+  if (!chk) return;
+  try {
+    const cfg = (await window.w2gp.configLoad()) || {};
+    chk.checked = !!(cfg.dlss5 && cfg.dlss5.force);
+  } catch {
+    // No readable config just means the default: unchecked.
+  }
+}
+async function saveDlss5Prefs(force) {
+  try {
+    const cfg = (await window.w2gp.configLoad()) || {};
+    cfg.dlss5 = { ...(cfg.dlss5 || {}), force: !!force };
+    await window.w2gp.configSave(cfg);
+  } catch {
+    // The flag still applies to this run; only its memory is lost.
+  }
+}
+$("dlss5ForceChk")?.addEventListener("change", (e) => saveDlss5Prefs(e.target.checked));
+loadDlss5Prefs();
+
 for (const id of ["dlss5DocsLink", "dlss5DocsLink2"]) {
   const a = $(id);
   if (a)
@@ -175,20 +206,6 @@ $("desktopShortcutBtn").addEventListener("click", async function () {
 // Dock buttons (always visible)
 document.querySelectorAll(".dock-btn").forEach((btn) => {
   btn.addEventListener("click", () => setFtDock(btn.dataset.dock));
-});
-// Events coming from the floating-terminal overlay (its own BrowserView, used for 'floating' dock)
-window.w2gp.onTermDockChanged((dock) => {
-  const ft = $("floatingTerminal");
-  ft.className =
-    "floating-term dock-" +
-    dock +
-    (ft.classList.contains("hidden") ? " hidden" : "");
-  if (dock !== "floating") ft.style.cssText = "";
-  document
-    .querySelectorAll(".dock-btn")
-    .forEach((b) => b.classList.toggle("active", b.dataset.dock === dock));
-  window.w2gp.bvSetDock(dock);
-  if (_ftVisible) showTerminal();
 });
 window.w2gp.onTermClosed(() => {
   _ftVisible = false;

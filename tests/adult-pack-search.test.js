@@ -90,9 +90,14 @@ test('renderer never invents an architecture — it uses what inspect returns', 
     'the UI must say when the architecture is not in this Wan2GP build',
   )
   // Family (which folder the file lands in) is derived from that architecture,
-  // never guessed from the title.
-  assert.ok(renderer.includes('const familyOf = (arch) =>'), 'family must derive from architecture')
-  assert.ok(renderer.includes('function familyDir') === false || true)
+  // never guessed in the renderer — the backend owns the mapping so the folder
+  // layout and the catalog filter can never drift apart.
+  assert.ok(!renderer.includes('const familyOf'), 'the renderer must not guess the family')
+  assert.ok(rust.includes('fn family_for_arch'), 'the backend must derive the family')
+  assert.ok(
+    rust.includes('family_for_arch(&arch)'),
+    'a user addition must file itself by its architecture, not a client value',
+  )
 })
 
 test('search filters by model type and base model', () => {

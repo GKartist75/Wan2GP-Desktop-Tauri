@@ -19,24 +19,36 @@
     clippy::redundant_clone
 )]
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex};
 // shell/dialog/fs plugins wired for install/launch streaming — ponytail: std::process covers probes without them
-pub(crate) static MUTATING: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-pub(crate) static LAST_STATUS: OnceLock<
-    Mutex<
-        Option<(
-            std::time::Instant,
-            Option<std::time::SystemTime>,
-            serde_json::Value,
-        )>,
-    >,
-> = OnceLock::new(); // status cache: 5s floor + site-packages mtime — pip installs invalidate instantly, dashboard paints from cache
-pub(crate) static CACHED_DATA_DIR: OnceLock<Mutex<(PathBuf, std::time::Instant)>> = OnceLock::new();
-pub(crate) static CACHED_REPO_DIR: OnceLock<Mutex<(PathBuf, std::time::Instant)>> = OnceLock::new();
-pub(crate) static CACHED_IGPU: OnceLock<Mutex<Option<serde_json::Value>>> = OnceLock::new();
-pub(crate) static METRICS_CACHE: OnceLock<Mutex<Option<(std::time::Instant, serde_json::Value)>>> =
-    OnceLock::new();
-pub(crate) static SYSINFO_CACHE: OnceLock<Mutex<sysinfo::System>> = OnceLock::new();
+pub(crate) static MUTATING: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
+pub(crate) type StatusSnapshot = Option<(
+    std::time::Instant,
+    Option<std::time::SystemTime>,
+    serde_json::Value,
+)>;
+pub(crate) static LAST_STATUS: LazyLock<Mutex<StatusSnapshot>> = LazyLock::new(|| Mutex::new(None)); // status cache: 5s floor + site-packages mtime — pip installs invalidate instantly, dashboard paints from cache
+pub(crate) static CACHED_DATA_DIR: LazyLock<Mutex<(PathBuf, std::time::Instant)>> =
+    LazyLock::new(|| Mutex::new((PathBuf::new(), stale_instant())));
+pub(crate) static CACHED_REPO_DIR: LazyLock<Mutex<(PathBuf, std::time::Instant)>> =
+    LazyLock::new(|| Mutex::new((PathBuf::new(), stale_instant())));
+pub(crate) static CACHED_IGPU: LazyLock<Mutex<Option<serde_json::Value>>> =
+    LazyLock::new(|| Mutex::new(None));
+pub(crate) static METRICS_CACHE: LazyLock<Mutex<Option<(std::time::Instant, serde_json::Value)>>> =
+    LazyLock::new(|| Mutex::new(None));
+pub(crate) static SYSINFO_CACHE: LazyLock<Mutex<sysinfo::System>> = LazyLock::new(|| {
+    use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind};
+    Mutex::new(sysinfo::System::new_with_specifics(
+        RefreshKind::nothing()
+            .with_cpu(CpuRefreshKind::everything())
+            .with_memory(MemoryRefreshKind::everything()),
+    ))
+});
+fn stale_instant() -> std::time::Instant {
+    std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_hours(1))
+        .unwrap()
+}
 // Ring buffer of recent server/install log lines backs get_log_history (term window prefill).
 // Spawn helper: CREATE_NO_WINDOW on Windows so probes (nvidia-smi, python,
 // powershell, reg, where…) never flash a conhost window. The shell plugin
@@ -68,7 +80,8 @@ pub(crate) fn term_tool(tool: &str) -> std::process::Command {
 pub(crate) fn term_tool(tool: &str) -> std::process::Command {
     std::process::Command::new(tool)
 }
-pub(crate) static LOG_HISTORY: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+pub(crate) static LOG_HISTORY: LazyLock<Mutex<Vec<String>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
 /// Prefix upstream-child output lines so the console shows who said what:
 /// launcher lines already carry `[*]`/`[!]`/`[✓]`; child lines (wgp.py,
 /// setup.py, Deepy server) get `[wan2gp] `. Empty lines pass through
@@ -92,8 +105,7 @@ pub(crate) fn push_log(text: &str, source: &str) {
     if text.is_empty() {
         return;
     }
-    let m = LOG_HISTORY.get_or_init(|| Mutex::new(Vec::new()));
-    if let Ok(mut g) = m.lock() {
+    if let Ok(mut g) = LOG_HISTORY.lock() {
         for line in text.replace("\r\n", "\n").replace('\r', "\n").split('\n') {
             let t = line.trim();
             if t.is_empty() {
@@ -111,12 +123,12 @@ pub(crate) fn push_log(text: &str, source: &str) {
             g.push(line.to_string());
         }
         // Keep as deep as the renderer's own buffer (MAX_LOG = 5000 in
-                // src/app.js). At 2000 the console opened in its own window replayed a
-                // far shallower history than the docked one, which keeps 5000 — the
-                // same lines, less of them, read as "the floating console dropped
-                // logs". tqdm fragments stay excluded (below): they are \r rewrites,
-                // and replaying them as static lines would be noise, not history.
-                let excess = g.len().saturating_sub(5000);
+        // src/app.js). At 2000 the console opened in its own window replayed a
+        // far shallower history than the docked one, which keeps 5000 — the
+        // same lines, less of them, read as "the floating console dropped
+        // logs". tqdm fragments stay excluded (below): they are \r rewrites,
+        // and replaying them as static lines would be noise, not history.
+        let excess = g.len().saturating_sub(5000);
         if excess > 0 {
             g.drain(..excess);
         }
@@ -182,7 +194,12 @@ pub(crate) fn install_panic_hook() {
 pub(crate) fn report_previous_crash() -> Option<String> {
     let path = panic_log_path();
     let text = std::fs::read_to_string(&path).ok()?;
-    let detail = text.lines().rev().find(|l| !l.trim().is_empty())?.trim().to_string();
+    let detail = text
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())?
+        .trim()
+        .to_string();
     let line = format!(
         "[!] The previous launcher session ended with a Rust panic — full log: {} (most recent: {detail})",
         path.display()
@@ -192,24 +209,15 @@ pub(crate) fn report_previous_crash() -> Option<String> {
 }
 
 pub(crate) fn invalidate_path_cache() {
-    if let Some(m) = CACHED_DATA_DIR.get() {
-        let _ = m.lock().map(|mut g| {
-            g.1 = std::time::Instant::now()
-                .checked_sub(std::time::Duration::from_hours(1))
-                .unwrap()
-        });
+    if let Ok(mut g) = CACHED_DATA_DIR.lock() {
+        g.1 = stale_instant();
     }
-    if let Some(m) = CACHED_REPO_DIR.get() {
-        let _ = m.lock().map(|mut g| {
-            g.1 = std::time::Instant::now()
-                .checked_sub(std::time::Duration::from_hours(1))
-                .unwrap()
-        });
+    if let Ok(mut g) = CACHED_REPO_DIR.lock() {
+        g.1 = stale_instant();
     }
 }
 pub(crate) fn mutating_try(name: &str) -> Result<(), String> {
-    let m = MUTATING.get_or_init(|| Mutex::new(None));
-    let mut g = m.lock().unwrap();
+    let mut g = MUTATING.lock().unwrap();
     if let Some(cur) = g.as_ref() {
         return Err(format!(
             "Another operation already running ({cur}). Wait for it to finish."
@@ -219,8 +227,8 @@ pub(crate) fn mutating_try(name: &str) -> Result<(), String> {
     Ok(())
 }
 pub(crate) fn mutating_done() {
-    if let Some(m) = MUTATING.get() {
-        *m.lock().unwrap() = None;
+    if let Ok(mut g) = MUTATING.lock() {
+        *g = None;
     }
 }
 
@@ -312,18 +320,9 @@ pub(crate) fn get_data_dir_uncached() -> PathBuf {
 pub(crate) fn get_data_dir() -> PathBuf {
     #[cfg(not(test))]
     {
-        let cache = CACHED_DATA_DIR.get_or_init(|| {
-            Mutex::new((
-                PathBuf::new(),
-                std::time::Instant::now()
-                    .checked_sub(std::time::Duration::from_hours(1))
-                    .unwrap(),
-            ))
-        });
+        let cache = &CACHED_DATA_DIR;
         if let Ok(g) = cache.lock() {
-            if g.1.elapsed() < std::time::Duration::from_secs(5)
-                && !g.0.as_os_str().is_empty()
-            {
+            if g.1.elapsed() < std::time::Duration::from_secs(5) && !g.0.as_os_str().is_empty() {
                 return g.0.clone();
             }
         }
@@ -352,15 +351,11 @@ pub(crate) fn get_data_dir() -> PathBuf {
 /// different tempdir, so a cached value from a sibling test would leak into it.
 #[cfg(test)]
 pub(crate) fn reset_dir_caches() {
-    if let Some(c) = CACHED_DATA_DIR.get() {
-        if let Ok(mut g) = c.lock() {
-            *g = (PathBuf::new(), std::time::Instant::now());
-        }
+    if let Ok(mut g) = CACHED_DATA_DIR.lock() {
+        *g = (PathBuf::new(), std::time::Instant::now());
     }
-    if let Some(c) = CACHED_REPO_DIR.get() {
-        if let Ok(mut g) = c.lock() {
-            *g = (PathBuf::new(), std::time::Instant::now());
-        }
+    if let Ok(mut g) = CACHED_REPO_DIR.lock() {
+        *g = (PathBuf::new(), std::time::Instant::now());
     }
 }
 
@@ -381,7 +376,9 @@ pub(crate) struct TestDataDir {
 impl TestDataDir {
     pub(crate) fn new() -> Self {
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let lock = LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let lock = LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = tempfile::TempDir::new().expect("temp dir");
         std::env::set_var("WAN2GP_DATA_DIR", tmp.path());
         reset_dir_caches();
@@ -401,8 +398,10 @@ impl TestDataDir {
 
     /// Read the tempdir's `wgp_config.json` back as JSON.
     pub(crate) fn read_wgp_config(&self) -> serde_json::Value {
-        serde_json::from_str(&std::fs::read_to_string(get_repo_dir().join("wgp_config.json")).unwrap())
-            .unwrap()
+        serde_json::from_str(
+            &std::fs::read_to_string(get_repo_dir().join("wgp_config.json")).unwrap(),
+        )
+        .unwrap()
     }
 }
 
@@ -480,18 +479,9 @@ pub(crate) fn get_repo_dir_uncached() -> PathBuf {
 pub(crate) fn get_repo_dir() -> PathBuf {
     #[cfg(not(test))]
     {
-        let cache = CACHED_REPO_DIR.get_or_init(|| {
-            Mutex::new((
-                PathBuf::new(),
-                std::time::Instant::now()
-                    .checked_sub(std::time::Duration::from_hours(1))
-                    .unwrap(),
-            ))
-        });
+        let cache = &CACHED_REPO_DIR;
         if let Ok(g) = cache.lock() {
-            if g.1.elapsed() < std::time::Duration::from_secs(5)
-                && !g.0.as_os_str().is_empty()
-            {
+            if g.1.elapsed() < std::time::Duration::from_secs(5) && !g.0.as_os_str().is_empty() {
                 return g.0.clone();
             }
         }
@@ -670,10 +660,10 @@ pub(crate) fn reg_val(line: &str) -> Option<(String, String)> {
 }
 pub(crate) fn split_cmdline(s: &str) -> (String, Vec<String>) {
     let t = s.trim();
-    if t.starts_with('"') {
-        if let Some(end) = t[1..].find('"') {
-            let exe = t[1..1 + end].to_string();
-            let args = t[1 + end + 1..]
+    if let Some(rest) = t.strip_prefix('"') {
+        if let Some(end) = rest.find('"') {
+            let exe = rest[..end].to_string();
+            let args = rest[end + 1..]
                 .split_whitespace()
                 .map(|x| x.to_string())
                 .collect();
@@ -687,7 +677,7 @@ pub(crate) fn split_cmdline(s: &str) -> (String, Vec<String>) {
     )
 }
 
-pub(crate) static WANGP_PID: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
+pub(crate) static WANGP_PID: LazyLock<Mutex<Option<u32>>> = LazyLock::new(|| Mutex::new(None));
 
 /// Validate a pip specifier before it reaches `pip install/upgrade/uninstall`.
 /// Rust port of services/pip-spec.js `assertSafePipSpec` — keep the two in
@@ -1035,7 +1025,9 @@ mod backup_tests {
     use super::backups_to_delete;
 
     fn names(n: u64) -> Vec<String> {
-        (1..=n).map(|i| format!("wgp_config.backup-{i}.json")).collect()
+        (1..=n)
+            .map(|i| format!("wgp_config.backup-{i}.json"))
+            .collect()
     }
 
     #[test]

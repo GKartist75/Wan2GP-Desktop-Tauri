@@ -30,10 +30,23 @@ async function refreshDlss5() {
       : "DLSS 5 not installed — optional NVIDIA upsampler runtime.";
   _dlss5Rows = Array.isArray(s.files) ? s.files : [];
   _dlss5State = {};
-  // Verdicts describe the files as they were when hashed — a fresh status read
-  // means the on-disk set may have changed, so they must not outlive it.
   _dlss5Verify = {};
+  _dlss5Update = {};
   renderDlss5Progress();
+  // Paint the last real hash comparison and upstream probe (validated by the
+  // backend against the current pin/size/mtime) so a restart does not make
+  // verified files look unproven again.
+  try {
+    const c = await window.w2gp.dlss5CachedState();
+    if (c && c.ok) {
+      for (const row of c.rows || []) if (row && row.id) _dlss5Verify[row.id] = row;
+      const u = c.update || {};
+      for (const row of u.rows || []) if (row && row.id) _dlss5Update[row.id] = row;
+      _dlss5UpdateCheckedAt = Number(u.checkedAt) || 0;
+      renderDlss5Progress();
+      maybeRefreshDlss5Updates();
+    }
+  } catch {}
 }
 // ── DLSS5 compatibility check (Test button): mirrors upstream
 // unavailable_reason() so workstation cards can see the false-block.
@@ -189,12 +202,8 @@ $("dlss5CheckBtn")?.addEventListener("click", async () => {
     // because it streams a couple hundred MB.
     try {
       if (!_dlss5Rows.length) await refreshDlss5();
-      const v = await window.w2gp.dlss5VerifyFiles();
+      const v = await verifyDlss5Files();
       if (v && v.ok) {
-        const byId = {};
-        for (const row of v.rows || []) byId[row.id] = row;
-        _dlss5Verify = byId;
-        renderDlss5Progress();
         const bad = (v.rows || []).filter(
           (x) => x.state === "mismatch" || x.state === "unreadable",
         );
@@ -346,21 +355,89 @@ $("dlss5CancelBtn")?.addEventListener("click", () => {
 let _dlss5Rows = [],
   _dlss5State = {},
   _dlss5Verify = {},
+  _dlss5Update = {},
+  _dlss5UpdateCheckedAt = 0,
+  // Upstream-update notes are opt-in per session: they appear only after the
+  // user presses Check for updates, never from the startup/cached probe.
+  _dlss5UpdateAsked = false,
+  _dlss5UpdateBusy = false,
   _dlss5LastPkg = null,
   _dlss5Done = false;
+
+// Re-ask upstream at most once per TTL: a fresh launcher should show an
+// available update without hammering GitHub, and an offline probe never
+// overwrites the last good answer.
+const DLSS5_UPDATE_TTL_MS = 6 * 60 * 60 * 1000;
+
+function applyDlss5UpdateRows(r) {
+  const rows = Array.isArray(r && r.rows) ? r.rows : [];
+  _dlss5Update = {};
+  for (const row of rows) if (row && row.id) _dlss5Update[row.id] = row;
+  _dlss5UpdateCheckedAt = Number(r && r.checkedAt) || Math.floor(Date.now() / 1000);
+  renderDlss5Progress();
+}
+
+async function maybeRefreshDlss5Updates() {
+  if (_dlss5UpdateBusy) return;
+  const age = _dlss5UpdateCheckedAt
+    ? Date.now() - _dlss5UpdateCheckedAt * 1000
+    : Infinity;
+  if (age < DLSS5_UPDATE_TTL_MS) return;
+  _dlss5UpdateBusy = true;
+  try {
+    const r = await window.w2gp.dlss5UpdateCheck();
+    if (r && r.ok && r.online) applyDlss5UpdateRows(r);
+  } catch {
+    // Read-only probe: leave the cached verdicts alone.
+  } finally {
+    _dlss5UpdateBusy = false;
+  }
+}
+
+// Hash every runtime file, remember the comparison, and repaint. Used by the
+// compatibility button and once after an install so the next restart starts
+// green.
+async function verifyDlss5Files() {
+  const v = await window.w2gp.dlss5VerifyFiles();
+  if (v && v.ok) {
+    const byId = {};
+    for (const row of v.rows || []) if (row && row.id) byId[row.id] = row;
+    _dlss5Verify = byId;
+    renderDlss5Progress();
+  }
+  return v;
+}
 // Verdict for one file row: tone + trailing text. Pure, so the wording — and
 // the rule that only a real hash comparison earns the ✓ — is tested without a
 // DOM or a couple hundred MB of DLLs.
-function dlss5RowVerdict(f, phase, verdict) {
+function dlss5RowVerdict(f, phase, verdict, update) {
   const sha = String((f && f.sha) || "");
   const short = sha.slice(0, 12) + (sha.length > 12 ? "…" : "");
   const got = String((verdict && verdict.got) || "");
   const gotShort = got.slice(0, 12) + (got.length > 12 ? "…" : "");
+  // A newer upstream build is news about Wan2GP's pins, not a fault in this
+  // file: something that verified (or hash-matches the pin) stays green, and
+  // the update is named as a separate muted note. Amber is for a file that is
+  // present but unproven, red for missing or wrong bytes. Only a strictly
+  // newer build is an "update"; a same-base flavor (`differs`, e.g. DLSSNR
+  // SF-v2) is reported by the probe, not here.
+  const note =
+    update && update.state === "newer" && update.latest
+      ? ` · ↻ upstream ${update.latest} — update Wan2GP`
+      : "";
   if (phase === "verified")
-    return { tone: "ok", tail: "✓ SHA " + short + " verified by the installer" };
+    return {
+      tone: "ok",
+      tail: "✓ SHA " + short + " verified by the installer",
+      note,
+    };
   const st = verdict && verdict.state;
   if (st === "match")
-    return { tone: "ok", tail: "✓ SHA " + short + " matches what Wan2GP pins" };
+    return {
+      tone: "ok",
+      tail: "✓ SHA " + short + " matches what Wan2GP pins",
+      note,
+    };
   if (st === "mismatch")
     return {
       tone: "bad",
@@ -376,7 +453,9 @@ function dlss5RowVerdict(f, phase, verdict) {
   if (f && f.installed)
     return {
       tone: "warn",
-      tail: "SHA " + short + " expected — press Check compatibility to verify",
+      tail:
+        "SHA " + short + " expected — press Check compatibility to verify",
+      note,
     };
   return { tone: "bad", tail: "SHA " + short + " expected — not installed" };
 }
@@ -404,15 +483,30 @@ function renderDlss5Progress() {
       lab.append(dots, " " + f.id);
       val.textContent = f.version + " · downloading…";
     } else {
-      const v = dlss5RowVerdict(f, ph, _dlss5Verify[f.id]);
+      const v = dlss5RowVerdict(
+        f,
+        ph,
+        _dlss5Verify[f.id],
+        // Notes are opt-in: an available upstream update says nothing about
+        // whether the file on disk is right, so it must not decorate the row
+        // until the user asks for it.
+        _dlss5UpdateAsked ? _dlss5Update[f.pkg] : undefined,
+      );
       const icon = document.createElement("span");
-      // Green = nothing to do, amber = present but unproven, red = missing or
-      // wrong bytes.
+      // Green = installed and correct, amber = present but unproven, red =
+      // missing or wrong bytes. An available upstream update is a separate
+      // muted note, so a correct file never looks like a fault.
       if (v.tone === "ok") icon.className = "dot-ok";
       else icon.style.color = v.tone === "bad" ? "#F87171" : "#FBBF24";
       icon.textContent = "●";
       lab.append(icon, " " + f.id);
       val.textContent = f.version + " · " + v.tail;
+      if (v.note) {
+        const noteEl = document.createElement("span");
+        noteEl.className = "dlss5-note";
+        noteEl.textContent = v.note;
+        val.append(noteEl);
+      }
     }
     row.append(lab, val);
     box.append(row);
@@ -460,6 +554,13 @@ $("dlss5UpdateBtn")?.addEventListener("click", async () => {
     const r = await window.w2gp.dlss5UpdateCheck();
     if (!r || !r.ok) throw new Error((r && r.error) || "check failed");
     const rows = Array.isArray(r.rows) ? r.rows : [];
+    // Repaint the file rows too: a newer upstream build is named on the rows
+    // it affects. Only an explicit check turns the notes on — the startup
+    // probe refreshes the data without decorating a healthy panel.
+    if (r.online) {
+      _dlss5UpdateAsked = true;
+      applyDlss5UpdateRows(r);
+    }
     const consoleLines = [];
     for (const row of rows) {
       const st = DLSS5_UPDATE_STATES[row.state] || DLSS5_UPDATE_STATES.unknown;

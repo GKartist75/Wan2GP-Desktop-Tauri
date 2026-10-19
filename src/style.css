@@ -1740,6 +1740,12 @@ button.deepyweb-open:disabled {
 .dot-bad {
  color: #f87171;
 }
+/* The "a newer build exists upstream" note on a DLSS 5 file row. Deliberately
+ muted: the row's dot already says whether the installed file is correct, and
+ the actionable summary lives on the section's own status line. */
+.dlss5-note {
+ color: var(--text-tertiary, #b8b8b6);
+}
 
 /* ── Update Banner ── */
 .update-banner {
@@ -3941,6 +3947,36 @@ input[type="radio"] {
 .ap-groups {
   margin-top: 10px;
 }
+.ap-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #eaeaea);
+  border-radius: 8px;
+  background: var(--bg-secondary, #f7f6f3);
+}
+.ap-filter .input {
+  flex: 1 1 200px;
+  min-width: 150px;
+}
+.ap-filter-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.7rem;
+  color: var(--text-secondary, #787774);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ap-filter-opt input {
+  accent-color: var(--accent, #1a1a1a);
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
 .ap-block {
   border: 1px solid var(--border, #eaeaea);
   border-radius: 8px;
@@ -4233,6 +4269,58 @@ input[type="radio"] {
 }
 .ap-progress {
   margin-top: 10px;
+}
+/* One row per item in the current fetch batch. Kept above the log so the
+   overall shape ("4 of 7 done") is visible without reading the messages. */
+.ap-queue {
+  margin-top: 10px;
+  border: 1px solid var(--border, #eaeaea);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ap-queue:empty {
+  display: none;
+}
+.ap-queue-head {
+  padding: 4px 9px;
+  font-size: 0.68rem;
+  color: var(--text-secondary, #787774);
+  border-bottom: 1px solid var(--border, #eaeaea);
+  font-variant-numeric: tabular-nums;
+}
+.ap-queue-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 9px;
+  font-size: 0.7rem;
+}
+.ap-queue-row + .ap-queue-row {
+  border-top: 1px solid var(--border, #eaeaea);
+}
+.ap-queue-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ap-queue-status {
+  flex: none;
+  color: var(--text-secondary, #787774);
+  font-variant-numeric: tabular-nums;
+}
+.ap-queue-row.done .ap-queue-status {
+  color: var(--signal-green, #346538);
+}
+.ap-queue-row.failed .ap-queue-status {
+  color: var(--signal-red, #9f2f2d);
+}
+.ap-queue-row.downloading .ap-queue-status,
+.ap-queue-row.verifying .ap-queue-status {
+  color: var(--signal-blue, #1f6c9f);
+}
+.ap-queue-row.skipped .ap-queue-status {
+  color: var(--signal-yellow, #956400);
 }
 .ap-progress-line {
   font-size: 0.72rem;
@@ -4533,6 +4621,13 @@ input[type="radio"] {
   padding: 4px 6px;
   border-top: 1px solid var(--border, #eaeaea);
 }
+/* Kind override in the Add flow: compact, so it lines up with the tag it replaced. */
+.ap-sr-file .ap-kind-sel {
+  width: auto;
+  min-width: 96px;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+}
 /* -- Model Pack: finetune manager --------------------------------------- */
 .ap-fm-list {
   margin-top: 8px;
@@ -4581,4 +4676,71 @@ input[type="radio"] {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+.ap-fm-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.ap-fm-field-top {
+  align-items: flex-start;
+}
+.ap-fm-field-top .ap-detail-k {
+  padding-top: 8px;
+}
+.ap-fm-field .ap-detail-k {
+  min-width: 86px;
+}
+.ap-fm-field .input,
+.ap-fm-field .ap-fm-text {
+  flex: 1;
+  min-width: 0;
+}
+.ap-fm-field .ap-fm-text {
+  min-height: 96px;
+}
+.ap-fm-field .ap-fm-text-sm {
+  min-height: 64px;
+}
+.ap-fm-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin: 10px 0 6px;
+}
+.ap-fm-tab {
+  font-size: 0.68rem;
+  line-height: 1.2;
+  padding: 4px 9px;
+  border: 1px solid var(--border, #eaeaea);
+  border-radius: 999px;
+  color: var(--text-secondary, #787774);
+  cursor: pointer;
+  user-select: none;
+}
+.ap-fm-tab:hover {
+  border-color: var(--border-hover, #d4d4d2);
+  color: var(--text-primary, #111);
+}
+.ap-fm-tab.active {
+  background: var(--surface, #fff);
+  border-color: var(--text-secondary, #787774);
+  color: var(--text-primary, #111);
+  font-weight: 600;
+}
+.ap-fm-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  font-size: 0.7rem;
+  color: var(--text-secondary, #787774);
+  cursor: pointer;
+}
+.ap-fm-check input {
+  accent-color: var(--accent, #1a1a1a);
+  width: 14px;
+  height: 14px;
+  margin: 0;
 }

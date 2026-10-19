@@ -51,11 +51,14 @@ test('every catalog row has its own actions, not just the bulk buttons', () => {
   )
   assert.ok(delBtn.includes('adultPackRemove([item.id])'), 'per-row delete must target just that id')
   assert.ok(/\n\s*true\),\s*\n\s*\);/.test(delBtn), 'delete must be the danger action')
+  // Per-row delete must ask first, naming the model. It goes through the
+  // native dialog bridge: window.confirm is replaced by an async plugin shim
+  // the ACL denies, so its truthiness silently skips the guard.
   assert.ok(
-    renderer.includes('window.confirm(`Delete ${item.name}'),
+    renderer.includes('askConfirm(`Delete ${item.name}'),
     'per-row delete must ask first, naming the model',
   )
-  assert.ok(renderer.includes('Files you added yourself are never touched.'), 'the confirm must state the limit')
+  assert.ok(renderer.includes('Nothing outside the pack folders is touched.'), 'the confirm must state the limit')
 
   // A LoRA must not offer a finetune JSON it cannot have: Wan2GP loads LoRAs
   // from loras\, so the row says so instead of offering a button that lies.
@@ -102,11 +105,9 @@ test('a recipe can never overwrite an upstream base model', () => {
   const fn = (rust.split('pub fn adult_pack_finetune_write')[1] || '').split('\n#[tauri')[0]
   assert.ok(fn.includes('defaults'), 'must check defaults/ before writing')
   assert.ok(/finetune_id_valid\(&id\)/.test(fn), 'the id itself must be validated')
-  // ids are used as file names — traversal must be impossible
-  assert.ok(
-    /id\.chars\(\)\.all\(\|c\| c\.is_ascii_alphanumeric\(\) \|\| c == '-' \|\| c == '_'\)/.test(rust),
-    'finetune ids must be filename-safe',
-  )
+  // Filename safety is behavioral: the Rust `a_recipe_can_be_created_...`
+  // test drives "../escape" through the real command and expects a refusal,
+  // so rustfmt can reflow the predicate without breaking this suite.
 })
 
 test('the manager lists all three origins, not just the pack', () => {
@@ -133,4 +134,53 @@ test('recipes can be edited, saved, copied, link-checked and deleted', () => {
     'the delete confirmation must say weights are kept',
   )
   assert.ok(renderer.includes('className = "ap-fm-text"'), 'a real JSON editor, not a summary')
+})
+
+test('a recipe can be created from the panel without hand-writing JSON', () => {
+  assert.ok(html.includes('id="apFmNewBtn"'), 'the panel needs a create button')
+  assert.ok(html.includes('id="apFmNewHost"'), 'the form needs a host next to the list')
+  assert.ok(html.includes('＋ New finetune.json'), 'the create button must be visible as an action')
+  assert.ok(renderer.includes('function openNewFinetuneEditor()'), 'the form must exist')
+  assert.ok(
+    renderer.includes('$("apFmNewBtn").addEventListener("click", openNewFinetuneEditor)'),
+    'the button must open the form',
+  )
+
+  const fn = renderer.slice(
+    renderer.indexOf('function archOptions()'),
+    renderer.indexOf('async function loadFinetunes()'),
+  )
+  // The architecture picker prefers the list this build actually ships (from
+  // adult_pack_arches) and falls back to the pack manifest: a hand-typed id
+  // would write a recipe Wan2GP cannot map to any base model.
+  assert.ok(fn.includes('arches && arches.length'), 'architectures must come from the build list first')
+  assert.ok(fn.includes('pack && pack.archMap'), 'the manifest is the fallback source')
+  // manifest archMap ids are family filters; the recipe needs Wan2GP's own
+  // architecture id, or the written file is one Wan2GP can never offer.
+  assert.ok(fn.includes('e.architecture || (e.wan2gpIds || [])[0]'), 'must write a Wan2GP architecture id')
+  assert.ok(fn.includes('seenArch.has(e.value)'), 'one option per architecture')
+  assert.ok(!fn.includes('o.value = e.id'), 'must not write the launcher family key as architecture')
+  assert.ok(/finetunes\/<id>\.json/.test(fn), 'the form must say where the file lands')
+  // A second (LOW) half, model notes and prompt help are real WanGP fields —
+  // optional, so a plain t2v finetune still writes the minimal shape.
+  assert.ok(fn.includes('model.URLs2 = second'), 'second-phase URLs are optional')
+  assert.ok(fn.includes('model.infos = notes'), 'model notes are optional')
+  assert.ok(fn.includes('model.prompt_infos = promptHelp'), 'prompt help is optional')
+  assert.ok(
+    fn.includes('if (!primary.length && !reuseId)'),
+    'a recipe with neither source URLs nor a reused recipe must be refused',
+  )
+  // Creating over an existing recipe would silently lose the old definition.
+  // The check must cover the file stem too: a pack recipe is listed as
+  // `wan_rapid_aio` but lives in `adultpack_wan_rapid_aio.json`.
+  assert.ok(fn.includes('const taken = new Set()'), 'existing ids must be collected')
+  assert.ok(fn.includes('taken.add(f.id)'), 'manifest ids count')
+  assert.ok(fn.includes('.replace(/\\.json$/i, "")'), 'file stems count')
+  assert.ok(fn.includes('if (taken.has(fid))'), 'an existing id must be refused')
+  assert.ok(!fn.includes('fmItems.some((f) => f.id === fid)'), 'id-only comparison misses pack files')
+  assert.ok(fn.includes('if (!fmLoaded) await loadFinetunes()'), 'the guard must read finetunes/ first')
+  // The backend does the real validation; the form must still go through it.
+  assert.ok(fn.includes('adultPackFinetuneWrite('), 'the form must write through the command')
+  assert.ok(fn.includes('JSON.stringify(doc, null, 2)'), 'the file is the API — write it pretty')
+  assert.ok(fn.includes('loadFinetunes()'), 'the list must refresh after a create')
 })

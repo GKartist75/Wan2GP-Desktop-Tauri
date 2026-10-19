@@ -4,7 +4,7 @@ use crate::{
     hw::{get_gpu_info_sync, kernel_profile_key},
     status::{get_active_env, resolve_env_python},
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::Emitter;
 
 /// Packages the launcher manages outside PyPI and therefore must never be
@@ -146,8 +146,7 @@ fn spec_clause_satisfied(clause: &str, latest: &str) -> bool {
             // Compatible release: `~=1.4.2` means `>=1.4.2, ==1.4.*`.
             let mut parts: Vec<&str> = ver.split('.').collect();
             if parts.len() < 2 {
-                return version_eq(latest, ver)
-                    || crate::hw::version_gt(latest, ver);
+                return version_eq(latest, ver) || crate::hw::version_gt(latest, ver);
             }
             parts.pop();
             let prefix = parts.join(".");
@@ -248,11 +247,7 @@ pub(crate) fn requirements_pin_for(
 /// `<=`/`~=` clause). Used by `upgrade_package`, which doesn't know pip's
 /// `latest` — a capped dist refuses every `--upgrade`. Floors (`>=`, `>`)
 /// and bare names are not caps. Pure.
-pub(crate) fn requirements_caps_dist(
-    text: &str,
-    dist: &str,
-    py: Option<(u32, u32)>,
-) -> bool {
+pub(crate) fn requirements_caps_dist(text: &str, dist: &str, py: Option<(u32, u32)>) -> bool {
     let Some(spec) = applicable_spec_in_requirements(text, dist, py) else {
         return false;
     };
@@ -263,11 +258,10 @@ pub(crate) fn requirements_caps_dist(
             .find(|op| c.starts_with(*op));
         // Floors (`>=`, `>`), bare fragments, and unknown operators are not
         // caps; everything else (`==`, `!=`, `<=`, `<`, `~=`) is.
-        match op.map(|s| *s) {
-            Some("===") | Some("==") | Some("!=") | Some("~=") | Some("<=")
-            | Some("<") => true,
-            _ => false,
-        }
+        matches!(
+            op.copied(),
+            Some("===") | Some("==") | Some("!=") | Some("~=") | Some("<=") | Some("<")
+        )
     })
 }
 
@@ -275,7 +269,7 @@ pub(crate) fn requirements_caps_dist(
 /// dashboard's version scan already probed it). None when unknown — callers
 /// fail open on marker-gated lines rather than spawning a probe per check.
 fn cached_env_python_version() -> Option<(u32, u32)> {
-    let g = crate::base::LAST_STATUS.get()?.lock().ok()?;
+    let g = crate::base::LAST_STATUS.lock().ok()?;
     let v = g.as_ref()?.2.get("versions")?.get("python")?.as_str()?;
     let mut it = v.split('.').map(|p| {
         p.chars()
@@ -327,8 +321,7 @@ pub async fn check_package_updates(
             // Tested-set gate (#54 follow-up): a pip `latest` that violates
             // requirements.txt must not be offered. Missing file degrades to
             // the managed-dist gate only.
-            let req_text =
-                std::fs::read_to_string(get_repo_dir().join("requirements.txt")).ok();
+            let req_text = std::fs::read_to_string(get_repo_dir().join("requirements.txt")).ok();
             let py = cached_env_python_version();
             let res: Vec<serde_json::Value> = arr.iter().map(|e| {
             let dist = e.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -484,10 +477,7 @@ pub(crate) fn ram_gb_from_probe(raw: &str) -> Option<f64> {
         if s.matches(['.', ',']).count() != 1 {
             return None;
         }
-        let norm: String = s
-            .chars()
-            .map(|c| if c == ',' { '.' } else { c })
-            .collect();
+        let norm: String = s.chars().map(|c| if c == ',' { '.' } else { c }).collect();
         let gb: f64 = norm.parse().ok()?;
         if !gb.is_finite() || gb <= 0.0 {
             return None;
@@ -511,7 +501,14 @@ pub(crate) fn ram_gb_from_probe(raw: &str) -> Option<f64> {
     Some(n / GB)
 }
 #[tauri::command]
-pub fn auto_tune_detect() -> serde_json::Value {
+pub async fn auto_tune_detect() -> Result<serde_json::Value, String> {
+    // Probe nvidia-smi / registry off the invoke thread.
+    tauri::async_runtime::spawn_blocking(auto_tune_detect_blocking)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+pub fn auto_tune_detect_blocking() -> serde_json::Value {
     // real hardware detect — mirrors services/auto-tune.js detect() but sync via nvidia-smi
     let gpu = get_gpu_info_sync();
     let vendor = gpu
@@ -548,8 +545,16 @@ pub fn auto_tune_detect() -> serde_json::Value {
     let ram_gb = {
         #[cfg(windows)]
         {
-            silent_command("powershell").args(["-NoProfile","-Command","(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"]).output()
-                .ok().and_then(|o| ram_gb_from_probe(&String::from_utf8_lossy(&o.stdout))).unwrap_or(16.0)
+            silent_command("powershell")
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory",
+                ])
+                .output()
+                .ok()
+                .and_then(|o| ram_gb_from_probe(&String::from_utf8_lossy(&o.stdout)))
+                .unwrap_or(16.0)
         }
         #[cfg(not(windows))]
         {
@@ -727,30 +732,30 @@ pub fn auto_tune_recommend(
             serde_json::json!(if vram_tier == "tight" { 2 } else { 0 }),
         );
         // Upstream v17.01: "first make sure you use Sage2/2+ Attention as quite a
-    // few optimizations depends on it" — so the attention mode is part of the
-    // recommendation, not just a troubleshooting dropdown. NVIDIA only; the
-    // AMD/ROCm path has no Sage build and defaults to sdpa upstream.
-    if hw.get("cuda_available").and_then(|v| v.as_bool()) == Some(true) {
-        let key = crate::hw::kernel_profile_key(
-            hw.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
-            hw.get("gpu_name").and_then(|v| v.as_str()).unwrap_or(""),
-        );
-        if let Some(a) = crate::hw::attention_for_profile(&key) {
-            extra.insert("attention_mode".into(), serde_json::json!(a));
+        // few optimizations depends on it" — so the attention mode is part of the
+        // recommendation, not just a troubleshooting dropdown. NVIDIA only; the
+        // AMD/ROCm path has no Sage build and defaults to sdpa upstream.
+        if hw.get("cuda_available").and_then(|v| v.as_bool()) == Some(true) {
+            let key = crate::hw::kernel_profile_key(
+                hw.get("vendor").and_then(|v| v.as_str()).unwrap_or(""),
+                hw.get("gpu_name").and_then(|v| v.as_str()).unwrap_or(""),
+            );
+            if let Some(a) = crate::hw::attention_for_profile(&key) {
+                extra.insert("attention_mode".into(), serde_json::json!(a));
+            }
+            // v18 compilation mode (wgp.py compile_choices): cudagraph is the
+            // fast path, transformer deprecated. Same classes the known-good
+            // recipe (troubleshoot.rs) prescribes it for; elsewhere unset =
+            // upstream default disabled.
+            if key == "RTX_30" || key == "RTX_40" {
+                extra.insert("compile".into(), serde_json::json!("cudagraph"));
+            }
         }
-        // v18 compilation mode (wgp.py compile_choices): cudagraph is the
-        // fast path, transformer deprecated. Same classes the known-good
-        // recipe (troubleshoot.rs) prescribes it for; elsewhere unset =
-        // upstream default disabled.
-        if key == "RTX_30" || key == "RTX_40" {
-            extra.insert("compile".into(), serde_json::json!("cudagraph"));
-        }
-    }
-    extra.insert("smart_memory_pinning".into(), serde_json::json!(true));
-    // `read_ahead` is deliberately absent: upstream v18.19 dropped the setting
-    // and always uses the read-ahead copier (mmgp/offload.py picks
-    // _ReadAheadPinningCopier itself), so writing the key would only leave a
-    // dead toggle in wgp_config. Legacy values already on disk are ignored.
+        extra.insert("smart_memory_pinning".into(), serde_json::json!(true));
+        // `read_ahead` is deliberately absent: upstream v18.19 dropped the setting
+        // and always uses the read-ahead copier (mmgp/offload.py picks
+        // _ReadAheadPinningCopier itself), so writing the key would only leave a
+        // dead toggle in wgp_config. Legacy values already on disk are ignored.
         // WanGP's own RAM/VRAM advice: "For image models, use Profile 4 or 5
         // with a Dynamic or Manual VRAM Preload ... Video steps are usually
         // long enough to hide the transfers." Audio rides P3+, which loads
@@ -768,7 +773,7 @@ pub fn auto_tune_recommend(
         );
         extra.insert("audio_preload_mode".into(), serde_json::json!("default"));
         // 0 = Auto (upstream: 40% on Windows, 60% on Linux — v17.10 / ec9566a
-                  // lowered Linux from 80%, so a Linux Auto now pins less than v17.00 did).
+        // lowered Linux from 80%, so a Linux Auto now pins less than v17.00 did).
         extra.insert("perc_reserved_mem_max".into(), serde_json::json!(0));
     }
     let mut out = serde_json::json!({
@@ -869,8 +874,7 @@ pub async fn upgrade_package(
     // the UI, after a confirm naming the recovery path) skips both guards;
     // the spec + AMD guards below always apply, even forced.
     if !force.unwrap_or(false) {
-        let req_text =
-            std::fs::read_to_string(get_repo_dir().join("requirements.txt")).ok();
+        let req_text = std::fs::read_to_string(get_repo_dir().join("requirements.txt")).ok();
         if let Some(reason) = refuse_upgrade_reason(&pkg, req_text.as_deref()) {
             return Err(reason);
         }
@@ -1024,8 +1028,14 @@ mod managed_pin_source_tests {
             managed_pin_source("torch", "2.10.0+cu130"),
             Some("gpu-profile")
         );
-        assert_eq!(managed_pin_source("flash_attn", "2.8.3"), Some("kernel-wheel"));
-        assert_eq!(managed_pin_source("flash-attn", "2.8.3"), Some("kernel-wheel"));
+        assert_eq!(
+            managed_pin_source("flash_attn", "2.8.3"),
+            Some("kernel-wheel")
+        );
+        assert_eq!(
+            managed_pin_source("flash-attn", "2.8.3"),
+            Some("kernel-wheel")
+        );
     }
     #[test]
     fn covers_profile_and_kernel_families() {
@@ -1046,7 +1056,10 @@ mod managed_pin_source_tests {
         }
         // Case / underscore-insensitive; version pins strip to the dist name.
         assert_eq!(managed_pin_source("Torch", "2.10.0"), Some("gpu-profile"));
-        assert_eq!(managed_pin_source("FLASH_ATTN", "2.8.3"), Some("kernel-wheel"));
+        assert_eq!(
+            managed_pin_source("FLASH_ATTN", "2.8.3"),
+            Some("kernel-wheel")
+        );
         assert_eq!(dist_name_only("flash-attn==2.8.3"), "flash-attn");
         assert_eq!(dist_name_only("torch>=2.10"), "torch");
         // Local CUDA/ROCm build tags pin even unknown names.
@@ -1084,17 +1097,26 @@ mod requirements_pin_tests {
             Some("==2.1.2".into())
         );
         // Already at the pin: no update offered, nothing to block.
-        assert_eq!(requirements_pin_for(REQS, "diffusers", "0.36.0", None), None);
+        assert_eq!(
+            requirements_pin_for(REQS, "diffusers", "0.36.0", None),
+            None
+        );
     }
     #[test]
     fn floors_bare_and_missing_stay_upgradable() {
-        assert_eq!(requirements_pin_for(REQS, "tokenizers", "0.23.2", None), None);
+        assert_eq!(
+            requirements_pin_for(REQS, "tokenizers", "0.23.2", None),
+            None
+        );
         // Upstream leaves huggingface_hub uncapped: 2.0 stays offered.
         assert_eq!(
             requirements_pin_for(REQS, "huggingface-hub", "2.0.0", None),
             None
         );
-        assert_eq!(requirements_pin_for(REQS, "not-listed", "9.9.9", None), None);
+        assert_eq!(
+            requirements_pin_for(REQS, "not-listed", "9.9.9", None),
+            None
+        );
         assert_eq!(requirements_pin_for(REQS, "diffusers", "", None), None);
     }
     #[test]
@@ -1112,7 +1134,10 @@ mod requirements_pin_tests {
             requirements_pin_for(gated, "pkg", "1.1", Some((3, 11))),
             Some("==1.0".into())
         );
-        assert_eq!(requirements_pin_for(gated, "pkg", "1.1", Some((3, 9))), None);
+        assert_eq!(
+            requirements_pin_for(gated, "pkg", "1.1", Some((3, 9))),
+            None
+        );
     }
     #[test]
     fn clause_semantics_cover_ranges_and_compat() {
@@ -1157,7 +1182,10 @@ mod requirements_pin_tests {
         assert!(r.contains("kernel-wheel"), "{r}");
         // Capped dists refuse with a restore pointer; floors pass.
         let r = refuse_upgrade_reason("diffusers", Some(REQS)).unwrap();
-        assert!(r.contains("requirements.txt") && r.contains("restore"), "{r}");
+        assert!(
+            r.contains("requirements.txt") && r.contains("restore"),
+            "{r}"
+        );
         assert_eq!(refuse_upgrade_reason("tokenizers", Some(REQS)), None);
         assert_eq!(refuse_upgrade_reason("not-listed", Some(REQS)), None);
         // No file degrades to the managed guard only.
@@ -1206,10 +1234,16 @@ mod apprise_argv_tests {
     fn native_managed_defaults_off_and_survives_normalize() {
         // Absent marker reads as legacy mode (old configs keep working).
         let off = notifier_normalize(&serde_json::json!({"enabled": true}));
-        assert_eq!(off.get("nativeManaged").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            off.get("nativeManaged").and_then(|v| v.as_bool()),
+            Some(false)
+        );
         // Present marker survives a round-trip (native save owns it).
         let on = notifier_normalize(&serde_json::json!({"nativeManaged": true}));
-        assert_eq!(on.get("nativeManaged").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            on.get("nativeManaged").and_then(|v| v.as_bool()),
+            Some(true)
+        );
     }
 }
 #[tauri::command]
@@ -1266,7 +1300,14 @@ pub async fn restore_requirements(app: tauri::AppHandle) -> Result<serde_json::V
     Ok(serde_json::json!({"ok": true, "success": true, "installed": installed}))
 }
 #[tauri::command]
-pub fn llm_engines_list() -> serde_json::Value {
+pub async fn llm_engines_list() -> Result<serde_json::Value, String> {
+    // Up to three cold `pip show` calls: never hold the invoke thread.
+    tauri::async_runtime::spawn_blocking(llm_engines_list_blocking)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+pub fn llm_engines_list_blocking() -> serde_json::Value {
     // ponytail: probe cliOnPath + pipInstalled like Electron services/llm-engines.js
     let env = get_active_env();
     let py = env_python_bin();
@@ -1290,8 +1331,8 @@ pub fn llm_engines_list() -> serde_json::Value {
     // Reuse the get_status version scan (same refresh already ran it — cache is warm)
     // instead of spawning a second cold venv python just for pip show.
     let cached_sdk = crate::base::LAST_STATUS
-        .get()
-        .and_then(|m| m.lock().ok())
+        .lock()
+        .ok()
         .and_then(|g| {
             g.as_ref()
                 .and_then(|(_, _, v)| v.get("versions"))
@@ -1380,8 +1421,8 @@ pub fn llm_engine_uninstall(engine: String) -> serde_json::Value {
 }
 // OpenCode server lifecycle (Wan2GP auto-starts it too; this is the manual toggle).
 // PID-tracked so Start/Stop is honest; other engines have no servable process.
-static OPENCODE_PID: std::sync::OnceLock<std::sync::Mutex<Option<u32>>> =
-    std::sync::OnceLock::new();
+static OPENCODE_PID: std::sync::LazyLock<std::sync::Mutex<Option<u32>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 // Kill the OpenCode server this launcher spawned (if any). Shared by the
 // serve toggle and the app-close cleanup.
 // Ownership is by recorded PID, never by port: OPENCODE_PID is memory-only
@@ -1399,11 +1440,7 @@ fn persist_opencode_pid(pid: u32) {
 /// Our PID for the opencode server: memory first, marker file second.
 /// Consumes both (the file is deleted) — one Stop owns the kill exactly once.
 fn take_opencode_pid() -> Option<u32> {
-    if let Some(pid) = OPENCODE_PID
-        .get()
-        .and_then(|m| m.lock().ok())
-        .and_then(|mut g| g.take())
-    {
+    if let Some(pid) = OPENCODE_PID.lock().ok().and_then(|mut g| g.take()) {
         return (pid != 0).then_some(pid);
     }
     let s = std::fs::read_to_string(opencode_pid_file()).ok()?;
@@ -1418,9 +1455,7 @@ fn opencode_pid_owner_ok(pid: u32) -> bool {
         .args([
             "-NoProfile",
             "-Command",
-            &format!(
-                "(Get-Process -Id {pid} -ErrorAction SilentlyContinue).ProcessName"
-            ),
+            &format!("(Get-Process -Id {pid} -ErrorAction SilentlyContinue).ProcessName"),
         ])
         .output()
         .ok()
@@ -1549,10 +1584,7 @@ pub fn llm_engine_serve(engine: String, action: String) -> serde_json::Value {
         .spawn()
     {
         Ok(child) => {
-            if let Ok(mut g) = OPENCODE_PID
-                .get_or_init(|| std::sync::Mutex::new(None))
-                .lock()
-            {
+            if let Ok(mut g) = OPENCODE_PID.lock() {
                 *g = Some(child.id());
             }
             // Survives restarts as *ours*: Stop consumes this (memory first,
@@ -1727,7 +1759,7 @@ pub(crate) fn prime_profile_to_ui_id(profile: &str) -> &str {
 /// normalize to the engine default (mirrors upstream); `None` preserves
 /// existing config.
 /// Pure + unit-tested.
-pub(crate) fn normalize_qwen_quant<'a>(quant: Option<&'a str>, enhancer: Option<i64>) -> Option<&'a str> {
+pub(crate) fn normalize_qwen_quant(quant: Option<&str>, enhancer: Option<i64>) -> Option<&str> {
     let q = quant.map(str::trim).filter(|s| !s.is_empty())?;
     match enhancer {
         Some(5) => match q {
@@ -1858,18 +1890,27 @@ pub fn deepy_set(
     // gguf_q8 quant or a stored enhancer 6 / qwen38_9b profile, otherwise 27B.
     let requested_56: Option<i64> = raw_id.filter(|id| *id == 5 || *id == 6);
     // (Zero/Disabled keep using raw_id via enh_id below; this is Prime-only.)
-    let prime_local_variant: Option<i64> = if m == "prime" && engine.as_deref() == Some("local-qwen38") {
-        if requested_56.is_some() {
-            requested_56
+    let prime_local_variant: Option<i64> =
+        if m == "prime" && engine.as_deref() == Some("local-qwen38") {
+            if requested_56.is_some() {
+                requested_56
+            } else {
+                let stored_6 = v.get("enhancer_enabled").and_then(|x| x.as_i64()) == Some(6);
+                let stored_9b = v
+                    .get("llm_engines")
+                    .and_then(|l| l.get("deepy"))
+                    .and_then(|x| x.as_str())
+                    == Some("qwen38_9b");
+                let wants_q8 = quant.as_deref().is_some_and(|q| q.trim() == "gguf_q8");
+                if wants_q8 || stored_6 || stored_9b {
+                    Some(6)
+                } else {
+                    Some(5)
+                }
+            }
         } else {
-            let stored_6 = v.get("enhancer_enabled").and_then(|x| x.as_i64()) == Some(6);
-            let stored_9b = v.get("llm_engines").and_then(|l| l.get("deepy")).and_then(|x| x.as_str()) == Some("qwen38_9b");
-            let wants_q8 = quant.as_deref().is_some_and(|q| q.trim() == "gguf_q8");
-            if wants_q8 || stored_6 || stored_9b { Some(6) } else { Some(5) }
-        }
-    } else {
-        None
-    };
+            None
+        };
     let quant_enhancer: Option<i64> = match m.as_str() {
         "zero" | "disabled" => enh_id.filter(|id| [3, 4, 5, 6].contains(id)),
         "prime" => prime_local_variant,
@@ -1903,7 +1944,11 @@ pub fn deepy_set(
     });
     let emode = match raw_emode {
         Some(0) | Some(1) => raw_emode.unwrap(),
-        _ => v.get("enhancer_mode").and_then(serde_json::Value::as_i64).filter(|n| *n == 0 || *n == 1).unwrap_or(1),
+        _ => v
+            .get("enhancer_mode")
+            .and_then(serde_json::Value::as_i64)
+            .filter(|n| *n == 0 || *n == 1)
+            .unwrap_or(1),
     };
     v["enhancer_mode"] = serde_json::json!(emode);
     // llm_engines deepy
@@ -1939,7 +1984,11 @@ pub fn deepy_set(
             // Either needs context >= 32000 and Summarize compaction, and the
             // Configuration UI auto-raises both, so mirror that here.
             let variant = prime_local_variant.unwrap_or(5);
-            let profile = if variant == 6 { "qwen38_9b" } else { "qwen38_27b" };
+            let profile = if variant == 6 {
+                "qwen38_9b"
+            } else {
+                "qwen38_27b"
+            };
             v["enhancer_enabled"] = serde_json::json!(variant);
             v["llm_engines"]["deepy"] = serde_json::json!(profile);
             v["llm_engines"]["prompt_enhancer"] = serde_json::json!("same_as_deepy");
@@ -2050,9 +2099,7 @@ pub fn deepy_set(
         other => other.to_string(),
     };
     let msg = if m == "prime" {
-        format!(
-            "Deepy Prime set to {prime_label}. Launch Wan2GP and click \"Ask Deepy\"."
-        )
+        format!("Deepy Prime set to {prime_label}. Launch Wan2GP and click \"Ask Deepy\".")
     } else if m == "zero" {
         "Deepy Zero enabled (local model). Launch Wan2GP and click \"Ask Deepy\".".into()
     } else {
@@ -2137,7 +2184,9 @@ pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool 
         // shared/cuda_memory.py COMPUTE_CACHE_PATH_KEY (default "ComputeCache",
         // relative to the WanGP folder or absolute). Fail-closed: non-empty,
         // bounded length, no NUL.
-        "compute_cache_path" => val.as_str().is_some_and(|s| !s.is_empty() && s.len() <= 260 && !s.contains('\0')),
+        "compute_cache_path" => val
+            .as_str()
+            .is_some_and(|s| !s.is_empty() && s.len() <= 260 && !s.contains('\0')),
         // wgp.py preload_mode() — "default" | "dynamic" | "manual"
         "video_preload_mode" | "image_preload_mode" | "audio_preload_mode" => {
             ["default", "dynamic", "manual"].contains(&s)
@@ -2284,11 +2333,11 @@ pub fn memory_profile_apply(settings: serde_json::Value) -> serde_json::Value {
 // from the launch-log stream (port of services/queue-notifier.js) and delivered
 // via the env's apprise console script (binary first, `python -m` fallback).
 // Spawns a thread per delivery so log streaming never blocks.
-static NOTIF_LAST_PCT: std::sync::OnceLock<std::sync::Mutex<Option<u8>>> =
-    std::sync::OnceLock::new();
-static NOTIF_LAST_FIRE: std::sync::OnceLock<
+static NOTIF_LAST_PCT: std::sync::LazyLock<std::sync::Mutex<Option<u8>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+static NOTIF_LAST_FIRE: std::sync::LazyLock<
     std::sync::Mutex<Option<(std::time::Instant, String)>>,
-> = std::sync::OnceLock::new();
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 pub(crate) fn notifier_normalize(cfg: &serde_json::Value) -> serde_json::Value {
     let step = cfg
         .get("progressStep")
@@ -2330,7 +2379,12 @@ fn env_python_bin() -> Option<PathBuf> {
 /// "No module named apprise.__main__" while `import apprise` succeeded, so
 /// delivery must not assume `-m` works. Pure over an explicit path so it is
 /// unit-testable.
-pub(crate) fn apprise_argv(py: &PathBuf, title: &str, body: &str, url: &str) -> (PathBuf, Vec<String>) {
+pub(crate) fn apprise_argv(
+    py: &Path,
+    title: &str,
+    body: &str,
+    url: &str,
+) -> (PathBuf, Vec<String>) {
     #[cfg(windows)]
     let bin = py.parent().map(|d| d.join("apprise.exe"));
     #[cfg(not(windows))]
@@ -2348,7 +2402,7 @@ pub(crate) fn apprise_argv(py: &PathBuf, title: &str, body: &str, url: &str) -> 
         )
     } else {
         (
-            py.clone(),
+            py.to_path_buf(),
             vec![
                 "-m".to_string(),
                 "apprise".to_string(),
@@ -2421,19 +2475,14 @@ pub(crate) fn notifier_fire(kind: &str, text: &str) {
         return;
     }
     // 10s cooldown per kind (log bursts shouldn't spam phones)
-    if let Some(m) = NOTIF_LAST_FIRE.get() {
-        if let Ok(g) = m.lock() {
-            if let Some((t, k)) = g.as_ref() {
-                if k == kind && t.elapsed() < std::time::Duration::from_secs(10) {
-                    return;
-                }
+    if let Ok(g) = NOTIF_LAST_FIRE.lock() {
+        if let Some((t, k)) = g.as_ref() {
+            if k == kind && t.elapsed() < std::time::Duration::from_secs(10) {
+                return;
             }
         }
     }
-    if let Ok(mut g) = NOTIF_LAST_FIRE
-        .get_or_init(|| std::sync::Mutex::new(None))
-        .lock()
-    {
+    if let Ok(mut g) = NOTIF_LAST_FIRE.lock() {
         *g = Some((std::time::Instant::now(), kind.to_string()));
     }
     let msg = match kind {
@@ -2512,16 +2561,9 @@ pub(crate) fn notifier_scan_line(line: &str) {
                     .and_then(|v| v.as_u64())
                     .unwrap_or(25)
                     .max(1);
-                let last = NOTIF_LAST_PCT
-                    .get()
-                    .and_then(|m| m.lock().ok())
-                    .and_then(|g| *g)
-                    .unwrap_or(0);
+                let last = NOTIF_LAST_PCT.lock().ok().and_then(|g| *g).unwrap_or(0);
                 if p / (step as u8) > last / (step as u8) {
-                    if let Ok(mut g) = NOTIF_LAST_PCT
-                        .get_or_init(|| std::sync::Mutex::new(None))
-                        .lock()
-                    {
+                    if let Ok(mut g) = NOTIF_LAST_PCT.lock() {
                         *g = Some(p);
                     }
                     notifier_fire("progress", &format!("{p}% done"));
@@ -2532,20 +2574,14 @@ pub(crate) fn notifier_scan_line(line: &str) {
     }
     let low = line.to_lowercase();
     if FAIL_MARKERS.iter().any(|m| low.contains(m)) && !FAIL_SKIP.iter().any(|s| low.contains(s)) {
-        if let Ok(mut g) = NOTIF_LAST_PCT
-            .get_or_init(|| std::sync::Mutex::new(None))
-            .lock()
-        {
+        if let Ok(mut g) = NOTIF_LAST_PCT.lock() {
             *g = None;
         }
         notifier_fire("fail", line.trim());
         return;
     }
     if DONE_MARKERS.iter().any(|m| low.contains(m)) {
-        if let Ok(mut g) = NOTIF_LAST_PCT
-            .get_or_init(|| std::sync::Mutex::new(None))
-            .lock()
-        {
+        if let Ok(mut g) = NOTIF_LAST_PCT.lock() {
             *g = None;
         }
         notifier_fire("complete", line.trim());
@@ -2752,11 +2788,25 @@ mod deepy_roundtrip_tests {
         );
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
         assert_eq!(read_cfg()["enhancer_mode"], 0);
-        let r = deepy_set("zero".into(), None, Some(serde_json::json!(4)), None, None, None);
+        let r = deepy_set(
+            "zero".into(),
+            None,
+            Some(serde_json::json!(4)),
+            None,
+            None,
+            None,
+        );
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
         assert_eq!(read_cfg()["enhancer_mode"], 0);
         // zero + Llama id must fall back to 3 (tokenizer-crash combo)
-        let r = deepy_set("zero".into(), None, Some(serde_json::json!(1)), None, None, None);
+        let r = deepy_set(
+            "zero".into(),
+            None,
+            Some(serde_json::json!(1)),
+            None,
+            None,
+            None,
+        );
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap());
         let c = read_cfg();
         assert_eq!(c["enhancer_enabled"], 3);
@@ -2908,7 +2958,9 @@ mod ram_probe_tests {
     }
     #[test]
     fn garbage_rejected() {
-        for bad in ["", "   ", "abc", "12.3.4", "1,2,3", "12,34.56", "-5", "0", "-79,8", "NaN", "inf"] {
+        for bad in [
+            "", "   ", "abc", "12.3.4", "1,2,3", "12,34.56", "-5", "0", "-79,8", "NaN", "inf",
+        ] {
             assert_eq!(ram_gb_from_probe(bad), None, "{bad:?}");
         }
     }
@@ -2940,7 +2992,7 @@ mod autotune_matrix_tests {
             (("high", "high"), (1.0, 1.0)),
             (("high", "low"), (3.0, 3.0)),
             (("high", "very_low"), (3.5, 3.5)), // P1/P3/P3.5 already give audio its fast path
-            (("low", "high"), (2.0, 3.0)), // v18.11: P3 (not P3+) is the audio default
+            (("low", "high"), (2.0, 3.0)),      // v18.11: P3 (not P3+) is the audio default
             (("low", "low"), (4.0, 3.0)),
             // Video already at P5 → nothing left to spare; audio follows down.
             (("low", "very_low"), (5.0, 5.0)),
@@ -3001,7 +3053,10 @@ mod autotune_matrix_tests {
             None,
         );
         assert_eq!(cuda["vram_allocator"], "vmm_spill");
-        assert_eq!(cuda["attention_head_split"], 2, "tight VRAM buys head split");
+        assert_eq!(
+            cuda["attention_head_split"], 2,
+            "tight VRAM buys head split"
+        );
         assert_eq!(cuda["image_preload_mode"], "dynamic");
         assert_eq!(cuda["smart_memory_pinning"], true);
         // Plenty of VRAM: head split off, everything else unchanged.
@@ -3042,7 +3097,11 @@ mod autotune_matrix_tests {
             })),
             None,
         );
-        for k in ["vram_allocator", "attention_head_split", "image_preload_mode"] {
+        for k in [
+            "vram_allocator",
+            "attention_head_split",
+            "image_preload_mode",
+        ] {
             assert!(none.get(k).is_none(), "CPU-only must not be given {k}");
         }
     }
@@ -3210,10 +3269,19 @@ mod kernel_setting_tests {
             assert_eq!(normalize_qwen_quant(Some(good), Some(6)), Some(good));
         }
         // Wrong-engine values fall back to the engine default, never garbage.
-        assert_eq!(normalize_qwen_quant(Some("quanto_int8"), Some(5)), Some("gguf"));
-        assert_eq!(normalize_qwen_quant(Some("gguf_ptq1"), Some(6)), Some("gguf"));
+        assert_eq!(
+            normalize_qwen_quant(Some("quanto_int8"), Some(5)),
+            Some("gguf")
+        );
+        assert_eq!(
+            normalize_qwen_quant(Some("gguf_ptq1"), Some(6)),
+            Some("gguf")
+        );
         assert_eq!(normalize_qwen_quant(Some("gguf_q8"), Some(5)), Some("gguf"));
-        assert_eq!(normalize_qwen_quant(Some("gguf_ptq1"), Some(4)), Some("quanto_int8"));
+        assert_eq!(
+            normalize_qwen_quant(Some("gguf_ptq1"), Some(4)),
+            Some("quanto_int8")
+        );
         assert_eq!(normalize_qwen_quant(Some("gguf"), Some(3)), Some("gguf"));
         // No engine / no quant preserves existing config.
         assert_eq!(normalize_qwen_quant(Some("gguf_ptq1"), None), None);
@@ -3236,7 +3304,10 @@ mod kernel_setting_tests {
             );
         }
         // Legacy numeric key must not validate as the new enum.
-        assert!(!valid_memory_override("int8_kernels", &serde_json::json!(1)));
+        assert!(!valid_memory_override(
+            "int8_kernels",
+            &serde_json::json!(1)
+        ));
     }
     #[test]
     fn fp8_kernels_match_upstream_choices() {
@@ -3278,23 +3349,44 @@ mod kernel_setting_tests {
     #[test]
     fn kernel_precision_match_upstream_choices() {
         // shared/kernels/kernel_policy.py CHOICES ("strict"/"fast").
-        assert!(valid_memory_override("kernel_precision", &serde_json::json!("fast")));
-        assert!(valid_memory_override("kernel_precision", &serde_json::json!("strict")));
-        assert!(!valid_memory_override("kernel_precision", &serde_json::json!("preserve")));
-        assert!(!valid_memory_override("kernel_precision", &serde_json::json!("")));
+        assert!(valid_memory_override(
+            "kernel_precision",
+            &serde_json::json!("fast")
+        ));
+        assert!(valid_memory_override(
+            "kernel_precision",
+            &serde_json::json!("strict")
+        ));
+        assert!(!valid_memory_override(
+            "kernel_precision",
+            &serde_json::json!("preserve")
+        ));
+        assert!(!valid_memory_override(
+            "kernel_precision",
+            &serde_json::json!("")
+        ));
     }
     #[test]
     fn queue_color_scheme_allows_only_known_names() {
         // wgp.py: "pastel" renders per-row hues, anything else the
         // theme-following grey rows. Fail-closed to the two known names.
-        assert!(valid_memory_override("queue_color_scheme", &serde_json::json!("pastel")));
-        assert!(valid_memory_override("queue_color_scheme", &serde_json::json!("grey")));
+        assert!(valid_memory_override(
+            "queue_color_scheme",
+            &serde_json::json!("pastel")
+        ));
+        assert!(valid_memory_override(
+            "queue_color_scheme",
+            &serde_json::json!("grey")
+        ));
         for bad in ["", "rainbow", "dark", "GREY"] {
             assert!(
                 !valid_memory_override("queue_color_scheme", &serde_json::json!(bad)),
                 "{bad:?}"
             );
         }
-        assert!(!valid_memory_override("queue_color_scheme", &serde_json::json!(1)));
+        assert!(!valid_memory_override(
+            "queue_color_scheme",
+            &serde_json::json!(1)
+        ));
     }
 }

@@ -571,8 +571,7 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
     let pick = |k: &str| wgp.get(k).cloned().unwrap_or(serde_json::json!(null));
     // Last error-ish log lines (ring buffer, no tqdm spam by construction).
     let tail: Vec<String> = LOG_HISTORY
-        .get()
-        .and_then(|m| m.lock().ok())
+        .lock()
         .map(|g| {
             g.iter()
                 .rev()
@@ -629,7 +628,7 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
         prec = pick("kernel_precision"),
         comp = pick("compile"),
 );
-let md = format!(
+    let md = format!(
         "**Launcher** v{ver} ({os}/{arch})\n**GPU** {gpu} ({vendor}, {vram} MB VRAM)\n**Python** {py}\n**Torch** {torch} + CUDA {cuda_v} (cuda_available={cuda_ok}){amd}\n**Launch** port={port} server={server} share={share} gpu={gpudev} verbose={verbose} args=`{args}`\n**Profiles** video={vp} image={ip} audio={ap} quant={q}{v17}\n**Log tail**\n```\n{tail}\n```",
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
@@ -735,7 +734,7 @@ fn clear_triton_caches() -> Result<Option<String>, String> {
                 if i == 0 {
                     backup = b;
                 }
-                let _ = crate::base::push_log(
+                crate::base::push_log(
                     &format!("[i] cleared Triton cache: {}\n", dir.to_string_lossy()),
                     "setup",
                 );
@@ -821,10 +820,17 @@ pub(crate) fn triton_pip_show_argv() -> Vec<&'static str> {
 /// without touching anything else. Pinned so flags can't silently change.
 /// Pure + unit-tested.
 pub(crate) fn triton_pip_reinstall_argv(spec: &str) -> Vec<String> {
-    ["-m", "pip", "install", "--force-reinstall", "--no-deps", spec]
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
+    [
+        "-m",
+        "pip",
+        "install",
+        "--force-reinstall",
+        "--no-deps",
+        spec,
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 /// Render the full command line for the console echo
@@ -848,7 +854,17 @@ pub(crate) fn valid_repair_version(v: &str) -> bool {
 /// not pin: the next setup run floats forward again on upstream's `-U`
 /// range spec.
 #[tauri::command]
-pub fn troubleshoot_triton_repair(
+pub async fn troubleshoot_triton_repair(
+    app: tauri::AppHandle,
+    version: Option<String>,
+) -> Result<serde_json::Value, String> {
+    // pip reinstall can run for minutes; never block the invoking thread.
+    tauri::async_runtime::spawn_blocking(move || troubleshoot_triton_repair_blocking(app, version))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn troubleshoot_triton_repair_blocking(
     app: tauri::AppHandle,
     version: Option<String>,
 ) -> Result<serde_json::Value, String> {
@@ -867,14 +883,16 @@ pub fn troubleshoot_triton_repair(
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let _ = echo(&format!("{}\n", render_py_command(&py_s, &show_argv)));
+    echo(&format!("{}\n", render_py_command(&py_s, &show_argv)));
     let show = silent_command(&py_s)
         .args(&show_argv)
         .output()
         .map_err(|e| format!("pip show failed: {e}"))?;
     let show_text = String::from_utf8_lossy(&show.stdout).to_string();
     let Some((dist, detected)) = parse_triton_pip_show(&show_text) else {
-        return Err("No Triton distribution installed in the active env — run Install first".into());
+        return Err(
+            "No Triton distribution installed in the active env — run Install first".into(),
+        );
     };
     // Explicit older build (Roll back button) or the detected one. Either
     // way an exact == pin — never floating.
@@ -883,7 +901,9 @@ pub fn troubleshoot_triton_repair(
         detected.clone()
     } else {
         if !valid_repair_version(&want) {
-            return Err("Bad Triton version — single version token only (e.g. 3.6.0.post24)".into());
+            return Err(
+                "Bad Triton version — single version token only (e.g. 3.6.0.post24)".into(),
+            );
         }
         want.trim().to_string()
     };
@@ -897,19 +917,21 @@ pub fn troubleshoot_triton_repair(
     if !inst.status.success() {
         return Err(format!(
             "pip reinstall failed: {}",
-            String::from_utf8_lossy(&inst.stderr).chars().take(500).collect::<String>()
+            String::from_utf8_lossy(&inst.stderr)
+                .chars()
+                .take(500)
+                .collect::<String>()
         ));
     }
     let backup = clear_triton_caches()?;
-    let check_argv = vec!["-c".to_string(), "import triton; print(triton.__version__)".to_string()];
+    let check_argv = vec![
+        "-c".to_string(),
+        "import triton; print(triton.__version__)".to_string(),
+    ];
     echo(&format!("{}\n", render_py_command(&py_s, &check_argv)));
-    let imp = silent_command(&py_s)
-        .args(&check_argv)
-        .output();
+    let imp = silent_command(&py_s).args(&check_argv).output();
     let import_version = match imp {
-        Ok(o) if o.status.success() => Some(
-            String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        ),
+        Ok(o) if o.status.success() => Some(String::from_utf8_lossy(&o.stdout).trim().to_string()),
         _ => None,
     };
     echo(&format!(
@@ -980,9 +1002,7 @@ pub(crate) fn vs_buildtools_ps_launch(exe: &str) -> String {
 /// auto-detects cl.exe (or the panel Recheck does). A failed download errors
 /// out before anything executes — never a partial state.
 #[tauri::command]
-pub async fn troubleshoot_msvc_install(
-    app: tauri::AppHandle,
-) -> Result<serde_json::Value, String> {
+pub async fn troubleshoot_msvc_install(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     use tauri::Emitter;
     if cfg!(not(windows)) {
         return Err("Windows only".into());
@@ -1145,7 +1165,9 @@ pub fn troubleshoot_vram_diag(action: Option<String>) -> serde_json::Value {
     let script = match action.as_deref().unwrap_or("list") {
         "list" => "gpumem.cmd",
         "trim" => "gputrim.cmd",
-        other => return serde_json::json!({"ok": false, "error": format!("unknown action '{other}'")}),
+        other => {
+            return serde_json::json!({"ok": false, "error": format!("unknown action '{other}'")})
+        }
     };
     let path = repo.join("scripts").join(script);
     if !path.exists() {
@@ -1193,13 +1215,23 @@ mod troubleshoot_tests {
         );
         assert_eq!(
             triton_pip_reinstall_argv("triton-windows==3.6.0.post24"),
-            vec!["-m", "pip", "install", "--force-reinstall", "--no-deps", "triton-windows==3.6.0.post24"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>()
+            [
+                "-m",
+                "pip",
+                "install",
+                "--force-reinstall",
+                "--no-deps",
+                "triton-windows==3.6.0.post24"
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
         );
         assert_eq!(
-            render_py_command(r"C:\Wan2GP\env_uv\Scripts\python.exe", &triton_pip_reinstall_argv("triton-windows==3.6.0.post24")),
+            render_py_command(
+                r"C:\Wan2GP\env_uv\Scripts\python.exe",
+                &triton_pip_reinstall_argv("triton-windows==3.6.0.post24")
+            ),
             r"[>] C:\Wan2GP\env_uv\Scripts\python.exe -m pip install --force-reinstall --no-deps triton-windows==3.6.0.post24"
         );
     }
@@ -1218,7 +1250,8 @@ mod troubleshoot_tests {
     }
 
     #[test]
-    fn triton_repair_prefers_windows_dist_and_pins_exact() {        let both = "Name: triton-windows\nVersion: 3.6.0.post26\nSummary: Triton\n---\nName: triton\nVersion: 3.6.0\nSummary: Triton\n";
+    fn triton_repair_prefers_windows_dist_and_pins_exact() {
+        let both = "Name: triton-windows\nVersion: 3.6.0.post26\nSummary: Triton\n---\nName: triton\nVersion: 3.6.0\nSummary: Triton\n";
         assert_eq!(
             parse_triton_pip_show(both),
             Some(("triton-windows".to_string(), "3.6.0.post26".to_string()))
@@ -1230,7 +1263,10 @@ mod troubleshoot_tests {
             Some(("triton".to_string(), "3.6.0".to_string()))
         );
         // Nothing Triton-shaped → None (caller errors "not installed").
-        assert_eq!(parse_triton_pip_show("Name: torch\nVersion: 2.10.0\n"), None);
+        assert_eq!(
+            parse_triton_pip_show("Name: torch\nVersion: 2.10.0\n"),
+            None
+        );
         assert_eq!(parse_triton_pip_show(""), None);
         // The spec pins the detected build exactly — floating to latest
         // would break upstream parity.
@@ -1258,7 +1294,10 @@ mod troubleshoot_tests {
     #[test]
     fn vs_buildtools_launch_is_elevated_fire_and_forget() {
         let ps = vs_buildtools_ps_launch(r"C:\Temp\wgp-vs_BuildTools.exe");
-        assert!(ps.contains("-Verb RunAs"), "UAC elevation is the whole point");
+        assert!(
+            ps.contains("-Verb RunAs"),
+            "UAC elevation is the whole point"
+        );
         assert!(ps.contains("Microsoft.VisualStudio.Workload.VCTools"));
         assert!(ps.contains(r"C:\Temp\wgp-vs_BuildTools.exe"));
         assert!(
@@ -1313,7 +1352,14 @@ mod troubleshoot_tests {
 
     #[test]
     fn known_good_recipe_refuses_unknown_and_non_nvidia() {
-        for k in ["AMD_GFX1201", "AMD_GFX110X", "INTEL_XPU", "CPU", "", "RTX_99"] {
+        for k in [
+            "AMD_GFX1201",
+            "AMD_GFX110X",
+            "INTEL_XPU",
+            "CPU",
+            "",
+            "RTX_99",
+        ] {
             assert!(known_good_recipe(k).is_none(), "{k} must have no recipe");
         }
     }

@@ -215,9 +215,6 @@ function resetMigrationUI() {
     setMigrationProgress(0);
   }
 }
-// Startup prompt (main process) asks the renderer to open this modal.
-window.w2gp.onOpenMigration?.(() => openMigrationModal());
-
 // Re-entrancy guard: periodic + manual checks share one flight; a slow GitHub
 // response can't stack overlapping fetches.
 let _wangpCheckBusy = false;

@@ -94,12 +94,19 @@ test('digests are truncated, never shown as a full 64-char wall', () => {
 
 test('the verifier is wired: bridge, command, registration, and a caller', () => {
   assert.match(bridge, /dlss5VerifyFiles:\s*\(\)\s*=>\s*call\("dlss5_verify_files"\)/)
+  assert.match(bridge, /dlss5CachedState:\s*\(\)\s*=>\s*call\("dlss5_cached_state"\)/)
   assert.match(rust, /pub async fn dlss5_verify_files\(\)/)
-  assert.match(lib, /install::dlss5_verify_files,/)
+  assert.match(rust, /pub fn dlss5_cached_state\(\)/)
+  assert.match(lib, /install::dlss5_cached_state,/)
   assert.match(
     tab,
-    /dlss5CheckBtn[\s\S]{0,12000}dlss5VerifyFiles\(\)/,
+    /dlss5CheckBtn[\s\S]{0,12000}verifyDlss5Files\(\)/,
     'Check compatibility is the button that pays for the hashing',
+  )
+  assert.match(
+    tab,
+    /async function verifyDlss5Files\(\)[\s\S]{0,600}dlss5VerifyFiles\(\)/,
+    'the shared helper is the one hashing entry point',
   )
 })
 
@@ -114,10 +121,44 @@ test('the verifier compares against the shipped manifest, not a copy of it', () 
   assert.match(rust, /fn verify_reports_mismatch_and_missing_without_touching_files\(/)
 })
 
-test('a fresh status read invalidates stale verdicts', () => {
+test('a restart repaints verified verdicts from the validated cache', () => {
   assert.match(
     tab,
-    /async function refreshDlss5\(\)[\s\S]{0,1200}_dlss5Verify = \{\}/,
-    'verdicts describe the bytes as they were; a new file set makes them stale',
+    /async function refreshDlss5\(\)[\s\S]{0,1800}dlss5CachedState\(\)/,
+    'a fresh status read must consult the persisted comparison',
   )
+  assert.match(tab, /_dlss5Verify\[row\.id\] = row/, 'cached rows repaint green')
+  assert.match(tab, /maybeRefreshDlss5Updates\(\)/, 'update state is restored too')
+})
+
+test('a verified file with a newer upstream build stays green and names the update', () => {
+  const v = verdict(
+    { ...FILE, installed: true },
+    undefined,
+    { state: 'match', got: SHA },
+    { state: 'newer', latest: '310.9.0' },
+  )
+  assert.equal(v.tone, 'ok', 'a correct file is not a fault; the update is separate news')
+  assert.match(v.tail, /✓ SHA /, 'integrity is still verified')
+  assert.doesNotMatch(v.tail, /↻/, 'the update is not mixed into the integrity verdict')
+  assert.match(v.note, /↻ upstream 310\.9\.0/, 'the newer version is named separately')
+  assert.match(v.note, /update Wan2GP/, 'and where it comes from')
+})
+
+test('a correct file with nothing to announce carries no note', () => {
+  const v = verdict({ ...FILE, installed: true }, undefined, { state: 'match', got: SHA })
+  assert.equal(v.tone, 'ok')
+  assert.equal(v.note, '', 'an empty note is what keeps the row undecorated')
+})
+
+test('a same-base flavor is not rendered as an update badge', () => {
+  const v = verdict(
+    { ...FILE, installed: true },
+    undefined,
+    { state: 'match', got: SHA },
+    { state: 'differs', latest: '310.8.Lecram' },
+  )
+  assert.equal(v.tone, 'ok')
+  assert.equal(v.note, '', 'only a strictly newer build is an update')
+  assert.doesNotMatch(v.tail, /↻/, 'only a strictly newer build is an update')
 })

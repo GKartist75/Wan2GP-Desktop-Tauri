@@ -8,7 +8,6 @@ use crate::{
     status::{get_active_env, resolve_env_python},
 };
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use tauri::Emitter;
 
 // Quote-aware split for Extra Launch Args (keeps "--teacache \"a b\"" together).
@@ -71,21 +70,18 @@ pub(crate) fn build_wgp_args(base: &WgpLaunchBase) -> Vec<String> {
     }
     args
 }
-static TERMINAL_TITLE: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
-    std::sync::OnceLock::new();
+static TERMINAL_TITLE: std::sync::LazyLock<std::sync::Mutex<Option<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 pub(crate) fn terminal_title() -> Option<String> {
-    TERMINAL_TITLE
-        .get()
-        .and_then(|m| m.lock().ok())
-        .and_then(|g| g.clone())
+    TERMINAL_TITLE.lock().ok().and_then(|g| g.clone())
 }
 // AMD ROCm PATH prepend tracking (retired): older launcher versions
 // prepended the ROCm SDK bin dirs to PATH in this process. Nothing prepends
 // anymore (upstream needs no launch-time SDK env), but the recording stays
 // so the non-AMD reconcile below can still strip prepends left by those
 // versions. HSA override handling is untouched.
-static AMD_PATH_PREPEND: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
-    std::sync::OnceLock::new();
+static AMD_PATH_PREPEND: std::sync::LazyLock<std::sync::Mutex<Option<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 /// Keys this launcher sets for the AMD ROCm session env. Meaningless off-AMD:
 /// on any non-AMD launch they are removed unconditionally (never set-if-absent
 /// there), each removal logged at `[i]` level. HSA override keys are NOT here —
@@ -140,8 +136,8 @@ pub(crate) fn reconcile_non_amd_session_env(mut emit: impl FnMut(&str)) {
         }
     }
     let recorded = AMD_PATH_PREPEND
-        .get()
-        .and_then(|m| m.lock().ok())
+        .lock()
+        .ok()
         .and_then(|g| g.clone())
         .unwrap_or_default();
     if !recorded.is_empty() {
@@ -247,13 +243,10 @@ fn launch_in_terminal(
             .map(|d| d.as_millis())
             .unwrap_or(0)
     );
-    if let Ok(mut g) = TERMINAL_TITLE
-        .get_or_init(|| std::sync::Mutex::new(None))
-        .lock()
-    {
+    if let Ok(mut g) = TERMINAL_TITLE.lock() {
         *g = Some(title.clone());
     }
-    // env lines for the script (tokens + GGUF knobs, same as hidden launch)
+    // Non-secret env lines for the script (GGUF knobs, same as hidden launch).
     let mut env_lines: Vec<String> = vec![
         "set PYTHONIOENCODING=utf-8".into(),
         "set PYTHONUTF8=1".into(),
@@ -262,11 +255,19 @@ fn launch_in_terminal(
         "set TQDM_MINITERS=1".into(),
         "set NO_PROXY=localhost,127.0.0.1,::1".into(),
     ];
+    // Tokens are NOT written into the .bat: a crash left the file (and the
+    // secrets) in %TEMP% indefinitely. They go into a separate file that the
+    // script reads and deletes before starting the server; every path below
+    // removes it on failure and stop/startup sweeps anything left behind.
+    let mut secret_env: Vec<String> = Vec::new();
     if !hf_token.is_empty() {
-        env_lines.push(format!("set HF_TOKEN={hf_token}"));
+        secret_env.push(format!("HF_TOKEN={}", hf_token.replace(['\r', '\n'], "")));
     }
     if !claude_key.is_empty() {
-        env_lines.push(format!("set ANTHROPIC_API_KEY={claude_key}"));
+        secret_env.push(format!(
+            "ANTHROPIC_API_KEY={}",
+            claude_key.replace(['\r', '\n'], "")
+        ));
     }
     for k in [
         "WGP_GGUF_LLAMACPP_CUDA",
@@ -289,6 +290,19 @@ fn launch_in_terminal(
             .map(|d| d.as_millis())
             .unwrap_or(0);
         let script = std::env::temp_dir().join(format!("wan2gp-terminal-{millis}.bat"));
+        let env_script = std::env::temp_dir().join(format!("wan2gp-env-{millis}.txt"));
+        let env_preamble = if secret_env.is_empty() {
+            String::new()
+        } else {
+            if let Err(e) = std::fs::write(&env_script, secret_env.join("\r\n") + "\r\n") {
+                mutating_done();
+                return Err(format!("Could not stage terminal environment: {e}"));
+            }
+            format!(
+                "for /f \"usebackq delims=\" %%A in (\"{env}\") do set \"%%A\"\r\ndel \"{env}\" >nul 2>&1\r\n",
+                env = env_script.display()
+            )
+        };
         let url = format!("http://localhost:{port}");
         // No-GPU variant: open the user's selected default browser with GPU
         // acceleration disabled so the browser frees VRAM for generation.
@@ -312,12 +326,13 @@ fn launch_in_terminal(
         } else {
             format!("start {url}")
         };
-        let full = format!("@echo off\r\ntitle {title}\r\ncd /d \"{repo}\"\r\n{envs}\r\necho [Wan2GP Desktop Launcher] Starting on port {port}...\r\necho [Wan2GP] Running: {server_cmd}\r\nstart /b \"\" cmd /c \"{server_cmd}\" 2>&1\r\necho Waiting for server on port {port}...\r\nset RC=0\r\n:waitloop\r\nrem Start-Sleep via PowerShell, not timeout /t: a GNU timeout from Git/MSYS on PATH mangles the flags. PowerShell is already required below.\r\npowershell -NoProfile -Command \"Start-Sleep -Seconds 2\" >nul 2>&1\r\nset /a RC+=1\r\nif %RC% gtr 60 (echo Server failed to start. Check console. ^& pause ^& exit /b 1)\r\npowershell -Command \"try{{$(Invoke-WebRequest -Uri http://127.0.0.1:{port}/config -TimeoutSec 2 -UseBasicParsing).StatusCode -eq 200;exit 0}}catch{{exit 1}}\" >nul 2>&1 && goto ready\r\ngoto waitloop\r\n:ready\r\necho Wan2GP is ready! Opening browser...\r\n{open_line}\r\necho [Wan2GP] Server running. Close this window to stop it.\r\npause >nul\r\n",
+        let full = format!("@echo off\r\ntitle {title}\r\ncd /d \"{repo}\"\r\n{env_preamble}{envs}\r\necho [Wan2GP Desktop Launcher] Starting on port {port}...\r\necho [Wan2GP] Running: {server_cmd}\r\nstart /b \"\" cmd /c \"{server_cmd}\" 2>&1\r\necho Waiting for server on port {port}...\r\nset RC=0\r\n:waitloop\r\nrem Start-Sleep via PowerShell, not timeout /t: a GNU timeout from Git/MSYS on PATH mangles the flags. PowerShell is already required below.\r\npowershell -NoProfile -Command \"Start-Sleep -Seconds 2\" >nul 2>&1\r\nset /a RC+=1\r\nif %RC% gtr 60 (echo Server failed to start. Check console. ^& pause ^& exit /b 1)\r\npowershell -Command \"try{{$(Invoke-WebRequest -Uri http://127.0.0.1:{port}/config -TimeoutSec 2 -UseBasicParsing).StatusCode -eq 200;exit 0}}catch{{exit 1}}\" >nul 2>&1 && goto ready\r\ngoto waitloop\r\n:ready\r\necho Wan2GP is ready! Opening browser...\r\n{open_line}\r\necho [Wan2GP] Server running. Close this window to stop it.\r\npause >nul\r\n",
                 repo = repo.display(), envs = env_lines.join("\r\n"));
-        std::fs::write(&script, full).map_err(|e| {
+        if let Err(e) = std::fs::write(&script, full) {
+            let _ = std::fs::remove_file(&env_script);
             mutating_done();
-            e.to_string()
-        })?;
+            return Err(e.to_string());
+        };
         emit("[*] Starting Wan2GP in external terminal…\n");
         // visible window: wt.exe preferred, else cmd /K (NOT silent — user must see it)
         let has_wt = std::process::Command::new("where")
@@ -354,6 +369,8 @@ fn launch_in_terminal(
                 .spawn()
         };
         if let Err(e) = spawned {
+            let _ = std::fs::remove_file(&script);
+            let _ = std::fs::remove_file(&env_script);
             mutating_done();
             return Err(format!("Could not open terminal: {e}"));
         }
@@ -425,7 +442,11 @@ pub async fn launch(
         "--advanced".into(),
         "--multiple-images".into(),
     ];
-    if cfg.get("verboseLogging").and_then(serde_json::Value::as_bool) == Some(true) {
+    if cfg
+        .get("verboseLogging")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
         args.push("--verbose".into());
         args.push("2".into());
     }
@@ -840,7 +861,8 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             // explicit user overrides always win. FLASH_ATTENTION_TRITON_AMD
             // is build-time only upstream (aiter submodule build) and is
             // NOT set at launch; stale values are reconciled away off-AMD.
-            for (k, v) in [("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1")] {
+            {
+                let (k, v) = ("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1");
                 if std::env::var(k).is_err() {
                     std::env::set_var(k, v);
                     emit(&format!("[i] GPU profile env: {k}={v}\n"));
@@ -933,7 +955,7 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     // a signed cl.exe dissolves the "unsigned spawns unsigned compiler"
     // pattern. AMD launches instead remove our pin — TheRock's clang-cl
     // must win there, and CC env would shadow it.
-    apply_msvc_cc_pin(is_amd_launch, &emit);
+    apply_msvc_cc_pin(is_amd_launch, emit);
     std::env::set_var("PYTHONUNBUFFERED", "1");
     std::env::set_var("PYTHONUTF8", "1");
     std::env::set_var("PYTHONIOENCODING", "utf-8");
@@ -967,10 +989,10 @@ runpy.run_path(sys.argv[0], run_name='__main__')
         e.to_string()
     })?;
     emit(&format!("[*] Spawned PID {}\n", child.pid()));
-    if let Ok(m) = WANGP_PID.get_or_init(|| Mutex::new(None)).lock() {
+    if let Ok(m) = WANGP_PID.lock() {
         drop(m);
     }
-    *WANGP_PID.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(child.pid());
+    *WANGP_PID.lock().unwrap() = Some(child.pid());
     // stream logs in background
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -1159,7 +1181,7 @@ fn close_sweep_should_kill(pid: u32) -> bool {
 pub(crate) fn close_port_sweep() -> Vec<u32> {
     let sports = wan2gp_ports();
     let repo_pre = wangp_repo_prefix();
-    let tracked = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g);
+    let tracked = WANGP_PID.lock().ok().and_then(|g| *g);
     // One scan: (pid, process name, port) for EVERY listener on our
     // ports — no owner pre-filter; origin is decided per PID below.
     let mut listeners: Vec<(u32, String, u64)> = Vec::new();
@@ -1267,7 +1289,7 @@ pub(crate) fn close_port_sweep() -> Vec<u32> {
 /// memory and rewrites the file on any settings change inside its UI, so
 /// whichever side persists last wins.
 pub(crate) fn wangp_running() -> bool {
-    if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
+    if let Some(pid) = WANGP_PID.lock().ok().and_then(|g| *g) {
         if pid != 0 && pid != std::process::id() && process_signature(pid).is_some() {
             return true;
         }
@@ -1287,7 +1309,7 @@ pub(crate) fn wangp_running() -> bool {
 }
 
 pub(crate) fn stop_wangp_fast() {
-    if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
+    if let Some(pid) = WANGP_PID.lock().ok().and_then(|g| *g) {
         if pid != 0 && pid != std::process::id() {
             #[cfg(windows)]
             {
@@ -1311,6 +1333,24 @@ pub(crate) fn stop_wangp_fast() {
             .output();
     }
 }
+/// Delete the per-launch scripts this launcher owns: `wan2gp-terminal-*.bat`
+/// and the short-lived `wan2gp-env-*.txt` secret staging files. Called on
+/// stop and at startup, so a crash cannot leave tokens in %TEMP%.
+pub(crate) fn sweep_terminal_temp_files() {
+    let tmp = std::env::temp_dir();
+    let Ok(rd) = std::fs::read_dir(&tmp) else {
+        return;
+    };
+    for entry in rd.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let ours = (name.starts_with("wan2gp-terminal-") && name.ends_with(".bat"))
+            || (name.starts_with("wan2gp-env-") && name.ends_with(".txt"));
+        if ours && entry.path().is_file() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
     // Scoped stop: ONLY our Wan2GP processes — the tracked child plus any python
     // running OUR repo's wgp.py (uv-shim/child split, detached terminal mode).
@@ -1389,7 +1429,7 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
     // Origin matcher shared with the close sweep (is_ours_process) —
     // one definition, one behaviour, unit-tested at the file level.
     let is_ours = |exe: &str, cmd: &str| -> bool { is_ours_process(exe, cmd, &repo_pre) };
-    if let Some(pid) = WANGP_PID.get().and_then(|m| m.lock().ok()).and_then(|g| *g) {
+    if let Some(pid) = WANGP_PID.lock().ok().and_then(|g| *g) {
         kill_pid(pid, &mut killed);
     }
     let mut found = 0usize;
@@ -1409,22 +1449,8 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
             .args(["/F", "/FI", &format!("WINDOWTITLE eq {t}*")])
             .output();
     }
-    // Best-effort cleanup of per-launch terminal scripts (unique
-    // wan2gp-terminal-<millis>.bat files). Files only, ignore errors.
-    {
-        let tmp = std::env::temp_dir();
-        if let Ok(rd) = std::fs::read_dir(&tmp) {
-            for entry in rd.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with("wan2gp-terminal-")
-                    && name.ends_with(".bat")
-                    && entry.path().is_file()
-                {
-                    let _ = std::fs::remove_file(entry.path());
-                }
-            }
-        }
-    }
+    // Best-effort cleanup of per-launch terminal scripts and staged env files.
+    sweep_terminal_temp_files();
     // Ground truth: whatever LISTENS on a Wan2GP port dies too. Catches every
     // spawn shape (workers, renamed interpreters, stale launchers) — launch
     // itself treats port-in-use as "ours" (reuses instead of spawning), so
@@ -1598,8 +1624,8 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
             }
         }
     }
-    if let Some(m) = WANGP_PID.get() {
-        *m.lock().unwrap() = None;
+    if let Ok(mut g) = WANGP_PID.lock() {
+        *g = None;
     }
     // Verify: re-scan after the dust settles, kill stragglers once, report
     // who's still alive instead of claiming success with orphans around.
@@ -1659,11 +1685,7 @@ pub async fn stop_all_servers(app: tauri::AppHandle) -> Result<serde_json::Value
     .map_err(|e| e.to_string())
 }
 
-// ── misc stubs to unblock frontend (return safe defaults) ──
-#[tauri::command]
-pub fn open_external(url: Option<String>) {
-    let _ = url;
-}
+// ── misc helpers ──
 /// Expand Windows %VAR% placeholders case-insensitively. The old code only
 /// replaced exact-case and lowercase forms, but Windows env names come back
 /// UPPERCASE (LOCALAPPDATA) — so a literal `%LocalAppData%` never matched and
@@ -1909,24 +1931,6 @@ pub fn no_gpu_available() -> bool {
 pub async fn launch_webview(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     launch(app, Some("app".into())).await
 }
-#[tauri::command]
-pub async fn popout_webview(
-    app: tauri::AppHandle,
-    url: Option<String>,
-) -> Result<serde_json::Value, String> {
-    let res = launch(app.clone(), Some("browser".into())).await?;
-    let u = url
-        .or_else(|| {
-            res.get("url")
-                .and_then(|v| v.as_str())
-                .map(std::string::ToString::to_string)
-        })
-        .unwrap_or_else(|| "http://localhost:7861".into());
-    use tauri_plugin_opener::OpenerExt;
-    let _ = app.opener().open_url(u, None::<String>);
-    Ok(res)
-}
-
 /// Pure path derivation for the launcher-pinned Triton JIT cache:
 /// `<data dir>\triton-cache` (e.g. `C:\Wan2GP\triton-cache`). Triton's
 /// compiled helpers (`cuda_utils`, `__triton_launcher`) are unsigned .pyd
@@ -1990,9 +1994,8 @@ pub(crate) fn decide_msvc_pin(
     cur: &MsvcCurrent,
     recorded: Option<&MsvcPin>,
 ) -> MsvcDecision {
-    let matches_recorded = |cur_val: &Option<String>, rec_val: &str| -> bool {
-        cur_val.as_deref() == Some(rec_val)
-    };
+    let matches_recorded =
+        |cur_val: &Option<String>, rec_val: &str| -> bool { cur_val.as_deref() == Some(rec_val) };
     if is_amd {
         let (mut cc, mut include, mut lib) = (false, false, false);
         if let Some(r) = recorded {
@@ -2061,16 +2064,8 @@ pub(crate) fn msvc_toolchain_paths(
     kits_root: &Path,
     kit_ver: &str,
 ) -> (PathBuf, Vec<PathBuf>, Vec<PathBuf>) {
-    let msvc = vs_root
-        .join("VC")
-        .join("Tools")
-        .join("MSVC")
-        .join(msvc_ver);
-    let cc = msvc
-        .join("bin")
-        .join("Hostx64")
-        .join("x64")
-        .join("cl.exe");
+    let msvc = vs_root.join("VC").join("Tools").join("MSVC").join(msvc_ver);
+    let cc = msvc.join("bin").join("Hostx64").join("x64").join("cl.exe");
     let kit_inc = kits_root.join("Include").join(kit_ver);
     let kit_lib = kits_root.join("Lib").join(kit_ver);
     let includes = vec![
@@ -2195,11 +2190,7 @@ fn default_vs_roots() -> Vec<PathBuf> {
 fn default_kits_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
-        roots.push(
-            PathBuf::from(pf86)
-                .join("Windows Kits")
-                .join("10"),
-        );
+        roots.push(PathBuf::from(pf86).join("Windows Kits").join("10"));
     }
     let fallback = PathBuf::from(r"C:\Program Files (x86)\Windows Kits\10");
     if !roots.contains(&fallback) {
@@ -2223,22 +2214,15 @@ fn discover_msvc_pin_live() -> Option<MsvcPin> {
 /// a const so the pointer it gives is unit-tested, not left to rot.
 pub(crate) const NO_MSVC_TOOLCHAIN_HINT: &str = "[i] no MSVC toolchain found — Triton keeps its bundled TinyCC fallback for JIT stub builds (unsigned: more AV-prone). Install VS 2022 Build Tools with the C++ workload (free) and relaunch to get the signed-compiler pin — one-line command in the User Guide (Antivirus section).\n";
 
-static MSVC_PIN_RECORDED: std::sync::OnceLock<std::sync::Mutex<Option<MsvcPin>>> =
-    std::sync::OnceLock::new();
+static MSVC_PIN_RECORDED: std::sync::LazyLock<std::sync::Mutex<Option<MsvcPin>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 
 fn recorded_pin() -> Option<MsvcPin> {
-    MSVC_PIN_RECORDED
-        .get_or_init(|| std::sync::Mutex::new(None))
-        .lock()
-        .ok()
-        .and_then(|g| g.clone())
+    MSVC_PIN_RECORDED.lock().ok().and_then(|g| g.clone())
 }
 
 fn set_recorded_pin(pin: Option<MsvcPin>) {
-    if let Ok(mut g) = MSVC_PIN_RECORDED
-        .get_or_init(|| std::sync::Mutex::new(None))
-        .lock()
-    {
+    if let Ok(mut g) = MSVC_PIN_RECORDED.lock() {
         *g = pin;
     }
 }
@@ -2250,6 +2234,7 @@ fn set_recorded_pin(pin: Option<MsvcPin>) {
 ///   would shadow) stays authoritative, whatever the mode.
 /// - Forced MSVC: pin, or warn loudly when no toolchain exists.
 /// - Auto (default): pin when no user toolchain is present.
+///
 /// Warn-only throughout — discovery failure just keeps Triton's TinyCC
 /// fallback. Takes effect on the NEXT launch (launch-time env).
 pub(crate) fn apply_msvc_cc_pin(is_amd: bool, emit: impl Fn(&str)) {
@@ -2463,9 +2448,7 @@ mod launch_args_tests {
         // Non-default data dir (D: pick) resolves inside it, never HOME.
         let d2 = triton_cache_dir_for(Path::new(r"D:\Tools\Wan2GP"));
         assert_eq!(d2, Path::new(r"D:\Tools\Wan2GP\triton-cache"));
-        assert!(!d2
-            .to_string_lossy()
-            .contains("AppData\\Local\\Temp"));
+        assert!(!d2.to_string_lossy().contains("AppData\\Local\\Temp"));
     }
     #[test]
     fn close_sweep_guard_skips_zero_and_self() {
@@ -2616,9 +2599,9 @@ cmd,
 mod msvc_pin_tests {
     use super::{
         decide_msvc_pin, discover_msvc_pin_in, msvc_toolchain_paths, parse_vswhere_root,
-        pick_newest_versioned, remove_recorded_pin, triton_compiler_normalize,
-        MsvcCurrent, MsvcDecision, MsvcPin, TritonCompilerMode,
-        MSVC_FORCED_MISSING_HINT, NO_MSVC_TOOLCHAIN_HINT,
+        pick_newest_versioned, remove_recorded_pin, triton_compiler_normalize, MsvcCurrent,
+        MsvcDecision, MsvcPin, TritonCompilerMode, MSVC_FORCED_MISSING_HINT,
+        NO_MSVC_TOOLCHAIN_HINT,
     };
 
     fn rec_pin() -> MsvcPin {
@@ -2683,7 +2666,8 @@ mod msvc_pin_tests {
     }
 
     #[test]
-    fn no_msvc_hint_points_at_the_free_fix() {        // The whole point of the None branch is telling a MSVC-less user how
+    fn no_msvc_hint_points_at_the_free_fix() {
+        // The whole point of the None branch is telling a MSVC-less user how
         // to get the pin: name the fallback truthfully and point at Build Tools.
         assert!(NO_MSVC_TOOLCHAIN_HINT.contains("TinyCC fallback"));
         assert!(NO_MSVC_TOOLCHAIN_HINT.contains("Build Tools"));
@@ -2691,7 +2675,8 @@ mod msvc_pin_tests {
     }
 
     #[test]
-    fn vswhere_parse_takes_first_non_empty_line() {        assert_eq!(
+    fn vswhere_parse_takes_first_non_empty_line() {
+        assert_eq!(
             parse_vswhere_root("C:\\VS\\2022\\Community\r\n"),
             Some(std::path::PathBuf::from("C:\\VS\\2022\\Community"))
         );
@@ -2734,9 +2719,7 @@ mod msvc_pin_tests {
         );
         assert_eq!(
             cc,
-            std::path::PathBuf::from(
-                r"C:\VS\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\cl.exe"
-            )
+            std::path::PathBuf::from(r"C:\VS\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\cl.exe")
         );
         assert!(inc.iter().any(|d| d.ends_with(r"14.44.35207\include")));
         assert!(inc.iter().any(|d| d.ends_with(r"10.0.22621.0\ucrt")));
@@ -2754,11 +2737,7 @@ mod msvc_pin_tests {
     ) -> (std::path::PathBuf, std::path::PathBuf) {
         let vs = base.join("VS");
         for v in msvc_vers {
-            let m = vs
-                .join("VC")
-                .join("Tools")
-                .join("MSVC")
-                .join(v);
+            let m = vs.join("VC").join("Tools").join("MSVC").join(v);
             std::fs::create_dir_all(m.join("include")).unwrap();
             std::fs::create_dir_all(m.join("lib").join("x64")).unwrap();
             if with_cl {
@@ -2800,27 +2779,33 @@ mod msvc_pin_tests {
     fn discovery_rejects_half_installed_toolchains() {
         let tmp = tempfile::tempdir().unwrap();
         // MSVC without cl.exe → None.
-        let (vs_nocl, kits) =
-            fake_tree(&tmp.path().join("a"), &["14.44.35207"], &["10.0.22621.0"], false);
-        assert!(discover_msvc_pin_in(
-            std::slice::from_ref(&vs_nocl),
-            std::slice::from_ref(&kits)
-        )
-        .is_none());
+        let (vs_nocl, kits) = fake_tree(
+            &tmp.path().join("a"),
+            &["14.44.35207"],
+            &["10.0.22621.0"],
+            false,
+        );
+        assert!(
+            discover_msvc_pin_in(std::slice::from_ref(&vs_nocl), std::slice::from_ref(&kits))
+                .is_none()
+        );
         // MSVC without any SDK → None (cl.exe alone can't compile Python.h).
         let (vs, _) = fake_tree(&tmp.path().join("b"), &["14.44.35207"], &[], true);
         let empty_kits = tmp.path().join("b-empty-kits");
         std::fs::create_dir_all(&empty_kits).unwrap();
-        assert!(discover_msvc_pin_in(
-            std::slice::from_ref(&vs),
-            std::slice::from_ref(&empty_kits)
-        )
-        .is_none());
+        assert!(
+            discover_msvc_pin_in(std::slice::from_ref(&vs), std::slice::from_ref(&empty_kits))
+                .is_none()
+        );
     }
 
     #[test]
     fn decision_pins_on_clean_env_and_repin_is_idempotent() {
-        let clean = MsvcCurrent { cc: None, include: None, lib: None };
+        let clean = MsvcCurrent {
+            cc: None,
+            include: None,
+            lib: None,
+        };
         assert_eq!(decide_msvc_pin(false, &clean, None), MsvcDecision::Pin);
         // Second launch in the same process still holding our values → Pin
         // again (harmless overwrite), never KeepUser against ourselves.
@@ -2864,7 +2849,11 @@ mod msvc_pin_tests {
         // (CC env would shadow it in Triton's get_cc).
         assert_eq!(
             decide_msvc_pin(true, &cur_of(&r), Some(&r)),
-            MsvcDecision::Unpin { cc: true, include: true, lib: true }
+            MsvcDecision::Unpin {
+                cc: true,
+                include: true,
+                lib: true
+            }
         );
         // User CC override survives the AMD cleanup; ours still go.
         let mixed = MsvcCurrent {
@@ -2874,13 +2863,25 @@ mod msvc_pin_tests {
         };
         assert_eq!(
             decide_msvc_pin(true, &mixed, Some(&r)),
-            MsvcDecision::Unpin { cc: false, include: true, lib: true }
+            MsvcDecision::Unpin {
+                cc: false,
+                include: true,
+                lib: true
+            }
         );
         // Nothing recorded → nothing to remove.
-        let clean = MsvcCurrent { cc: None, include: None, lib: None };
+        let clean = MsvcCurrent {
+            cc: None,
+            include: None,
+            lib: None,
+        };
         assert_eq!(
             decide_msvc_pin(true, &clean, None),
-            MsvcDecision::Unpin { cc: false, include: false, lib: false }
+            MsvcDecision::Unpin {
+                cc: false,
+                include: false,
+                lib: false
+            }
         );
     }
 }
@@ -2929,9 +2930,7 @@ fn batch_python() -> Result<String, String> {
     let raw = env.get("path").and_then(|p| p.as_str()).ok_or_else(|| {
         "No Python environment is installed — finish or repair the install first".to_string()
     })?;
-    let rel = raw
-        .trim_start_matches(".\\")
-        .trim_start_matches("./");
+    let rel = raw.trim_start_matches(".\\").trim_start_matches("./");
     let base = if Path::new(raw).is_absolute() {
         PathBuf::from(raw)
     } else {
@@ -2951,7 +2950,9 @@ fn batch_python() -> Result<String, String> {
         .output()
         .is_ok_and(|o| o.status.success());
     if !torch_ok {
-        return Err("The environment's Python can't import torch — repair the environment first".into());
+        return Err(
+            "The environment's Python can't import torch — repair the environment first".into(),
+        );
     }
     Ok(py)
 }
@@ -2982,7 +2983,11 @@ pub async fn batch_process(
     emit(&format!(
         "[*] Batch {} {queue}{}\n",
         if dry_run { "validating" } else { "processing" },
-        output_dir.as_deref().filter(|d| !d.trim().is_empty()).map(|d| format!(" → {d}")).unwrap_or_default()
+        output_dir
+            .as_deref()
+            .filter(|d| !d.trim().is_empty())
+            .map(|d| format!(" → {d}"))
+            .unwrap_or_default()
     ));
     let code = tauri::async_runtime::spawn_blocking(move || {
         let mut child = std::process::Command::new(&py)
@@ -2993,7 +2998,8 @@ pub async fn batch_process(
             .spawn()
             .map_err(|e| format!("Could not start batch ({e})"))?;
         if let Some(out) = child.stdout.take() {
-            for line in std::io::BufRead::lines(std::io::BufReader::new(out)).map_while(Result::ok) {
+            for line in std::io::BufRead::lines(std::io::BufReader::new(out)).map_while(Result::ok)
+            {
                 let msg = format!("[batch] {line}\n");
                 crate::base::push_log(&msg, "launch");
                 let _ = app2.emit("launch-log", msg);
@@ -3003,7 +3009,10 @@ pub async fn batch_process(
         if let Some(err) = child.stderr.take() {
             use std::io::Read;
             let mut buf = String::new();
-            if std::io::BufReader::new(err).read_to_string(&mut buf).is_ok() {
+            if std::io::BufReader::new(err)
+                .read_to_string(&mut buf)
+                .is_ok()
+            {
                 let t = buf.trim();
                 if t.len() > 2000 {
                     err_tail = format!("…{}", &t[t.len() - 2000..]);
@@ -3023,7 +3032,9 @@ pub async fn batch_process(
     .await
     .map_err(|e| format!("Batch task failed ({e})"))??;
     mutating_done();
-    emit(&format!("[*] Batch finished with exit code {code} (0 = done, 1 = error, 130 = interrupted)\n"));
+    emit(&format!(
+        "[*] Batch finished with exit code {code} (0 = done, 1 = error, 130 = interrupted)\n"
+    ));
     Ok(serde_json::json!({"ok": code == 0, "code": code}))
 }
 
@@ -3045,7 +3056,14 @@ mod batch_tests {
         let argv = batch_argv(z.to_str().unwrap(), Some("C:\\out"), false).unwrap();
         assert_eq!(
             argv,
-            vec!["-u", "wgp.py", "--process", z.to_str().unwrap(), "--output-dir", "C:\\out"]
+            vec![
+                "-u",
+                "wgp.py",
+                "--process",
+                z.to_str().unwrap(),
+                "--output-dir",
+                "C:\\out"
+            ]
         );
         let j = fixture("json");
         let argv = batch_argv(j.to_str().unwrap(), None, true).unwrap();

@@ -10,11 +10,8 @@
 
   function $(id) { return document.getElementById(id) }
 
-  function esc(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  }
+  // Single source of truth (services/escape.js, loaded before this file).
+  const esc = window.escHtml
 
   function copyText(text, statusEl, okMsg) {
     function done(ok) {

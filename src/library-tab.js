@@ -10,11 +10,8 @@
 
   function $(id) { return document.getElementById(id) }
 
-  function esc(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  }
+  // Single source of truth (services/escape.js, loaded before this file).
+  const esc = window.escHtml
 
   function fmtBytes(n) {
     n = Number(n) || 0
@@ -35,20 +32,21 @@
         box.innerHTML = '<p class="token-hint">' + esc((r && r.error) || 'No LoRA root found') + '</p>'
         return
       }
-      if (!r.folders.length) {
+      const folders = Array.isArray(r.folders) ? r.folders : []
+      if (!folders.length) {
         box.innerHTML = '<p class="token-hint">Empty — root: <code>' + esc(r.root) + '</code></p>'
         return
       }
       box.innerHTML = '<table class="args-table lib-table">' +
         '<tr><td><strong>Family</strong></td><td><strong>Files</strong></td><td><strong>Size</strong></td><td><strong>URLs known</strong></td></tr>' +
-        r.folders.map((f) => (
+        folders.map((f) => (
           '<tr><td><code>' + esc(f.name) + '</code>' +
           (f.truncated ? ' <span class="token-hint">(first 200 shown in WanGP)</span>' : '') +
           '</td><td>' + esc(f.files) + '</td><td>' + esc(fmtBytes(f.bytes)) + '</td>' +
           '<td>' + esc(f.urls_known) + ' / ' + esc(f.files) + '</td></tr>'
         )).join('') + '</table>' +
         '<p class="token-hint">Root: <code>' + esc(r.root) + '</code> — URLs known come from <code>loras_url_cache_v2.json</code> (share it to save friends re-hunting LoRAs).</p>'
-      if (status) status.textContent = r.folders.length + ' families'
+      if (status) status.textContent = folders.length + ' families'
     } catch (e) {
       box.innerHTML = '<p class="token-hint">Failed: ' + esc((e && e.message) || e) + '</p>'
     }
@@ -65,13 +63,14 @@
         box.innerHTML = '<p class="token-hint">Failed to list finetunes.</p>'
         return
       }
-      if (!r.items.length) {
+      const items = Array.isArray(r.items) ? r.items : []
+      if (!items.length) {
         box.innerHTML = '<p class="token-hint">None yet — put shared <code>*.json</code> definitions in <code>' + esc(r.dir) + '</code> or import one below. Never edit <code>defaults/</code>.</p>'
         return
       }
       box.innerHTML = '<table class="args-table lib-table">' +
         '<tr><td><strong>Id</strong></td><td><strong>Base</strong></td><td><strong>URLs / LoRAs</strong></td><td><strong></strong></td></tr>' +
-        r.items.map((it) => (
+        items.map((it) => (
           '<tr><td><code>' + esc(it.id) + '</code><br><span class="token-hint">' + esc(it.name || '') + '</span>' +
           (it.error ? '<br><span class="token-hint">' + esc(it.error) + '</span>' : '') +
           '</td><td><code>' + esc(it.architecture || '?') + '</code></td>' +
@@ -152,9 +151,10 @@
         box.innerHTML = '<p class="token-hint">Empty — models download on first use in WanGP.</p>'
         return
       }
+      const sample = Array.isArray(r.sample) ? r.sample : []
       box.innerHTML = '<table class="args-table lib-table compact">' +
         '<tr><td><strong>Checkpoint</strong></td><td><strong>Kind</strong></td><td><strong>Size</strong></td></tr>' +
-        r.sample.map((f) => (
+        sample.map((f) => (
           '<tr><td><code>' + esc(f.name) + '</code></td><td>' + esc(f.kind || '—') + '</td><td>' + esc(fmtBytes(f.bytes)) + '</td></tr>'
         )).join('') + '</table>' +
         (r.truncated ? '<p class="token-hint">First 300 of ' + esc(r.files) + ' shown (largest first).</p>' : '') +
@@ -183,13 +183,14 @@
         box.innerHTML = '<p class="token-hint">No workspaces folder yet.</p>'
         return
       }
-      if (!r.items.length) {
+      const items = Array.isArray(r.items) ? r.items : []
+      if (!items.length) {
         box.innerHTML = '<p class="token-hint">No workspaces.</p>'
         return
       }
       box.innerHTML = '<table class="args-table lib-table">' +
         '<tr><td><strong>Workspace</strong></td><td><strong>Media</strong></td><td><strong>Size</strong></td><td><strong>Last activity</strong></td><td><strong></strong></td></tr>' +
-        r.items.map((it) => (
+        items.map((it) => (
           '<tr><td><code>' + esc(it.name || it.id) + '</code>' +
           (it.error ? '<br><span class="token-hint">' + esc(it.error) + '</span>' : '') +
           (it.missing ? '<br><span class="token-hint">' + esc(it.missing) + ' file(s) moved/missing</span>' : '') +

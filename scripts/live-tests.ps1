@@ -50,11 +50,22 @@ $cargoArgs += @('--', '--ignored', '--nocapture', '--test-threads=1')
 Write-Output ("live tests (network required) — {0} {1}" -f $cargo, ($cargoArgs -join ' '))
 Push-Location $tauri
 try {
-  & $cargo @cargoArgs
+  # Keep the output so a filter that matched nothing is an error, not a pass.
+  # `cargo test` exits 0 when zero tests run, which would make this script
+  # report success after testing nothing at all.
+  $liveOut = @()
+  & $cargo @cargoArgs 2>&1 | Tee-Object -Variable liveOut
   $code = $LASTEXITCODE
 } finally {
   Pop-Location
 }
 if ($code -ne 0) { throw "live tests failed (exit $code)" }
+$text = ($liveOut | Out-String)
+if ($text -notmatch 'test result: ok\.\s+(\d+) passed') {
+  throw "no live test ran (filter '$Filter' matched nothing) - check the test name"
+}
+if ([int]$Matches[1] -lt 1) {
+  throw "no live test ran (filter '$Filter' matched nothing) - check the test name"
+}
 Write-Output ''
-Write-Output 'live tests passed.'
+Write-Output ("live tests passed ({0} test(s))." -f $Matches[1])

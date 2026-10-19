@@ -93,8 +93,11 @@
     if (name === 'plugins_list') return { ok: true, plugins: [] }
     if (name === 'config_backups_list') return { ok: true, backups: [] }
     if (name === 'upstream_changelog') return { ok: true, commits: [] }
-    if (name === 'library_models' || name === 'library_loras' || name === 'library_finetunes') return { ok: true, items: [] }
-    if (name === 'workspace_list') return { ok: true, workspaces: [] }
+    if (name === 'library_models') return { ok: true, root: 'C:\\Wan2GP\\models', files: 0, bytes: 0, truncated: false, sample: [] }
+    if (name === 'library_loras') return { ok: true, root: 'C:\\Wan2GP\\loras', folders: [] }
+    if (name === 'library_finetunes') return { ok: true, dir: 'C:\\Wan2GP\\finetunes', items: [] }
+    if (name === 'workspace_list') return { ok: true, dir: 'C:\\Wan2GP\\workspaces', items: [], archived: 0 }
+    if (name === 'get_wangp_version') return '1.3.5'
     if (name === 'triton_status' || name === 'long_paths_status') return { ok: true, enabled: true }
     if (name === 'dlss5_classify') return { ok: true, tier: 'supported', found: true }
     if (name === 'log_server_status') return { ok: true, running: false, port: 7862, lan: false, samePc: null, phone: null, phoneUnavailable: true }

@@ -1,5 +1,5 @@
-mod amd;
 mod adult_pack;
+mod amd;
 mod base;
 mod config;
 mod deepy_web;
@@ -87,9 +87,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            // Clear any terminal script / staged token file a crashed previous
+            // session left in %TEMP% (tokens are no longer written to the .bat,
+            // but older builds did).
+            crate::launch::sweep_terminal_temp_files();
             // Desktop window mode (issue #63): config ships the main window
             // hidden and pre-maximized (the 0.2.0 default), setup re-applies
             // the saved desktopWindowMode invisibly, then shows the window —
@@ -173,15 +176,12 @@ pub fn run() {
         // get_system_metrics) stay sync on purpose: they are cache-throttled,
         // and keeping their timing unchanged matters more than the move.
         .invoke_handler(tauri::generate_handler![
-            system::greet,
             hw::detect_gpu,
             hw::detect_gpus,
             hw::detect_hardware,
             hw::get_hardware_profile,
             hw::get_system_metrics,
             status::get_status,
-            status::check_python,
-            status::check_git,
             status::check_installed,
             status::check_command,
             config::config_load,
@@ -231,11 +231,12 @@ pub fn run() {
             install::update,
             install::dep_check,
             install::dlss5_status,
-    install::triton_runtime_status,
+            install::triton_runtime_status,
             install::install_dlss5,
             install::dlss5_check,
             install::dlss5_update_check,
             install::dlss5_verify_files,
+            install::dlss5_cached_state,
             install::dlss5_apply_workstation_fix,
             install::dlss5_revert_workstation_fix,
             install::classify_target,
@@ -246,7 +247,6 @@ pub fn run() {
             install::rollback_wangp,
             config::manage_set_active,
             config::uninstall_env,
-            launch::open_external,
             launch::detect_browsers,
             launch::launch_browser,
             launch::launch_browser_no_gpu,
@@ -320,13 +320,12 @@ pub fn run() {
             system::get_crash_recovery_info,
             launch::launch_webview,
             launch::batch_process,
-            launch::popout_webview,
             system::hide_browser_view,
             system::detach_browser_view,
             system::reattach_browser_view,
             system::create_term_view,
-    system::request_console_seed,
-    system::term_console_seed,
+            system::request_console_seed,
+            system::term_console_seed,
             system::destroy_term_view,
             system::bv_navigate,
             system::bv_set_zoom,
@@ -352,7 +351,6 @@ pub fn run() {
             troubleshoot::troubleshoot_known_good,
             troubleshoot::troubleshoot_oom_remedy,
             troubleshoot::troubleshoot_vram_diag,
-            install::preflight_check,
             deepy_web::deepy_web_preflight,
             deepy_web::deepy_web_start,
             deepy_web::deepy_web_stop,
@@ -380,6 +378,10 @@ pub fn run() {
             adult_pack::adult_pack_apply_updates,
             adult_pack::adult_pack_inspect,
             adult_pack::adult_pack_add,
+            adult_pack::adult_pack_arches,
+            adult_pack::adult_pack_resolve_url,
+            adult_pack::adult_pack_lora_inventory,
+            adult_pack::adult_pack_lora_delete,
             adult_pack::adult_pack_finetune_list,
             adult_pack::adult_pack_finetune_read,
             adult_pack::adult_pack_finetune_write,

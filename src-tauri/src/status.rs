@@ -2,7 +2,6 @@
 use crate::base::*;
 use crate::hw::{get_gpu_info_sync, kernel_profile_key};
 use std::path::PathBuf;
-use std::sync::Mutex;
 
 #[tauri::command]
 pub fn get_status() -> serde_json::Value {
@@ -27,12 +26,10 @@ pub fn get_status() -> serde_json::Value {
             }
         })
         .and_then(|d| std::fs::metadata(&d).and_then(|m| m.modified()).ok());
-    if let Some(m) = LAST_STATUS.get() {
-        if let Ok(g) = m.lock() {
-            if let Some((t, mt, v)) = g.as_ref() {
-                if t.elapsed() < std::time::Duration::from_secs(5) && *mt == sp_mtime {
-                    return v.clone();
-                }
+    if let Ok(g) = LAST_STATUS.lock() {
+        if let Some((t, mt, v)) = g.as_ref() {
+            if t.elapsed() < std::time::Duration::from_secs(5) && *mt == sp_mtime {
+                return v.clone();
             }
         }
     }
@@ -78,15 +75,14 @@ pub fn get_status() -> serde_json::Value {
                             if let Some(key) = k.as_str() {
                                 let (label, pip) = match key {
                                     "nunchaku_cu13" | "nunchaku" => ("Nunchaku", "nunchaku"),
-                                    "gguf" | "gguf_cu128" | "gguf_rocm10" | "llamacpp_gguf_cuda" => {
+                                    "gguf" | "gguf_cu128" | "gguf_rocm10"
+                                    | "llamacpp_gguf_cuda" => {
                                         ("GGUF (llamacpp)", "llamacpp_gguf_cuda")
                                     }
                                     "light2xv" | "lightx2v_kernel" => {
                                         ("LightX2V", "lightx2v_kernel")
                                     }
-                                    "wgpkernels"
-                                    | "wgpkernels_cu128"
-                                    | "wgpkernels_rocm10" => {
+                                    "wgpkernels" | "wgpkernels_cu128" | "wgpkernels_rocm10" => {
                                         ("WGPKernels", "wgpkernels")
                                     }
                                     _ => (key, key),
@@ -101,8 +97,10 @@ pub fn get_status() -> serde_json::Value {
                                 // overview compares against a foreign build tag
                                 // and shows a permanent phantom mismatch.
                                 let comp_key = if key == "gguf" {
-                                    let t = prof.get("torch").and_then(|v| v.as_str()).unwrap_or("");
-                                    let p = prof.get("python").and_then(|v| v.as_str()).unwrap_or("");
+                                    let t =
+                                        prof.get("torch").and_then(|v| v.as_str()).unwrap_or("");
+                                    let p =
+                                        prof.get("python").and_then(|v| v.as_str()).unwrap_or("");
                                     match crate::hw::gguf_component_for(t, p) {
                                         // Non-RDNA4 AMD maps to the ROCm wheel, but
                                         // Sync skips it (gfx1200/1201 only) — claim
@@ -254,7 +252,9 @@ except Exception as e:
             // `AMD` key — without this every Sparge/Flash/Triton/Sage tag reads
             // "—" on an AMD box (same aliasing as the wheels list above).
             let key = if profile.starts_with("AMD")
-                && c.get("gpu_profiles").and_then(|p| p.get(&profile)).is_none()
+                && c.get("gpu_profiles")
+                    .and_then(|p| p.get(&profile))
+                    .is_none()
             {
                 "AMD"
             } else {
@@ -276,39 +276,11 @@ except Exception as e:
     }
     let out = serde_json::json!({"env": env, "versions": serde_json::Value::Object(versions), "kernelWheels": out_wheels, "kernelProfile": profile, "profile": profile_obj, "spike": false});
     // cache for 5s (mtime-keyed: pip changes invalidate instantly)
-    if let Ok(mut g) = LAST_STATUS.get_or_init(|| Mutex::new(None)).lock() {
+    if let Ok(mut g) = LAST_STATUS.lock() {
         *g = Some((std::time::Instant::now(), sp_mtime, out.clone()));
     }
     out
 }
-#[tauri::command]
-pub fn check_python() -> serde_json::Value {
-    for cmd in ["python", "python3", "py"] {
-        if let Ok(out) = silent_command(cmd).args(["--version"]).output() {
-            if out.status.success() {
-                let v = format!(
-                    "{}{}",
-                    String::from_utf8_lossy(&out.stdout),
-                    String::from_utf8_lossy(&out.stderr)
-                )
-                .trim()
-                .to_string();
-                return serde_json::json!({ "found": true, "cmd": cmd, "version": v });
-            }
-        }
-    }
-    serde_json::json!({ "found": false, "cmd": null, "version": "python not found" })
-}
-#[tauri::command]
-pub fn check_git() -> serde_json::Value {
-    match silent_command("git").arg("--version").output() {
-        Ok(out) if out.status.success() => {
-            serde_json::json!({ "found": true, "version": String::from_utf8_lossy(&out.stdout).trim() })
-        }
-        _ => serde_json::json!({ "found": false, "version": "git not found" }),
-    }
-}
-
 // ── Phase 1: paths / config / hardware / install checks ──
 /// Map an installed `onnxruntime-gpu` onto the `onnxruntime` version row
 /// (issue #15 follow-up): the probe queries both dist names; when only
@@ -390,8 +362,7 @@ mod allocator_build_tests {
         if cfg!(target_os = "macos") {
             return;
         }
-        let dir =
-            std::env::temp_dir().join(format!("wan2gp-alloc-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("wan2gp-alloc-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let name = if cfg!(windows) {
@@ -407,22 +378,36 @@ mod allocator_build_tests {
         // Same content → same id; different content → different id.
         std::fs::write(dir.join(name), b"build-one").unwrap();
         let a = allocator_build_id(&dir).unwrap();
-        assert_eq!(a, allocator_build_id(&dir).unwrap(), "fingerprint is stable");
+        assert_eq!(
+            a,
+            allocator_build_id(&dir).unwrap(),
+            "fingerprint is stable"
+        );
         std::fs::write(dir.join(name), b"build-two!").unwrap();
         let b = allocator_build_id(&dir).unwrap();
         assert_ne!(a, b, "two builds sharing a version must not collide");
         assert!(a.ends_with("k"), "size folded into the id: {a}");
         // v17.17: a second prebuilt library sits beside the VRAM one, so the
         // same VRAM build must not fingerprint the same with and without it.
-        std::fs::write(dir.join(name.replace("vmm_alloc", "ram_alloc")), b"ram-build").unwrap();
+        std::fs::write(
+            dir.join(name.replace("vmm_alloc", "ram_alloc")),
+            b"ram-build",
+        )
+        .unwrap();
         let with_ram = allocator_build_id(&dir).unwrap();
-        assert_ne!(b, with_ram, "the RAM allocator binary must be part of the id");
-        assert!(with_ram.ends_with("k"), "both sizes folded into the id: {with_ram}");
+        assert_ne!(
+            b, with_ram,
+            "the RAM allocator binary must be part of the id"
+        );
+        assert!(
+            with_ram.ends_with("k"),
+            "both sizes folded into the id: {with_ram}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
-    /// `version = "4.0.0"` from a pyproject.toml body. First `version =` line
+/// `version = "4.0.0"` from a pyproject.toml body. First `version =` line
 /// wins; `requires-python` and dependency entries never match. Pure +
 /// unit-tested.
 pub(crate) fn pyproject_version(text: &str) -> Option<String> {
@@ -430,11 +415,7 @@ pub(crate) fn pyproject_version(text: &str) -> Option<String> {
         .map(str::trim)
         .filter_map(|l| l.strip_prefix("version"))
         .find_map(|l| l.split_once('='))
-        .map(|(_, v)| {
-            v.trim()
-                .trim_matches(|c| c == '"' || c == '\'')
-                .to_string()
-        })
+        .map(|(_, v)| v.trim().trim_matches(|c| c == '"' || c == '\'').to_string())
         .filter(|v| !v.is_empty())
 }
 

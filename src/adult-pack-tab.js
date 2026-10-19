@@ -30,6 +30,13 @@
   let progressUnsub = null;
   let wired = false;
   let busy = false;
+  // Every architecture this build can load (installed defaults/ + archMap).
+  // Loaded once per init so both the recipe form and Add-by-link read one list.
+  let arches = [];
+  let loraInvLoaded = false;
+  // Catalog filter — session-only on purpose: a remembered "selected only"
+  // would hide the catalog on the next visit and look like missing data.
+  let filter = { q: "", selected: false, missing: false };
 
   const enabled = () => !!(pack && $("apEnabled") && $("apEnabled").checked);
   const ageOk = () => !!(pack && $("apAge") && $("apAge").checked);
@@ -68,6 +75,59 @@
     i.addEventListener("change", () => onchange(i.checked));
     l.appendChild(i);
     return { label: l, input: i };
+  }
+
+  // ── catalog filter ───────────────────────────────────────────────────────
+  const filterOn = () => !!(filter.q || filter.selected || filter.missing);
+  const hit = (values) =>
+    values.some((v) => String(v || "").toLowerCase().includes(filter.q));
+
+  function matchesFilter(item, kind) {
+    if (filter.selected) {
+      const on = kind === "lora" ? sel.loras[item.id] : sel.fts[item.id];
+      if (!on) return false;
+    }
+    if (filter.missing) {
+      if (kind === "lora" && item.installed) return false;
+      if (kind === "finetune" && item.finetuneWritten) return false;
+    }
+    if (!filter.q) return true;
+    return hit([item.name, item.file, item.group, item.family, item.id, item.architecture, item.description]);
+  }
+
+  function matchesCiv(c) {
+    if (filter.selected) return !!sel.civ[c.id];
+    return !filter.q || hit([c.name, c.description, c.id]);
+  }
+
+  const visibleLoras = () => (pack.loras || []).filter((l) => matchesFilter(l, "lora"));
+  const visibleFinetunes = () =>
+    (pack.finetunes || []).filter(
+      (f) => f.architectureAvailable !== false && matchesFilter(f, "finetune"),
+    );
+
+  /** Toggle every row the filter currently shows: the reason to filter is
+   *  usually "select this whole family", not just to look at it. */
+  function selectShown(on) {
+    for (const l of visibleLoras()) sel.loras[l.id] = on;
+    for (const f of visibleFinetunes()) {
+      sel.fts[f.id] = on;
+      if (!on) sel.fts["pf:" + f.id] = false;
+    }
+    for (const c of pack.civitai || []) if (matchesCiv(c)) sel.civ[c.id] = on;
+    render();
+    persist();
+  }
+
+  function clearCatalogFilter() {
+    filter = { q: "", selected: false, missing: false };
+    for (const id of ["apFilter", "apFilterSel", "apFilterMissing"]) {
+      const el = $(id);
+      if (!el) continue;
+      if (el.type === "checkbox") el.checked = false;
+      else el.value = "";
+    }
+    render();
   }
 
   /** Only ever render an https link out of the manifest — the preview and the
@@ -544,7 +604,13 @@
       actionBtn("Copy file name", "Copy the exact file name", (e) => copyToClipboard(item.file || "", e.currentTarget)),
     );
     const page = item.filePage || item.civitaiPage || item.repoPage || item.page;
-    if (page) bar.appendChild(actionBtn("Open source page", "Open the model on HuggingFace / CivitAI", () => window.w2gp.openExternal(page)));
+    if (page)
+      bar.appendChild(
+        actionBtn("Open source page", "Open the model on HuggingFace / CivitAI", () => {
+          const u = httpsUrl(page);
+          if (u) window.w2gp.openExternal(u);
+        }),
+      );
     bar.appendChild(
       actionBtn("Delete…", "Delete this item's downloaded files (and recipe)", () =>
         done(() =>
@@ -554,7 +620,7 @@
               : isCiv
               ? "its local recipe"
               : "its prefetched weights and its finetune recipe";
-            if (!window.confirm(`Delete ${item.name} — ${what}?\n\nFiles you added yourself are never touched.`)) return;
+            if (!(await askConfirm(`Delete ${item.name} — ${what}?\n\nOnly this entry's files and recipe are removed; nothing outside the pack folders is touched.`, "Delete pack item"))) return;
             try {
               const r = await window.w2gp.adultPackRemove([item.id]);
               logLine(`✓ removed ${((r && r.removed) || []).length} item(s)`, "ok");
@@ -634,15 +700,17 @@
     }
     if (!active()) {
       if (body) body.style.display = "none";
+      updateTotals();
       return;
     }
     if (body) body.style.display = "";
 
     const host = $("apGroups");
     host.innerHTML = "";
+    const loras = visibleLoras();
 
     for (const g of pack.groups || []) {
-      const items = (pack.loras || []).filter((l) => l.group === g.id);
+      const items = loras.filter((l) => l.group === g.id);
       if (!items.length) continue;
       const on = items.filter((l) => sel.loras[l.id]).length;
       const block = rowEl("ap-block");
@@ -662,15 +730,47 @@
       host.appendChild(block);
     }
 
-    const fts = (pack.finetunes || []).filter((f) => f.architectureAvailable !== false);
+    const fts = visibleFinetunes();
     const ftBlock = rowEl("ap-block");
     const ftHead = rowEl("ap-block-head");
     ftHead.appendChild(rowEl("ap-title-sm", "Checkpoint finetunes"));
     ftHead.appendChild(rowEl("ap-hint", "recipe now — weights only when you run the model, or prefetch"));
+    // Bulk toggles live in the section head: with 19+ checkpoints, ticking
+    // them one by one is the whole job.
+    for (const [label, title, value] of [
+      ["Select all", "Tick every checkpoint finetune in this list", true],
+      ["Deselect all", "Untick every checkpoint finetune (prefetch flags too)", false],
+    ]) {
+      const b = document.createElement("button");
+      b.className = "btn btn-ghost small";
+      b.textContent = label;
+      b.title = title;
+      b.addEventListener("click", () => {
+        for (const f of fts) {
+          sel.fts[f.id] = value;
+          if (!value) sel.fts["pf:" + f.id] = false;
+        }
+        render();
+        persist();
+      });
+      ftHead.appendChild(b);
+    }
     ftBlock.appendChild(ftHead);
     for (const f of fts) {
       const row = rowEl("ap-row");
-      row.appendChild(thumbOf(f));
+      const thumb = thumbOf(f);
+      row.appendChild(thumb);
+      const gal = galleryEl(f, "hf");
+      if (!f.preview) {
+        // The manifest has no picture for most HF checkpoints, but the repo
+        // may still publish samples. Make the placeholder the shortcut.
+        thumb.style.cursor = "pointer";
+        thumb.title = "No preview published — click to load this repo's example media";
+        thumb.addEventListener("click", () => {
+          if (gal.box.style.display === "none") gal.btn.click();
+          gal.box.scrollIntoView({ block: "nearest" });
+        });
+      }
       const cb = checkBox(!!sel.fts[f.id], (on) => {
         sel.fts[f.id] = on;
         render();
@@ -700,7 +800,6 @@
       pf.appendChild(pi);
       pf.appendChild(document.createTextNode("prefetch"));
       row.appendChild(pf);
-      const gal = galleryEl(f, "hf");
       row.appendChild(gal.btn);
       const info = rowEl("ap-info-btn", "i", "Show details, source link and hash");
       row.appendChild(info);
@@ -720,7 +819,7 @@
 
     const civHost = $("apCivItems");
     civHost.innerHTML = "";
-    for (const c of pack.civitai || []) {
+    for (const c of (pack.civitai || []).filter(matchesCiv)) {
       const row = rowEl("ap-row");
       row.appendChild(thumbEl(c.preview, c.name));
       const cb = checkBox(!!sel.civ[c.id], (on) => {
@@ -756,6 +855,22 @@
     if (legal) {
       legal.innerHTML = "";
       for (const line of pack.legal || []) legal.appendChild(rowEl("ap-legal-line", "⚖ " + line));
+    }
+    const countEl = $("apFilterCount");
+    if (countEl) {
+      const totalL = (pack.loras || []).length;
+      const totalF = (pack.finetunes || []).filter((f) => f.architectureAvailable !== false).length;
+      countEl.textContent = `${loras.length}/${totalL} LoRAs · ${fts.length}/${totalF} checkpoints`;
+    }
+    if (
+      filterOn() &&
+      !loras.length &&
+      !fts.length &&
+      !(pack.civitai || []).some(matchesCiv)
+    ) {
+      host.appendChild(
+        rowEl("ap-hint", "Nothing matches this filter — Clear it to see the whole catalog."),
+      );
     }
     updateTotals();
   }
@@ -813,8 +928,10 @@
       add("recipes written", `${recipes}/${fts.length}`, recipes ? "ok" : "", "finetunes/*.json in place");
       add("weights on disk", `${weights}/${fts.length}`, weights ? "ok" : "", "Checkpoint files already fetched");
     }
-    if (!p.active) {
-      t.textContent = "Adult pack off";
+    if (!p.count) {
+      t.textContent = enabled()
+        ? "Nothing selected"
+        : "Nothing selected — search above, or enable the pack";
       const f = $("apFreeText");
       if (f) f.textContent = "";
       return;
@@ -870,6 +987,99 @@
   let updates = null;
   let updateSel = new Set();
 
+  // ── download queue ───────────────────────────────────────────────────────
+  // The fetch batch is sequential in the backend, but that is an implementation
+  // detail the user should not have to infer from a scrolling log. One row per
+  // selected item, fed by the progress events (`queueIndex`/`queueTotal`).
+  let queue = null;
+
+  /** Display name for an id, from the catalog. A `#low` suffix addresses the
+   *  LOW half of a recipe, so it resolves to the recipe's own name. */
+  function queueName(id) {
+    const base = String(id).replace(/#low$/, "");
+    const all = [...((pack && pack.loras) || []), ...((pack && pack.finetunes) || [])];
+    const hit = all.find((x) => x.id === base);
+    return (hit && hit.name) || base;
+  }
+
+  function startQueue(ids) {
+    const order = [];
+    const byId = new Map();
+    for (const id of ids) {
+      if (byId.has(id)) continue;
+      order.push(id);
+      byId.set(id, { id, name: queueName(id), status: "queued", received: 0, total: 0 });
+    }
+    queue = { total: order.length, order, byId, active: true };
+    renderQueue();
+  }
+
+  /** Fold one progress event into the queue. The event's `id` is the selected
+   *  item, so a HIGH/LOW recipe's two files land on the one row the user ticked.
+   *  Only an in-flight batch is folded: CivitAI items and the update check emit
+   *  on the same channel, and must not rewrite a finished run's rows. */
+  function updateQueue(ev) {
+    if (!queue || !queue.active || !ev || !ev.id) return;
+    let row = queue.byId.get(ev.id);
+    if (!row) {
+      row = { id: ev.id, name: ev.name || queueName(ev.id), status: "queued", received: 0, total: 0 };
+      queue.order.push(ev.id);
+      queue.byId.set(ev.id, row);
+      queue.total = queue.order.length;
+    }
+    if (ev.name) row.name = ev.name;
+    if (ev.phase === "done") row.status = "done";
+    else if (ev.phase === "verify") row.status = "verifying";
+    else if (ev.phase === "start" || ev.phase === "download") row.status = "downloading";
+    row.received = Number(ev.received) || 0;
+    if (ev.total) row.total = Number(ev.total) || 0;
+    renderQueue();
+  }
+
+  /** Anything never reached is reported as such; anything interrupted mid-file
+   *  is a failure. The per-item reason is in the log, next to the queue. */
+  function finishQueue() {
+    if (!queue) return;
+    for (const row of queue.byId.values()) {
+      if (row.status === "done") continue;
+      row.status = row.status === "queued" ? "skipped" : "failed";
+    }
+    queue.active = false;
+    renderQueue();
+  }
+
+  function renderQueue() {
+    const host = $("apQueue");
+    if (!host) return;
+    if (!queue || !queue.order.length) {
+      host.innerHTML = "";
+      return;
+    }
+    const rows = queue.order.map((id) => queue.byId.get(id)).filter(Boolean);
+    const done = rows.filter((r) => r.status === "done").length;
+    host.innerHTML = "";
+    host.appendChild(
+      rowEl(
+        "ap-queue-head",
+        `${done}/${queue.total} done`,
+        "Files download one at a time; each is checked against its pinned SHA-256 before it is kept.",
+      ),
+    );
+    for (const r of rows) {
+      const row = rowEl("ap-queue-row " + r.status);
+      row.appendChild(rowEl("ap-queue-name", r.name, r.id));
+      let text = "queued";
+      if (r.status === "done") text = fmtBytes(r.total || r.received);
+      else if (r.status === "verifying") text = "verifying…";
+      else if (r.status === "downloading")
+        text = `${fmtBytes(r.received)}${r.total ? " / " + fmtBytes(r.total) : ""}`;
+      else if (r.status === "failed") text = "✗ failed";
+      else if (r.status === "skipped") text = "– not attempted";
+      row.appendChild(rowEl("ap-queue-status", text));
+      host.appendChild(row);
+    }
+  }
+
   async function runUpdateCheck() {
     const status = $("apUpdStatus");
     const host = $("apUpdList");
@@ -883,7 +1093,13 @@
       renderUpdates();
       const changed = (r.items || []).filter((it) => it.status === "updated" || it.status === "removed");
       const stale = (r.items || []).filter((it) => it.installedStale);
-      status.textContent = `${r.reposChecked} repo(s) checked · ${changed.length} file(s) changed upstream · ${stale.length} downloaded file(s) out of date`;
+      const failed = (r.failed || []).length;
+      status.textContent =
+        `${r.reposChecked} repo(s) checked · ${changed.length} file(s) changed upstream · ${stale.length} downloaded file(s) out of date` +
+        (failed ? ` · ${failed} repo(s) could not be reached` : "");
+      for (const f of r.failed || []) {
+        logLine(`✗ ${f.repo || "repo"}: ${f.error || "unreachable"}`, "err");
+      }
     } catch (e) {
       status.textContent = "Could not check for updates: " + (errText(e) || e);
     }
@@ -945,11 +1161,36 @@
       // Pins first: the new hash has to be in place before the bytes are
       // verified against it.
       const applied = await window.w2gp.adultPackApplyUpdates(ids);
-      await doFetch(ids, "Updating");
+      // Call the unwrapped worker: doFetch() would re-enter withBusy() and
+      // return immediately because this outer call already holds the guard.
+      await fetchNow(ids);
       const st = $("apUpdStatus");
       if (st) st.textContent = `${(applied.applied || []).length} hash pin(s) updated, ${(applied.skipped || []).length} skipped`;
       await runUpdateCheck();
     });
+  }
+
+  /** The download work, with no busy guard of its own so a caller that already
+   *  holds one (Apply updates) can reuse it. */
+  async function fetchNow(ids) {
+    if (!ids.length) {
+      logLine("Nothing selected to download.");
+      return;
+    }
+    startQueue(ids);
+    let r;
+    try {
+      r = await window.w2gp.adultPackFetch(ids);
+    } finally {
+      // Even if the whole command errors, the rows should not sit at
+      // "downloading" forever.
+      finishQueue();
+    }
+    const got = (r && r.done && r.done.length) || 0;
+    logLine(`✓ ${got}/${ids.length} file(s) downloaded — ${fmtBytes((r && r.bytes) || 0)}`, "ok");
+    for (const f of (r && r.failed) || []) logLine(`✗ ${f.name || f.id}: ${f.error}`, "err");
+    setProgress("Download finished.");
+    await init(true);
   }
 
   async function doFetch(ids, label) {
@@ -957,14 +1198,7 @@
       logLine("Nothing selected to download.");
       return;
     }
-    await withBusy(label + "…", async () => {
-      const r = await window.w2gp.adultPackFetch(ids);
-      const got = (r && r.done && r.done.length) || 0;
-      logLine(`✓ ${got}/${ids.length} file(s) downloaded — ${fmtBytes((r && r.bytes) || 0)}`, "ok");
-      for (const f of (r && r.failed) || []) logLine(`✗ ${f.name || f.id}: ${f.error}`, "err");
-      setProgress("Download finished.");
-      await init(true);
-    });
+    await withBusy(label + "…", () => fetchNow(ids));
   }
 
   async function doRecipes() {
@@ -1027,11 +1261,12 @@
       return;
     }
     if (
-      !window.confirm(
+      !(await askConfirm(
         `Remove ${ids.length} selected pack item(s) from disk?\n\n` +
           "LoRA files are deleted, and a selected checkpoint's prefetched weights plus its " +
-          "finetune recipe are deleted. Files you added yourself are never touched.",
-      )
+          "finetune recipe are deleted. Nothing outside the pack folders is touched.",
+        "Remove pack items",
+      ))
     )
       return;
     await withBusy("Removing…", async () => {
@@ -1072,6 +1307,9 @@
   // startup, so a bad edit shows up as a model that never appears; every write
   // therefore goes through the backend's validator first.
   let fmItems = [];
+  // True once finetunes/ has actually been read; the create form refuses an
+  // existing id, and that guard is worthless before the list exists.
+  let fmLoaded = false;
 
   function fmRow(ft, host) {
     const row = rowEl("ap-fm-row");
@@ -1115,7 +1353,7 @@
         2,
       );
       box.appendChild(ta);
-      box.appendChild(fmEditorActions(ft, ta, box));
+      box.appendChild(fmEditorActions(ft, ta, box, host, null));
       return;
     }
     box.innerHTML = "";
@@ -1123,10 +1361,25 @@
     ta.className = "ap-fm-text";
     ta.value = content;
     box.appendChild(ta);
-    box.appendChild(fmEditorActions(ft, ta, box));
+    box.appendChild(fmEditorActions(ft, ta, box, host, content));
   }
 
-  function fmEditorActions(ft, ta, box) {
+  /** Save a recipe to disk as a .json the user can share. */
+  function downloadRecipe(id, text) {
+    try {
+      const blob = new Blob([text], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${id}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {}
+  }
+
+  function fmEditorActions(ft, ta, box, host, content) {
     const bar = rowEl("ap-fm-actions");
     const status = rowEl("ap-hint");
 
@@ -1167,9 +1420,31 @@
       }
     });
 
+    // A recipe that parses can be edited in the same form used to create one,
+    // instead of only as raw JSON.
+    let parsed = null;
+    try {
+      parsed = content ? JSON.parse(content) : null;
+    } catch {}
+    if (parsed && parsed.model) {
+      const form = rowEl("ap-sr-add", "Form view", "Edit with the same form as New finetune.json");
+      form.addEventListener("click", () => {
+        box.remove();
+        openRecipeForm({ host, id: ft.id, doc: parsed });
+      });
+      bar.appendChild(form);
+    }
+
+    const exp = rowEl("ap-sr-add", "Export", "Download this recipe as a .json file to share or back up");
+    exp.addEventListener("click", () => {
+      downloadRecipe(ft.id, ta.value);
+      status.textContent = `✓ saved ${ft.id}.json`;
+    });
+    bar.appendChild(exp);
+
     const del = rowEl("ap-sr-add", "Delete recipe", "Remove this JSON from finetunes/ (weights stay)");
     del.addEventListener("click", async () => {
-      if (!window.confirm(`Delete ${ft.id}.json from finetunes/?\n\nDownloaded weights are left on disk.`)) return;
+      if (!(await askConfirm(`Delete ${ft.id}.json from finetunes/?\n\nDownloaded weights are left on disk.`, "Delete recipe"))) return;
       try {
         await window.w2gp.adultPackRemove([ft.id]);
         logLine(`✓ removed recipe ${ft.id}`, "ok");
@@ -1190,12 +1465,456 @@
     return wrap;
   }
 
+  /** Read one textarea as a list of non-empty lines. */
+  function listLines(el) {
+    return el.value
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  /** 1024x2048 -> "1024x2048 (1:2)". Wan2GP shows the label, stores the value.
+   *  A ratio the author typed in parentheses is kept as written. */
+  function resolutionPair(line) {
+    const m = /^(\d{2,5})\s*[x×]\s*(\d{2,5})(?:\s*\(([^)]+)\))?$/i.exec(line);
+    if (!m) return null;
+    const w = Number(m[1]);
+    const h = Number(m[2]);
+    const value = `${w}x${h}`;
+    const label = m[3] ? `${value} (${m[3].trim()})` : `${value} (${ratioLabel(w, h)})`;
+    return [label, value];
+  }
+
+  function ratioLabel(w, h) {
+    const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+    const g = gcd(w, h) || 1;
+    return `${w / g}:${h / g}`;
+  }
+
+  /** Create a recipe from scratch without knowing the JSON shape. The backend
+   *  still validates every field; this only collects them in the right place
+   *  so a user-added model does not require hand-writing finetunes/<id>.json.
+   *  Upstream's FINETUNES.md is the field reference. */
+  /** The architecture list both the recipe form and Add-by-link use: what this
+   *  build actually ships first, then the curated map. Falls back to archMap if
+   *  the backend lookup failed, so the form is never empty. */
+  function archOptions() {
+    if (arches && arches.length) {
+      return arches.map((a) => ({
+        value: a.id,
+        label: `${a.label || a.id}${a.installed === false ? " — not installed" : ""}`,
+      }));
+    }
+    const out = [];
+    const seen = new Set();
+    for (const e of (pack && pack.archMap) || []) {
+      const value = e.architecture || (e.wan2gpIds || [])[0] || e.id;
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      out.push({ value, label: e.label || value });
+    }
+    return out;
+  }
+
+  function fillArchSelect() {
+    const el = $("apUrlArch");
+    if (!el) return;
+    const prev = el.value;
+    el.innerHTML = "";
+    for (const o of archOptions()) {
+      const opt = document.createElement("option");
+      opt.value = o.value;
+      opt.textContent = o.label;
+      el.appendChild(opt);
+    }
+    if (prev && [...el.options].some((o) => o.value === prev)) el.value = prev;
+  }
+
+  function openNewFinetuneEditor() {
+    openRecipeForm({ host: $("apFmNewHost") });
+  }
+
+  /** One form for both "New finetune.json" and "Edit… → Form view". With an id
+   *  and a doc it edits that recipe in place; without, it creates a new one. */
+  function openRecipeForm(opts) {
+    opts = opts || {};
+    const host = opts.host || $("apFmNewHost");
+    const editId = opts.id || "";
+    const seedDoc = opts.doc || null;
+    if (!host) return;
+    if (!editId && host.firstChild) {
+      host.firstChild.scrollIntoView({ block: "center" });
+      return;
+    }
+    const box = rowEl("ap-fm-editor");
+    box.appendChild(
+      rowEl(
+        "ap-hint",
+        editId
+          ? `Editing finetunes/${editId}.json — Save writes the change; the file id stays fixed.`
+          : "Writes finetunes/<id>.json — Wan2GP offers it in the model dropdown after a refresh. Source URLs are the only required field; the other tabs carry the WanGP fields a hand-written recipe usually sets.",
+      ),
+    );
+
+    const input = (placeholder) => {
+      const el = document.createElement("input");
+      el.className = "input";
+      el.placeholder = placeholder;
+      el.autocomplete = "off";
+      return el;
+    };
+    const area = (placeholder, small) => {
+      const el = document.createElement("textarea");
+      el.className = "ap-fm-text" + (small ? " ap-fm-text-sm" : "");
+      el.placeholder = placeholder;
+      return el;
+    };
+    const field = (pane, label, el) => {
+      const r = rowEl("ap-fm-field");
+      if (el.tagName === "TEXTAREA") r.classList.add("ap-fm-field-top");
+      r.appendChild(rowEl("ap-detail-k", label));
+      r.appendChild(el);
+      pane.appendChild(r);
+    };
+
+    // ── tab strip: six panes in one editor instead of a 20-field column ──
+    const tabBar = rowEl("ap-fm-tabs");
+    const paneHost = rowEl("ap-fm-panes");
+    const panes = {};
+    const tabBtns = [];
+    const addPane = (key, label, title) => {
+      const pane = rowEl("ap-fm-pane");
+      pane.style.display = "none";
+      panes[key] = pane;
+      paneHost.appendChild(pane);
+      const b = rowEl("ap-fm-tab", label, title || "");
+      b.addEventListener("click", () => {
+        for (const [k, p] of Object.entries(panes)) p.style.display = k === key ? "" : "none";
+        for (const t of tabBtns) t.classList.toggle("active", t === b);
+      });
+      tabBar.appendChild(b);
+      tabBtns.push(b);
+    };
+    for (const [key, label, title] of [
+      ["basics", "Basics", "File id, name, base architecture and description"],
+      ["urls", "URLs", "Checkpoint sources, second phase, text encoder, VAE and preload"],
+      ["loras", "LoRAs", "Always-loaded LoRAs and their multipliers"],
+      ["res", "Resolutions", "Custom resolutions and resolution categories"],
+      ["help", "Help", "Markdown shown behind the model's information buttons"],
+      ["adv", "Advanced", "Modules, source model, quantization, visibility, image-only"],
+    ]) {
+      addPane(key, label, title);
+    }
+    box.append(tabBar, paneHost);
+    panes.basics.style.display = "";
+    tabBtns[0].classList.add("active");
+
+    const status = rowEl("ap-hint");
+
+    // ── Basics ──
+    const id = input("my_model (letters, digits, - and _)");
+    if (editId) {
+      id.value = editId;
+      id.disabled = true;
+    }
+    field(panes.basics, "File id", id);
+    const name = input("Name Wan2GP shows");
+    field(panes.basics, "Name", name);
+    const arch = document.createElement("select");
+    arch.className = "input";
+    // The recipe needs a Wan2GP architecture id. Prefer the list of what this
+    // build actually ships; fall back to the curated map when that lookup failed.
+    const seenArch = new Set();
+    for (const e of archOptions()) {
+      if (!e.value || seenArch.has(e.value)) continue;
+      seenArch.add(e.value);
+      const o = document.createElement("option");
+      o.value = e.value;
+      o.textContent = e.label || e.value;
+      arch.appendChild(o);
+    }
+    field(panes.basics, "Architecture", arch);
+    const desc = input("Optional description");
+    field(panes.basics, "Description", desc);
+
+    // Seeding copies a model subtree (URLs, LoRAs, resolutions, help text) so
+    // a variant of an existing recipe does not have to be retyped.
+    const seed = document.createElement("select");
+    seed.className = "input";
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "— start empty —";
+    seed.appendChild(none);
+    for (const ft of fmItems) {
+      const o = document.createElement("option");
+      o.value = ft.id;
+      o.textContent = `${ft.name || ft.id}${ft.written ? "" : " (not written yet)"}`;
+      seed.appendChild(o);
+    }
+    field(panes.basics, "Start from", seed);
+    if (editId) seed.disabled = true;
+
+    // ── URLs ──
+    const urls = area("One source URL per line (https://…)");
+    field(panes.urls, "Source URLs", urls);
+    const reuse = input("Optional: an existing recipe id to reuse its weights (e.g. t2v_2_2)");
+    field(panes.urls, "Reuse weights", reuse);
+    const urls2 = area("Optional second phase, one URL per line (e.g. Wan 2.2 low-noise weights)");
+    field(panes.urls, "Second phase", urls2);
+    const te = area("Optional text encoder URLs, one per line — overrides the architecture default");
+    field(panes.urls, "Text encoder", te);
+    const vae = area("Optional VAE URLs, one per line — overrides the architecture default");
+    field(panes.urls, "VAE", vae);
+    const preload = area("Optional files to always download, one URL per line");
+    field(panes.urls, "Preload", preload);
+
+    // ── LoRAs ──
+    const loras = area("One LoRA URL or local path per line", true);
+    field(panes.loras, "LoRAs", loras);
+    const mults = area("One per line, same order — a number, or a schedule such as 1,1.1;0", true);
+    field(panes.loras, "Multipliers", mults);
+
+    // ── Resolutions ──
+    const res = area("One WxH per line, e.g. 832x480 — the ratio label is generated", true);
+    field(panes.res, "Custom", res);
+    const resCat = area("One condition per line, e.g. 720p, 1080p, >=720&<=1440", true);
+    field(panes.res, "Categories", resCat);
+
+    // ── Help ──
+    const infos = area("Optional Markdown model notes (recommended resolutions, limitations, licence)");
+    field(panes.help, "Model notes", infos);
+    const promptInfos = area("Optional Markdown prompt-writing guidance");
+    field(panes.help, "Prompt help", promptInfos);
+
+    // ── Advanced ──
+    const modules = area("One module per line — vace_14B, multitalk", true);
+    field(panes.adv, "Modules", modules);
+    const sourceModel = input("Optional: source model id the Finetune Editor starts from (defaults to architecture)");
+    field(panes.adv, "Source model", sourceModel);
+    const boolRow = (label, title, checked) => {
+      const l = document.createElement("label");
+      l.className = "ap-fm-check";
+      l.title = title || "";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!checked;
+      l.append(cb, document.createTextNode(label));
+      panes.adv.appendChild(l);
+      return cb;
+    };
+    const autoQ = boolRow(
+      "Auto-quantize when only unquantized weights are offered",
+      "WanGP quantizes on the fly when the user asks for a quantized model",
+      false,
+    );
+    const visible = boolRow(
+      "Visible in the model list",
+      "Uncheck to keep an override that hides a base model",
+      true,
+    );
+    const imgOut = boolRow(
+      "Image-only model",
+      "Turns a video architecture into an image generator (a one-frame video)",
+      false,
+    );
+
+    seed.addEventListener("change", async () => {
+      if (!seed.value) return;
+      status.textContent = "Loading " + seed.value + "…";
+      try {
+        const r = await window.w2gp.adultPackFinetuneRead(seed.value);
+        const doc = JSON.parse((r && r.content) || "{}");
+        fillFromModel(doc.model || {});
+        status.textContent = `Loaded ${seed.value} — pick a new file id before creating.`;
+      } catch (e) {
+        status.textContent = "✗ could not read the recipe: " + (errText(e) || e);
+      }
+    });
+
+    function fillFromModel(m) {
+      const setLines = (el, v) => {
+        el.value = Array.isArray(v)
+          ? v
+              .map((x) => (Array.isArray(x) ? x[1] || x[0] : x))
+              .join("\n")
+          : typeof v === "string"
+            ? v
+            : "";
+      };
+      name.value = m.name || "";
+      // Round-trip the architecture even when this build does not offer it, so a
+      // save never silently swaps it for the first option. The backend refuses
+      // the write with a clear reason instead.
+      if (m.architecture && ![...arch.options].some((o) => o.value === m.architecture)) {
+        const o = document.createElement("option");
+        o.value = m.architecture;
+        o.textContent = `${m.architecture} (not offered by this build)`;
+        arch.appendChild(o);
+      }
+      if (m.architecture) arch.value = m.architecture;
+      desc.value = m.description || "";
+      if (typeof m.URLs === "string") {
+        reuse.value = m.URLs;
+        urls.value = "";
+      } else {
+        reuse.value = "";
+        setLines(urls, m.URLs);
+      }
+      setLines(urls2, m.URLs2);
+      setLines(te, m.text_encoder_URLs);
+      setLines(vae, m.VAE_URLs);
+      setLines(preload, m.preload_URLs);
+      setLines(loras, m.loras);
+      setLines(mults, m.loras_multipliers);
+      setLines(res, m.resolutions);
+      setLines(resCat, m.resolutions_categories);
+      setLines(modules, m.modules);
+      infos.value = m.infos || "";
+      promptInfos.value = m.prompt_infos || "";
+      sourceModel.value = m.finetune_source_model || "";
+      autoQ.checked = m.auto_quantize === true;
+      visible.checked = m.visible !== false;
+      imgOut.checked = m.image_outputs === true;
+    }
+
+    if (seedDoc) {
+      fillFromModel(seedDoc.model || seedDoc);
+      status.textContent = `Editing ${editId} — Save writes the change.`;
+    }
+
+    const bar = rowEl("ap-fm-actions");
+    const save = rowEl(
+      "ap-sr-add",
+      editId ? "Save changes" : "Create recipe",
+      editId ? "Validate and update finetunes/<id>.json" : "Validate and write finetunes/<id>.json",
+    );
+    save.addEventListener("click", async () => {
+      const fid = id.value.trim();
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(fid)) {
+        status.textContent = "✗ id: letters, digits, - and _ only (max 64)";
+        return;
+      }
+      // The list may still be loading (or the panel was never opened before
+      // this click). Read finetunes/ before deciding the id is free, or an
+      // existing recipe would be replaced without the Edit path ever showing.
+      // An edit already owns its file, so the check does not apply.
+      if (!editId) {
+        if (!fmLoaded) await loadFinetunes();
+        // Compare file stems, not just manifest ids: a pack recipe is listed as
+        // `wan_rapid_aio` but lives in `adultpack_wan_rapid_aio.json`, and the
+        // backend resolves that name too — typing it would replace the recipe.
+        const taken = new Set();
+        for (const f of fmItems) {
+          if (f.id) taken.add(f.id);
+          const stem = String(f.path || "")
+            .split(/[\\/]/)
+            .pop()
+            .replace(/\.json$/i, "");
+          if (stem) taken.add(stem);
+        }
+        if (taken.has(fid)) {
+          status.textContent = `✗ ${fid} already exists — open it below and press Edit`;
+          return;
+        }
+      }
+      const primary = listLines(urls);
+      const reuseId = reuse.value.trim();
+      if (!primary.length && !reuseId) {
+        status.textContent = "✗ at least one source URL (or a recipe to reuse) is required";
+        return;
+      }
+      if (primary.length && reuseId) {
+        status.textContent = "✗ use either source URLs or a recipe id, not both";
+        return;
+      }
+      const loraUrls = listLines(loras);
+      const multLines = listLines(mults);
+      if (multLines.length && !loraUrls.length) {
+        status.textContent = "✗ multipliers need LoRAs above them";
+        return;
+      }
+      if (multLines.length !== loraUrls.length && multLines.length) {
+        status.textContent = `✗ ${loraUrls.length} LoRA(s) but ${multLines.length} multiplier(s) — they must match, in order`;
+        return;
+      }
+
+      const model = {
+        name: name.value.trim(),
+        architecture: arch.value,
+        description: desc.value.trim(),
+      };
+      model.URLs = reuseId || primary;
+      const addList = (key, el) => {
+        const v = listLines(el);
+        if (v.length) model[key] = v;
+      };
+      addList("text_encoder_URLs", te);
+      addList("VAE_URLs", vae);
+      addList("preload_URLs", preload);
+      addList("loras", loras);
+      const second = listLines(urls2);
+      if (second.length) model.URLs2 = second;
+      const notes = infos.value.trim();
+      if (notes) model.infos = notes;
+      const promptHelp = promptInfos.value.trim();
+      if (promptHelp) model.prompt_infos = promptHelp;
+      if (multLines.length) {
+        model.loras_multipliers = multLines.map((s) =>
+          /^[+-]?(\d+(\.\d*)?|\.\d+)$/.test(s) ? Number(s) : s,
+        );
+      }
+      const resLines = listLines(res);
+      if (resLines.length) {
+        const pairs = [];
+        for (const line of resLines) {
+          const pair = resolutionPair(line);
+          if (!pair) {
+            status.textContent = `✗ resolution “${line}” is not WxH — write it like 832x480`;
+            return;
+          }
+          pairs.push(pair);
+        }
+        model.resolutions = pairs;
+      }
+      addList("resolutions_categories", resCat);
+      addList("modules", modules);
+      if (autoQ.checked) model.auto_quantize = true;
+      if (!visible.checked) model.visible = false;
+      if (imgOut.checked) model.image_outputs = true;
+      const src = sourceModel.value.trim();
+      if (src) model.finetune_source_model = src;
+
+      const doc = { model };
+      save.disabled = true;
+      status.textContent = "Saving…";
+      try {
+        const r = await window.w2gp.adultPackFinetuneWrite(fid, JSON.stringify(doc, null, 2));
+        logLine(`✓ recipe ${editId ? "updated" : "created"} — ${r.name} (${r.architecture}) → ${r.path}`, "ok");
+        host.innerHTML = "";
+        loadFinetunes();
+      } catch (e) {
+        status.textContent = "✗ " + (errText(e) || e);
+        save.disabled = false;
+      }
+    });
+    const cancel = rowEl("ap-sr-add", "Cancel", "Close without writing");
+    cancel.addEventListener("click", () => {
+      host.innerHTML = "";
+    });
+    bar.append(save, cancel);
+    box.appendChild(bar);
+    box.appendChild(status);
+    host.appendChild(box);
+    if (!editId) id.focus();
+  }
+
   async function loadFinetunes() {
     const host = $("apFmList");
     if (!host) return;
     try {
       const r = await window.w2gp.adultPackFinetuneList();
       fmItems = (r && r.items) || [];
+      fmLoaded = true;
       host.innerHTML = "";
       if (!fmItems.length) {
         host.appendChild(rowEl("ap-hint", "No recipes yet. Tick some checkpoints and press “Write finetune recipes”."));
@@ -1326,23 +2045,26 @@
 
   /** Inspect → pick a file → confirm. The file list is the honest part: a repo
    *  can hold an 8 GB checkpoint and 150 MB adapters side by side. */
-  async function openAddFlow(item) {
-    const host = $("apSearchResults");
-    const status = $("apSearchStatus");
+  async function openAddFlow(item, opts) {
+    opts = opts || {};
+    const host = opts.host || $("apSearchResults");
+    const status = opts.status || $("apSearchStatus");
+    const version =
+      opts.version != null ? String(opts.version) : item.versionId != null ? String(item.versionId) : null;
     status.textContent = `Looking inside ${item.title || item.id}…`;
     host.innerHTML = "";
     let info;
     try {
-      info = await window.w2gp.adultPackInspect(item.source, item.id, item.architecture);
+      info = await window.w2gp.adultPackInspect(item.source, item.id, item.architecture, version);
     } catch (e) {
       status.textContent = "Could not read that model: " + (errText(e) || e);
-      return;
+      return null;
     }
     status.textContent = "";
     const files = (info && info.files) || [];
     if (!files.length) {
       status.textContent = "No loadable files found (Wan2GP needs .safetensors or .gguf).";
-      return;
+      return null;
     }
     const box = rowEl("ap-sr-box");
     const head = rowEl("ap-sr-box-head");
@@ -1358,19 +2080,46 @@
     );
     head.appendChild(hb);
     box.appendChild(head);
+    // A CivitAI model usually has several versions. The search hit pins one; this
+    // lets the user switch without going back to the search.
+    if (info.source === "civitai" && info.versions && info.versions.length > 1) {
+      const vRow = rowEl("ap-fm-field");
+      vRow.appendChild(rowEl("ap-detail-k", "Version"));
+      const vs = document.createElement("select");
+      vs.className = "input";
+      for (const v of info.versions) {
+        const o = document.createElement("option");
+        o.value = String(v.id);
+        o.textContent = `${v.name || "version " + v.id}${v.baseModel ? " — " + v.baseModel : ""} (${v.fileCount} file(s))`;
+        vs.appendChild(o);
+      }
+      vs.value = String(info.versionId);
+      vs.addEventListener("change", () => openAddFlow(item, { ...opts, version: vs.value, host, status }));
+      vRow.appendChild(vs);
+      box.appendChild(vRow);
+    }
     if (info.samples && info.samples.length) {
       const strip = rowEl("ap-gallery-grid");
       for (const s of info.samples.slice(0, 4)) strip.appendChild(mediaEl(s.url, "video", s.name));
       box.appendChild(strip);
     }
 
-    const familyOf = (arch) =>
-      arch.startsWith("minimax") ? "h3" : arch.startsWith("ltx") ? "ltx" : arch.startsWith("z_image") || arch.startsWith("krea") || arch.startsWith("qwen") || arch.startsWith("flux") || arch.startsWith("moss") ? "image" : "wan";
-
     for (const f of files) {
       const r = rowEl("ap-sr-file");
-      const kind = rowEl("ap-tag " + (f.kind === "lora" ? "high" : "done"), f.kind.toUpperCase());
-      r.appendChild(kind);
+      // Kind decides whether a recipe is written: a LoRA is filed as an adapter,
+      // a checkpoint becomes a finetune recipe. The name+size guess is a
+      // starting point, not a verdict, so it is editable.
+      const kindSel = document.createElement("select");
+      kindSel.className = "input ap-kind-sel";
+      kindSel.title = "LoRA = filed as an adapter; Checkpoint = becomes a finetune recipe";
+      for (const k of ["lora", "checkpoint"]) {
+        const o = document.createElement("option");
+        o.value = k;
+        o.textContent = k.toUpperCase();
+        kindSel.appendChild(o);
+      }
+      kindSel.value = f.kind === "lora" ? "lora" : "checkpoint";
+      r.appendChild(kindSel);
       const nm = rowEl("ap-name");
       nm.textContent = f.file;
       if (f.pair) nm.appendChild(rowEl("ap-tag " + f.pair, f.pair.toUpperCase()));
@@ -1385,12 +2134,11 @@
           id: info.id,
           title: info.title,
           architecture: info.architecture,
-          family: familyOf(info.architecture),
           file: f.file,
           url: f.url,
           sha256: f.sha256,
           bytes: f.bytes,
-          kind: f.kind,
+          kind: kindSel.value,
           preview: info.preview,
           repoPage: info.repoPage,
           filePage: f.url ? f.url.replace("/resolve/main/", "/blob/main/") : "",
@@ -1399,7 +2147,12 @@
         try {
           const res = await window.w2gp.adultPackAdd(entry);
           logLine(`✓ added ${f.file} — fetch it with “Fetch missing only” or tick it and download`, "ok");
-          if (res && res.id) sel.loras[res.id] = true;
+          // A checkpoint belongs in the finetune selection; a LoRA does not.
+          // Ticking the wrong bag made the download button ignore the new row.
+          if (res && res.id) {
+            if (res.kind === "lora") sel.loras[res.id] = true;
+            else sel.fts[res.id] = true;
+          }
           await init(true);
         } catch (e) {
           logLine("✗ could not add: " + (errText(e) || e), "err");
@@ -1410,6 +2163,112 @@
       box.appendChild(r);
     }
     host.appendChild(box);
+    return info;
+  }
+
+  /** Add by link: resolve whatever was pasted, then reuse the same inspect →
+   *  pick-a-file flow. The one path that reaches a model whose name matches no
+   *  keyword in the curated map. */
+  async function addByUrl() {
+    const status = $("apUrlStatus");
+    const input = $("apUrlInput");
+    const results = $("apUrlResults");
+    const raw = (input && input.value ? input.value : "").trim();
+    if (!raw) {
+      if (status) status.textContent = "Paste a repo or URL first.";
+      return;
+    }
+    const arch = $("apUrlArch") && $("apUrlArch").value;
+    if (!arch) {
+      if (status) status.textContent = "Pick the architecture to load it with first.";
+      return;
+    }
+    if (results) results.innerHTML = "";
+    if (status) status.textContent = "Resolving…";
+    try {
+      const r = await window.w2gp.adultPackResolveUrl(raw);
+      const info = await openAddFlow(
+        { source: r.source, id: r.id, title: r.id, architecture: arch },
+        { host: results, status },
+      );
+      if (info && status) {
+        status.textContent = `Found ${r.source === "hf" ? "repository" : "model"} ${r.id} — pick a file below.`;
+      }
+    } catch (e) {
+      if (status) status.textContent = "✗ " + (errText(e) || e);
+    }
+  }
+
+  /** Import a shared recipe by path — the Library import, offered where the
+   *  recipes actually live. */
+  async function importRecipe() {
+    const input = $("apFmImportInput");
+    const status = $("apFmStatus");
+    const src = (input && input.value ? input.value : "").trim();
+    if (!src) {
+      if (status) status.textContent = "Paste the full path to a .json to import.";
+      return;
+    }
+    try {
+      const r = await window.w2gp.libraryFinetuneImport(src);
+      logLine(`✓ imported ${(r && (r.id || r.name)) || "recipe"} into finetunes/`, "ok");
+      if (input) input.value = "";
+      if (status) status.textContent = "";
+      await loadFinetunes();
+    } catch (e) {
+      if (status) status.textContent = "✗ " + (errText(e) || e);
+    }
+  }
+
+  /** Every LoRA weight under the LoRAs folder, catalog-linked or not. */
+  async function loadLoraInventory() {
+    const host = $("apLoraInvList");
+    if (!host) return;
+    const status = $("apLoraInvStatus");
+    host.innerHTML = "";
+    host.appendChild(rowEl("ap-hint", "Scanning the LoRAs folder…"));
+    try {
+      const r = await window.w2gp.adultPackLoraInventory();
+      host.innerHTML = "";
+      if (!r || r.ok === false) {
+        host.appendChild(rowEl("ap-hint", (r && r.error) || "Could not read the LoRAs folder."));
+        return;
+      }
+      loraInvLoaded = true;
+      if (status) status.textContent = `${r.count} file(s) · ${fmtBytes(r.bytes)} · ${r.root}`;
+      if (!r.files.length) {
+        host.appendChild(rowEl("ap-hint", "No LoRA weights found under the LoRAs folder."));
+        return;
+      }
+      for (const f of r.files) {
+        const row = rowEl("ap-fm-row");
+        const main = rowEl("ap-fm-main");
+        main.appendChild(rowEl("ap-sr-title", f.name));
+        main.appendChild(rowEl("ap-sr-meta", `${fmtBytes(f.bytes)} · ${f.rel}`));
+        row.appendChild(main);
+        row.appendChild(
+          f.known
+            ? rowEl("ap-tag done", "in catalog", "This file belongs to a catalog entry")
+            : rowEl("ap-tag", "unknown", "Not in the catalog — remove it if you did not add it"),
+        );
+        const del = rowEl("ap-sr-add", "Delete", "Remove this file from disk");
+        del.addEventListener("click", async () => {
+          if (!(await askConfirm(`Delete ${f.rel} from disk?\n\nThis removes the weights, not just a catalog row.`, "Delete LoRA file"))) return;
+          try {
+            await window.w2gp.adultPackLoraDelete(f.rel);
+            logLine(`✓ deleted ${f.rel}`, "ok");
+            loadLoraInventory();
+          } catch (e) {
+            if (status) status.textContent = "✗ " + (errText(e) || e);
+          }
+        });
+        row.appendChild(del);
+        host.appendChild(row);
+      }
+    } catch (e) {
+      host.innerHTML = "";
+      host.appendChild(rowEl("ap-hint", "Could not read the LoRAs folder: " + (errText(e) || e)));
+    }
   }
 
   async function runSearch() {
@@ -1461,6 +2320,12 @@
   async function init(keepSelection) {
     const root = document.querySelector('.settings-tab-content[data-tab="pack"]');
     if (!root) return;
+    // A batch from an earlier visit is not this visit's news; a refresh right
+    // after a download is, which is why a kept selection keeps the queue.
+    if (!keepSelection) {
+      queue = null;
+      renderQueue();
+    }
     try {
       pack = await window.w2gp.adultPackManifest();
     } catch (e) {
@@ -1471,6 +2336,14 @@
     if (!pack || !pack.loras || !pack.loras.length) {
       setProgress("This build carries no pack catalog.");
       return;
+    }
+    // The selectable architectures are independent of the catalog, so load them
+    // before anything can need them.
+    try {
+      const ar = await window.w2gp.adultPackArches();
+      arches = (ar && ar.items) || [];
+    } catch {
+      arches = [];
     }
     if (pack.hasToken && $("apToken")) $("apToken").placeholder = "CivitAI token stored — type to replace it";
 
@@ -1510,6 +2383,10 @@
       $("apVerifyBtn").addEventListener("click", verifyToken);
       $("apDownloadBtn").addEventListener("click", async () => {
         const p = plan();
+        // A new batch: drop the previous run's rows so the CivitAI downloads
+        // that run first cannot appear against them.
+        queue = null;
+        renderQueue();
         await doCivitai();
         await doFetch([...p.loraIds, ...p.prefetchIds], "Downloading selected");
       });
@@ -1517,9 +2394,31 @@
       $("apMissingBtn").addEventListener("click", doMissing);
       $("apRemoveBtn").addEventListener("click", doRemove);
       $("apRefreshBtn").addEventListener("click", () => init(true));
+      $("apFilter").addEventListener("input", () => {
+        filter.q = $("apFilter").value.trim().toLowerCase();
+        render();
+      });
+      $("apFilterSel").addEventListener("change", () => {
+        filter.selected = $("apFilterSel").checked;
+        render();
+      });
+      $("apFilterMissing").addEventListener("change", () => {
+        filter.missing = $("apFilterMissing").checked;
+        render();
+      });
+      $("apFilterSelect").addEventListener("click", () => selectShown(true));
+      $("apFilterUnselect").addEventListener("click", () => selectShown(false));
+      $("apFilterClear").addEventListener("click", clearCatalogFilter);
+      $("apFmNewBtn").addEventListener("click", openNewFinetuneEditor);
       $("apSearchBtn").addEventListener("click", runSearch);
       $("apFmRefreshBtn").addEventListener("click", loadFinetunes);
       $("apFmCheckAllBtn").addEventListener("click", checkAllFinetuneLinks);
+      $("apFmImportBtn").addEventListener("click", importRecipe);
+      $("apLoraInvRefreshBtn").addEventListener("click", loadLoraInventory);
+      $("apUrlBtn").addEventListener("click", addByUrl);
+      $("apUrlInput").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") addByUrl();
+      });
       $("apBrowseBtn").addEventListener("click", runBrowse);
       $("apUpdCheckBtn").addEventListener("click", () => withBusy("Checking…", runUpdateCheck));
       $("apUpdApplyBtn").addEventListener("click", applyUpdates);
@@ -1535,17 +2434,27 @@
     }
     progressUnsub = window.w2gp.onAdultPackProgress((ev) => {
       if (!ev || !ev.name) return;
+      updateQueue(ev);
+      if (ev.phase === "start") return; // the queue row says it all; no bytes yet
+      if (ev.phase === "check") {
+        setProgress(`Checking ${ev.name}… (${ev.done}/${ev.total})`);
+        return;
+      }
       const pct = ev.total ? Math.floor((ev.received / ev.total) * 100) : 0;
+      const pos =
+        ev.queueIndex != null && ev.queueTotal ? `[${ev.queueIndex}/${ev.queueTotal}] ` : "";
       setProgress(
         ev.phase === "verify"
-          ? `verifying ${ev.name}…`
-          : `↓ ${ev.name} — ${fmtBytes(ev.received)}${ev.total ? ` / ${fmtBytes(ev.total)} (${pct}%)` : ""}`,
+          ? `${pos}verifying ${ev.name}…`
+          : `${pos}↓ ${ev.name} — ${fmtBytes(ev.received)}${ev.total ? ` / ${fmtBytes(ev.total)} (${pct}%)` : ""}`,
       );
     });
 
     render();
     fillFamilyFilter();
+    fillArchSelect();
     loadFinetunes();
+    if (!loraInvLoaded) loadLoraInventory();
   }
 
   // Fill on demand: the tab is opened from Manage, so it must not cost anything
