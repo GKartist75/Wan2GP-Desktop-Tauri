@@ -26,9 +26,9 @@ $("syncKernelsBtn")?.addEventListener("click", async function () {
 $("restoreKernelsBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   if (
-    !confirm(
+    !(await askConfirm(
       "Reinstall setup_config wheels exactly as published? This drops launcher overrides (GGUF floor off; sage installs the published pin).",
-    )
+    ))
   )
     return;
   this.disabled = true;
@@ -51,9 +51,9 @@ $("restoreKernelsBtn")?.addEventListener("click", async function () {
 $("installHipGgufBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   if (
-    !confirm(
+    !(await askConfirm(
       "Install experimental HIP GGUF 1.0.27 (torch213rocm100py312) for AMD RDNA4 (RX 9060/9070, gfx1200/gfx1201)?\n\nInstalls in this env's torch 2.13+rocm10 stack - the wheel checks the ROCm torch build at import. Update GPU Wheels installs the same wheel automatically. Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
-    )
+    ))
   )
     return;
   this.disabled = true;
@@ -78,9 +78,9 @@ $("installHipGgufBtn")?.addEventListener("click", async function () {
 $("installWgpkernelsBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   if (
-    !confirm(
+    !(await askConfirm(
       "Install the WGPKernels 1.1.2 wheel for INT8 fast kernels?\n\nOptional upstream wheel (also installed by Update GPU Wheels). It matches your torch build automatically: cu130/cu128 for NVIDIA RTX 30/40/50, or the experimental rocm100 build for AMD RDNA4 (RX 9060/9070 series). WanGP's int8_kernels = Auto will prefer it once present.",
-    )
+    ))
   )
     return;
   this.disabled = true;
@@ -117,7 +117,7 @@ async function changeModelFolder(type, key, _cfgKey, singular) {
   if (!dir) return;
   // ponytail: reject file-as-folder (orca-paste Temp png)
   if (isFilePickedAsFolder(dir)) {
-    alert("Please select a folder, not a file:\n" + dir);
+    notifyUser("Please select a folder, not a file:\n" + dir);
     return;
   }
   const cur = await window.w2gp
@@ -150,7 +150,7 @@ async function changeModelFolder(type, key, _cfgKey, singular) {
   if (choice === "move" && cur) {
     const r = await window.w2gp.moveFolder(cur, dir);
     if (!r || !r.ok) {
-      alert("Could not move files:\n" + ((r && r.error) || "unknown"));
+      notifyUser("Could not move files:\n" + ((r && r.error) || "unknown"));
     }
   }
   // Write the real config (what Wan2GP reads) so the change takes effect next launch.

@@ -42,7 +42,7 @@ $("updateBtn").addEventListener("click", async () => {
     refreshDashboard();
   } catch (e) {
     appendLog("[!] Update failed: " + errText(e));
-    alert("Update: " + errText(e));
+    notifyUser("Update: " + errText(e));
   }
   $("updateBtn").disabled = false;
   $("updateBtn").textContent = "↻ Update Wan2GP (DeepBeepMeep)";
@@ -72,7 +72,7 @@ $("repairFilesBtn")?.addEventListener("click", async () => {
         .join("\n");
       const more =
         total > dirty.length ? "\n…+" + (total - dirty.length) + " more" : "";
-      const ok = confirm(
+      const ok = await askConfirm(
         total +
           " tracked Wan2GP file(s) differ from upstream:\n" +
           names +
@@ -121,7 +121,7 @@ $("rollbackBtn")?.addEventListener("click", async () => {
         );
       } else {
         const when = pin.date ? " (" + pin.date + ")" : "";
-        const ok = confirm(
+        const ok = await askConfirm(
           "Roll back Wan2GP to the recorded update?\n" +
             pin.hash.slice(0, 8) +
             when +

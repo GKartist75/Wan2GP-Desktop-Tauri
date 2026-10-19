@@ -99,7 +99,7 @@
       box.querySelectorAll('[data-lib-delete]').forEach((btn) => {
         btn.addEventListener('click', async () => {
           const id = btn.getAttribute('data-lib-delete')
-          if (!window.confirm('Delete finetune "' + id + '"? The definition is removed; downloaded weights stay.')) return
+          if (!(await askConfirm('Delete finetune "' + id + '"? The definition is removed; downloaded weights stay.'))) return
           try {
             await window.w2gp.libraryFinetuneDelete(id)
             refreshFinetunes()

@@ -183,7 +183,7 @@ async function refreshLLMEngines() {
   list.querySelectorAll(".llm-remove-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const id = btn.dataset.engine;
-      if (!confirm("Remove " + id + " from this machine?")) return;
+      if (!(await askConfirm("Remove " + id + " from this machine?"))) return;
       btn.disabled = true;
       btn.textContent = "removing...";
       const r = await window.w2gp.llmEngineUninstall(id);

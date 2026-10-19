@@ -470,7 +470,7 @@ async function startInstall() {
       locNote = "\nLocation: " + (paths.repo || paths.dataDir);
   } catch {}
   if (
-    !window.confirm(
+    !(await askConfirm(
       "Start the Wan2GP install now?" +
         (choiceNote ? "\nChoice: " + choiceNote : "") +
         "\nEnvironment: " +
@@ -478,7 +478,7 @@ async function startInstall() {
         locNote +
         wipeWarn +
         "\n\nThis downloads several GB and takes 5–20 minutes.",
-    )
+    ))
   ) {
     _restoreStartBtn();
     return;
@@ -769,7 +769,7 @@ function showReinstallBackupModal() {
           const dir = await window.w2gp.selectFolder().catch(() => null);
           if (!dir) return;
           if (isDriveRoot(dir)) {
-            alert("Pick a folder, not a drive root.");
+            notifyUser("Pick a folder, not a drive root.");
             return;
           }
           if (
@@ -777,7 +777,7 @@ function showReinstallBackupModal() {
               .toLowerCase()
               .startsWith(repo.toLowerCase().replace(/\\+$/, "") + "\\")
           ) {
-            alert(
+            notifyUser(
               "Destination must be OUTSIDE the wiped folder — it would be deleted too.",
             );
             return;
