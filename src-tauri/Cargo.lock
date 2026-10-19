@@ -5020,7 +5020,7 @@ dependencies = [
 
 [[package]]
 name = "wan2gp-desktop-launcher-tauri"
-version = "0.10.14"
+version = "0.10.15"
 dependencies = [
  "chrono",
  "local-ip-address",
