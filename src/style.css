@@ -3354,8 +3354,67 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
  min-width: 0;
  overflow: hidden;
 }
+/* The metrics row is the first thing to run out of room (the bar needs ~1440px
+   for every sparkline, ~1550px with a second GPU), and it used to answer that by
+   shrinking its own container and clipping the *last* item — VRAM was the
+   casualty, so the graph you watch during a generation was the one that
+   disappeared. Drop whole, lower-priority readings in tiers instead: VRAM keeps
+   its sparkline longest, the CPU/GPU percentages stay readable as numbers, and
+   nothing is ever cut through the middle of a label. */
+@media (max-width: 1450px) {
+ .metric:not(.metric-vram) .metric-spark {
+  display: none;
+ }
+}
+@media (max-width: 1380px) {
+ #metricRam,
+ #metricGpu2 {
+  display: none;
+ }
+}
+@media (max-width: 1270px) {
+ #metricCpu,
+ #metricGpu {
+  display: none;
+ }
+}
 @media (max-width: 1150px) {
- .metric-spark {
+ .metric-vram .metric-spark {
+  display: none;
+ }
+}
+@media (max-width: 1060px) {
+ #topbarMetrics {
+  display: none;
+ }
+}
+
+/* Embedded Wan2GP view: Back to Dashboard + Console + the zoom slider cost about
+   330px more than the dashboard bar, so the same ladder starts one rung higher.
+   VRAM stays the protected reading — it is the one you watch while a generation
+   runs — and only the value survives once even the graph no longer fits. */
+#dashboard.wv-active .metric:not(.metric-vram) .metric-spark {
+ display: none;
+}
+@media (max-width: 1760px) {
+ #dashboard.wv-active #metricCpu,
+ #dashboard.wv-active #metricRam,
+ #dashboard.wv-active #metricGpu2 {
+  display: none;
+ }
+}
+@media (max-width: 1540px) {
+ #dashboard.wv-active #metricGpu {
+  display: none;
+ }
+}
+@media (max-width: 1470px) {
+ #dashboard.wv-active .metric-vram .metric-spark {
+  display: none;
+ }
+}
+@media (max-width: 1440px) {
+ #dashboard.wv-active #topbarMetrics {
   display: none;
  }
 }
