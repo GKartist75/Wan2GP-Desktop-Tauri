@@ -364,6 +364,7 @@ pub fn run() {
             log_server::log_server_status,
             adult_pack::adult_pack_manifest,
             adult_pack::adult_pack_save,
+            adult_pack::adult_pack_set_civitai,
             adult_pack::adult_pack_fetch,
             adult_pack::adult_pack_write_finetunes,
             adult_pack::adult_pack_civitai_verify,

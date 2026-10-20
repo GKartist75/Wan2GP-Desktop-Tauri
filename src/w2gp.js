@@ -261,6 +261,8 @@ if (!window.__TAURI__) {
         adultPackManifest: () => call("adult_pack_manifest"),
         adultPackSave: (selection, token) =>
             call("adult_pack_save", { selection, token }),
+        adultPackSetCivitai: (enabled) =>
+            call("adult_pack_set_civitai", { enabled }),
         adultPackFetch: (ids) => call("adult_pack_fetch", { ids }),
         adultPackWriteFinetunes: (ids) =>
             call("adult_pack_write_finetunes", { ids }),

@@ -41,6 +41,7 @@
 
   const enabled = () => !!(pack && $("apEnabled") && $("apEnabled").checked);
   const ageOk = () => !!(pack && $("apAge") && $("apAge").checked);
+  const civOn = () => !!(pack && pack.civitaiEnabled);
   const active = () => enabled() && ageOk();
 
   function persist() {
@@ -115,7 +116,7 @@
       sel.fts[f.id] = on;
       if (!on) sel.fts["pf:" + f.id] = false;
     }
-    for (const c of pack.civitai || []) if (matchesCiv(c)) sel.civ[c.id] = on;
+    if (civOn()) for (const c of pack.civitai || []) if (matchesCiv(c)) sel.civ[c.id] = on;
     render();
     persist();
   }
@@ -881,7 +882,7 @@
     const loraIds = Object.keys(sel.loras).filter((k) => sel.loras[k]);
     const ftIds = Object.keys(sel.fts).filter((k) => !k.startsWith("pf:") && sel.fts[k]);
     const prefetchIds = ftIds.filter((k) => sel.fts["pf:" + k]);
-    const civIds = Object.keys(sel.civ).filter((k) => sel.civ[k]);
+    const civIds = civOn() ? Object.keys(sel.civ).filter((k) => sel.civ[k]) : [];
     const lm = new Map((pack.loras || []).map((x) => [x.id, x]));
     const fm = new Map((pack.finetunes || []).map((x) => [x.id, x]));
     const cm = new Map((pack.civitai || []).map((x) => [x.id, x]));
@@ -889,17 +890,33 @@
       const f = fm.get(id);
       return f ? (f.bytes || 0) + (f.bytesLow || 0) : 0;
     };
+    // What still costs bytes. A LoRA whose size matches the verified catalog and
+    // a checkpoint whose weights are on disk are not downloads; counting them
+    // made the footer claim gigabytes right after a finished fetch.
+    const pendingLoras = loraIds.filter((id) => !lm.get(id)?.installed);
+    const pendingPrefetch = prefetchIds.filter((id) => !fm.get(id)?.weightsPresent);
+    const loraBytes = pendingLoras.reduce((a, id) => a + (lm.get(id)?.bytes || 0), 0);
+    const ckptBytes = pendingPrefetch.reduce((a, id) => a + ftCost(id), 0);
+    const civBytes = civIds.reduce((a, id) => a + (cm.get(id)?.bytesEstimate || 0), 0);
     return {
       active: active(),
       loraIds,
       ftIds,
       prefetchIds,
       civIds,
-      nowBytes:
-        loraIds.reduce((a, id) => a + (lm.get(id)?.bytes || 0), 0) +
-        prefetchIds.reduce((a, id) => a + ftCost(id), 0) +
-        civIds.reduce((a, id) => a + (cm.get(id)?.bytesEstimate || 0), 0),
-      count: loraIds.length + ftIds.length + civIds.length,
+      pendingLoras,
+      pendingPrefetch,
+      // Selected and already on disk — shown so "0 to download" is never
+      // mistaken for "nothing selected".
+      settled:
+        loraIds.length - pendingLoras.length + (prefetchIds.length - pendingPrefetch.length),
+      loraBytes,
+      ckptBytes,
+      civBytes,
+      nowBytes: loraBytes + ckptBytes + civBytes,
+      // Items that need bytes moved. Recipe-only checkpoints are not one.
+      count: pendingLoras.length + pendingPrefetch.length + civIds.length,
+      selected: loraIds.length + ftIds.length + civIds.length,
     };
   }
 
@@ -929,7 +946,7 @@
       add("recipes written", `${recipes}/${fts.length}`, recipes ? "ok" : "", "finetunes/*.json in place");
       add("weights on disk", `${weights}/${fts.length}`, weights ? "ok" : "", "Checkpoint files already fetched");
     }
-    if (!p.count) {
+    if (!p.selected) {
       t.textContent = enabled()
         ? "Nothing selected"
         : "Nothing selected — search above, or enable the pack";
@@ -937,24 +954,52 @@
       if (f) f.textContent = "";
       return;
     }
-    t.textContent =
-      `${p.count} items selected · ${fmtBytes(p.nowBytes)} to download` +
-      (p.ftIds.length
-        ? ` · ${p.ftIds.length} checkpoint${p.ftIds.length > 1 ? "s" : ""} as recipes (fetched only when you run ${p.ftIds.length > 1 ? "them" : "it"})`
-        : "");
-    const f = $("apFreeText");
-    if (f && pack.paths && pack.paths.loras) {
-      window.w2gp
-        .getDiskSpace(pack.paths.loras)
-        .then((d) => {
-          if (!d || typeof d.free !== "number") return;
-          const left = d.free - p.nowBytes;
-          f.textContent =
-            `${fmtBytes(d.free)} free — ` +
-            (left < 0 ? "⚠ not enough space for this selection" : `${fmtBytes(left)} would remain`);
-        })
-        .catch(() => {});
+    const parts = [];
+    if (p.count) {
+      parts.push(
+        `${p.count} item${p.count === 1 ? "" : "s"} to download · ${fmtBytes(p.nowBytes)}`,
+      );
+    } else {
+      parts.push("Nothing to download");
     }
+    if (p.settled) parts.push(`${p.settled} already on disk`);
+    if (p.ftIds.length) {
+      const n = p.ftIds.length;
+      parts.push(
+        `${n} checkpoint${n === 1 ? "" : "s"} as recipes (fetched only when you run ${n === 1 ? "it" : "them"})`,
+      );
+    }
+    t.textContent = parts.join(" · ");
+
+    const f = $("apFreeText");
+    if (!f) return;
+    if (!p.count) {
+      f.textContent = "";
+      return;
+    }
+    // LoRAs and prefetched checkpoints can live on different drives, so check
+    // the folders this selection will actually write to and report the tightest.
+    const ckptsRoot = pack.paths && (pack.paths.ckptsPack || pack.paths.ckpts);
+    const targets = [
+      { dir: pack.paths && pack.paths.loras, bytes: p.loraBytes },
+      { dir: ckptsRoot, bytes: p.ckptBytes + p.civBytes },
+    ].filter((x) => x.dir && x.bytes > 0);
+    if (!targets.length) {
+      f.textContent = "";
+      return;
+    }
+    Promise.all(targets.map((x) => window.w2gp.getDiskSpace(x.dir).catch(() => null)))
+      .then((spaces) => {
+        if (spaces.some((d) => !d || typeof d.free !== "number")) return;
+        const remaining = spaces.map((d, i) => d.free - targets[i].bytes);
+        const tightest = remaining.indexOf(Math.min(...remaining));
+        f.textContent =
+          `${fmtBytes(spaces[tightest].free)} free — ` +
+          (remaining[tightest] < 0
+            ? "⚠ not enough space for this selection"
+            : `${fmtBytes(remaining[tightest])} would remain`);
+      })
+      .catch(() => {});
   }
 
   // ── actions ──────────────────────────────────────────────────────────────
@@ -1243,10 +1288,9 @@
 
   async function doMissing() {
     const p = plan();
-    const missing = p.loraIds.filter((id) => {
-      const l = (pack.loras || []).find((x) => x.id === id);
-      return l && !l.installed;
-    });
+    // Missing bytes only: selected LoRAs not matching the verified size, plus
+    // prefetched checkpoints whose weights are not on disk yet.
+    const missing = [...p.pendingLoras, ...p.pendingPrefetch];
     if (!missing.length) {
       logLine("Everything selected is already on disk (and hash-matching).");
       return;
@@ -2318,6 +2362,23 @@
   }
 
   // ── init ─────────────────────────────────────────────────────────────────
+  /// The CivitAI host is never contacted while the switch is off, so the
+  /// section and both source pickers follow the saved setting.
+  function applyCivitaiVisibility() {
+    const on = civOn();
+    const cb = $("apCivEnabled");
+    if (cb) cb.checked = on;
+    const section = $("apCivSection");
+    if (section) section.style.display = on ? "" : "none";
+    for (const id of ["apSearchSource", "apBrowseSource"]) {
+      const s = $(id);
+      if (!s) continue;
+      const opt = s.querySelector('option[value="civitai"]');
+      if (opt) opt.disabled = !on;
+      if (!on && s.value === "civitai") s.value = "hf";
+    }
+  }
+
   async function init(keepSelection) {
     const root = document.querySelector('.settings-tab-content[data-tab="pack"]');
     if (!root) return;
@@ -2347,6 +2408,7 @@
       arches = [];
     }
     if (pack.hasToken && $("apToken")) $("apToken").placeholder = "CivitAI token stored — type to replace it";
+    applyCivitaiVisibility();
 
     if (!keepSelection && !sel.hydrated) {
       const saved = pack.savedSelections || {};
@@ -2381,6 +2443,22 @@
         persist();
       });
       $("apToken").addEventListener("change", render);
+      $("apCivEnabled").addEventListener("change", async () => {
+        const want = $("apCivEnabled").checked;
+        try {
+          await window.w2gp.adultPackSetCivitai(want);
+          pack.civitaiEnabled = want;
+          applyCivitaiVisibility();
+          setProgress(
+            want
+              ? "CivitAI on — requests will go to civitai.red."
+              : "CivitAI off — nothing contacts civitai.red.",
+          );
+        } catch (e) {
+          $("apCivEnabled").checked = !want;
+          logLine(`✗ CivitAI setting: ${errText(e)}`, "err");
+        }
+      });
       $("apVerifyBtn").addEventListener("click", verifyToken);
       $("apDownloadBtn").addEventListener("click", async () => {
         const p = plan();

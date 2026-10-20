@@ -105,9 +105,20 @@ test('search filters by model type and base model', () => {
   const fn = (rust.split('pub async fn adult_pack_search')[1] || '').split('\npub ')[0]
   assert.ok(fn.includes('&filter=lora'), 'HF LoRA search must use its lora filter')
   assert.ok(fn.includes('&filter=gguf'), 'HF GGUF search must use its gguf filter')
-  assert.ok(fn.includes('types=LoRA') || fn.includes('"LoRA"'), 'CivitAI LoRA search must use types')
-  assert.ok(fn.includes('"Checkpoint"'), 'CivitAI checkpoint search must use types')
-  assert.ok(fn.includes('"GGUF"'), 'CivitAI GGUF search must use types')
+  // CivitAI: repeated `types=` params with the API's exact spelling. A comma
+  // list, `LoRA`, `Model` and `GGUF` are all HTTP 400 there (checked live), so
+  // search must delegate to the one helper that knows this.
+  const typesBody = (rust.split('fn civitai_types')[1] || '').split('\n}')[0]
+  const frags = [...typesBody.matchAll(/"(types=[^"]*)"/g)].map((m) => m[1])
+  assert.ok(frags.length >= 2, 'civitai_types must return query fragments')
+  for (const f of frags) {
+    assert.ok(!f.includes(','), `CivitAI rejects a comma-separated types list: ${f}`)
+    assert.ok(!/types=LoRA\b|types=Model\b|types=GGUF\b/.test(f), `not a CivitAI model type: ${f}`)
+  }
+  const all = frags.join('&')
+  assert.ok(all.includes('types=LORA'), 'CivitAI LoRA search must use types=LORA')
+  assert.ok(all.includes('types=Checkpoint'), 'CivitAI checkpoint search must use types=Checkpoint')
+  assert.ok(fn.includes('civitai_types(&kind)'), 'search must use the shared type mapping')
   // Base model: filtered after mapping, so the family always comes from
   // archMap rather than the source's own wording.
   assert.ok(fn.includes('family_filter'), 'family filter must be applied')

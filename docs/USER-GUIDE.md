@@ -483,6 +483,16 @@ This tab is **off by default and nothing is downloaded until you tick it** — t
 opt-in adult-content decision, which is why this lives in Manage and not in
 Setup.
 
+**CivitAI is a second, separate switch — also off by default.** CivitAI lives at
+`civitai.red`, the adult host, and many security suites and ISPs block that
+domain outright. While the switch is off the launcher makes **no request to
+CivitAI at all**: the account tier is hidden, both source pickers fall back to
+HuggingFace, and every CivitAI command returns "CivitAI is turned off" without
+opening a connection. Turn it on under the pack's own settings when you want
+search, browse, examples or the account tier; if your antivirus blocks adult
+sites, allow `civitai.red` (and `image.civitai.com`) first. HuggingFace-only
+browsing, updates and catalog fetches work with the switch off.
+
 **Every row shows what you actually have:**
 
 | On the row | Meaning |
@@ -608,6 +618,9 @@ itself is never modified: which drive receives the files is still decided by
 its first entry, exactly as for every other model.
 
 ### CivitAI account tier
+
+Turn on the CivitAI switch first (see above) — it is off by default and nothing
+here contacts `civitai.red` until it is on.
 
 Two author-exclusive releases (DaSiWa TastySin v8, Wan 2.2 NSFW Lightning) are
 resolved live from your own CivitAI token — the version id is looked up at the

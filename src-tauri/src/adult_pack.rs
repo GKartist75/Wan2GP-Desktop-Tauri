@@ -213,6 +213,28 @@ fn pack_ckpts_dir() -> PathBuf {
     resolve_ckpts_dir().join(PACK_CKPT_DIR)
 }
 
+/// True when every file a recipe names is already in the pack's checkpoint
+/// folder. Both the manifest (panel counts) and the status command ask this, so
+/// "already downloaded" means one thing everywhere.
+fn finetune_weights_present(ft: &Value) -> bool {
+    let dir = pack_ckpts_dir();
+    let wanted: Vec<String> = [str_field(ft, "file"), str_field(ft, "fileLow")]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .map(|s| basename(&s))
+        .collect();
+    !wanted.is_empty()
+        && wanted.iter().all(|n| {
+            dir.join(n).is_file()
+                || std::fs::read_dir(&dir)
+                    .map(|rd| {
+                        rd.flatten()
+                            .any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(n))
+                    })
+                    .unwrap_or(false)
+        })
+}
+
 /// Point a model URL at `<checkpoints_paths[0]>/adult-pack/`. Local paths are
 /// left alone: they are already absolute and fully resolved by us.
 fn pack_weight_url(u: &str) -> String {
@@ -320,6 +342,33 @@ fn save_pack_config(cfg: Value) -> Result<(), String> {
     let p = get_config_file();
     let s = serde_json::to_string_pretty(&full).map_err(|e| e.to_string())?;
     atomic_write(&p, &s).map_err(|e| format!("Cannot write config: {e}"))
+}
+
+/// CivitAI is off unless the user turns it on. It is the only adult host the
+/// launcher talks to, and security suites commonly block it as an adult site,
+/// so nothing may contact `civitai.red` until this is explicitly enabled.
+fn civitai_enabled() -> bool {
+    pack_config()
+        .get("civitaiEnabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+fn require_civitai() -> Result<(), String> {
+    if civitai_enabled() {
+        Ok(())
+    } else {
+        Err("CivitAI is turned off. Enable it in Model Pack → CivitAI.".into())
+    }
+}
+
+/// True for any URL hosted by CivitAI (API or CDN), so the off switch also
+/// covers direct file downloads of user-added models.
+fn is_civitai_url(url: &str) -> bool {
+    let u = url.to_ascii_lowercase();
+    u.contains("://civitai.red/")
+        || u.contains("://civitai.com/")
+        || u.contains("://image.civitai.com/")
 }
 
 /// CivitAI tokens are credentials: keep them out of the plain config the way the
@@ -817,6 +866,9 @@ pub fn adult_pack_manifest() -> Value {
             let id = str_field(ft, "id");
             let mut o = ft.clone();
             o["finetuneWritten"] = json!(finetunes_dir().join(format!("adultpack_{id}.json")).is_file());
+            // The panel subtracts what is on disk from "to download", so this
+            // must be as fresh as the LoRA `installed` flag.
+            o["weightsPresent"] = json!(finetune_weights_present(ft));
             o
         }).collect::<Vec<_>>(),
         "civitai": arr(m, "civitai"),
@@ -833,6 +885,7 @@ pub fn adult_pack_manifest() -> Value {
         "wan2gpModelCount": ids.len(),
         "ageConfirmedAt": selected,
         "hasToken": !read_token().is_empty(),
+        "civitaiEnabled": civitai_enabled(),
         "civitaiPinned": cfg.get("civitaiPinned").cloned().unwrap_or(json!({})),
         // Last saved picks, so re-running Setup starts where the user left off
         // instead of silently resetting a half-finished selection.
@@ -859,6 +912,16 @@ pub fn adult_pack_save(selection: Value, token: Option<String>) -> Result<Value,
     }
     save_pack_config(cfg)?;
     Ok(json!({"ok": true}))
+}
+
+/// Turn the CivitAI source on/off. Off is the default; every CivitAI command
+/// checks this before opening a socket.
+#[tauri::command]
+pub fn adult_pack_set_civitai(enabled: bool) -> Result<Value, String> {
+    let mut cfg = pack_config();
+    cfg["civitaiEnabled"] = json!(enabled);
+    save_pack_config(cfg)?;
+    Ok(json!({"ok": true, "civitaiEnabled": enabled}))
 }
 
 fn family_dir(item: &Value) -> &'static str {
@@ -1448,6 +1511,10 @@ pub async fn adult_pack_fetch(ids: Vec<String>, app: AppHandle) -> Result<Value,
                 l.get("bytes").and_then(|x| x.as_u64()).unwrap_or(0),
                 &pins,
             );
+            if !civitai_enabled() && is_civitai_url(&url) {
+                failed.push(json!({"id": &id, "name": label, "error": "CivitAI is turned off. Enable it in Model Pack → CivitAI."}));
+                continue;
+            }
             match download_verified(
                 &client,
                 &url,
@@ -1522,6 +1589,11 @@ pub async fn adult_pack_fetch(ids: Vec<String>, app: AppHandle) -> Result<Value,
                         f.get(bytes_key).and_then(|x| x.as_u64()).unwrap_or(0),
                         &pins,
                     );
+                    if !civitai_enabled() && is_civitai_url(&url) {
+                        item_failed = true;
+                        failed.push(json!({"id": &id, "name": label, "error": "CivitAI is turned off. Enable it in Model Pack → CivitAI."}));
+                        continue;
+                    }
                     let suffix = if *key == "urls2" { " (low)" } else { "" };
                     match download_verified(
                         &client,
@@ -1664,6 +1736,7 @@ pub fn adult_pack_write_finetunes(ids: Vec<String>) -> Result<Value, String> {
 /// Check a CivitAI token without downloading anything (one small GET).
 #[tauri::command]
 pub async fn adult_pack_civitai_verify(token: String) -> Result<Value, String> {
+    require_civitai()?;
     if token.trim().is_empty() {
         return Ok(json!({"ok": false, "error": "no token"}));
     }
@@ -1801,6 +1874,7 @@ pub async fn adult_pack_civitai_download(
     token: Option<String>,
     app: AppHandle,
 ) -> Result<Value, String> {
+    require_civitai()?;
     let tok = token
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty());
@@ -1937,7 +2011,6 @@ pub fn adult_pack_status() -> Value {
         loras.push(json!({"id": l.get("id").cloned().unwrap_or(json!("")), "present": on, "path": p.to_string_lossy()}));
     }
     let mut fts = vec![];
-    let ckpts = pack_ckpts_dir();
     let mut ckpt_present = 0u32;
     for ft in arr(m, "finetunes") {
         let id = str_field(ft, "id");
@@ -1945,21 +2018,7 @@ pub fn adult_pack_status() -> Value {
         // A checkpoint counts as downloaded when every file its recipe points at
         // is on disk, so the row can say "weights on disk" honestly rather than
         // "recipe written" standing in for it.
-        let wanted: Vec<String> = [str_field(ft, "file"), str_field(ft, "fileLow")]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .map(|s| basename(&s))
-            .collect();
-        let have_all = !wanted.is_empty()
-            && wanted.iter().all(|n| {
-                ckpts.join(n).is_file()
-                    || std::fs::read_dir(&ckpts)
-                        .map(|rd| {
-                            rd.flatten()
-                                .any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(n))
-                        })
-                        .unwrap_or(false)
-            });
+        let have_all = finetune_weights_present(ft);
         if have_all {
             ckpt_present += 1;
         }
@@ -2173,6 +2232,7 @@ pub async fn adult_pack_gallery(repo: String, rev: Option<String>) -> Result<Val
 /// download is what needs the token), so the gallery works without one.
 #[tauri::command]
 pub async fn adult_pack_civitai_gallery(id: String) -> Result<Value, String> {
+    require_civitai()?;
     let m = manifest();
     let Some(spec) = find(m, "civitai", &id) else {
         return Err(format!("unknown civitai item {id}"));
@@ -2350,12 +2410,16 @@ fn civitai_period(period: &str) -> &'static str {
     }
 }
 
+/// CivitAI's `types` parameter takes repeated params, not a comma list (a
+/// comma list is a 400), and only exact enum names: `LORA` works, `LoRA`
+/// does not. `Model` and `GGUF` are not model types there at all, so "any"
+/// asks for the two families the pack can use and GGUF searches fall back to
+/// checkpoints (GGUF releases are published as Checkpoint/Model entries).
 fn civitai_types(kind: &str) -> &'static str {
     match kind {
-        "lora" => "LoRA",
-        "checkpoint" => "Checkpoint",
-        "gguf" => "GGUF",
-        _ => "Checkpoint,LoRA,Model",
+        "lora" => "types=LORA&types=DoRA&types=LoCon",
+        "checkpoint" => "types=Checkpoint",
+        _ => "types=Checkpoint&types=LORA&types=DoRA&types=LoCon",
     }
 }
 
@@ -2490,6 +2554,9 @@ pub async fn adult_pack_browse(
     family: Option<String>,
     limit: Option<usize>,
 ) -> Result<Value, String> {
+    if source != "hf" {
+        require_civitai()?;
+    }
     let sort = sort.unwrap_or_else(|| "trending".into());
     let period = period.unwrap_or_else(|| "week".into());
     let kind = kind.unwrap_or_else(|| "any".into());
@@ -2525,7 +2592,7 @@ pub async fn adult_pack_browse(
         }
     } else {
         let url = format!(
-            "https://civitai.red/api/v1/models?sort={}&period={}&limit={}&nsfw=1&types={}",
+            "https://civitai.red/api/v1/models?sort={}&period={}&limit={}&nsfw=1&{}",
             civitai_sort(&sort),
             civitai_period(&period),
             n,
@@ -2569,6 +2636,9 @@ pub async fn adult_pack_search(
     if q.len() < 2 {
         return Err("Type at least two characters".into());
     }
+    if source != "hf" {
+        require_civitai()?;
+    }
     // "any" | "lora" | "checkpoint" | "gguf" — each source spells its filter
     // differently, and neither one can express all three, so a LoRA search on
     // HuggingFace uses its own lora filter and CivitAI uses types=LoRA.
@@ -2611,17 +2681,12 @@ pub async fn adult_pack_search(
         }
     } else {
         // CivitAI types: LoRA / Checkpoint / GGUF are distinct model types there.
-        let types = match kind.as_str() {
-            "lora" => "LoRA",
-            "checkpoint" => "Checkpoint",
-            "gguf" => "GGUF",
-            _ => "Checkpoint,LoRA,Model",
-        };
+        // `civitai_types` owns the spelling; a comma list is a 400.
         let url = format!(
-            "https://civitai.red/api/v1/models?query={}&limit={}&nsfw=1&types={}",
+            "https://civitai.red/api/v1/models?query={}&limit={}&nsfw=1&{}",
             urlencode(q),
             n,
-            types
+            civitai_types(&kind)
         );
         let resp = client
             .get(&url)
@@ -2659,6 +2724,9 @@ pub async fn adult_pack_inspect(
     architecture: String,
     version: Option<String>,
 ) -> Result<Value, String> {
+    if source != "hf" {
+        require_civitai()?;
+    }
     let client = http_client();
     let arch_ok = installed_model_ids();
     let mut files: Vec<Value> = vec![];
@@ -4282,6 +4350,15 @@ mod tests {
             .cloned()
             .unwrap();
         assert_eq!(row["weightsPresent"], json!(true), "{row}");
+        // The panel's "to download" math reads the manifest, not status, so
+        // both must agree that these weights are already here.
+        let pack = adult_pack_manifest();
+        let row = arr(&pack, "finetunes")
+            .iter()
+            .find(|f| str_field(f, "id") == id)
+            .cloned()
+            .unwrap();
+        assert_eq!(row["weightsPresent"], json!(true), "{row}");
         let _ = std::fs::remove_file(&p);
     }
 
@@ -4582,6 +4659,24 @@ mod tests {
             "456"
         );
         assert!(civitai_sha(&bare).is_none());
+    }
+
+    #[test]
+    fn civitai_type_filters_use_the_spelling_the_api_accepts() {
+        // Live checks against civitai.red: `types=Checkpoint,LORA` and
+        // `types=Model` are HTTP 400; `LORA` (not `LoRA`) and repeated params
+        // are 200. This guard keeps a "tidy" edit from breaking search again.
+        for kind in ["any", "lora", "checkpoint", "gguf"] {
+            let q = civitai_types(kind);
+            assert!(q.starts_with("types="), "{kind}: must be a query fragment");
+            assert!(!q.contains(','), "{kind}: a comma list is a 400");
+            assert!(!q.contains("LoRA"), "{kind}: the API wants LORA");
+            assert!(!q.contains("Model"), "{kind}: Model is not a model type");
+            assert!(!q.contains("GGUF"), "{kind}: GGUF is not a model type");
+        }
+        assert_eq!(civitai_types("checkpoint"), "types=Checkpoint");
+        assert!(civitai_types("any").contains("types=LORA"));
+        assert!(civitai_types("lora").contains("types=LORA"));
     }
 
     #[test]
