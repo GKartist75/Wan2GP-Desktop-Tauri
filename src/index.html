@@ -854,7 +854,11 @@
               </div>
               <div class="ap-upd-list" id="apUpdList"></div>
             </div>
-            <div id="apCivSection" class="ap-civ">
+            <label class="ap-age" style="margin-top:12px">
+              <input type="checkbox" id="apCivEnabled">
+              <span>Use CivitAI (adult host, <code>civitai.red</code>) — off by default. Nothing contacts it until you turn this on. If your antivirus or ISP blocks adult sites, allow <code>civitai.red</code> first.</span>
+            </label>
+            <div id="apCivSection" class="ap-civ" style="display:none">
               <div class="ap-sub">Via your CivitAI account</div>
               <div class="ap-hint">Author-exclusive releases, resolved live. The launcher fetches them with your own token and records where they landed — it never re-hosts them.</div>
               <div id="apCivItems"></div>

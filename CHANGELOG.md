@@ -2,6 +2,29 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.10.17] — 2026-10-20
+
+- **CivitAI is now a master switch, off by default.** `civitai.red` is the one
+  adult host the launcher talks to, and security suites and ISPs routinely block
+  it as an adult site. While the switch is off nothing contacts it: the account
+  tier is hidden, both source pickers fall back to HuggingFace, and every
+  CivitAI command (search, browse, inspect, examples, token check, download)
+  refuses locally — no socket, no partial request. Direct downloads of
+  user-added CivitAI models are covered too. Turn it on in the pack's own
+  settings; the 18+ gate stays independent. HuggingFace browsing, updates and
+  catalog fetches are unaffected.
+- **CivitAI search and browse work again.** The API rejects comma-separated
+  types, as well as the names `LoRA`, `Model` and `GGUF`; it wants repeated
+  `types=` parameters with its own spelling (`LORA`, `Checkpoint`, `DoRA`,
+  `LoCon`). Both paths now share that mapping, so "Trending" no longer answers
+  HTTP 400.
+- **Download counts tell the truth.** The footer used to count every selected
+  item as a download, even when the LoRA was already on disk or a checkpoint's
+  weights were already in `adult-pack/`. It now separates "N to download" from
+  "M already on disk", sizes only the pending bytes, and the free-space check
+  uses the real LoRA and checkpoint folders. The manifest reports
+  `weightsPresent` per checkpoint so the panel does not guess.
+
 ## [0.10.16] — 2026-10-20
 
 - **Pack LoRAs now land where Wan2GP actually looks.** Wan2GP lists
