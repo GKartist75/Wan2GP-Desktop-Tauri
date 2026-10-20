@@ -144,8 +144,8 @@ packages) — state is remembered across restarts. Collapsed headers keep
 their key actions live (enhancement mode + Apply, Disabled/Zero/Prime +
 Apply, LAN toggle + Deepy Start/Stop); Kernel/Env headers collapse clean.
 
-**DLSS 5 card** — optional NVIDIA upsampler runtimes. *Install DLSS 5…* opens a
-confirmation (Cancel / Install); its **Force (backup + replace existing files)**
+**DLSS 5 card** — optional NVIDIA upsampler runtimes. *Install / update DLSS 5* opens a
+confirmation (Cancel / Install / update); its **Force (backup + replace existing files)**
 tick is remembered across restarts (upstream's installer leaves matching files
 alone and refuses to touch *different* ones until you rerun it with `-Force`,
 which backs up everything it replaces), while the consent tick in the install modal is cleared every
@@ -158,17 +158,20 @@ claiming a match — the panel only stats the files on open (hashing them stream
 couple hundred MB, so it waits to be asked). A row is **green** when its bytes
 match the pin, **amber** when the file is present but was never hashed, and red
 when it is missing or wrong — green is local truth only, so a newer build
-*upstream* never tints a correct file. *Check for updates* asks the sources
-that upstream's installer script pins (`RankFTW/rhi-repo`,
-`DeepBeepMeep/dlss5-visual-enhancer`, reshade.me) whether a newer component
-release exists — read-only, downloads nothing, and its *upstream* note appears **only after you press it** —
-the startup probe still refreshes the data quietly, so the button answers
-instantly — it just no longer decorates a healthy panel on launch. The component
-versions themselves are pinned by that script, so a newer one arrives through
-*Update Wan2GP*, never from this card. RenoDX and DLSSNR are deliberately held
-on the versions WanGP tested (newer development builds live on the RenoDX
-Discord), so those two can keep reporting a newer build upstream has chosen not
-to adopt.
+*pinned by DeepBeepMeep/Wan2GP* never tints a correct file. *Compare with upstream*
+compares the pins in your Wan2GP checkout with `scripts/install_dlss5.ps1` on
+`deepbeepmeep/Wan2GP` main — read-only, downloads nothing, and its update note
+appears **only after you press it** — the startup check refreshes the data
+quietly, so the button answers instantly, but it does not decorate a healthy
+panel on launch. Component release feeds are not update sources: a build only
+becomes an update when DeepBeepMeep/Wan2GP pins it. The component versions
+themselves are read from the local `<Wan2GP>/scripts/install_dlss5.ps1`.
+Updating Wan2GP replaces that script but does **not** touch files already in
+`dlss5/`; run *Install / update DLSS 5* afterwards to apply new pins. If the
+local script is missing or unreadable, the panel falls back to the launcher's
+built-in pins for the local baseline and says so. RenoDX and DLSSNR are
+deliberately held on the versions WanGP tested (newer development builds live on
+the RenoDX Discord), so those two stay put until DeepBeepMeep/Wan2GP adopts them.
 
 **Advanced — pip packages card** — install any extra PyPI package into the
 active env, with a copy button for the equivalent command.
@@ -283,6 +286,14 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   live preview, Save theme / Set as default / Reset to shipped colors. Text size
   (85–130%) + Terminal size (85–150%) sliders; console window follows.
 - **Desktop** — desktop shortcut + start options.
+- **Custom Resolutions** — adds your own sizes to Wan2GP's resolution picker.
+  The table writes `<repo>/resolutions.json` next to `wgp.py` as
+  `[["label", "1600x1200"], ...]`; Wan2GP's built-in list stays untouched.
+  Add/remove rows, then **Save to resolutions.json**. **Load example** fills
+  eight common 1080p / 1 MP Krea 2 and MiniMax H3 sizes. Labels are what you see
+  in Wan2GP; values must be positive `WIDTHxHEIGHT`, and duplicate labels or
+  sizes are rejected. Saving an empty table removes the custom entries. Restart
+  Wan2GP after saving — it caches the file when the Python process starts.
 - **Queue Notifier** — now sets up Wan2GP's **native** notifications
   (`wgp_config.json`, upstream `shared/notifications`): space-separated
   Apprise destinations, OS-credential-store checkbox (needs `keyring`,
@@ -464,10 +475,15 @@ Two caveats if you override video to `dynamic`: it **only engages with the MMGP 
 
 ## Manage → Library
 
-📚 **LoRA & Finetune Library** — per-family LoRA file counts, sizes and known
-download URLs (`loras_url_cache_v2.json`); finetune list with base architecture
-and URL/LoRA counts, plus import (validated, never overwrites), export
-(download JSON to share) and delete. Refresh Model List in WanGP afterwards.
+📚 **LoRA & Finetune Library** — per-family LoRA file counts split into
+**Yours** and **Pack** (the nested `adult-pack/` folder), sizes and known
+download URLs (`loras_url_cache_v2.json`); finetune list with base architecture,
+URL/LoRA counts and an origin column (`Pack`, `Pack · CivitAI`,
+`Overrides DeepBeepMeep`, or `Yours`); checkpoint inventory with origin
+(`DeepBeepMeep` when the file is named in the shipped `defaults/`, `Pack` when it
+is in `adult-pack/`, otherwise `Yours`), plus import (validated, never
+overwrites), export (download JSON to share) and delete. Refresh Model List in
+WanGP afterwards.
 
 **Workspaces** — per-project media counts, real on-disk sizes, moved/missing
 file flags, archive-lock toggle, definitions backup ZIP (back up outputs too
@@ -477,6 +493,16 @@ for a portable archive).
 
 📦 **Adult (NSFW) model pack** — a curated catalog of adult checkpoints and
 LoRAs that Wan2GP can actually load, plus a way to find and add your own.
+
+> **In development.** Catalog entries, sources and install locations can change
+> between releases. Adult content is optional and off by default — use it only
+> if you are 18 or older and it is legal where you live. You are responsible for
+> what you download and generate.
+
+The tab is ordered as a workflow: **disclaimer → pack gate and catalogue →
+Downloads → Find models → Finetune recipes → LoRA files**. The pack is the
+headline; everything below Downloads is optional tooling for models the pack
+does not carry.
 
 This tab is **off by default and nothing is downloaded until you tick it** — the
 18+ confirmation gates the whole panel. Installing Wan2GP must never carry an
@@ -492,6 +518,15 @@ opening a connection. Turn it on under the pack's own settings when you want
 search, browse, examples or the account tier; if your antivirus blocks adult
 sites, allow `civitai.red` (and `image.civitai.com`) first. HuggingFace-only
 browsing, updates and catalog fetches work with the switch off.
+
+**A CivitAI token is optional.** Public releases download without an account. A
+token is only needed for auth-gated or early-access files, and it raises the API
+rate limit. Create one from **Account → API Keys** on
+[civitai.com](https://civitai.com/user/account) or
+[civitai.red](https://civitai.red/user/account) — the same key works on both
+hosts, and the pack's token row has buttons that open either page. When a release
+rejects an anonymous request the panel says so instead of pretending the item is
+broken.
 
 **Every row shows what you actually have:**
 
@@ -517,9 +552,10 @@ The chips above the list answer "what do I already have" at a glance.
    that does not map to a real architecture is never shown.
 3. **Search by name, then Add…** — search HuggingFace or CivitAI, inspect the
    repo's files, pick one, and **Add** it. Adding writes
-   `finetunes/<id>.json`, so **Wan2GP downloads the weights itself on first run**
-   — the launcher never re-hosts a model. Anything you add is remembered in
-   `adult-pack-custom.json`, outside the shipped catalog, so updates cannot drop it.
+   `finetunes/adultpack_<id>.json`, so **Wan2GP downloads the weights itself on
+   first run** — the launcher never re-hosts a model. Anything you add is
+   remembered in `adult-pack-custom.json`, outside the shipped catalog, so
+   updates cannot drop it.
 4. **Add by link** — when you already know the model, paste a HuggingFace repo
    (`owner/name` or its URL), a CivitAI model URL, or a CivitAI model id, pick the
    architecture, and **Open…**. This is the path for a model whose name matches no
@@ -527,6 +563,9 @@ The chips above the list answer "what do I already have" at a glance.
    model with several versions you can switch version before adding, and the
    auto-detected file kind (LoRA vs checkpoint) can be overridden before you
    confirm — a wrong guess never forces a file into the wrong folder.
+   Public CivitAI files need no key. A gated CivitAI *checkpoint* added this way
+   is first fetched by the pack's own button (which can authenticate); Wan2GP's
+   automatic first-run download cannot supply your key, so fetch it here first.
 
 Examples: **Examples** on a row opens the model's own sample media (video reels
 included). Most mirrors publish no media of their own, so unmatched models get
@@ -542,12 +581,15 @@ itself, so you never have to select a whole group to act on one entry:
 - **Fetch weights now** — prefetch a checkpoint's files instead of waiting
 - **Open recipe** — jump to it in the finetune manager
 - **Copy URL / Copy file name / Open source page**
-- **Delete…** — the only red action; always confirmed, never touches anything
-  you added yourself
+- **Delete…** — the only red action; always confirmed. It removes exactly the
+  selected pack item (and, for a CivitAI item, the files it recorded), never
+  cleans a folder or touches unrelated models.
 
 LoRA rows deliberately have no "make finetune JSON": Wan2GP loads LoRAs from
-`loras\<collection>\` — the folder it scans for that model family — so the row
-says that instead of offering a button that cannot work.
+`loras\<collection>\adult-pack\` — inside the folder it scans for that model
+family — so the row says that instead of offering a button that cannot work.
+CivitAI LoRAs use the same path; CivitAI checkpoints go to
+`ckpts\adult-pack\` with a local-path recipe.
 
 ### Updates
 
@@ -594,9 +636,13 @@ a definition. The full field list lives in upstream's
 ### LoRA files on disk
 
 **Refresh files** scans your LoRAs folder and lists every weight it finds,
-including files you copied in yourself — rows the catalog knows about are marked
-**in catalog**, the rest are **unknown** and can be deleted from here rather than
-through Explorer. Deletion is confined to the LoRAs folder and always confirmed.
+including files you copied in yourself. Each row says where it came from:
+**Pack** (a curated catalog file), **Pack · CivitAI** (fetched by the CivitAI
+tier), **Yours (added via pack)** (your own Find models addition), **Yours
+(CivitAI)**, **Pack (unlisted)** (in an `adult-pack` folder but not in the
+current catalog), or **Yours** (everything else). Any of them can be deleted from
+here rather than through Explorer. Deletion is confined to the LoRAs folder and
+always confirmed.
 
 Pack LoRAs are fetched into `loras\<collection>\adult-pack\` — inside the folder
 Wan2GP scans for that family (`wan`, `minimax_h3`, `ltx2`, `qwen`, `z_image`…),
@@ -622,12 +668,16 @@ its first entry, exactly as for every other model.
 Turn on the CivitAI switch first (see above) — it is off by default and nothing
 here contacts `civitai.red` until it is on.
 
-Two author-exclusive releases (DaSiWa TastySin v8, Wan 2.2 NSFW Lightning) are
-resolved live from your own CivitAI token — the version id is looked up at the
-moment you fetch, because a pinned id would be stale the moment the author
-publishes. The token is stored in its own file, never in
-`desktop-config.json`, and the launcher never re-hosts anything. Browsing and
-searching CivitAI need no token; downloading does.
+Four CivitAI entries (two checkpoint collections and two LoRAs) are resolved
+live — the version id is looked up at the moment you fetch, because a pinned id
+would be stale as soon as the author publishes. The token is stored in its own
+file, never in `desktop-config.json`, and the launcher never re-hosts anything.
+If the launcher has no token of its own it reuses the `civitai_api_key` from the
+Wan2GP Finetune Manager plugin's `config.json`, read-only, so the key is entered
+once. A token is optional: public releases download without one; only gated or
+early-access files need it, and it raises the API rate limit. Browsing and
+searching CivitAI need no token. LoRAs land in `<collection>\adult-pack\`;
+checkpoints land in `ckpts\adult-pack\` with a local-path recipe.
 
 ---
 
