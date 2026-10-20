@@ -7,10 +7,11 @@
 // change here.
 //
 // Two tiers, because they behave differently:
-//   * LoRAs are downloaded by the launcher into loras/adult-pack/<family>/,
+//   * LoRAs are downloaded by the launcher into loras/<collection>/adult-pack/,
 //     resumable and SHA-256 verified.
 //   * Checkpoints are recipes: we write finetunes/adultpack_*.json with remote
-//     URLs and Wan2GP fetches the weights when you actually run that model.
+//     URLs and Wan2GP fetches the weights when you actually run that model,
+//     into <checkpoints_paths[0]>/adult-pack/ (the URL|adult-pack suffix).
 //     Tick "prefetch" to pull one now.
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -530,7 +531,7 @@
           isLora ? "Download now" : "Fetch weights now",
           isLora
             ? "Download just this file (resumable, SHA-256 verified)"
-            : "Prefetch this checkpoint's weights to the ckpts folder",
+            : "Prefetch this checkpoint's weights to the ckpts/adult-pack folder",
           () =>
             done(() => {
               if (!isLora) sel.fts["pf:" + item.id] = true;

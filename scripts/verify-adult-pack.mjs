@@ -776,7 +776,7 @@ for (const spec of sources.loras || []) {
       for (const f of g) f.defaultSelected = anySelected;
     }
 
-    // Files land flat inside loras/adult-pack/<family>/, so the manifest's
+    // Files land flat inside loras/<collection>/adult-pack/, so the manifest's
     // `file` must be a bare name — never the repo path (a "loras/" prefix
     // would be rejected as unsafe). Disambiguate same-named files.
     const seenNames = new Map();

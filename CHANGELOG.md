@@ -2,6 +2,31 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.10.16] — 2026-10-20
+
+- **Pack LoRAs now land where Wan2GP actually looks.** Wan2GP lists
+  `<loras_root>/<collection>/**` — `wan/`, `wan_i2v/`, `minimax_h3/`, `ltx2/`,
+  `qwen/`… — and never scans a sibling `adult-pack/` folder. 0.10.15 therefore
+  downloaded the pack's LoRAs into `loras\adult-pack\<family>\`, where they were
+  invisible in Wan2GP's LoRA tab. They are now fetched into
+  `loras\<collection>\adult-pack\`, mapped per architecture exactly as each
+  family handler's `get_lora_dir()` does upstream (Wan 2.2 i2v and t2v share
+  `wan`, deliberately). The root follows Wan2GP's own precedence — `--loras`
+  from Launch arguments, then `wgp_config.json`'s `loras_root`, then the desktop
+  setting — and a `--lora-config` override is honoured per collection, so the
+  pack cannot fill a folder Wan2GP never reads. Files already downloaded by
+  0.10.15 are moved into place once, automatically, when the Pack tab opens —
+  nothing is re-downloaded.
+- **Pack checkpoints get their own folder.** Recipes now ask Wan2GP for
+  `<checkpoint root>\adult-pack\<file>` using upstream's `URL|subfolder` form,
+  which its own downloader and locator both understand. Nothing else on the
+  drive changes: `checkpoints_paths` is untouched, the pack simply stops
+  mixing its weights with your own or DeepBeepMeep's downloads. Files
+  prefetched by 0.10.15 are moved in once, and the pack's own recipes are
+  re-pointed, so nothing is downloaded twice. Which drive this lands on still
+  follows `checkpoints_paths[0]` — that is also where Wan2GP downloads any
+  model, so only moving that root would move the whole library.
+
 ## [0.10.15] — 2026-10-19
 
 - **Opt-in Adult (NSFW) model pack — Manage → 📦 Pack.** A new tab in Manage, deliberately
