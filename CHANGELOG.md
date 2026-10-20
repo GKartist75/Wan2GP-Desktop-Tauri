@@ -2,7 +2,7 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
-## [Unreleased]
+## [0.10.16] — 2026-10-20
 
 - **Pack LoRAs now land where Wan2GP actually looks.** Wan2GP lists
   `<loras_root>/<collection>/**` — `wan/`, `wan_i2v/`, `minimax_h3/`, `ltx2/`,
