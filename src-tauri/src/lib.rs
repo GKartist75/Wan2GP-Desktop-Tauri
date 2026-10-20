@@ -11,6 +11,7 @@ mod launch;
 mod log_server;
 mod notifier_native;
 mod plugins;
+mod resolutions;
 mod status;
 mod system;
 mod troubleshoot;
@@ -201,6 +202,8 @@ pub fn run() {
             config::library_finetune_import,
             config::library_finetune_delete,
             config::library_finetune_content,
+            resolutions::custom_resolutions_read,
+            resolutions::custom_resolutions_write,
             config::workspace_list,
             config::workspace_protect,
             config::workspace_backup,

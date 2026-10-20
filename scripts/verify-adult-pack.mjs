@@ -856,6 +856,10 @@ for (const spec of sources.civitai || []) {
     id: spec.id,
     family: spec.family,
     architecture: spec.architecture,
+    // CivitAI entries are checkpoints unless the source says otherwise; LoRAs
+    // must keep that label through a regeneration, not only in the checked-in
+    // manifest.
+    kind: spec.kind || undefined,
     name: spec.name,
     // Live resolution: the runtime searches CivitAI for `query` (filtered by
     // baseModelFilter) instead of pinning a version id that goes stale.

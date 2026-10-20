@@ -642,6 +642,9 @@ if (!window.__TAURI__) {
         openTaskManager: () => call("open_task_manager"),
         configLoad: () => call("config_load"),
         configSave: (cfg) => call("config_save", { cfg }),
+        customResolutionsRead: () => call("custom_resolutions_read"),
+        customResolutionsWrite: (resolutions) =>
+            call("custom_resolutions_write", { resolutions }),
         deepyStatus: () => call("deepy_status"),
         deepyActivate: (e) => call("deepy_activate", { engine: e }),
         deepySet: (mode, engine, enhancer, sessions, quant, enhancerMode) =>

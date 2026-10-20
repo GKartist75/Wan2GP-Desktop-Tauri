@@ -38,14 +38,15 @@
         return
       }
       box.innerHTML = '<table class="args-table lib-table">' +
-        '<tr><td><strong>Family</strong></td><td><strong>Files</strong></td><td><strong>Size</strong></td><td><strong>URLs known</strong></td></tr>' +
+        '<tr><td><strong>Family</strong></td><td><strong>Pack</strong></td><td><strong>Yours</strong></td><td><strong>Size</strong></td><td><strong>URLs known</strong></td></tr>' +
         folders.map((f) => (
           '<tr><td><code>' + esc(f.name) + '</code>' +
           (f.truncated ? ' <span class="token-hint">(first 200 shown in WanGP)</span>' : '') +
-          '</td><td>' + esc(f.files) + '</td><td>' + esc(fmtBytes(f.bytes)) + '</td>' +
+          '</td><td>' + (f.pack_files ? esc(f.pack_files) + ' · ' + esc(fmtBytes(f.pack_bytes)) : '—') +
+          '</td><td>' + esc(f.files) + '</td><td>' + esc(fmtBytes((Number(f.bytes) || 0) + (Number(f.pack_bytes) || 0))) + '</td>' +
           '<td>' + esc(f.urls_known) + ' / ' + esc(f.files) + '</td></tr>'
         )).join('') + '</table>' +
-        '<p class="token-hint">Root: <code>' + esc(r.root) + '</code> — URLs known come from <code>loras_url_cache_v2.json</code> (share it to save friends re-hunting LoRAs).</p>'
+        '<p class="token-hint">Root: <code>' + esc(r.root) + '</code> — “Yours” counts files directly in each family folder; “Pack” counts the <code>adult-pack/</code> subfolder this launcher fills. URLs known come from <code>loras_url_cache_v2.json</code> (share it to save friends re-hunting LoRAs).</p>'
       if (status) status.textContent = folders.length + ' families'
     } catch (e) {
       box.innerHTML = '<p class="token-hint">Failed: ' + esc((e && e.message) || e) + '</p>'
@@ -69,11 +70,11 @@
         return
       }
       box.innerHTML = '<table class="args-table lib-table">' +
-        '<tr><td><strong>Id</strong></td><td><strong>Base</strong></td><td><strong>URLs / LoRAs</strong></td><td><strong></strong></td></tr>' +
+        '<tr><td><strong>Id</strong></td><td><strong>Origin</strong></td><td><strong>Base</strong></td><td><strong>URLs / LoRAs</strong></td><td><strong></strong></td></tr>' +
         items.map((it) => (
           '<tr><td><code>' + esc(it.id) + '</code><br><span class="token-hint">' + esc(it.name || '') + '</span>' +
           (it.error ? '<br><span class="token-hint">' + esc(it.error) + '</span>' : '') +
-          '</td><td><code>' + esc(it.architecture || '?') + '</code></td>' +
+          '</td><td>' + esc(it.origin || 'Yours') + '</td><td><code>' + esc(it.architecture || '?') + '</code></td>' +
           '<td>' + esc(it.urls || 0) + (it.urls2 ? '+' + esc(it.urls2) : '') + ' / ' + esc(it.loras || 0) + '</td>' +
           '<td><button class="btn btn-ghost small" data-lib-export="' + esc(it.id) + '" title="Download this finetune JSON to share">Export</button> ' +
           '<button class="btn btn-ghost small" data-lib-delete="' + esc(it.id) + '" title="Delete this finetune definition (weights untouched)">Delete</button></td></tr>'
@@ -153,12 +154,12 @@
       }
       const sample = Array.isArray(r.sample) ? r.sample : []
       box.innerHTML = '<table class="args-table lib-table compact">' +
-        '<tr><td><strong>Checkpoint</strong></td><td><strong>Kind</strong></td><td><strong>Size</strong></td></tr>' +
+        '<tr><td><strong>Checkpoint</strong></td><td><strong>Origin</strong></td><td><strong>Kind</strong></td><td><strong>Size</strong></td></tr>' +
         sample.map((f) => (
-          '<tr><td><code>' + esc(f.name) + '</code></td><td>' + esc(f.kind || '—') + '</td><td>' + esc(fmtBytes(f.bytes)) + '</td></tr>'
+          '<tr><td><code>' + esc(f.name) + '</code></td><td>' + esc(f.origin || 'Yours') + '</td><td>' + esc(f.kind || '—') + '</td><td>' + esc(fmtBytes(f.bytes)) + '</td></tr>'
         )).join('') + '</table>' +
         (r.truncated ? '<p class="token-hint">First 300 of ' + esc(r.files) + ' shown (largest first).</p>' : '') +
-        '<p class="token-hint">Root: <code>' + esc(r.root) + '</code></p>'
+        '<p class="token-hint">Root: <code>' + esc(r.root) + '</code> — <strong>DeepBeepMeep</strong> files are named in the shipped <code>defaults/</code>, <strong>Pack</strong> files live in <code>adult-pack/</code>, and <strong>Yours</strong> is everything else.</p>'
       if (status) status.textContent = r.files + ' files · ' + fmtBytes(r.bytes)
     } catch (e) {
       box.innerHTML = '<p class="token-hint">Failed: ' + esc((e && e.message) || e) + '</p>'

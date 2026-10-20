@@ -2,6 +2,83 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.10.18] — 2026-10-20
+
+- **Finetune JSON now matches Wan2GP's documented shape.** Pack and CivitAI
+  recipes put licence/source notes in `model.infos` instead of a root `infos`
+  that the model's information button never reads, and copy the catalog's
+  `loraMultipliers` into `model.loras_multipliers` so always-loaded LoRAs keep
+  their weights. The manager validator now accepts `URLs` as a single reusable
+  recipe id, relative local checkpoint paths and bare model filenames, and it
+  refuses mismatched `loras`/`loras_multipliers` lists. A reused recipe reports
+  one source instead of zero.
+- **DLSS 5 status, compatibility and updates now all follow
+  DeepBeepMeep/Wan2GP.** Status and SHA verification read the package table in
+  `<repo>/scripts/install_dlss5.ps1`, and *Compare with upstream* compares those
+  local pins with the same script on `deepbeepmeep/Wan2GP` main — component
+  release feeds are no longer treated as update sources. A newer pin means
+  "update Wan2GP, then run Install / update DLSS 5"; the launcher never
+  downloads a build DeepBeepMeep/Wan2GP has not pinned. A successful install
+  now runs the file verification immediately, and a failed installer exit is
+  reported as a failure even when an older complete install left every file in
+  place, so verified rows turn green without waiting for a manual check. The
+  compatibility check also mirrors current upstream's workstation-aware GPU
+  tier, so RTX PRO / Ada / RTX Ax000 cards no longer show a false "upstream
+  would block this" mismatch.
+- **Custom Wan2GP resolutions are editable in Manage → General.** A small
+  table editor reads and writes `<repo>/resolutions.json` next to `wgp.py` in
+  Wan2GP's own `[[label, "WxH"], ...]` shape. Every row is validated before the
+  file is replaced (two strings, positive `WIDTHxHEIGHT`, no duplicate labels or
+  sizes), the write is atomic, and the editor is only enabled once `wgp.py`
+  exists. **Load example** fills the eight Krea 2 / MiniMax H3 1080p and 1 MP
+  sizes; saving an empty table removes all custom entries. Wan2GP caches the
+  list at Python start, so restart it after saving.
+- **CivitAI LoRAs now install as LoRAs.** Catalog entries can declare
+  `"kind": "lora"` (with an API-type fallback for hand-written entries), and the
+  downloader files them into `<loras_root>/<collection>/adult-pack/` instead of
+  `ckpts/adult-pack/`. Checkpoints still go to `ckpts/adult-pack/` with a
+  local-path finetune; LoRAs deliberately get no finetune JSON because Wan2GP
+  loads them from the collection folder.
+- **A CivitAI token is optional again.** Public releases download without an
+  account; a token is attached only when one is stored or typed. Version
+  resolution and download URLs use it when present, an HTTP 401/403 explains
+  that a token is needed (or that the stored one was rejected), and the token
+  help now links straight to the API-key page on both `civitai.com` and
+  `civitai.red`.
+- **CivitAI installs are recorded, not guessed.** Each download stores its real
+  file paths, kind and byte count (`civitaiInstalled`). The manifest reports
+  `installed`, `installedKind` and `installedBytes`, so the footer, free-space
+  check and "Remove selected" agree with what is actually on disk. A selected
+  CivitAI item is no longer re-downloaded or counted as pending, and
+  "Fetch missing only" now includes CivitAI items. If the launcher has no token
+  of its own, it reuses the `civitai_api_key` from the Wan2GP Finetune Manager
+  plugin's `config.json` read-only, so the key is entered once.
+- **CivitAI downloads only fetch weights.** A version's auxiliary entries
+  (configs, VAEs, training data, sample archives) are skipped instead of being
+  filed as models. When a release publishes HIGH and LOW weights as two files,
+  the LOW half is written to the recipe's `URLs2` (the second Wan 2.2 phase)
+  instead of leaving both in `URLs`. A failed removal now reports the locked
+  file and keeps the install record, rather than claiming the item is gone.
+- **The Pack tab has a clear order.** A prominent in-development/adult-content
+  disclaimer comes first, then the shared Downloads, Find models, Finetune
+  recipes and LoRA files tools, with the adult pack gate and catalogue below
+  them. CivitAI's token row explains that public releases need no key, and the
+  old "token required" checkbox gate is gone.
+- **The Library now shows provenance.** Checkpoints are labelled
+  `DeepBeepMeep` (a file named in the shipped `defaults/*.json`), `Pack` (in
+  `adult-pack/`), or `Yours`; LoRA families report separate Pack and Yours
+  counts/sizes (including the nested `adult-pack/` folder); finetunes report
+  `Pack`, `Pack · CivitAI`, `Overrides DeepBeepMeep`, or `Yours`. The pack's own
+  LoRA inventory uses the same labels, including `Yours (added via pack)` and
+  `Pack (unlisted)` so a hand-placed file is not mistaken for a curated one.
+  The checkpoint table gives Checkpoint/Origin/Kind/Size real widths, so long
+  filenames wrap normally instead of one character per line and Size no longer
+  takes the whole table.
+- **Adult Pack gains two H3 models.** MiniMax H3 Singularity is available in a
+  pruned int8 build (20.9 GB, off by default) alongside the existing w4a8
+  finetune, and the 131 MB MiniMax H3 Realism People LoRA (T2V/I2V/R2V, trigger
+  `r34l1sm`) joins the H3 group. MysticXXX MMH3 V4 was already in the catalog.
+
 ## [0.10.17] — 2026-10-20
 
 - **CivitAI is now a master switch, off by default.** `civitai.red` is the one

@@ -2362,14 +2362,22 @@ table.args-table.lib-table.compact td {
  font-size: 0.6875rem;
 }
 table.args-table.lib-table.compact td:first-child {
+ width: auto;
  white-space: normal;
- word-break: break-all;
+ overflow-wrap: anywhere;
+ word-break: normal;
 }
 table.args-table.lib-table.compact td:nth-child(2) {
- width: 96px;
+ width: 108px;
 }
 table.args-table.lib-table.compact td:nth-child(3) {
- width: 76px;
+ width: 64px;
+}
+/* The generic .args-table td:last-child rule asks for 100% width, which in a
+   fixed-layout table squeezes the name and Origin columns to zero. Give Size
+   a real width so the remaining space goes to the filename. */
+table.args-table.lib-table.compact td:nth-child(4) {
+ width: 82px;
 }
 
 /* ── Settings Panel ── */
@@ -2473,6 +2481,34 @@ table.args-table.lib-table.compact td:nth-child(3) {
  letter-spacing: 0.06em;
  color: var(--text-secondary);
  margin-bottom: 10px;
+}
+
+.resolution-row {
+ display: flex;
+ gap: 8px;
+ align-items: center;
+ margin-top: 6px;
+}
+.resolution-row .res-label {
+ flex: 1 1 260px;
+ min-width: 0;
+}
+.resolution-row .res-value {
+ flex: 0 0 140px;
+ width: 140px;
+ font-family: "Geist Mono", monospace;
+}
+.resolution-row .res-del {
+ flex: 0 0 auto;
+ line-height: 1;
+}
+@media (max-width: 720px) {
+ .resolution-row {
+  flex-wrap: wrap;
+ }
+ .resolution-row .res-value {
+  flex: 1 1 120px;
+ }
 }
 
 .token-field {
@@ -3897,6 +3933,7 @@ input[type="radio"] {
    only reviewable if every line costs one short row with a size and a badge. */
 .ap-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -4220,11 +4257,13 @@ input[type="radio"] {
 }
 .ap-token-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
 }
 .ap-token-row input {
-  flex: 1;
+  flex: 1 1 220px;
+  min-width: 0;
   font-size: 0.74rem;
   padding: 6px 9px;
   border: 1px solid var(--border, #eaeaea);
@@ -4239,6 +4278,7 @@ input[type="radio"] {
 }
 .ap-total {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
@@ -4406,6 +4446,31 @@ input[type="radio"] {
 .ap-link:hover {
   text-decoration: underline;
 }
+/* Buttons used as links (API-key help) must not look like action buttons. */
+button.ap-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+}
+.ap-key-hint {
+  margin: 6px 0 0;
+}
+.ap-disclaimer {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--signal-yellow, #d9a400);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--signal-yellow-bg, rgba(217, 164, 0, 0.1));
+  color: var(--text-secondary, #444);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+.ap-disclaimer strong {
+  color: var(--text-primary, #111);
+}
 .ap-details {
   margin: 2px 0 8px 46px;
   padding: 8px 10px;
@@ -4537,13 +4602,27 @@ input[type="radio"] {
 }
 .ap-search-row {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   margin-top: 8px;
 }
-.ap-search-row input[type="text"] {
-  flex: 1;
+.ap-search-row > .input,
+.ap-search-row > select,
+.ap-search-row > input[type="text"] {
+  /* Let controls shrink and wrap instead of pushing the Search/Browse button
+     off the edge of a narrow Manage panel. */
+  min-width: 0;
+  flex: 1 1 140px;
+  width: auto;
+}
+.ap-search-row > input[type="text"] {
+  flex: 2 1 240px;
   font-size: 0.74rem;
   padding: 6px 9px;
+}
+.ap-search-row > .btn {
+  flex: 0 0 auto;
 }
 .ap-search-status {
   margin-top: 8px;

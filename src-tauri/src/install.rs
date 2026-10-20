@@ -7305,9 +7305,11 @@ async fn install_prerequisite_windows(
     Ok(serde_json::json!({"ok": true, "success": true, "ready": false}))
 }
 
-// Pinned manifest mirrors upstream scripts/install_dlss5.ps1: one row per installed
-// file (path, package id, version, expected file SHA-256).
-// ponytail: the backend owns versions/SHAs so the panel can't go stale like the old hardcoded frontend copy.
+// Fallback pins, used only when Wan2GP's own `scripts/install_dlss5.ps1` is
+// missing or cannot be parsed. The script is the real source of truth: it is
+// what `Install DLSS 5` runs, and updating Wan2GP replaces it. Keeping a copy
+// here means a newly-installed launcher can still verify an existing install
+// before Wan2GP is set up (or if upstream renames a line we parse).
 const DLSS5_FILES: &[(&str, &str, &str, &str)] = &[
     (
         "host/nr-depth-worker.exe",
@@ -7359,6 +7361,164 @@ const DLSS5_FILES: &[(&str, &str, &str, &str)] = &[
     ),
 ];
 
+/// One file `scripts/install_dlss5.ps1` installs: destination under `dlss5/`,
+/// the package it belongs to, a human label, and the SHA-256 the script checks.
+#[derive(Clone, Debug)]
+struct Dlss5Pin {
+    path: String,
+    pkg: String,
+    version: String,
+    sha: String,
+}
+
+fn dlss5_static_pins() -> Vec<Dlss5Pin> {
+    DLSS5_FILES
+        .iter()
+        .map(|(path, pkg, version, sha)| Dlss5Pin {
+            path: (*path).to_string(),
+            pkg: (*pkg).to_string(),
+            version: (*version).to_string(),
+            sha: (*sha).to_string(),
+        })
+        .collect()
+}
+
+/// First quoted value after `marker` on one PowerShell line.
+fn dlss5_quoted_after<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
+    let start = line.find(marker)? + marker.len();
+    let rest = &line[start..];
+    Some(&rest[..rest.find('"')?])
+}
+
+/// Every quoted value on the line, in order. PowerShell string literals in the
+/// installer do not contain escaped quotes, so splitting is enough here.
+fn dlss5_quoted_values(line: &str) -> Vec<&str> {
+    line.split('"').skip(1).step_by(2).collect()
+}
+
+/// The version token in an upstream package `Name`, e.g.
+/// "WanGP DLSS 5 workers v1.1.3" → "1.1.3",
+/// "ReShade 6.8.0 full add-on setup" → "6.8.0",
+/// "DLSSNR 310.8.SF-v2" → "310.8.SF-v2". Only tokens containing a dot and a
+/// digit qualify, so words like "DLSS5" and "setup" are skipped.
+fn dlss5_version_from_name(name: &str) -> Option<String> {
+    name.split_whitespace()
+        .rev()
+        .map(|t| {
+            t.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_')
+                .trim_start_matches(['v', 'V'])
+        })
+        .find(|t| !t.is_empty() && t.contains('.') && t.chars().any(|c| c.is_ascii_digit()))
+        .map(str::to_string)
+}
+
+/// Friendly label matching the old static manifest's wording.
+fn dlss5_display_version(pkg: &str, version: &str) -> String {
+    match pkg {
+        "workers" => format!("Workers v{version}"),
+        "reshade" => format!("ReShade {version}"),
+        "renodx" => format!("RenoDX DLSS5 {version}"),
+        "dlssnr" => format!("DLSSNR {version}"),
+        "dlss" => format!("DLSS Super Resolution {version}"),
+        "dlssg" => format!("DLSS Frame Generation {version}"),
+        _ => version.to_string(),
+    }
+}
+
+/// Parse the package table and `New-InstallItem` lines from upstream's
+/// `scripts/install_dlss5.ps1`. Returns None unless every package id the panel
+/// knows about has at least one pinned file, so a partial/shifted parse falls
+/// back to `DLSS5_FILES` instead of silently shrinking the install.
+fn dlss5_parse_script_pins(text: &str) -> Option<Vec<Dlss5Pin>> {
+    let mut packages: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for line in text.lines() {
+        let t = line.trim_start();
+        if !t.starts_with("[pscustomobject]@{") {
+            continue;
+        }
+        let (Some(id), Some(name)) = (
+            dlss5_quoted_after(t, "Id = \""),
+            dlss5_quoted_after(t, "Name = \""),
+        ) else {
+            continue;
+        };
+        packages.insert(id.to_string(), name.to_string());
+    }
+    if packages.is_empty() {
+        return None;
+    }
+
+    let mut pins = Vec::new();
+    for line in text.lines() {
+        let t = line.trim_start();
+        if !t.starts_with("New-InstallItem") {
+            continue;
+        }
+        // A line has 2 quoted values when the source is a variable
+        // (`$reshade64 "host\dxgi.dll" "SHA"`) and 3 when it is a Join-Path
+        // expression. The destination and SHA are always the last two.
+        let quoted = dlss5_quoted_values(t);
+        if quoted.len() < 2 {
+            continue;
+        }
+        let path = quoted[quoted.len() - 2];
+        let sha = quoted[quoted.len() - 1];
+        if sha.len() != 64 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
+        // `(Join-Path $workers "host\...")` → workers; `$reshade64` → the
+        // "reshade" package id.
+        let Some(first_quote) = t.find('"') else {
+            continue;
+        };
+        let head = &t[..first_quote];
+        let Some(dollar) = head.find('$') else {
+            continue;
+        };
+        let var: String = head[dollar + 1..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        let pkg = if var == "reshade64" {
+            "reshade"
+        } else {
+            var.as_str()
+        };
+        let Some(name) = packages.get(pkg) else {
+            continue;
+        };
+        let Some(version) = dlss5_version_from_name(name) else {
+            continue;
+        };
+        pins.push(Dlss5Pin {
+            path: path.to_string(),
+            pkg: pkg.to_string(),
+            version: dlss5_display_version(pkg, &version),
+            sha: sha.to_ascii_uppercase(),
+        });
+    }
+
+    if DLSS5_PACKAGES
+        .iter()
+        .all(|pkg| pins.iter().any(|pin| pin.pkg.as_str() == *pkg))
+    {
+        Some(pins)
+    } else {
+        None
+    }
+}
+
+/// The pins `Install DLSS 5` will actually verify against: Wan2GP's installer
+/// script when present, otherwise the launcher's built-in fallback.
+fn dlss5_pins_for_repo(repo: &Path) -> (Vec<Dlss5Pin>, &'static str) {
+    if let Ok(text) = std::fs::read_to_string(repo.join("scripts/install_dlss5.ps1")) {
+        if let Some(pins) = dlss5_parse_script_pins(&text) {
+            return (pins, "wan2gp");
+        }
+    }
+    (dlss5_static_pins(), "launcher")
+}
+
 #[tauri::command]
 pub fn dlss5_status() -> serde_json::Value {
     let repo = get_repo_dir();
@@ -7366,15 +7526,16 @@ pub fn dlss5_status() -> serde_json::Value {
         return serde_json::json!({"ok": false, "error": "Wan2GP not installed"});
     }
     let dlss5 = repo.join("dlss5");
-    let files: Vec<serde_json::Value> = DLSS5_FILES.iter().map(|(path, pkg, version, sha)| {
-        let ok = dlss5.join(path).exists();
-        serde_json::json!({"id": path, "pkg": pkg, "version": version, "sha": sha, "installed": ok})
+    let (pins, pins_source) = dlss5_pins_for_repo(&repo);
+    let files: Vec<serde_json::Value> = pins.iter().map(|pin| {
+        let ok = dlss5.join(&pin.path).exists();
+        serde_json::json!({"id": pin.path, "pkg": pin.pkg, "version": pin.version, "sha": pin.sha, "installed": ok})
     }).collect();
     let present = files
         .iter()
         .filter(|f| f["installed"].as_bool().unwrap_or(false))
         .count();
-    serde_json::json!({"ok": true, "installed": present > 0, "complete": present == files.len(), "present": present, "total": files.len(), "files": files})
+    serde_json::json!({"ok": true, "installed": present > 0, "complete": present == files.len(), "present": present, "total": files.len(), "files": files, "pinsSource": pins_source})
 }
 
 // ── persisted DLSS 5 verdicts ────────────────────────────────────────────
@@ -7468,18 +7629,18 @@ pub(crate) fn dlss_file_state(exists: bool, got: Option<&str>, expected: &str) -
 /// separate, on-demand command and not part of `dlss5_status`: the panel paints
 /// from existence alone, and only the button that asks a real question ("is what
 /// I have what Wan2GP pinned?") pays for the read.
-fn dlss5_verify_files_blocking(dlss5: &std::path::Path) -> serde_json::Value {
-    let mut rows = Vec::with_capacity(DLSS5_FILES.len());
+fn dlss5_verify_files_blocking(dlss5: &std::path::Path, pins: &[Dlss5Pin]) -> serde_json::Value {
+    let mut rows = Vec::with_capacity(pins.len());
     let (mut n_match, mut n_mismatch, mut n_missing) = (0usize, 0usize, 0usize);
-    for (path, pkg, version, sha) in DLSS5_FILES.iter() {
-        let p = dlss5.join(path);
+    for pin in pins {
+        let p = dlss5.join(&pin.path);
         let exists = p.exists();
         let got = if exists {
             crate::wheels::sha256_file(&p)
         } else {
             None
         };
-        let state = dlss_file_state(exists, got.as_deref(), sha);
+        let state = dlss_file_state(exists, got.as_deref(), &pin.sha);
         match state {
             "match" => n_match += 1,
             "missing" => n_missing += 1,
@@ -7491,10 +7652,10 @@ fn dlss5_verify_files_blocking(dlss5: &std::path::Path) -> serde_json::Value {
             (0, 0)
         };
         rows.push(serde_json::json!({
-            "id": path,
-            "pkg": pkg,
-            "version": version,
-            "expected": sha,
+            "id": pin.path,
+            "pkg": pin.pkg,
+            "version": pin.version,
+            "expected": pin.sha,
             "got": got.unwrap_or_default(),
             "state": state,
             "size": stamp.0,
@@ -7507,12 +7668,12 @@ fn dlss5_verify_files_blocking(dlss5: &std::path::Path) -> serde_json::Value {
         "match": n_match,
         "mismatch": n_mismatch,
         "missing": n_missing,
-        "total": DLSS5_FILES.len(),
+        "total": pins.len(),
     })
 }
 
-/// "Is the DLSS 5 install on disk actually what `DLSS5_FILES` pins?" — the
-/// question the panel's SHA column was only pretending to answer. Hashing is
+/// "Is the DLSS 5 install on disk actually what the current installer pins?" —
+/// the question the panel's SHA column was only pretending to answer. Hashing is
 /// blocking IO, so it runs on the blocking pool rather than the async task.
 #[tauri::command]
 pub async fn dlss5_verify_files() -> serde_json::Value {
@@ -7521,7 +7682,10 @@ pub async fn dlss5_verify_files() -> serde_json::Value {
         return serde_json::json!({"ok": false, "error": "Wan2GP not installed"});
     }
     let dlss5 = repo.join("dlss5");
-    match tauri::async_runtime::spawn_blocking(move || dlss5_verify_files_blocking(&dlss5)).await {
+    let (pins, _) = dlss5_pins_for_repo(&repo);
+    match tauri::async_runtime::spawn_blocking(move || dlss5_verify_files_blocking(&dlss5, &pins))
+        .await
+    {
         Ok(v) => {
             // Remember a real comparison so the next launch can show it
             // without re-reading hundreds of MB. Metadata-keyed, so the cache
@@ -7570,24 +7734,25 @@ pub fn dlss5_cached_state() -> serde_json::Value {
         return serde_json::json!({"ok": false, "error": "Wan2GP not installed"});
     }
     let dlss5 = repo.join("dlss5");
+    let (pins, pins_source) = dlss5_pins_for_repo(&repo);
     let cache = dlss5_cache_read();
     let mut rows = Vec::new();
     if let Some(files) = cache.get("files").and_then(|v| v.as_object()) {
-        for (path, pkg, version, sha) in DLSS5_FILES.iter() {
-            let Some(entry) = files.get(*path) else {
+        for pin in &pins {
+            let Some(entry) = files.get(&pin.path) else {
                 continue;
             };
-            let Some((size, mtime_ms)) = dlss5_file_stamp(&dlss5.join(path)) else {
+            let Some((size, mtime_ms)) = dlss5_file_stamp(&dlss5.join(&pin.path)) else {
                 continue;
             };
-            if !dlss_cache_row_valid(sha, entry, size, mtime_ms) {
+            if !dlss_cache_row_valid(&pin.sha, entry, size, mtime_ms) {
                 continue;
             }
             rows.push(serde_json::json!({
-                "id": path,
-                "pkg": pkg,
-                "version": version,
-                "expected": sha,
+                "id": pin.path,
+                "pkg": pin.pkg,
+                "version": pin.version,
+                "expected": pin.sha,
                 "got": entry.get("got").and_then(|v| v.as_str()).unwrap_or(""),
                 "state": entry.get("state").and_then(|v| v.as_str()).unwrap_or(""),
             }));
@@ -7598,49 +7763,43 @@ pub fn dlss5_cached_state() -> serde_json::Value {
         "rows": rows,
         "verifiedAt": cache.get("verifiedAt").cloned().unwrap_or(serde_json::Value::Null),
         "update": cache.get("update").cloned().unwrap_or(serde_json::Value::Null),
+        "pinsSource": pins_source,
     })
 }
 
 // ===========================================================================
-// DLSS5 upstream-release probe (read-only)
+// DLSS5 upstream-pin comparison (read-only)
 //
-// Upstream's `scripts/install_dlss5.ps1` owns every component version: its
-// package table is version-pinned with hardcoded URLs and SHA-256s, so a newer
-// DLSS / ReShade / RenoDX build can only become installable by updating
-// Wan2GP. Nothing here downloads, installs or hashes anything — it asks the
-// same sources that script pins whether a newer release exists (the two GitHub
-// repos that back five of the six components, reshade.me for the sixth), so
-// "a newer version is available" has an answer other than diffing the script
-// by hand.
+// DeepBeepMeep/WanGP owns every component version: its
+// `scripts/install_dlss5.ps1` package table is version-pinned with hardcoded
+// URLs and SHA-256s. The pins are read from the copy of that script inside the
+// user's Wan2GP checkout, so updating Wan2GP updates the versions this panel
+// reports *and* the versions `Install DLSS 5` installs.
 //
-// The versions compared against come from DLSS5_FILES — the same manifest the
-// panel prints — so the pins have exactly one home on the launcher side.
+// "Is an update available?" therefore means exactly one thing: does the
+// installer script on DeepBeepMeep/WanGP `main` pin a different version than
+// the user's checkout? Component release feeds are not consulted as update
+// sources — a build only becomes an update when DeepBeepMeep/WanGP pins it.
+// Nothing here downloads, installs or hashes anything.
 // ===========================================================================
 
-/// (component id as the panel prints it, owner/repo, release-tag prefix,
-/// package id in DLSS5_FILES)
-const DLSS5_UPSTREAM: &[(&str, &str, &str, &str)] = &[
-    ("dlss", "RankFTW/rhi-repo", "dlss-", "dlss"),
-    ("dlssg", "RankFTW/rhi-repo", "dlssg-", "dlssg"),
-    ("dlssnr", "RankFTW/rhi-repo", "dlssnr-", "dlssnr"),
-    ("renodx", "RankFTW/rhi-repo", "renodx-dlss5-", "renodx"),
-    (
-        "workers",
-        "DeepBeepMeep/dlss5-visual-enhancer",
-        "wangp-v",
-        "workers",
-    ),
-];
+/// Components whose pins are compared against DeepBeepMeep/WanGP's installer.
+/// The package ids match `dlss5_display_version` and the panel's file rows.
+pub(crate) const DLSS5_PACKAGES: &[&str] =
+    &["workers", "reshade", "renodx", "dlssnr", "dlss", "dlssg"];
 
-/// The version token DLSS5_FILES pins for `pkg`: "Workers v1.1.3" → "1.1.3",
-/// "DLSS Super Resolution 310.8.0" → "310.8.0". The manifest stays the single
-/// source of truth — this probe never keeps a second copy of the pins.
-fn dlss_pinned_version(pkg: &str) -> Option<String> {
-    DLSS5_FILES
-        .iter()
-        .find(|(_, p, _, _)| *p == pkg)
-        .and_then(|(_, _, version, _)| version.split_whitespace().last())
-        .map(|v| v.trim_start_matches('v').to_string())
+/// The one update source: DeepBeepMeep/WanGP's own installer script.
+const DLSS5_UPSTREAM_SCRIPT_URL: &str =
+    "https://raw.githubusercontent.com/deepbeepmeep/WanGP/main/scripts/install_dlss5.ps1";
+
+/// The version token the current pins carry for `pkg`: "Workers v1.1.3" →
+/// "1.1.3", "DLSS Super Resolution 310.8.0" → "310.8.0". A single helper is
+/// used for the script and the fallback, so the probe never keeps a second copy
+/// of the pins.
+fn dlss_pinned_version(pins: &[Dlss5Pin], pkg: &str) -> Option<String> {
+    pins.iter()
+        .find(|pin| pin.pkg == pkg)
+        .and_then(|pin| dlss5_version_from_name(&pin.version))
         .filter(|v| !v.is_empty())
 }
 
@@ -7669,34 +7828,9 @@ fn dlss_version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     std::cmp::Ordering::Equal
 }
 
-/// Newest release tag in `tags` carrying `prefix`. GitHub returns tags
-/// newest-first, so a pair this comparison cannot order keeps the earlier one.
-fn dlss_newest_tag<'a>(tags: &'a [String], prefix: &str) -> Option<&'a str> {
-    let mut best: Option<&str> = None;
-    for tag in tags
-        .iter()
-        .map(String::as_str)
-        .filter(|t| t.starts_with(prefix))
-    {
-        best = Some(match best {
-            None => tag,
-            Some(prev) => {
-                let cur = tag.strip_prefix(prefix).unwrap_or(tag);
-                let old = prev.strip_prefix(prefix).unwrap_or(prev);
-                if dlss_version_cmp(cur, old) == std::cmp::Ordering::Greater {
-                    tag
-                } else {
-                    prev
-                }
-            }
-        });
-    }
-    best
-}
-
 /// (`state`, upstream version) for one component. States: `current`, `newer`,
-/// `older`, `differs` (upstream ships a build this probe cannot order against
-/// the pin) and `unknown` (nothing fetched, or no matching tag/known pin).
+/// `older`, `differs` (DeepBeepMeep/WanGP pins a build this probe cannot order
+/// against the local pin) and `unknown` (nothing fetched, or no known pin).
 fn dlss_update_verdict(pinned: &str, latest: Option<&str>) -> (&'static str, String) {
     let Some(latest) = latest.filter(|l| !l.is_empty()) else {
         return ("unknown", String::new());
@@ -7714,158 +7848,89 @@ fn dlss_update_verdict(pinned: &str, latest: Option<&str>) -> (&'static str, Str
     }
 }
 
-/// Newest ReShade *full add-on* build reshade.me links to. The site has no
-/// release API, so this reads the version out of its own download links
-/// (`ReShade_Setup_<version>_Addon.exe`); None when the page cannot be read or
-/// its markup moved, which the panel reports as "not checked" rather than a
-/// version the launcher guessed.
-async fn reshade_latest(client: &reqwest::Client) -> Option<String> {
-    let body = client
-        .get("https://reshade.me/")
+/// Fetch the installer script from DeepBeepMeep/WanGP `main` and parse its
+/// pins. A network failure or a moved/renamed script is reported as an error
+/// instead of silently comparing against the launcher's fallback copy.
+async fn dlss5_fetch_upstream_pins(client: &reqwest::Client) -> Result<Vec<Dlss5Pin>, String> {
+    let text = client
+        .get(DLSS5_UPSTREAM_SCRIPT_URL)
+        .header("Accept", "text/plain")
         .send()
         .await
-        .ok()?
+        .map_err(|e| format!("couldn't reach DeepBeepMeep/WanGP: {e}"))?
         .error_for_status()
-        .ok()?
+        .map_err(|e| format!("DeepBeepMeep/WanGP returned {e}"))?
         .text()
         .await
-        .ok()?;
-    const MARKER: &str = "ReShade_Setup_";
-    let mut best: Option<String> = None;
-    let mut rest = body.as_str();
-    while let Some(i) = rest.find(MARKER) {
-        rest = &rest[i + MARKER.len()..];
-        let window = &rest[..rest.len().min(24)];
-        let Some(end) = window.find("_Addon") else {
-            continue;
-        };
-        let v = &window[..end];
-        if v.is_empty() || !v.chars().all(|c| c.is_ascii_digit() || c == '.') {
-            continue;
-        }
-        best = Some(match best.take() {
-            Some(prev) if dlss_version_cmp(v, &prev) != std::cmp::Ordering::Greater => prev,
-            _ => v.to_string(),
-        });
-    }
-    best
+        .map_err(|e| format!("couldn't read DeepBeepMeep/WanGP's installer script: {e}"))?;
+    dlss5_parse_script_pins(&text).ok_or_else(|| {
+        "DeepBeepMeep/WanGP's installer script changed shape — could not read its pins".to_string()
+    })
 }
 
-/// Release tags for `repo`, newest first, or None when the API is unreachable
-/// (offline, rate limited).
-async fn fetch_release_tags(
-    client: &reqwest::Client,
-    repo: &str,
-    token: &str,
-) -> Option<Vec<String>> {
-    let mut req = client
-        .get(format!(
-            "https://api.github.com/repos/{repo}/releases?per_page=100"
-        ))
-        .header("Accept", "application/vnd.github.v3+json");
-    if !token.is_empty() {
-        req = req.header("Authorization", format!("token {token}"));
-    }
-    let v: serde_json::Value = req
-        .send()
-        .await
-        .ok()?
-        .error_for_status()
-        .ok()?
-        .json()
-        .await
-        .ok()?;
-    Some(
-        v.as_array()?
-            .iter()
-            .filter_map(|r| r.get("tag_name").and_then(|t| t.as_str()))
-            .map(str::to_string)
-            .collect(),
-    )
-}
-
-/// Read-only: ask upstream whether newer DLSS5 components exist. Installs and
-/// downloads nothing, and never changes a pin — a newer release is a
-/// *Wan2GP update* away, not a launcher-side upgrade.
+/// Read-only: compare the pins in the user's Wan2GP checkout with the pins on
+/// DeepBeepMeep/WanGP `main`. Installs and downloads nothing, and never changes
+/// a pin — an update means "update Wan2GP, then run Install / update DLSS 5".
 #[tauri::command]
 pub async fn dlss5_update_check() -> serde_json::Value {
+    let repo = get_repo_dir();
+    let (local_pins, pins_source) = dlss5_pins_for_repo(&repo);
     let client = reqwest::Client::builder()
         .user_agent("wan2gp-tauri")
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
-    // Same optional token the upstream-commits check uses: the probe is two
-    // calls per press, so anonymous only matters if the button is hammered.
-    let token = crate::base::load_config_value()
-        .get("githubToken")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let checked_at = unix_now_secs();
 
-    // Two repos back five of the six components: fetch each one once.
-    let mut tags: std::collections::HashMap<&str, Option<Vec<String>>> =
-        std::collections::HashMap::new();
-    for (_, repo, _, _) in DLSS5_UPSTREAM {
-        if tags.contains_key(*repo) {
-            continue;
+    let upstream_pins = match dlss5_fetch_upstream_pins(&client).await {
+        Ok(pins) => pins,
+        Err(e) => {
+            return serde_json::json!({
+                "ok": true,
+                "online": false,
+                "error": e,
+                "rows": [],
+                "checkedAt": checked_at,
+                "pinsSource": pins_source,
+                "upstreamSource": "deepbeepmeep/WanGP main",
+            });
         }
-        let list = fetch_release_tags(&client, repo, &token).await;
-        tags.insert(repo, list);
-    }
+    };
 
     let mut rows: Vec<serde_json::Value> = Vec::new();
-    let mut online = false;
-    for (id, repo, prefix, pkg) in DLSS5_UPSTREAM {
-        let found = tags.get(*repo).and_then(|o| o.as_ref());
-        online |= found.is_some();
-        let tag = found.and_then(|t| dlss_newest_tag(t, prefix));
-        let latest = tag.map(|t| t.strip_prefix(prefix).unwrap_or(t));
-        let pinned = dlss_pinned_version(pkg);
-        let (state, latest_version) = dlss_update_verdict(pinned.as_deref().unwrap_or(""), latest);
+    for pkg in DLSS5_PACKAGES {
+        let pinned = dlss_pinned_version(&local_pins, pkg);
+        let latest = dlss_pinned_version(&upstream_pins, pkg);
+        let (state, latest_version) =
+            dlss_update_verdict(pinned.as_deref().unwrap_or(""), latest.as_deref());
         rows.push(serde_json::json!({
-            "id": id,
+            "id": pkg,
             "pinned": pinned.unwrap_or_default(),
             "latest": latest_version,
             "state": state,
-            "tag": tag.unwrap_or_default(),
-            "source": format!("github.com/{repo}"),
+            "tag": "",
+            "source": "deepbeepmeep/WanGP · scripts/install_dlss5.ps1",
         }));
     }
-    // ReShade is the one component that is not a GitHub release — upstream
-    // pins a reshade.me download URL.
-    let reshade = reshade_latest(&client).await;
-    online |= reshade.is_some();
-    let reshade_pin = dlss_pinned_version("reshade").unwrap_or_default();
-    let (reshade_state, reshade_version) = dlss_update_verdict(&reshade_pin, reshade.as_deref());
-    rows.push(serde_json::json!({
-        "id": "reshade",
-        "pinned": reshade_pin,
-        "latest": reshade_version,
-        "state": reshade_state,
-        "tag": reshade.unwrap_or_default(),
-        "source": "reshade.me",
-    }));
 
-    let checked_at = unix_now_secs();
     let result = serde_json::json!({
         "ok": true,
-        "online": online,
+        "online": true,
         "rows": rows,
         "checkedAt": checked_at,
+        "pinsSource": pins_source,
+        "upstreamSource": "deepbeepmeep/WanGP main",
     });
-    // Only a real answer is cached; an offline/rate-limited probe must not
-    // suppress the next attempt for the whole TTL.
-    if online {
-        let update = serde_json::json!({
-            "checkedAt": checked_at,
-            "online": true,
-            "rows": result["rows"].clone(),
-        });
-        dlss5_cache_update(|c| {
-            c.insert("update".into(), update);
-        });
-    }
+    let update = serde_json::json!({
+        "checkedAt": checked_at,
+        "online": true,
+        "rows": result["rows"].clone(),
+        "pinsSource": pins_source,
+        "upstreamSource": "deepbeepmeep/WanGP main",
+    });
+    dlss5_cache_update(|c| {
+        c.insert("update".into(), update);
+    });
     result
 }
 
@@ -7873,30 +7938,152 @@ pub async fn dlss5_update_check() -> serde_json::Value {
 mod dlss5_update_tests {
     use super::*;
 
+    const SAMPLE_SCRIPT: &str = r#"
+$packages = @(
+    [pscustomobject]@{ Id = "workers"; Name = "WanGP DLSS 5 workers v1.1.9"; File = "workers.zip"; Url = "https://example/workers.zip"; Sha256 = "AA" }
+    [pscustomobject]@{ Id = "reshade"; Name = "ReShade 6.8.1 full add-on setup"; File = "ReShade_Setup_6.8.1_Addon.exe"; Url = "https://example/reshade.exe"; Sha256 = "BB" }
+    [pscustomobject]@{ Id = "renodx"; Name = "RenoDX DLSS5 4.71"; File = "renodx.zip"; Url = "https://example/renodx.zip"; Sha256 = "CC" }
+    [pscustomobject]@{ Id = "dlssnr"; Name = "DLSSNR 310.9.SF-v3"; File = "dlssnr.zip"; Url = "https://example/dlssnr.zip"; Sha256 = "DD" }
+    [pscustomobject]@{ Id = "dlss"; Name = "DLSS Super Resolution 310.9.0"; File = "dlss.zip"; Url = "https://example/dlss.zip"; Sha256 = "EE" }
+    [pscustomobject]@{ Id = "dlssg"; Name = "DLSS Frame Generation 310.8.0"; File = "dlssg.zip"; Url = "https://example/dlssg.zip"; Sha256 = "FF" }
+)
+    $installItems = @(
+        New-InstallItem (Join-Path $workers "host\nr-depth-worker.exe") "host\nr-depth-worker.exe" "1111111111111111111111111111111111111111111111111111111111111111"
+        New-InstallItem (Join-Path $workers "host\nvngx.dll") "host\nvngx.dll" "2222222222222222222222222222222222222222222222222222222222222222"
+        New-InstallItem $reshade64 "host\dxgi.dll" "3333333333333333333333333333333333333333333333333333333333333333"
+        New-InstallItem (Join-Path $renodx "renodx-dlss5.addon64") "host\renodx-dlss5.addon64" "4444444444444444444444444444444444444444444444444444444444444444"
+        New-InstallItem (Join-Path $dlssnr "nvngx_dlssnr.dll") "host\nvngx_dlssnr.dll" "5555555555555555555555555555555555555555555555555555555555555555"
+        New-InstallItem (Join-Path $dlss "nvngx_dlss.dll") "dlss\nvngx_dlss.dll" "6666666666666666666666666666666666666666666666666666666666666666"
+        New-InstallItem (Join-Path $dlssg "nvngx_dlssg.dll") "dlssg\nvngx_dlssg.dll" "7777777777777777777777777777777777777777777777777777777777777777"
+        New-InstallItem (Join-Path $workers "LICENSE.txt") "LICENSE.txt"
+    )
+"#;
+
     #[test]
     fn pinned_versions_come_from_the_manifest() {
-        assert_eq!(dlss_pinned_version("dlss").as_deref(), Some("310.8.0"));
-        assert_eq!(dlss_pinned_version("dlssg").as_deref(), Some("310.7.0"));
+        let pins = dlss5_static_pins();
         assert_eq!(
-            dlss_pinned_version("dlssnr").as_deref(),
+            dlss_pinned_version(&pins, "dlss").as_deref(),
+            Some("310.8.0")
+        );
+        assert_eq!(
+            dlss_pinned_version(&pins, "dlssg").as_deref(),
+            Some("310.7.0")
+        );
+        assert_eq!(
+            dlss_pinned_version(&pins, "dlssnr").as_deref(),
             Some("310.8.SF-v2")
         );
-        assert_eq!(dlss_pinned_version("renodx").as_deref(), Some("4.70"));
-        assert_eq!(dlss_pinned_version("workers").as_deref(), Some("1.1.3"));
-        assert_eq!(dlss_pinned_version("reshade").as_deref(), Some("6.8.0"));
-        assert_eq!(dlss_pinned_version("not-a-package"), None);
+        assert_eq!(
+            dlss_pinned_version(&pins, "renodx").as_deref(),
+            Some("4.70")
+        );
+        assert_eq!(
+            dlss_pinned_version(&pins, "workers").as_deref(),
+            Some("1.1.3")
+        );
+        assert_eq!(
+            dlss_pinned_version(&pins, "reshade").as_deref(),
+            Some("6.8.0")
+        );
+        assert_eq!(dlss_pinned_version(&pins, "not-a-package"), None);
     }
 
     #[test]
-    fn every_probe_row_maps_to_a_manifest_pin() {
-        // A component added to the probe with a pkg id typo — or a DLSS5_FILES
-        // row upstream renames — would otherwise report "not checked" forever.
-        for (id, _, prefix, pkg) in DLSS5_UPSTREAM {
+    fn upstream_script_pins_override_the_fallback_manifest() {
+        let pins = dlss5_parse_script_pins(SAMPLE_SCRIPT).expect("sample script parses");
+        assert_eq!(pins.len(), 7, "license-only rows are skipped");
+        assert_eq!(pins[0].path, "host\\nr-depth-worker.exe");
+        assert_eq!(pins[0].pkg, "workers");
+        assert_eq!(pins[0].version, "Workers v1.1.9");
+        assert_eq!(
+            pins[0].sha,
+            "1111111111111111111111111111111111111111111111111111111111111111"
+        );
+        // `$reshade64` is the one source variable whose name differs from the
+        // package id in the script's package table.
+        let reshade = pins.iter().find(|p| p.pkg == "reshade").unwrap();
+        assert_eq!(reshade.path, "host\\dxgi.dll");
+        assert_eq!(reshade.version, "ReShade 6.8.1");
+        assert_eq!(
+            dlss_pinned_version(&pins, "renodx").as_deref(),
+            Some("4.71")
+        );
+        assert_eq!(
+            dlss_pinned_version(&pins, "dlssnr").as_deref(),
+            Some("310.9.SF-v3")
+        );
+        assert_eq!(
+            dlss_pinned_version(&pins, "dlss").as_deref(),
+            Some("310.9.0")
+        );
+        assert_eq!(
+            dlss_pinned_version(&pins, "dlssg").as_deref(),
+            Some("310.8.0")
+        );
+    }
+
+    #[test]
+    fn a_partial_script_parse_falls_back_instead_of_shrinking_the_install() {
+        let incomplete = SAMPLE_SCRIPT.replace("Id = \"dlssg\"", "Id = \"dlssg-renamed\"");
+        assert!(
+            dlss5_parse_script_pins(&incomplete).is_none(),
+            "a missing package must keep the full fallback manifest"
+        );
+        assert!(dlss5_parse_script_pins("$packages = @()").is_none());
+    }
+
+    #[test]
+    fn package_names_yield_the_version_token() {
+        assert_eq!(
+            dlss5_version_from_name("WanGP DLSS 5 workers v1.1.9").as_deref(),
+            Some("1.1.9")
+        );
+        assert_eq!(
+            dlss5_version_from_name("ReShade 6.8.1 full add-on setup").as_deref(),
+            Some("6.8.1")
+        );
+        assert_eq!(
+            dlss5_version_from_name("DLSSNR 310.9.SF-v3").as_deref(),
+            Some("310.9.SF-v3")
+        );
+        assert_eq!(
+            dlss5_version_from_name("DLSS Super Resolution 310.9.0").as_deref(),
+            Some("310.9.0")
+        );
+        assert_eq!(dlss5_version_from_name("no version here"), None);
+    }
+
+    #[test]
+    fn every_update_row_maps_to_a_manifest_pin() {
+        // A component added to the comparison with a pkg id typo — or a
+        // DLSS5_FILES row upstream renames — would otherwise report
+        // "not checked" forever.
+        let pins = dlss5_static_pins();
+        for pkg in DLSS5_PACKAGES {
             assert!(
-                dlss_pinned_version(pkg).is_some(),
-                "probe row {id} ({prefix}) has no DLSS5_FILES pin for pkg {pkg}"
+                dlss_pinned_version(&pins, pkg).is_some(),
+                "update row for pkg {pkg} has no DLSS5_FILES pin"
             );
         }
+    }
+
+    #[test]
+    fn updates_are_defined_by_the_deepbeepmeep_script_pins() {
+        let local = dlss5_static_pins();
+        let upstream = dlss5_parse_script_pins(SAMPLE_SCRIPT).expect("sample script parses");
+        for pkg in ["workers", "reshade", "renodx", "dlssnr", "dlss", "dlssg"] {
+            let pinned = dlss_pinned_version(&local, pkg).unwrap_or_default();
+            let latest = dlss_pinned_version(&upstream, pkg);
+            assert_eq!(
+                dlss_update_verdict(&pinned, latest.as_deref()).0,
+                "newer",
+                "the sample Wan2GP main script must read as an update for {pkg}"
+            );
+        }
+        // Identical pins compare as current, not as an update.
+        let current = dlss_pinned_version(&local, "dlss").unwrap();
+        assert_eq!(dlss_update_verdict(&current, Some(&current)).0, "current");
     }
 
     #[test]
@@ -7927,35 +8114,6 @@ mod dlss5_update_tests {
         );
         // No numeric head at all: unorderable, so never a false "newer".
         assert_eq!(dlss_version_cmp("v1.1.3", "1.1.2"), Ordering::Equal);
-    }
-
-    #[test]
-    fn newest_tag_prefers_the_higher_version_and_ignores_other_components() {
-        let tags: Vec<String> = [
-            "dlssg-310.7.0",
-            "dlss-310.9.0",
-            "dlss-310.8.0",
-            "renodx-dlss5-4.70",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        assert_eq!(dlss_newest_tag(&tags, "dlss-"), Some("dlss-310.9.0"));
-        assert_eq!(dlss_newest_tag(&tags, "dlssg-"), Some("dlssg-310.7.0"));
-        assert_eq!(
-            dlss_newest_tag(&tags, "renodx-dlss5-"),
-            Some("renodx-dlss5-4.70")
-        );
-        assert_eq!(dlss_newest_tag(&tags, "wangp-v"), None);
-        // Two tags it cannot order keep the first (GitHub's newest-first).
-        let unorderable: Vec<String> = ["dlssnr-310.8.SF-v3", "dlssnr-310.8.SF-v2"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert_eq!(
-            dlss_newest_tag(&unorderable, "dlssnr-"),
-            Some("dlssnr-310.8.SF-v3")
-        );
     }
 }
 
@@ -8307,6 +8465,18 @@ pub(crate) fn dlss_fixed_series(name: &str) -> u32 {
     }
 }
 
+/// What the *installed* Wan2GP runtime would report for `name`. Current
+/// upstream merged the workstation fallback, so a runtime that carries it
+/// tiers workstation cards the same way the launcher does; an older runtime
+/// still only sees "GeForce RTX" names. Pure + unit-tested.
+pub(crate) fn dlss_series_for_runtime(name: &str, upstream_fixed: bool) -> u32 {
+    if upstream_fixed {
+        dlss_fixed_series(name)
+    } else {
+        dlss_upstream_series(name).unwrap_or(0)
+    }
+}
+
 fn dlss_reason(series: u32, minimum: u32) -> String {
     if series < minimum {
         format!("RTX {minimum}+ required")
@@ -8424,14 +8594,22 @@ pub async fn dlss5_check() -> serde_json::Value {
         }
     }
     let gpu_name = names.first().cloned().unwrap_or_default();
-    let upstream_series = names
-        .iter()
-        .filter_map(|n| dlss_upstream_series(n))
-        .max()
-        .unwrap_or(0);
     let fixed_series = names
         .iter()
         .map(|n| dlss_fixed_series(n))
+        .max()
+        .unwrap_or(0);
+    // Compare against the runtime the user actually has. Upstream merged the
+    // workstation fallback, so an old "GeForce RTX only" answer is only the
+    // baseline when the installed runtime still lacks the fix.
+    let runtime_patch = dlss_runtime_patch_status(&repo);
+    let runtime_fixed = runtime_patch
+        .get("upstreamFixed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let upstream_series = names
+        .iter()
+        .map(|n| dlss_series_for_runtime(n, runtime_fixed))
         .max()
         .unwrap_or(0);
     let profile = if gpu_name.is_empty() {
@@ -8532,7 +8710,6 @@ pub async fn dlss5_check() -> serde_json::Value {
     let fg_upstream = verdict(&fg_missing, upstream_series, 40, true);
     let workstation_mismatch =
         fixed_series >= 30 && upstream_series < 30 || fixed_series >= 40 && upstream_series < 40;
-    let runtime_patch = dlss_runtime_patch_status(&repo);
     serde_json::json!({
         "ok": true,
         "gpuName": gpu_name,
@@ -8732,7 +8909,9 @@ pub fn dlss5_revert_workstation_fix() -> Result<serde_json::Value, String> {
 // this only mirrors its Downloading / verified / Installed lines to the UI.
 #[cfg(test)]
 mod dlss5_verify_tests {
-    use super::{dlss5_verify_files_blocking, dlss_cache_row_valid, dlss_file_state, DLSS5_FILES};
+    use super::{
+        dlss5_static_pins, dlss5_verify_files_blocking, dlss_cache_row_valid, dlss_file_state,
+    };
 
     #[test]
     fn state_classifies_existence_and_hash() {
@@ -8748,17 +8927,18 @@ mod dlss5_verify_tests {
     fn verify_reports_mismatch_and_missing_without_touching_files() {
         let d = std::env::temp_dir().join(format!("wgp-dlss5-verify-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        let first = &DLSS5_FILES[0];
-        let p = d.join(first.0);
+        let pins = dlss5_static_pins();
+        let first = &pins[0];
+        let p = d.join(&first.path);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, b"not the pinned bytes").unwrap();
 
-        let out = dlss5_verify_files_blocking(&d);
+        let out = dlss5_verify_files_blocking(&d, &pins);
         let rows = out["rows"].as_array().unwrap();
         // One row per manifest entry — the manifest stays the single source.
-        assert_eq!(rows.len(), DLSS5_FILES.len());
+        assert_eq!(rows.len(), pins.len());
         assert_eq!(rows[0]["state"], "mismatch");
-        assert_eq!(rows[0]["expected"], first.3);
+        assert_eq!(rows[0]["expected"], first.sha);
         assert!(
             rows[0]["size"].as_u64().unwrap_or(0) > 0,
             "the row carries the stamp the cache is keyed on"
@@ -8771,7 +8951,7 @@ mod dlss5_verify_tests {
             assert_eq!(row["state"], "missing");
         }
         assert_eq!(out["mismatch"], 1);
-        assert_eq!(out["missing"], DLSS5_FILES.len() - 1);
+        assert_eq!(out["missing"], pins.len() - 1);
         assert_eq!(out["match"], 0);
         // Read-only: the junk file is still there, untouched.
         assert!(p.exists());
@@ -8783,15 +8963,18 @@ mod dlss5_verify_tests {
         // Every probe row is anchored to a manifest package, and every manifest
         // entry carries a 64-hex pin — the assumption the panel's SHA column
         // and the verifier both rest on.
-        for (_, pkg, _, sha) in DLSS5_FILES.iter() {
+        let pins = dlss5_static_pins();
+        for pin in &pins {
             assert!(
-                super::dlss_pinned_version(pkg).is_some(),
-                "no pinned version for {pkg}"
+                super::dlss_pinned_version(&pins, &pin.pkg).is_some(),
+                "no pinned version for {}",
+                pin.pkg
             );
-            assert_eq!(sha.len(), 64, "{pkg}: pin is not a sha256");
+            assert_eq!(pin.sha.len(), 64, "{}: pin is not a sha256", pin.pkg);
             assert!(
-                sha.chars().all(|c| c.is_ascii_hexdigit()),
-                "{pkg}: pin is not hex"
+                pin.sha.chars().all(|c| c.is_ascii_hexdigit()),
+                "{}: pin is not hex",
+                pin.pkg
             );
         }
     }
@@ -8819,18 +9002,38 @@ mod dlss5_verify_tests {
 mod dlss5_check_tests {
     use super::{
         dlss_fixed_series, dlss_gpu_series_excerpt, dlss_patch_runtime_text, dlss_probe_summary,
-        dlss_reason, dlss_runtime_fixed_upstream, dlss_upstream_series, dlss_verdict_state,
-        DLSS_RUNTIME_ANCHOR, DLSS_RUNTIME_MARKER,
+        dlss_reason, dlss_runtime_fixed_upstream, dlss_series_for_runtime, dlss_upstream_series,
+        dlss_verdict_state, DLSS_RUNTIME_ANCHOR, DLSS_RUNTIME_MARKER,
     };
 
     #[test]
     fn upstream_matches_geforce_only() {
         assert_eq!(dlss_upstream_series("NVIDIA GeForce RTX 4090"), Some(40));
         assert_eq!(dlss_upstream_series("NVIDIA GeForce RTX 3050"), Some(30));
-        // Workstation / datacenter names are invisible to upstream.
+        // Workstation / datacenter names are invisible to the old runtime.
         assert_eq!(dlss_upstream_series("NVIDIA RTX PRO 5000 Blackwell"), None);
         assert_eq!(dlss_upstream_series("NVIDIA RTX 5000 Ada Generation"), None);
         assert_eq!(dlss_upstream_series("NVIDIA RTX A6000"), None);
+    }
+
+    #[test]
+    fn series_follows_the_runtime_the_user_has() {
+        // An old checkout still blocks workstation names.
+        assert_eq!(
+            dlss_series_for_runtime("NVIDIA RTX PRO 5000 Blackwell", false),
+            0
+        );
+        // Current upstream merged the workstation fallback, so the same card
+        // must not be reported as an upstream mismatch any more.
+        assert_eq!(
+            dlss_series_for_runtime("NVIDIA RTX PRO 5000 Blackwell", true),
+            50
+        );
+        assert_eq!(
+            dlss_series_for_runtime("NVIDIA GeForce RTX 4090", false),
+            40
+        );
+        assert_eq!(dlss_series_for_runtime("NVIDIA GeForce RTX 4090", true), 40);
     }
 
     #[test]
@@ -8941,6 +9144,59 @@ mod dlss5_check_tests {
     }
 }
 
+#[cfg(test)]
+mod dlss5_install_tests {
+    use super::dlss5_install_result;
+
+    #[test]
+    fn a_clean_complete_run_is_a_success() {
+        let v = dlss5_install_result(false, Some(0), true, true, 8, 8);
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["success"], true);
+        assert_eq!(v["complete"], true);
+    }
+
+    #[test]
+    fn a_nonzero_exit_is_a_failure_even_when_old_files_exist() {
+        // The old bug: `complete` came from file existence alone, so a failed
+        // update over an existing install reported success.
+        let v = dlss5_install_result(false, Some(1), true, true, 8, 8);
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["success"], false);
+        assert_eq!(
+            v["complete"], true,
+            "the panel can still hash what is there"
+        );
+        assert!(v["error"].as_str().unwrap_or("").contains("code 1"));
+    }
+
+    #[test]
+    fn a_partial_run_is_a_hint_not_a_failure() {
+        let v = dlss5_install_result(false, Some(0), false, true, 5, 8);
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["complete"], false);
+        assert!(v["hint"].as_str().unwrap_or("").contains("Partial"));
+    }
+
+    #[test]
+    fn a_run_that_installed_nothing_is_a_failure() {
+        let v = dlss5_install_result(false, Some(0), false, false, 0, 8);
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["installed"], false);
+    }
+
+    #[test]
+    fn a_missing_or_spawn_failure_is_never_success() {
+        for v in [
+            dlss5_install_result(true, None, true, true, 8, 8),
+            dlss5_install_result(false, None, true, true, 8, 8),
+        ] {
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["success"], false);
+        }
+    }
+}
+
 fn dlss5_classify(app: &tauri::AppHandle, chunk: &str) {
     let pkg = |name: &str| -> &str {
         let n = name.to_lowercase();
@@ -8986,6 +9242,51 @@ fn dlss5_classify(app: &tauri::AppHandle, chunk: &str) {
     }
 }
 
+/// Final verdict for an installer run. The script's exit code is authoritative:
+/// a non-zero exit is a failure even when an older complete install still makes
+/// every file exist on disk. `complete`/`installed` stay in the payload so the
+/// panel can still hash what is there and show the real per-file state.
+pub(crate) fn dlss5_install_result(
+    spawn_err: bool,
+    exit_code: Option<i32>,
+    complete: bool,
+    installed: bool,
+    present: u64,
+    total: u64,
+) -> serde_json::Value {
+    if spawn_err {
+        return serde_json::json!({
+            "ok": false, "success": false, "complete": false,
+            "installed": installed, "present": present, "total": total,
+            "error": "DLSS 5 installer could not be started — see console output",
+        });
+    }
+    if exit_code != Some(0) {
+        let code = exit_code
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "unknown".into());
+        return serde_json::json!({
+            "ok": false, "success": false, "complete": complete,
+            "installed": installed, "present": present, "total": total,
+            "error": format!("DLSS 5 installer exited with code {code} — see console output"),
+        });
+    }
+    if complete {
+        return serde_json::json!({"ok": true, "success": true, "complete": true});
+    }
+    if installed {
+        return serde_json::json!({
+            "ok": true, "success": true, "complete": false,
+            "hint": "Partial install — see console; rerun with Force if files conflict.",
+        });
+    }
+    serde_json::json!({
+        "ok": false, "success": false, "complete": false, "installed": false,
+        "present": present, "total": total,
+        "error": "DLSS 5 install did not complete — see console output",
+    })
+}
+
 #[tauri::command]
 pub async fn install_dlss5(
     app: tauri::AppHandle,
@@ -9027,19 +9328,26 @@ pub async fn install_dlss5(
         args.push("-Force".into());
     }
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (mut rx, _) = app
-        .shell()
-        .command("powershell")
-        .args(&arg_refs)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    let (mut rx, _) = match app.shell().command("powershell").args(&arg_refs).spawn() {
+        Ok(v) => v,
+        Err(e) => {
+            // Release the mutating guard even when PowerShell never starts;
+            // otherwise one spawn failure locks every later install.
+            mutating_done();
+            return Err(e.to_string());
+        }
+    };
     let mut spawn_err = false;
+    let mut exit_code: Option<i32> = None;
     while let Some(ev) = rx.recv().await {
         match ev {
             CommandEvent::Stdout(b) | CommandEvent::Stderr(b) => {
                 let s = String::from_utf8_lossy(&b).to_string();
                 emit(&s);
                 dlss5_classify(&app, &s);
+            }
+            CommandEvent::Terminated(p) => {
+                exit_code = p.code;
             }
             CommandEvent::Error(e) => {
                 emit(&format!("[!] {e}\n"));
@@ -9057,16 +9365,12 @@ pub async fn install_dlss5(
         .get("installed")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let present = st.get("present").and_then(|v| v.as_u64()).unwrap_or(0);
+    let total = st.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
     mutating_done();
-    if complete && !spawn_err {
-        return Ok(serde_json::json!({"ok": true, "success": true, "complete": true}));
-    }
-    if installed {
-        return Ok(
-            serde_json::json!({"ok": true, "success": true, "complete": false, "hint": "Partial install — see console; rerun with Force if files conflict."}),
-        );
-    }
-    Err("DLSS5 install failed — see console output".into())
+    Ok(dlss5_install_result(
+        spawn_err, exit_code, complete, installed, present, total,
+    ))
 }
 
 #[cfg(test)]

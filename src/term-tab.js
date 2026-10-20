@@ -747,6 +747,9 @@ function openSettings() {
     try {
       refreshElectronSection();
     } catch (e) {}
+    try {
+      loadCustomResolutions();
+    } catch (e) {}
   }, 60);
   refreshPluginsLazy();
 }
