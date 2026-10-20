@@ -128,7 +128,9 @@ $("dlss5ConfirmBtn")?.addEventListener("click", async () => {
   let complete = false;
   try {
     const r = await window.w2gp.installDlss5(force);
-    complete = !!(r && r.ok && r.complete);
+    // `complete` is about the files on disk, not about the exit code: even a
+    // failed update must be hashed so the rows show which files are right.
+    complete = !!(r && r.complete);
     if (r && r.ok)
       showToast(
         r.complete
@@ -141,10 +143,13 @@ $("dlss5ConfirmBtn")?.addEventListener("click", async () => {
   } finally {
     btn.disabled = false;
     btn.textContent = orig;
-    refreshDlss5();
+    // Serialize the status refresh before hashing: refreshDlss5 clears the
+    // verdict map, so running both at once could wipe the green rows it
+    // paints on a fast verification.
+    await refreshDlss5();
     // Persist a real hash pass now, so the next launcher start shows the
     // installed files green instead of "expected" until a manual check.
-    if (complete) verifyDlss5Files().catch(() => {});
+    if (complete) await verifyDlss5Files().catch(() => {});
   }
 });
 // The Force flag is a setting, not a per-run toggle: remember it so a reinstall

@@ -72,8 +72,15 @@ test('every catalog row has its own actions, not just the bulk buttons', () => {
   )
   assert.ok(loraPart.includes('loras\\\\'), 'the LoRA row must explain why')
 
-  // CivitAI rows fetch through the user's token, not through the bulk path.
-  assert.ok(renderer.includes('adultPackCivitaiDownload(item.id, token)'), 'civitai row must fetch with the token')
+  // CivitAI rows fetch through the (optional) token, not through the bulk path.
+  assert.ok(
+    renderer.includes('adultPackCivitaiDownload(item.id, token || null)'),
+    'civitai row must fetch even without a token',
+  )
+  assert.ok(
+    !renderer.includes('Paste a CivitAI token first.'),
+    'a public CivitAI release must not require a token',
+  )
 })
 
 test('finetune manager commands exist and are registered', () => {
@@ -115,7 +122,11 @@ test('the manager lists all three origins, not just the pack', () => {
   assert.ok(fn.includes('arr(manifest(), "finetunes")'), 'pack recipes')
   assert.ok(fn.includes('arr(&custom, "finetunes")'), 'user-added recipes')
   assert.ok(fn.includes('read_dir(&dir)'), 'hand-written recipes in the folder')
-  assert.ok(fn.includes('hasLocalWeights'), 'must report whether weights are already on disk')
+  assert.ok(fn.includes('finetune_summary'), 'scanned recipes must use the shared summary')
+  assert.ok(
+    rust.includes('"hasLocalWeights": local_files > 0'),
+    'must report whether weights are already on disk',
+  )
   // The UI must be able to reach all of it.
   assert.ok(renderer.includes('async function loadFinetunes()'), 'renderer must load the list')
   assert.ok(renderer.includes('adultPackFinetuneList()'), 'renderer must call the list command')
@@ -164,6 +175,8 @@ test('a recipe can be created from the panel without hand-writing JSON', () => {
   // A second (LOW) half, model notes and prompt help are real WanGP fields —
   // optional, so a plain t2v finetune still writes the minimal shape.
   assert.ok(fn.includes('model.URLs2 = second'), 'second-phase URLs are optional')
+  assert.ok(fn.includes('model.URLs2 = reuseSecond'), 'a second-phase recipe id is optional')
+  assert.ok(fn.includes('reuse2.value'), 'the form must round-trip a reused second phase')
   assert.ok(fn.includes('model.infos = notes'), 'model notes are optional')
   assert.ok(fn.includes('model.prompt_infos = promptHelp'), 'prompt help is optional')
   assert.ok(

@@ -168,6 +168,19 @@
           <p class="token-hint">When on, the launcher quietly checks for a new version on startup and notifies you — it never downloads or installs anything automatically. Off = only check manually via "Check for updates".</p>
         </div>
         <div class="settings-section">
+          <h3>Custom Resolutions</h3>
+          <p class="token-hint">Add your own sizes to Wan2GP's resolution picker. The launcher writes <code>resolutions.json</code> next to <code>wgp.py</code>; Wan2GP reads the label on the left and the <code>WIDTHxHEIGHT</code> value on the right. Wan2GP dedupes by size, so a size that is already built in keeps its built-in label. Restart Wan2GP after saving — the list is cached when its Python process starts.</p>
+          <div id="resolutionsList"></div>
+          <div class="form-row" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-ghost small" id="resolutionsAddBtn" title="Add another label and size">+ Add resolution</button>
+            <button class="btn btn-ghost small" id="resolutionsExampleBtn" title="Fill the editor with eight common 1080p / 1MP sizes from Krea 2 and MiniMax H3">Load example</button>
+            <button class="btn btn-ghost small" id="resolutionsReloadBtn" title="Discard unsaved edits and read resolutions.json again">Reload</button>
+            <button class="btn btn-primary small" id="resolutionsSaveBtn" title="Validate and write resolutions.json next to wgp.py">Save to resolutions.json</button>
+          </div>
+          <p class="token-hint" id="resolutionsStatus" style="margin-top:8px"></p>
+          <p class="token-hint" id="resolutionsPath" style="margin-top:4px;word-break:break-all"></p>
+        </div>
+        <div class="settings-section">
           <h3>Notifications (Wan2GP native)</h3>
           <p class="token-hint">Wan2GP notifies itself via <a href="#" id="notifAppriseLink">Apprise</a> — destinations live in <code>wgp_config.json</code> (optionally in the OS credential manager). The launcher sets this up for you; no extra plugin needed. Easiest start: open <code>https://ntfy.sh/your-topic</code> in a browser, then enter <code>ntfys://your-topic</code> below.</p>
           <div id="nativeNotifBlock">
@@ -688,6 +701,33 @@
 
       <!-- ═══════ Model Pack Tab (opt-in adult content) ═══════ -->
       <div class="settings-tab-content" data-tab="pack">
+        <div class="ap-disclaimer" role="note">
+          <strong>The Pack Manager is in development.</strong>
+          Catalog entries, sources and install locations can change between releases.
+          Adult content is optional and off by default — use it only if you are 18 or older and
+          it is legal where you live. You are responsible for what you download and generate.
+        </div>
+
+        <div class="settings-section">
+          <h3>⬇ Downloads</h3>
+          <p class="ap-hint">Shared by the adult pack and by anything you add under Find models: selected models are fetched, verified and filed into the right folder.</p>
+          <div class="ap-total">
+            <span id="apTotalText">—</span>
+            <span id="apFreeText" class="ap-hint"></span>
+          </div>
+          <div class="ap-actions">
+            <button class="btn btn-primary small" id="apDownloadBtn" title="Download the selected LoRAs and prefetched checkpoints now">Download selected</button>
+            <button class="btn btn-ghost small" id="apRecipesBtn" title="Write the selected checkpoint definitions into finetunes/ so Wan2GP offers them">Write finetune recipes</button>
+            <button class="btn btn-ghost small" id="apMissingBtn" title="Download only what is missing or incomplete">Fetch missing only</button>
+            <button class="btn btn-ghost small" id="apRemoveBtn" title="Delete the selected files and recipes from disk">Remove selected…</button>
+            <button class="btn btn-ghost small" id="apRefreshBtn" title="Re-read the manifest and what is on disk">↻ Refresh</button>
+          </div>
+          <div class="ap-queue" id="apQueue"></div>
+          <div class="ap-progress">
+            <div class="ap-progress-line" id="apProgress">Idle.</div>
+            <div class="ap-log" id="apLog"></div>
+          </div>
+        </div>
         <div class="settings-section">
           <h3>🔎 Find models</h3>
           <p class="token-hint">
@@ -763,26 +803,6 @@
           </div>
         </div>
 
-        <div class="settings-section">
-          <h3>⬇ Downloads</h3>
-          <p class="ap-hint">Shared by everything above and by the adult pack: selected models are fetched, verified and filed into the right folder.</p>
-          <div class="ap-total">
-            <span id="apTotalText">—</span>
-            <span id="apFreeText" class="ap-hint"></span>
-          </div>
-          <div class="ap-actions">
-            <button class="btn btn-primary small" id="apDownloadBtn" title="Download the selected LoRAs and prefetched checkpoints now">Download selected</button>
-            <button class="btn btn-ghost small" id="apRecipesBtn" title="Write the selected checkpoint definitions into finetunes/ so Wan2GP offers them">Write finetune recipes</button>
-            <button class="btn btn-ghost small" id="apMissingBtn" title="Download only what is missing or incomplete">Fetch missing only</button>
-            <button class="btn btn-ghost small" id="apRemoveBtn" title="Delete the selected files and recipes from disk">Remove selected…</button>
-            <button class="btn btn-ghost small" id="apRefreshBtn" title="Re-read the manifest and what is on disk">↻ Refresh</button>
-          </div>
-          <div class="ap-queue" id="apQueue"></div>
-          <div class="ap-progress">
-            <div class="ap-progress-line" id="apProgress">Idle.</div>
-            <div class="ap-log" id="apLog"></div>
-          </div>
-        </div>
 
         <div class="settings-section">
           <h3>🧩 Finetune recipes</h3>
@@ -859,18 +879,24 @@
               <span>Use CivitAI (adult host, <code>civitai.red</code>) — off by default. Nothing contacts it until you turn this on. If your antivirus or ISP blocks adult sites, allow <code>civitai.red</code> first.</span>
             </label>
             <div id="apCivSection" class="ap-civ" style="display:none">
-              <div class="ap-sub">Via your CivitAI account</div>
-              <div class="ap-hint">Author-exclusive releases, resolved live. The launcher fetches them with your own token and records where they landed — it never re-hosts them.</div>
+              <div class="ap-sub">CivitAI releases (civitai.red)</div>
+              <div class="ap-hint">Author-exclusive releases, resolved live. Public releases download without a token; a token is only needed for auth-gated or early-access files, and it raises the API rate limit. The launcher fetches them with your own credentials and records where they landed — it never re-hosts them.</div>
               <div id="apCivItems"></div>
               <div class="ap-token-row">
-                <input type="password" id="apToken" placeholder="CivitAI API token (optional) — settings.civitai.com, API keys" autocomplete="off" spellcheck="false">
+                <input type="password" id="apToken" placeholder="CivitAI API key (optional — public models need none)" autocomplete="off" spellcheck="false">
                 <button class="btn btn-ghost small" id="apVerifyBtn" title="Check the token with one small request — no download">Verify</button>
               </div>
+              <p class="ap-hint ap-key-hint">
+                Get a key: <button type="button" class="ap-link" data-civ-key="com">civitai.com → Account → API Keys</button>
+                · <button type="button" class="ap-link" data-civ-key="red">civitai.red → Account → API Keys</button>.
+                The same key works on both hosts.
+              </p>
               <div class="ap-verify" id="apVerifyResult"></div>
             </div>
             <div class="ap-legal" id="apLegal"></div>
           </div>
         </div>
+
       </div>
 
       <!-- ═══════ Auto-Tune Tab ═══════ -->
@@ -1828,15 +1854,15 @@
           <p class="path-hint" id="dlss5StatusMsg" style="margin-top:6px">Checking…</p>
           <div id="dlss5Progress" style="display:none;margin-top:6px"></div>
           <div class="deepy-actions">
-            <button class="btn btn-primary" id="dlss5InstallBtn" title="Open the DLSS 5 installer (consent step required)">Install DLSS 5…</button>
+            <button class="btn btn-primary" id="dlss5InstallBtn" title="Open the DLSS 5 installer (runs Wan2GP's own script; consent step required)">Install / update DLSS 5</button>
             <button class="btn btn-ghost" id="dlss5CheckBtn" title="Run the DLSS 5 compatibility check (GPU tier, files, HAGS, frame-gen probe)">Check compatibility</button>
-            <button class="btn btn-ghost" id="dlss5UpdateBtn" title="Read-only: ask the sources upstream's installer script pins whether a newer DLSS / ReShade / RenoDX release exists. Downloads and installs nothing.">Check for updates</button>
+            <button class="btn btn-ghost" id="dlss5UpdateBtn" title="Read-only: compare the DLSS 5 pins in your Wan2GP checkout with DeepBeepMeep/Wan2GP's installer script. Downloads and installs nothing.">Compare with upstream</button>
             <button class="btn btn-ghost" id="dlss5FixBtn" title="Patch Wan2GP's GPU check so workstation cards (RTX PRO, Ada, RTX Ax000) pass DLSS gating — backed up, reversible">Apply workstation GPU fix</button>
             <label class="path-hint" style="margin-left:8px"><input type="checkbox" id="dlss5ForceChk"> Force (backup + replace existing files)</label>
           </div>
           <div id="dlss5CheckResult" class="path-hint" style="display:none;margin-top:6px;white-space:pre-line"></div>
           <div id="dlss5UpdateResult" class="path-hint" style="display:none;margin-top:6px"></div>
-          <p class="path-hint" style="margin-top:4px">Component versions are pinned by Wan2GP's own installer script — <em>Check for updates</em> only asks the sources it pins whether a newer release exists; installing one is an <em>Update Wan2GP</em> away.</p>
+          <p class="path-hint" style="margin-top:4px">Component versions are pinned by DeepBeepMeep/Wan2GP's own <code>scripts/install_dlss5.ps1</code>. <em>Compare with upstream</em> checks whether the script on <code>deepbeepmeep/Wan2GP</code> main pins newer builds; it downloads and installs nothing. Updating Wan2GP replaces that script, not the files already in <code>dlss5/</code> — run <em>Install / update DLSS 5</em> afterwards to apply new pins.</p>
           <p class="path-hint" style="margin-top:4px"><em>Stop Wan2GP first — files under <code>dlss5/</code> can't be replaced while in use.</em></p>
         </div>
 
@@ -1845,12 +1871,12 @@
              `hidden` class, shown by removing it. -->
         <div id="dlss5Modal" class="modal-overlay hidden">
           <div class="modal-box">
-            <h3 style="margin:0 0 8px">Install DLSS 5 runtime?</h3>
+            <h3 style="margin:0 0 8px">Install or update DLSS 5 runtime?</h3>
             <p class="path-hint">This downloads and runs native third-party binaries — NVIDIA DLSS, ReShade, RenoDX and DLSSNR 310.8.SF-v2. They are community-hosted, unsigned and proprietary, with GPU and filesystem access. Wan2GP grants no redistribution rights and guarantees nothing about these files. Details: <a id="dlss5DocsLink2" href="#" style="color:var(--accent)">docs/DLSS5.md</a></p>
             <label class="path-hint" style="display:flex;gap:8px;align-items:flex-start;margin:10px 0 12px;cursor:pointer"><input type="checkbox" id="dlss5AcceptChk" style="margin-top:2px"> <span>I accept the copyright, licensing, and security risks above.</span></label>
             <div style="display:flex;gap:8px;justify-content:flex-end">
               <button class="btn btn-ghost" id="dlss5CancelBtn" title="Close without installing DLSS 5">Cancel</button>
-              <button class="btn btn-primary" id="dlss5ConfirmBtn" disabled title="Download and run the DLSS 5 installer">Install</button>
+              <button class="btn btn-primary" id="dlss5ConfirmBtn" disabled title="Download and run the DLSS 5 installer">Install / update</button>
             </div>
           </div>
         </div>

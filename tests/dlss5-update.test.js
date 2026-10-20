@@ -1,14 +1,14 @@
 /**
  * dlss5-update.test.js — the DLSS 5 upstream-release probe is wired end to end.
  *
- * Upstream's scripts/install_dlss5.ps1 owns every component version (hardcoded
- * URLs + SHA-256s), so a newer DLSS / ReShade / RenoDX build can only arrive
- * through a Wan2GP update. The probe answers "is a newer version available?"
- * read-only: it asks the sources that script pins, and never downloads,
- * installs or re-pins anything.
+ * Wan2GP's scripts/install_dlss5.ps1 owns every component version (hardcoded
+ * URLs + SHA-256s), and the launcher reads those pins from the local checkout.
+ * The probe answers "is a newer version available upstream?" read-only: it
+ * downloads, installs and re-pins nothing. Updating Wan2GP replaces the script,
+ * never the installed files, so a reinstall is still required.
  *
- * Structural guards: button, result box, bridge, command registration, the
- * pins' single home, and the "update Wan2GP" wording.
+ * Structural guards: button, result box, bridge, command registration, live
+ * script parsing, fallback pins, and honest wording.
  */
 const test = require('node:test')
 const assert = require('node:assert')
@@ -24,14 +24,19 @@ const rust = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'install.rs'), 
 const lib = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'lib.rs'), 'utf8')
 const dlTab = fs.readFileSync(path.join(SRC, 'downloads-tab.js'), 'utf8')
 
-test('the DLSS 5 card carries the update-probe button and its own result box', () => {
+test('the DLSS 5 card carries the upstream-probe button and its own result box', () => {
   assert.match(html, /id="dlss5UpdateBtn"/)
-  assert.match(html, /Check for updates/)
+  assert.match(html, /Compare with upstream/)
   assert.match(html, /id="dlss5UpdateResult"/)
   assert.match(
     html,
-    /Update Wan2GP<\/em> away/,
-    'the card must say where a newer build actually comes from',
+    /Updating Wan2GP replaces that script, not the files already in/,
+    'the card must say what a Wan2GP update does and does not update',
+  )
+  assert.match(
+    html,
+    /run <em>Install \/ update DLSS 5<\/em> afterwards to apply new pins/,
+    'the card must name the step that actually replaces files',
   )
 })
 
@@ -44,42 +49,69 @@ test('the backend command exists and is registered', () => {
   assert.match(lib, /install::dlss5_update_check,/)
 })
 
-test('the probe reads the sources upstream pins (and reshade.me for ReShade)', () => {
-  assert.match(rust, /RankFTW\/rhi-repo/)
-  assert.match(rust, /DeepBeepMeep\/dlss5-visual-enhancer/)
-  assert.match(rust, /reshade\.me/)
-})
+test('the probe reads DeepBeepMeep/Wan2GP’s installer script, not component feeds', () => {
+  assert.match(
+    rust,
+    /raw\.githubusercontent\.com\/deepbeepmeep\/WanGP\/main\/scripts\/install_dlss5\.ps1/,
+    'the update source is DeepBeepMeep/Wan2GP main',
+  );
+  assert.match(rust, /deepbeepmeep\/WanGP/i, 'the UI and logs must name the upstream');
+  assert.doesNotMatch(
+    rust,
+    /RankFTW\/rhi-repo/,
+    'component release tags are not an update source',
+  );
+  assert.doesNotMatch(rust, /reshade\.me/, 'reshade.me is not an update source');
+});
 
-test('the pins have one home: the probe derives them from DLSS5_FILES', () => {
+test('the pins are read from Wan2GP’s installer script, with a fallback', () => {
   assert.match(
     rust,
-    /fn dlss_pinned_version[\s\S]{0,700}DLSS5_FILES/,
-    'the pins must be read out of the shipped manifest, not copied',
-  )
+    /fn dlss5_parse_script_pins/,
+    'upstream version pins must be parsed from the live script',
+  );
+  assert.match(rust, /scripts\/install_dlss5\.ps1/, 'that is the file the installer runs');
+  assert.match(rust, /fn dlss5_pins_for_repo/, 'the script is preferred per checkout');
   assert.match(
     rust,
-    /fn every_probe_row_maps_to_a_manifest_pin/,
+    /fn dlss5_static_pins/,
+    'a missing/unreadable script still needs verifiable fallback pins',
+  );
+  assert.match(rust, /"pinsSource": pins_source/, 'the panel must be told which pins were used');
+  assert.match(
+    rust,
+    /fn every_update_row_maps_to_a_manifest_pin/,
     'a pkg-id typo would report "not checked" forever',
-  )
-})
+  );
+});
 
-test('a newer upstream release is offered as a Wan2GP update, never self-installed', () => {
-  assert.match(tab, /dlss5UpdateCheck\(\)/, 'must go through the bridge')
-  assert.match(tab, /update Wan2GP to pick it up/)
-  assert.match(tab, /never downloads a build upstream has not pinned/)
-  assert.doesNotMatch(tab, /installDlss5\(/, 'the probe must not trigger an install')
-})
+test('a newer DeepBeepMeep/Wan2GP pin is informational, never self-installed', () => {
+  assert.match(tab, /dlss5UpdateCheck\(\)/, 'must go through the bridge');
+  assert.match(tab, /DeepBeepMeep\/Wan2GP pins a newer build/, 'the honest state of an update');
+  assert.match(
+    tab,
+    /run Install \/ update DLSS 5 after updating Wan2GP|update Wan2GP, then run Install \/ update DLSS 5/,
+    'the probe must say the installer still has to run',
+  );
+  assert.match(tab, /never downloads a build DeepBeepMeep\/Wan2GP has not pinned/);
+  assert.doesNotMatch(tab, /installDlss5\(/, 'the probe must not trigger an install');
+  assert.doesNotMatch(
+    tab,
+    /update Wan2GP alone will install it/,
+    'updating Wan2GP alone does not update DLSS 5',
+  );
+});
 
 test('an unreachable upstream is reported honestly, not as "current"', () => {
-  assert.match(tab, /Couldn't reach the upstream sources/)
-  assert.match(tab, /upstream unreachable/)
+  assert.match(tab, /Couldn't read DeepBeepMeep\/Wan2GP's installer script/)
+  assert.match(tab, /upstream check — unreachable|couldn't read deepbeepmeep\/Wan2GP/)
   assert.match(tab, /nothing was checked or changed/)
 })
 
 test('upstream-update notes appear only after the user asks for them', () => {
-  // A healthy, installed panel must not decorate itself with "update Wan2GP" on
-  // launch: that is what made correct rows look wrong. The startup probe still
-  // refreshes the data, it just does not paint it.
+  // A healthy, installed panel must not decorate itself with an upstream note
+  // on launch: that is what made correct rows look wrong. The startup probe
+  // still refreshes the data, it just does not paint it.
   assert.match(tab, /_dlss5UpdateAsked = false/, 'the session starts with notes off')
   assert.match(
     tab,

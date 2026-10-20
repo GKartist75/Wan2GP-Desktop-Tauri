@@ -110,12 +110,14 @@ test('the verifier is wired: bridge, command, registration, and a caller', () =>
   )
 })
 
-test('the verifier compares against the shipped manifest, not a copy of it', () => {
+test('the verifier compares against the current pins, not a frozen copy', () => {
   assert.match(
     rust,
-    /fn dlss5_verify_files_blocking[\s\S]{0,900}DLSS5_FILES\.iter\(\)/,
-    'one home for the pins',
+    /fn dlss5_verify_files_blocking\(dlss5: &std::path::Path, pins: &\[Dlss5Pin\]\)/,
+    'the verifier receives the pins resolved for this checkout',
   )
+  assert.match(rust, /for pin in pins/, 'one home for the pins')
+  assert.match(rust, /fn dlss5_pins_for_repo/, 'script pins win; fallback covers a missing script')
   assert.match(rust, /fn dlss_file_state\(/, 'the verdict classifier is pure and tested')
   assert.match(rust, /fn state_classifies_existence_and_hash\(/)
   assert.match(rust, /fn verify_reports_mismatch_and_missing_without_touching_files\(/)
@@ -131,18 +133,23 @@ test('a restart repaints verified verdicts from the validated cache', () => {
   assert.match(tab, /maybeRefreshDlss5Updates\(\)/, 'update state is restored too')
 })
 
-test('a verified file with a newer upstream build stays green and names the update', () => {
+test('a verified file with a newer DeepBeepMeep/Wan2GP pin stays green and names the update', () => {
   const v = verdict(
     { ...FILE, installed: true },
     undefined,
     { state: 'match', got: SHA },
-    { state: 'newer', latest: '310.9.0' },
+    { state: 'newer', latest: '310.9.0', pinned: '310.8.0' },
   )
   assert.equal(v.tone, 'ok', 'a correct file is not a fault; the update is separate news')
   assert.match(v.tail, /✓ SHA /, 'integrity is still verified')
   assert.doesNotMatch(v.tail, /↻/, 'the update is not mixed into the integrity verdict')
-  assert.match(v.note, /↻ upstream 310\.9\.0/, 'the newer version is named separately')
-  assert.match(v.note, /update Wan2GP/, 'and where it comes from')
+  assert.match(v.note, /↻ DeepBeepMeep\/Wan2GP pins 310\.9\.0/, 'the newer version is named separately')
+  assert.match(
+    v.note,
+    /Install \/ update DLSS 5 after updating Wan2GP/,
+    'and the step that actually applies it',
+  )
+  assert.doesNotMatch(v.note, /update Wan2GP alone/, 'updating Wan2GP alone does not update DLSS 5')
 })
 
 test('a correct file with nothing to announce carries no note', () => {

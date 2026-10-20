@@ -23,11 +23,16 @@ async function refreshDlss5() {
     return;
   }
   btn.disabled = false;
-  msg.textContent = s.complete
-    ? `✓ DLSS 5 installed (${s.present}/${s.total} files).`
-    : s.installed
-      ? `Partial DLSS 5 install (${s.present}/${s.total} files) — reinstall, or tick Force to replace.`
-      : "DLSS 5 not installed — optional NVIDIA upsampler runtime.";
+  const pinsNote =
+    s.pinsSource === "launcher"
+      ? " (using the launcher's built-in pins — Wan2GP's installer script was not readable)"
+      : "";
+  msg.textContent =
+    (s.complete
+      ? `✓ DLSS 5 installed (${s.present}/${s.total} files).`
+      : s.installed
+        ? `Partial DLSS 5 install (${s.present}/${s.total} files) — reinstall, or tick Force to replace.`
+        : "DLSS 5 not installed — optional NVIDIA upsampler runtime.") + pinsNote;
   _dlss5Rows = Array.isArray(s.files) ? s.files : [];
   _dlss5State = {};
   _dlss5Verify = {};
@@ -70,7 +75,7 @@ $("dlss5CheckBtn")?.addEventListener("click", async () => {
       v && v.available
         ? "✓ available"
         : v && v.state === "not-installed"
-          ? "○ compatible — runtime not installed, run Install DLSS 5"
+          ? "○ compatible — runtime not installed, run Install / update DLSS 5"
           : `✗ ${(v && v.reason) || "unavailable"}`;
     // Dot color follows the three verdict states: green ready, amber
     // install-to-use, red blocked.
@@ -344,8 +349,8 @@ $("dlss5CancelBtn")?.addEventListener("click", () => {
   $("dlss5Modal").classList.add("hidden");
 });
 // ── DLSS5 file overview: one always-visible row per file (version + the SHA
-// DLSS5_FILES pins) with its real state. The backend's "installed" is a file
-// existence check only, so a row must never imply the SHA matched unless it
+// the current pins expect) with its real state. The backend's "installed" is a
+// file existence check only, so a row must never imply the SHA matched unless it
 // actually did: either the installer verified it live, or the user ran Check
 // compatibility, which hashes every file (dlss5_verify_files). Everything else
 // says "expected".
@@ -358,7 +363,7 @@ let _dlss5Rows = [],
   _dlss5Update = {},
   _dlss5UpdateCheckedAt = 0,
   // Upstream-update notes are opt-in per session: they appear only after the
-  // user presses Check for updates, never from the startup/cached probe.
+  // user presses Compare with upstream, never from the startup/cached probe.
   _dlss5UpdateAsked = false,
   _dlss5UpdateBusy = false,
   _dlss5LastPkg = null,
@@ -415,7 +420,7 @@ function dlss5RowVerdict(f, phase, verdict, update) {
   const short = sha.slice(0, 12) + (sha.length > 12 ? "…" : "");
   const got = String((verdict && verdict.got) || "");
   const gotShort = got.slice(0, 12) + (got.length > 12 ? "…" : "");
-  // A newer upstream build is news about Wan2GP's pins, not a fault in this
+  // A newer DeepBeepMeep/Wan2GP pin is news about the update, not a fault in this
   // file: something that verified (or hash-matches the pin) stays green, and
   // the update is named as a separate muted note. Amber is for a file that is
   // present but unproven, red for missing or wrong bytes. Only a strictly
@@ -423,7 +428,7 @@ function dlss5RowVerdict(f, phase, verdict, update) {
   // SF-v2) is reported by the probe, not here.
   const note =
     update && update.state === "newer" && update.latest
-      ? ` · ↻ upstream ${update.latest} — update Wan2GP`
+      ? ` · ↻ DeepBeepMeep/Wan2GP pins ${update.latest} — Install / update DLSS 5 after updating Wan2GP`
       : "";
   if (phase === "verified")
     return {
@@ -520,24 +525,29 @@ function renderDlss5Progress() {
   }
 }
 
-// ── DLSS 5 upstream-release probe (read-only) ─────────────────────────────
-// Answers "how would I even know a newer DLSS is out?" without leaving the
-// panel. Upstream's scripts/install_dlss5.ps1 owns the component versions —
-// its package table is version-pinned with hardcoded URLs and SHA-256s — so a
-// newer build only becomes installable through a Wan2GP update. This asks the
-// same sources that script pins whether a newer release exists: it downloads
-// nothing, installs nothing, and never moves a pin.
+// ── DLSS 5 DeepBeepMeep/Wan2GP pin comparison (read-only) ──────────────────
+// Answers "does DeepBeepMeep/Wan2GP pin a newer DLSS build?" without leaving
+// the panel. The backend compares the pins in the user's Wan2GP checkout with
+// `scripts/install_dlss5.ps1` on deepbeepmeep/Wan2GP main. The launcher never
+// consults component release feeds as an update source and never downloads or
+// installs a build DeepBeepMeep/Wan2GP has not pinned.
 const DLSS5_UPDATE_STATES = {
-  current: { color: null, text: "up to date with the pinned build" },
+  current: {
+    color: null,
+    text: "matches what DeepBeepMeep/Wan2GP pins today",
+  },
   newer: {
     color: "#FBBF24",
-    text: "newer release upstream — update Wan2GP to pick it up",
+    text: "DeepBeepMeep/Wan2GP pins a newer build — update Wan2GP, then run Install / update DLSS 5",
   },
   differs: {
     color: "#FBBF24",
-    text: "a different build upstream — check its release notes",
+    text: "a different build than DeepBeepMeep/Wan2GP pins — compare your Wan2GP branch; Install / update DLSS 5 applies your checkout's pin",
   },
-  older: { color: null, text: "pinned build is newer than upstream's newest tag" },
+  older: {
+    color: null,
+    text: "your checkout pins newer than DeepBeepMeep/Wan2GP main",
+  },
   unknown: { color: "", text: "not checked" },
 };
 $("dlss5UpdateBtn")?.addEventListener("click", async () => {
@@ -549,14 +559,16 @@ $("dlss5UpdateBtn")?.addEventListener("click", async () => {
   btn.textContent = "Checking…";
   box.style.display = "block";
   box.textContent = "";
-  appendLog("[*] DLSS 5 update check — asking the sources upstream's installer pins…");
+  appendLog(
+    "[*] DLSS 5 upstream check — comparing your Wan2GP pins with deepbeepmeep/Wan2GP main…",
+  );
   try {
     const r = await window.w2gp.dlss5UpdateCheck();
     if (!r || !r.ok) throw new Error((r && r.error) || "check failed");
     const rows = Array.isArray(r.rows) ? r.rows : [];
-    // Repaint the file rows too: a newer upstream build is named on the rows
-    // it affects. Only an explicit check turns the notes on — the startup
-    // probe refreshes the data without decorating a healthy panel.
+    // Repaint the file rows too: a newer DeepBeepMeep/Wan2GP pin is named on
+    // the rows it affects. Only an explicit check turns the notes on — the
+    // startup probe refreshes the data without decorating a healthy panel.
     if (r.online) {
       _dlss5UpdateAsked = true;
       applyDlss5UpdateRows(r);
@@ -577,47 +589,56 @@ $("dlss5UpdateBtn")?.addEventListener("click", async () => {
       lab.append(icon, " " + row.id);
       const val = document.createElement("span");
       val.className = "spec-value";
-      // The tag rides along for anything the launcher isn't already on: for
-      // "differs" it is the whole point (a same-base flavor like
-      // dlssnr-310.8.Lecram vs the pinned 310.8.SF-v2), and an -rc upstream
-      // is flagged so "newer release" can't read as "Wan2GP will install it".
+      // DeepBeepMeep/Wan2GP pins stable builds, but keep the label honest if
+      // a release candidate ever becomes the pinned version.
       const rc = /-rc\d*$/i.test(row.latest || "") ? " · release candidate" : "";
       val.textContent =
-        `pinned ${row.pinned || "?"}` +
-        (row.latest && row.latest !== row.pinned ? ` · upstream ${row.latest}` : "") +
+        `your Wan2GP: ${row.pinned || "?"}` +
+        (row.latest && row.latest !== row.pinned
+          ? ` · DeepBeepMeep/Wan2GP: ${row.latest}`
+          : "") +
         (row.state !== "current" && row.tag ? ` (${row.tag})` : "") +
         rc +
         ` — ${st.text}`;
       line.append(lab, val);
       box.append(line);
       consoleLines.push(
-        `${row.id}: pinned ${row.pinned || "?"} · upstream ${row.latest || "?"} [${row.state}] ${row.tag} (${row.source})`,
+        `${row.id}: your Wan2GP ${row.pinned || "?"} · DeepBeepMeep/Wan2GP ${row.latest || "?"} [${row.state}] (${row.source})`,
       );
     }
     const news = rows.filter((x) => x.state === "newer");
+    const pinsLine = document.createElement("div");
+    pinsLine.className = "pip-advanced-hint";
+    pinsLine.textContent =
+      r.pinsSource === "wan2gp"
+        ? "Your pins: scripts/install_dlss5.ps1 in your Wan2GP checkout. Compared with: deepbeepmeep/Wan2GP main."
+        : "Your Wan2GP installer script was not readable — using the launcher's built-in pins as the local baseline. Compared with: deepbeepmeep/Wan2GP main.";
+    box.append(pinsLine);
     const note = document.createElement("div");
     note.className = "pip-advanced-hint";
     if (!r.online) {
       note.textContent =
-        "Couldn't reach the upstream sources (offline, or GitHub rate limited) — nothing was checked or changed. A GitHub token in Manage settings raises the rate limit.";
+        "Couldn't read DeepBeepMeep/Wan2GP's installer script (" +
+        (r.error || "offline, rate limited, or the file moved") +
+        ") — nothing was checked or changed.";
     } else if (news.length) {
       note.style.color = "#FBBF24";
       note.textContent =
-        `Newer upstream release${news.length > 1 ? "s" : ""}: ` +
+        "DeepBeepMeep/Wan2GP now pins newer: " +
         news.map((x) => `${x.id} ${x.latest}`).join(", ") +
-        " — install it by updating Wan2GP (this panel never downloads a build upstream has not pinned).";
+        ". Update Wan2GP, then run Install / update DLSS 5 to replace installed files. The launcher never downloads a build DeepBeepMeep/Wan2GP has not pinned.";
     } else {
       note.textContent =
-        "Nothing newer upstream: these are the builds Wan2GP's own installer pins today.";
+        "Your Wan2GP checkout matches the DLSS 5 pins on deepbeepmeep/Wan2GP main. Updating Wan2GP alone does not replace installed files — run Install / update DLSS 5 after a Wan2GP update.";
     }
     box.append(note);
-    appendLog("[DLSS5 update check]\n" + consoleLines.join("\n"));
+    appendLog("[DLSS5 upstream check]\n" + consoleLines.join("\n"));
     showToast(
       !r.online
-        ? "✗ DLSS 5 update check — upstream unreachable"
+        ? "✗ DLSS 5 — couldn't read deepbeepmeep/Wan2GP"
         : news.length
-          ? `↻ ${news.length} newer DLSS 5 component${news.length > 1 ? "s" : ""} upstream — update Wan2GP`
-          : "✓ DLSS 5 components match upstream's pins",
+          ? `↻ ${news.length} DLSS 5 component${news.length > 1 ? "s" : ""} newer on DeepBeepMeep/Wan2GP — update Wan2GP`
+          : "✓ DLSS 5 matches DeepBeepMeep/Wan2GP's pinned versions",
     );
   } catch (e) {
     box.textContent = "✗ " + errText(e);

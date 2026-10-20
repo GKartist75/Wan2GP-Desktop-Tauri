@@ -271,6 +271,241 @@ $("cliDocsLink")?.addEventListener("click", (e) => {
   );
 });
 
+// ── Manage → General: custom Wan2GP resolutions ──
+// Wan2GP reads `resolutions.json` from the folder containing wgp.py. The
+// launcher only edits that one file; the backend validates every row and
+// refuses to write before Wan2GP is installed.
+const RESOLUTION_EXAMPLE = [
+  ["1600x1200 (4:3, 1080p)", "1600x1200"],
+  ["1200x1600 (3:4, 1080p)", "1200x1600"],
+  ["1376x768 (16:9, 1MP) - Krea 2 (Official)", "1376x768"],
+  ["768x1376 (9:16, 1MP) - Krea 2 (Official)", "768x1376"],
+  ["1344x768 (16:9, 1MP) - MM H3 (Official)", "1344x768"],
+  ["768x1344 (9:16, 1MP) - MM H3 (Official)", "768x1344"],
+  ["1184x896 (4:3, 1MP) - Krea 2 (Official)", "1184x896"],
+  ["896x1184 (3:4, 1MP) - Krea 2 (Official)", "896x1184"],
+];
+let _resolutionsInstalled = true;
+
+function setResolutionsStatus(text, kind) {
+  const st = $("resolutionsStatus");
+  if (!st) return;
+  st.textContent = text || "";
+  st.style.color =
+    kind === "err"
+      ? "var(--signal-red, #9f2f2d)"
+      : kind === "ok"
+        ? "var(--text-secondary)"
+        : "";
+}
+
+function resolutionRow(label = "", value = "") {
+  const row = document.createElement("div");
+  row.className = "resolution-row";
+  const l = document.createElement("input");
+  l.type = "text";
+  l.className = "input res-label";
+  l.placeholder = "Label — e.g. 1600x1200 (4:3, 1080p)";
+  l.value = label;
+  l.maxLength = 200;
+  l.spellcheck = false;
+  const v = document.createElement("input");
+  v.type = "text";
+  v.className = "input res-value";
+  v.placeholder = "1600x1200";
+  v.value = value;
+  v.maxLength = 16;
+  v.spellcheck = false;
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "btn btn-ghost small res-del";
+  del.textContent = "×";
+  del.title = "Remove this resolution";
+  del.setAttribute("aria-label", "Remove resolution");
+  del.addEventListener("click", () => row.remove());
+  row.append(l, v, del);
+  return row;
+}
+
+function addResolutionRow(label, value) {
+  const host = $("resolutionsList");
+  if (!host) return null;
+  const row = resolutionRow(label, value);
+  host.appendChild(row);
+  return row;
+}
+
+function collectResolutionRows() {
+  const host = $("resolutionsList");
+  if (!host) return [];
+  const out = [];
+  host.querySelectorAll(".resolution-row").forEach((row) => {
+    const label = (row.querySelector(".res-label")?.value || "").trim();
+    const value = (row.querySelector(".res-value")?.value || "").trim();
+    if (!label && !value) return;
+    out.push([label, value]);
+  });
+  return out;
+}
+
+async function loadCustomResolutions() {
+  const host = $("resolutionsList");
+  if (!host) return;
+  const pathEl = $("resolutionsPath");
+  const saveBtn = $("resolutionsSaveBtn");
+  host.innerHTML = "";
+  setResolutionsStatus("Loading…");
+  try {
+    const r = await window.w2gp.customResolutionsRead();
+    _resolutionsInstalled = !(r && r.installed === false);
+    if (saveBtn) saveBtn.disabled = !_resolutionsInstalled;
+    if (pathEl) pathEl.textContent = r && r.path ? "File: " + r.path : "";
+    if (r && r.ok === false) {
+      setResolutionsStatus(
+        "⚠ " +
+          (r.error || "Could not read resolutions.json") +
+          (r.exists ? " — correcting it and pressing Save replaces the file." : ""),
+        "err",
+      );
+      return;
+    }
+    const list = (r && r.resolutions) || [];
+    for (const pair of list) addResolutionRow(pair[0] || "", pair[1] || "");
+    if (!_resolutionsInstalled) {
+      setResolutionsStatus(
+        "Wan2GP is not installed yet — this editor becomes available after install.",
+        "err",
+      );
+    } else if (!list.length) {
+      setResolutionsStatus(
+        "No custom resolutions yet. Add a row or load the example.",
+      );
+    } else {
+      setResolutionsStatus(
+        `${list.length} custom resolution(s) saved. Restart Wan2GP to see them.`,
+        "ok",
+      );
+    }
+  } catch (e) {
+    setResolutionsStatus(
+      "✗ " + (typeof errText === "function" ? errText(e) : e?.message || e),
+      "err",
+    );
+  }
+}
+
+async function saveCustomResolutions() {
+  if (!_resolutionsInstalled) {
+    setResolutionsStatus("Install Wan2GP first — there is no wgp.py to write next to.", "err");
+    return;
+  }
+  const list = collectResolutionRows();
+  if (!list.length) {
+    const choice = await window.w2gp.confirmDialog({
+      title: "Remove all custom resolutions?",
+      message: "The editor is empty — save an empty list?",
+      detail:
+        "This writes [] to resolutions.json. Wan2GP's built-in resolutions are never removed; only custom entries disappear.",
+    });
+    if (choice !== "ok") {
+      setResolutionsStatus("Nothing saved.");
+      return;
+    }
+  }
+  const labels = new Set();
+  const sizes = new Set();
+  for (let i = 0; i < list.length; i++) {
+    const label = list[i][0];
+    const value = list[i][1].toLowerCase();
+    if (!label) {
+      setResolutionsStatus(`Row ${i + 1}: add a label.`, "err");
+      return;
+    }
+    if (!/^[1-9]\d*x[1-9]\d*$/.test(value)) {
+      setResolutionsStatus(
+        `Row ${i + 1}: "${list[i][1]}" is not WIDTHxHEIGHT (for example 1600x1200).`,
+        "err",
+      );
+      return;
+    }
+    const [w, h] = value.split("x").map((n) => parseInt(n, 10));
+    if (w > 65535 || h > 65535) {
+      setResolutionsStatus(`Row ${i + 1}: width and height must be at most 65535.`, "err");
+      return;
+    }
+    if (labels.has(label.toLowerCase())) {
+      setResolutionsStatus(`Row ${i + 1}: duplicate label "${label}".`, "err");
+      return;
+    }
+    if (sizes.has(value)) {
+      setResolutionsStatus(
+        `Row ${i + 1}: duplicate resolution "${value}" — Wan2GP keeps only the first.`,
+        "err",
+      );
+      return;
+    }
+    labels.add(label.toLowerCase());
+    sizes.add(value);
+    list[i][1] = value;
+  }
+  const btn = $("resolutionsSaveBtn");
+  if (btn) btn.disabled = true;
+  setResolutionsStatus(list.length ? "Saving…" : "Removing all custom resolutions…");
+  try {
+    const r = await window.w2gp.customResolutionsWrite(list);
+    if (r && r.ok) {
+      if ($("resolutionsPath") && r.path) {
+        $("resolutionsPath").textContent = "File: " + r.path;
+      }
+      const n = r.count == null ? list.length : r.count;
+      setResolutionsStatus(
+        n
+          ? `✓ Saved ${n} resolution(s). Restart Wan2GP to see them.`
+          : "✓ Removed all custom resolutions. Restart Wan2GP to apply.",
+        "ok",
+      );
+      showToast(n ? `Saved ${n} custom resolutions` : "Custom resolutions cleared");
+    } else {
+      setResolutionsStatus("✗ " + ((r && r.error) || "Save failed"), "err");
+    }
+  } catch (e) {
+    setResolutionsStatus(
+      "✗ " + (typeof errText === "function" ? errText(e) : e?.message || e),
+      "err",
+    );
+  } finally {
+    if (btn) btn.disabled = !_resolutionsInstalled;
+  }
+}
+
+$("resolutionsAddBtn")?.addEventListener("click", () => {
+  const row = addResolutionRow("", "");
+  row?.querySelector(".res-label")?.focus();
+});
+$("resolutionsReloadBtn")?.addEventListener("click", () => loadCustomResolutions());
+$("resolutionsSaveBtn")?.addEventListener("click", () => saveCustomResolutions());
+$("resolutionsExampleBtn")?.addEventListener("click", async () => {
+  const host = $("resolutionsList");
+  if (!host) return;
+  const populated = Array.from(host.querySelectorAll(".resolution-row")).some(
+    (row) =>
+      (row.querySelector(".res-label")?.value || "").trim() ||
+      (row.querySelector(".res-value")?.value || "").trim(),
+  );
+  if (populated) {
+    const choice = await window.w2gp.confirmDialog({
+      title: "Replace the editor contents?",
+      message: "Load the eight example resolutions?",
+      detail:
+        "This only fills the editor. Nothing is written until you press Save to resolutions.json.",
+    });
+    if (choice !== "ok") return;
+  }
+  host.innerHTML = "";
+  for (const [label, value] of RESOLUTION_EXAMPLE) addResolutionRow(label, value);
+  setResolutionsStatus("Example loaded — review the rows, then Save to resolutions.json.");
+});
+
 // ── Manage → General: Electron legacy section + closeSettings ──
 // Moved here from term-tab.js: these belong to the settings overlay, and
 // settings-tab.js needs closeSettings at load time (it wires the back button).

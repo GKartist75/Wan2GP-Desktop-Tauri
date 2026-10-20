@@ -362,6 +362,30 @@ fn require_civitai() -> Result<(), String> {
     }
 }
 
+/// Attach a CivitAI credential only when the user supplied one. Public releases
+/// are readable without a token, so callers must not require one up front.
+fn civitai_auth(req: reqwest::RequestBuilder, token: Option<&str>) -> reqwest::RequestBuilder {
+    match token.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) => req.header(
+            "Authorization",
+            format!("Bearer {}", t.trim_start_matches("Bearer ")),
+        ),
+        None => req,
+    }
+}
+
+/// CivitAI accepts the token on the download URL as well as in the header.
+/// Appending it keeps gated downloads resumable through the same code path.
+fn civitai_download_url(url: &str, token: Option<&str>) -> String {
+    match token.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) if !url.contains("token=") => {
+            let sep = if url.contains('?') { '&' } else { '?' };
+            format!("{url}{sep}token={}", urlencode(t))
+        }
+        _ => url.to_string(),
+    }
+}
+
 /// True for any URL hosted by CivitAI (API or CDN), so the off switch also
 /// covers direct file downloads of user-added models.
 fn is_civitai_url(url: &str) -> bool {
@@ -378,8 +402,30 @@ fn token_storage_path() -> PathBuf {
 }
 
 fn read_token() -> String {
-    std::fs::read_to_string(token_storage_path())
+    let own = std::fs::read_to_string(token_storage_path())
         .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if !own.is_empty() {
+        return own;
+    }
+    // Compatibility with the Finetune Manager plugin: it already stores a
+    // CivitAI key for the same host. Reuse it read-only when the launcher has
+    // none of its own, so the user does not have to paste the key twice. The
+    // plugin file is never modified.
+    let p = get_repo_dir()
+        .join("plugins")
+        .join("Wan2GP-finetune-manager")
+        .join("config.json");
+    std::fs::read_to_string(p)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| {
+            v.get("civitai_api_key")
+                .and_then(|x| x.as_str())
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(str::to_string)
+        })
         .unwrap_or_default()
 }
 
@@ -871,7 +917,36 @@ pub fn adult_pack_manifest() -> Value {
             o["weightsPresent"] = json!(finetune_weights_present(ft));
             o
         }).collect::<Vec<_>>(),
-        "civitai": arr(m, "civitai"),
+        "civitai": arr(m, "civitai").iter().map(|c| {
+            let mut o = c.clone();
+            let id = str_field(c, "id");
+            let rec = cfg
+                .get("civitaiInstalled")
+                .and_then(|x| x.get(&id))
+                .cloned()
+                .unwrap_or(json!({}));
+            let files: Vec<&str> = rec
+                .get("files")
+                .and_then(|x| x.as_array())
+                .map(|a| a.iter().filter_map(|f| f.as_str()).collect())
+                .unwrap_or_default();
+            // Only trust the record when every file it lists is still there:
+            // a partially deleted install must show up as missing again.
+            let have = !files.is_empty() && files.iter().all(|p| std::path::Path::new(*p).is_file());
+            let kind = rec
+                .get("kind")
+                .and_then(|x| x.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    let k = str_field(c, "kind");
+                    if k.is_empty() { "checkpoint".to_string() } else { k }
+                });
+            o["installed"] = json!(have);
+            o["installedKind"] = json!(kind);
+            o["installedBytes"] = rec.get("bytes").cloned().unwrap_or(json!(0));
+            o["installedPath"] = json!(files.first().copied().unwrap_or(""));
+            o
+        }).collect::<Vec<_>>(),
         "paths": {
             "loras": loras_dir.to_string_lossy(),
             "ckpts": ckpts_dir.to_string_lossy(),
@@ -1467,6 +1542,17 @@ pub async fn adult_pack_fetch(ids: Vec<String>, app: AppHandle) -> Result<Value,
     let custom = load_custom();
     let client = http_client();
     let pins = load_pins();
+    // A token is optional, but a stored one must be used for CivitAI files
+    // added by hand too — otherwise gated downloads fail in the bulk path while
+    // the same file works from the catalogue.
+    let civ_token = {
+        let t = read_token();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
+    };
     let mut done: Vec<Value> = vec![];
     let mut failed: Vec<Value> = vec![];
     let mut bytes = 0u64;
@@ -1515,6 +1601,11 @@ pub async fn adult_pack_fetch(ids: Vec<String>, app: AppHandle) -> Result<Value,
                 failed.push(json!({"id": &id, "name": label, "error": "CivitAI is turned off. Enable it in Model Pack → CivitAI."}));
                 continue;
             }
+            let url = if is_civitai_url(&url) {
+                civitai_download_url(&url, civ_token.as_deref())
+            } else {
+                url
+            };
             match download_verified(
                 &client,
                 &url,
@@ -1594,6 +1685,11 @@ pub async fn adult_pack_fetch(ids: Vec<String>, app: AppHandle) -> Result<Value,
                         failed.push(json!({"id": &id, "name": label, "error": "CivitAI is turned off. Enable it in Model Pack → CivitAI."}));
                         continue;
                     }
+                    let url = if is_civitai_url(&url) {
+                        civitai_download_url(&url, civ_token.as_deref())
+                    } else {
+                        url
+                    };
                     let suffix = if *key == "urls2" { " (low)" } else { "" };
                     match download_verified(
                         &client,
@@ -1664,8 +1760,23 @@ pub(crate) fn build_finetune_json(ft: &Value, urls: Vec<String>) -> Value {
         // would leave loras_multipliers pointing at nothing.
         model["loras"] = json!(pre);
     }
-    if let Some(l) = ft.get("lorasMultipliers").filter(|x| !x.is_null()) {
+    // The catalog and its generator call this `loraMultipliers`; accept the
+    // WanGP-facing spelling too so a hand-written source entry still works.
+    if let Some(l) = ft
+        .get("loraMultipliers")
+        .or_else(|| ft.get("lorasMultipliers"))
+        .filter(|x| !x.is_null())
+    {
         model["loras_multipliers"] = l.clone();
+    }
+    // FINETUNES.md puts model-level notes under `model.infos`; a root-level
+    // `infos` key is a generation setting and would never reach the info button.
+    if let Some(n) = ft
+        .get("licenseNote")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        model["infos"] = json!(format!("{n}\n\nFetched by the Wan2GP launcher adult pack."));
     }
 
     let mut root = json!({ "model": model });
@@ -1679,13 +1790,6 @@ pub(crate) fn build_finetune_json(ft: &Value, urls: Vec<String>) -> Value {
         if let Some(s) = r.get("sampler").and_then(|x| x.as_str()) {
             root["sampler"] = json!(s);
         }
-    }
-    if let Some(n) = ft
-        .get("licenseNote")
-        .and_then(|x| x.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        root["infos"] = json!(format!("{n}\n\nFetched by the Wan2GP launcher adult pack."));
     }
     root
 }
@@ -1770,7 +1874,11 @@ pub async fn adult_pack_civitai_verify(token: String) -> Result<Value, String> {
 
 /// Find the current CivitAI version for a pack entry (search + base-model
 /// filter), so "today's release" is resolved live instead of going stale.
-async fn civitai_resolve_version(client: &reqwest::Client, id: &str) -> Result<Value, String> {
+async fn civitai_resolve_version(
+    client: &reqwest::Client,
+    id: &str,
+    token: Option<&str>,
+) -> Result<Value, String> {
     let m = manifest();
     let Some(spec) = find(m, "civitai", id) else {
         return Err(format!("unknown civitai item {id}"));
@@ -1788,8 +1896,7 @@ async fn civitai_resolve_version(client: &reqwest::Client, id: &str) -> Result<V
         "https://civitai.red/api/v1/models?query={}&limit=20",
         urlencode(&query)
     );
-    let resp = client
-        .get(&url)
+    let resp = civitai_auth(client.get(&url), token)
         .send()
         .await
         .map_err(|e| format!("civitai search failed: {e}"))?;
@@ -1845,6 +1952,16 @@ fn urlencode(s: &str) -> String {
         .collect()
 }
 
+/// A CivitAI version can carry more than weights: training data, configs, VAEs
+/// and sample archives all appear in `files`. Only `type: "Model"` entries
+/// belong in a download/install list; an empty type is treated as a model for
+/// older API responses. `primary` is deliberately not a bypass — a primary VAE
+/// must not become a checkpoint.
+fn civitai_weight_file(f: &Value) -> bool {
+    let ftype = f.get("type").and_then(|x| x.as_str()).unwrap_or("");
+    ftype.is_empty() || ftype == "Model"
+}
+
 /// The name a CivitAI file should land under. `downloadUrl` is an API endpoint,
 /// not a filename, so prefer the file object's `name` and only fall back to a
 /// query-stripped endpoint as a last resort.
@@ -1865,9 +1982,10 @@ fn civitai_sha(f: &Value) -> Option<&str> {
         .filter(|s| s.len() == 64)
 }
 
-/// Download a token-gated release into ckpts/ and write a local-path finetune.
-/// The launcher never re-hosts these — it fetches them with the user's token
-/// and records only where they landed.
+/// Download one CivitAI release. LoRAs go to `<collection>/adult-pack/` and are
+/// loaded by Wan2GP directly; checkpoints go to `ckpts/adult-pack/` with a
+/// local-path finetune. The token is optional — public releases need none.
+/// The launcher never re-hosts anything; it records where the files landed.
 #[tauri::command]
 pub async fn adult_pack_civitai_download(
     id: String,
@@ -1875,38 +1993,51 @@ pub async fn adult_pack_civitai_download(
     app: AppHandle,
 ) -> Result<Value, String> {
     require_civitai()?;
+    // Optional on purpose: public CivitAI releases download without an account.
+    // A token is attached only when the user has one, and it also unlocks
+    // auth-gated files and raises the API rate limit.
     let tok = token
         .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty());
-    let Some(tok) = tok.or_else(|| {
-        let stored = read_token();
-        if stored.is_empty() {
-            None
-        } else {
-            Some(stored)
-        }
-    }) else {
-        return Err("CivitAI token required for this item".into());
-    };
+        .filter(|t| !t.is_empty())
+        .or_else(|| {
+            let stored = read_token();
+            if stored.is_empty() {
+                None
+            } else {
+                Some(stored)
+            }
+        });
     let m = manifest();
     let Some(spec) = find(m, "civitai", &id) else {
         return Err(format!("unknown civitai item {id}"));
     };
     let client = http_client();
-    let resolved = civitai_resolve_version(&client, &id).await?;
+    let resolved = civitai_resolve_version(&client, &id, tok.as_deref()).await?;
     let version_id = resolved
         .get("versionId")
         .and_then(|x| x.as_i64())
         .ok_or("could not resolve the CivitAI version")?;
 
-    let meta = client
-        .get(format!(
+    let meta = civitai_auth(
+        client.get(format!(
             "https://civitai.red/api/v1/model-versions/{version_id}"
-        ))
-        .header("Authorization", format!("Bearer {tok}"))
-        .send()
-        .await
-        .map_err(|e| format!("civitai version fetch failed: {e}"))?;
+        )),
+        tok.as_deref(),
+    )
+    .send()
+    .await
+    .map_err(|e| format!("civitai version fetch failed: {e}"))?;
+    if meta.status() == reqwest::StatusCode::UNAUTHORIZED
+        || meta.status() == reqwest::StatusCode::FORBIDDEN
+    {
+        return Err(if tok.is_some() {
+            "CivitAI rejected the stored token (HTTP 401/403). Update it under CivitAI settings."
+                .into()
+        } else {
+            "This CivitAI release needs an API token. Public releases download without one; add one under CivitAI settings."
+                .into()
+        });
+    }
     if !meta.status().is_success() {
         return Err(format!("civitai version HTTP {}", meta.status()));
     }
@@ -1915,7 +2046,30 @@ pub async fn adult_pack_civitai_download(
     if files.is_empty() {
         return Err("this CivitAI release has no downloadable files".into());
     }
-    let dir = pack_ckpts_dir();
+
+    // Manifest `kind` wins. Entries without it fall back to the model type the
+    // API reports, so a LoRA can never be filed as a checkpoint (and a
+    // checkpoint never as a LoRA) just because the manifest was hand-written.
+    let declared = str_field(spec, "kind").to_ascii_lowercase();
+    let api_kind = meta
+        .get("model")
+        .and_then(|x| x.get("type"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let is_lora = declared == "lora"
+        || (declared.is_empty() && matches!(api_kind.as_str(), "lora" | "locon" | "dora"));
+    let dir = if is_lora {
+        let arch = str_field(spec, "architecture");
+        let collection = if arch.is_empty() {
+            "adult-pack".to_string()
+        } else {
+            lora_collection(&arch)
+        };
+        lora_collection_dir(&collection).join("adult-pack")
+    } else {
+        pack_ckpts_dir()
+    };
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("cannot create {}: {e}", dir.to_string_lossy()))?;
 
@@ -1923,6 +2077,12 @@ pub async fn adult_pack_civitai_download(
     let mut local_paths: Vec<String> = vec![];
     let mut bytes = 0u64;
     for f in &files {
+        // A CivitAI version can carry more than weights: training data, configs,
+        // VAEs and sample archives all appear in `files`. Downloading those
+        // would waste gigabytes and make the install record lie about size.
+        if !civitai_weight_file(f) {
+            continue;
+        }
         let Some(dl) = f.get("downloadUrl").and_then(|x| x.as_str()) else {
             continue;
         };
@@ -1939,9 +2099,10 @@ pub async fn adult_pack_civitai_download(
         let expect =
             (f.get("sizeKB").and_then(|x| x.as_f64()).unwrap_or(0.0) * 1024.0).round() as u64;
         let dest = dir.join(&name);
+        let url = civitai_download_url(dl, tok.as_deref());
         let n = download_verified(
             &client,
-            dl,
+            &url,
             &dest,
             sha,
             if sha.is_some() { 0 } else { expect },
@@ -1949,7 +2110,19 @@ pub async fn adult_pack_civitai_download(
             &id,
             &name,
         )
-        .await?;
+        .await
+        .map_err(|e| {
+            let low = e.to_ascii_lowercase();
+            if low.contains("401") || low.contains("403") {
+                if tok.is_some() {
+                    format!("{e} — CivitAI rejected the token; check it under CivitAI settings.")
+                } else {
+                    format!("{e} — this file needs a CivitAI API token; add one under CivitAI settings.")
+                }
+            } else {
+                e
+            }
+        })?;
         bytes += n;
         local_paths.push(dest.to_string_lossy().to_string());
         saved.push(name);
@@ -1959,32 +2132,58 @@ pub async fn adult_pack_civitai_download(
     }
 
     // Remember which version this install uses, so a later re-run does not
-    // silently jump to a different release.
+    // silently jump to a different release. Also record exactly which files
+    // were written: without this the panel could only guess whether a CivitAI
+    // item is installed, because its file names are not in the manifest.
     let mut cfg = pack_config();
     let mut pinned = cfg.get("civitaiPinned").cloned().unwrap_or(json!({}));
     pinned[id.as_str()] = json!(version_id);
     cfg["civitaiPinned"] = pinned;
+    let mut installed = cfg.get("civitaiInstalled").cloned().unwrap_or(json!({}));
+    installed[id.as_str()] = json!({
+        "files": local_paths.clone(),
+        "kind": if is_lora { "lora" } else { "checkpoint" },
+        "bytes": bytes,
+        "versionId": version_id,
+    });
+    cfg["civitaiInstalled"] = installed;
     let _ = save_pack_config(cfg);
 
-    // Finetune points at the local files (nothing is re-uploaded anywhere).
-    // Absolute paths are what Wan2GP uses for locally quantized models; a bare
-    // file name would be resolved against Wan2GP's working directory, not ckpts/.
-    let mut ft = spec.clone();
-    ft["urls2"] = json!([]);
-    let doc = build_finetune_json(&ft, local_paths);
-    let body = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
-    let p = finetunes_dir().join(format!("adultpack_{id}.json"));
-    std::fs::create_dir_all(finetunes_dir()).ok();
-    atomic_write(&p, &body).map_err(|e| format!("{}: {e}", p.to_string_lossy()))?;
+    // Checkpoints get a recipe; LoRAs are loaded from the collection folder
+    // Wan2GP already scans and must not create a finetune entry.
+    let finetune = if is_lora {
+        None
+    } else {
+        // Finetune points at the local files (nothing is re-uploaded anywhere).
+        // Absolute paths are what Wan2GP uses for locally quantized models; a
+        // bare file name would be resolved against Wan2GP's working directory,
+        // not ckpts/.
+        let mut ft = spec.clone();
+        // Wan 2.2 releases publish HIGH and LOW weights as two files. Wan2GP
+        // expects the LOW half in `URLs2`; leaving both in `URLs` makes one of
+        // them look like an alternative version of phase 1 and the second phase
+        // has no weights. Split them by the file-name markers the rest of the
+        // pack already uses.
+        let (high, low) = split_civitai_halves(&saved, &local_paths);
+        ft["urls2"] = json!(low);
+        let doc = build_finetune_json(&ft, high);
+        let body = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+        let p = finetunes_dir().join(format!("adultpack_{id}.json"));
+        std::fs::create_dir_all(finetunes_dir()).ok();
+        atomic_write(&p, &body).map_err(|e| format!("{}: {e}", p.to_string_lossy()))?;
+        Some(p.to_string_lossy().to_string())
+    };
 
     Ok(json!({
         "ok": true,
         "id": id,
+        "kind": if is_lora { "lora" } else { "checkpoint" },
         "versionId": version_id,
         "versionName": resolved.get("name").cloned().unwrap_or(json!("")),
         "files": saved,
         "bytes": bytes,
-        "finetune": p.to_string_lossy(),
+        "path": dir.to_string_lossy(),
+        "finetune": finetune,
     }))
 }
 
@@ -2729,6 +2928,14 @@ pub async fn adult_pack_inspect(
     }
     let client = http_client();
     let arch_ok = installed_model_ids();
+    let civ_token = {
+        let t = read_token();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
+    };
     let mut files: Vec<Value> = vec![];
     let mut samples: Vec<Value> = vec![];
     let (title, preview, repo_page, version_id, version_name, versions_meta) = if source == "hf" {
@@ -2779,8 +2986,7 @@ pub async fn adult_pack_inspect(
         )
     } else {
         let url = format!("{}/models/{}", CIVITAI_API, id);
-        let resp = client
-            .get(&url)
+        let resp = civitai_auth(client.get(&url), civ_token.as_deref())
             .send()
             .await
             .map_err(|e| format!("cannot reach CivitAI: {e}"))?;
@@ -2816,6 +3022,11 @@ pub async fn adult_pack_inspect(
             .unwrap_or(json!({}));
         let mut out = vec![];
         for f in arr(&chosen, "files") {
+            // Ignore auxiliary entries (configs, VAE, training data) so the
+            // picker never offers them as if they were loadable weights.
+            if !civitai_weight_file(f) {
+                continue;
+            }
             let Some(name) = f.get("name").and_then(|x| x.as_str()) else {
                 continue;
             };
@@ -2889,6 +3100,26 @@ fn detect_pair(path: &str) -> Value {
     } else {
         json!(null)
     }
+}
+
+/// Split a CivitAI checkpoint's downloaded files into the first (`URLs`) and
+/// second (`URLs2`) phases. A release with no detectable LOW file keeps every
+/// path in the first phase, which is the only safe interpretation for single
+/// file checkpoints.
+fn split_civitai_halves(names: &[String], paths: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut high = vec![];
+    let mut low = vec![];
+    for (name, path) in names.iter().zip(paths.iter()) {
+        if detect_pair(name).as_str() == Some("low") {
+            low.push(path.clone());
+        } else {
+            high.push(path.clone());
+        }
+    }
+    if high.is_empty() && !low.is_empty() {
+        high.append(&mut low);
+    }
+    (high, low)
 }
 
 /// Candidate weight files in a repo tree, with the URL/size/hash filled in.
@@ -3227,19 +3458,31 @@ pub fn adult_pack_finetune_list() -> Value {
             };
             let parsed: Value = serde_json::from_str(&text).unwrap_or(json!({}));
             let model = parsed.get("model").cloned().unwrap_or(json!({}));
-            items.push(json!({
-                "id": id,
-                "name": str_field(&model, "name"),
-                "architecture": str_field(&model, "architecture"),
-                "description": str_field(&model, "description"),
-                "urlCount": arr(&model, "URLs").len() + arr(&model, "URLs2").len(),
-                "bytes": 0,
-                "written": true,
-                "origin": "local",
-                "path": p.to_string_lossy(),
-                "hasLocalWeights": false,
-                "valid": model.get("name").is_some() && model.get("architecture").is_some(),
-            }));
+            // A CivitAI checkpoint's recipe is pack-owned but is not in the
+            // manifest's finetune list, so classify it by its catalog id.
+            let origin =
+                if id.starts_with("adultpack_") && find(manifest(), "civitai", bare).is_some() {
+                    "civitai"
+                } else {
+                    "local"
+                };
+            // Feed the parsed recipe through the same summary the catalog uses,
+            // so a scanned CivitAI recipe reports its local weights instead of
+            // "written" with zero bytes.
+            let ft = json!({
+                "id": bare,
+                "name": model.get("name").cloned().unwrap_or(json!("")),
+                "architecture": model.get("architecture").cloned().unwrap_or(json!("")),
+                "description": model.get("description").cloned().unwrap_or(json!("")),
+                "urls": model.get("URLs").cloned().unwrap_or(json!([])),
+                "urls2": model.get("URLs2").cloned().unwrap_or(json!([])),
+            });
+            let mut item = finetune_summary(&ft, &dir, &ckpts, origin, true);
+            item["written"] = json!(true);
+            item["path"] = json!(p.to_string_lossy());
+            item["valid"] =
+                json!(model.get("name").is_some() && model.get("architecture").is_some());
+            items.push(item);
         }
     }
     items.sort_by(|a, b| {
@@ -3270,13 +3513,22 @@ fn finetune_summary(ft: &Value, dir: &Path, ckpts: &Path, origin: &str, written:
             }
         }
     }
+    // A recipe may reuse another model's weights by writing `URLs` or `URLs2`
+    // as a single id (FINETUNES.md). Each reuse is still one source, even
+    // though it is not an array of download URLs.
+    let mut url_count = arr(ft, "urls").len() + arr(ft, "urls2").len();
+    for key in ["urls", "urls2"] {
+        if matches!(ft.get(key), Some(Value::String(s)) if !s.trim().is_empty()) {
+            url_count += 1;
+        }
+    }
     json!({
         "id": id,
         "name": str_field(ft, "name"),
         "architecture": str_field(ft, "architecture"),
         "description": str_field(ft, "description"),
         "precisionToken": ft.get("precisionToken").cloned().unwrap_or(json!(null)),
-        "urlCount": arr(ft, "urls").len() + arr(ft, "urls2").len(),
+        "urlCount": url_count,
         "bytes": ft.get("bytes").cloned().unwrap_or(json!(0)),
         "written": written && path.is_file(),
         "origin": origin,
@@ -3301,6 +3553,35 @@ pub fn adult_pack_finetune_read(id: String) -> Result<Value, String> {
 
 /// Validate before writing. A recipe is JSON that WanGP parses at startup, so a
 /// typo here shows up as a model that silently never appears — worth refusing.
+fn usable_weight_source(s: &str) -> bool {
+    // FINETUNES.md: `URLs` entries are URLs or local paths. A local path may be
+    // absolute (`C:\...`, `/...`, UNC), relative (`ckpts/...`) or a bare file
+    // name; the last case still needs a model extension to be recognisable.
+    if s.starts_with("http://")
+        || s.starts_with("https://")
+        || s.starts_with('/')
+        || s.starts_with("\\\\")
+        || s.contains(":\\")
+        || s.contains(":/")
+        || s.contains('/')
+        || s.contains('\\')
+    {
+        return true;
+    }
+    let lower = s.to_ascii_lowercase();
+    [
+        ".safetensors",
+        ".gguf",
+        ".sft",
+        ".ckpt",
+        ".pt",
+        ".pth",
+        ".bin",
+    ]
+    .iter()
+    .any(|ext| lower.ends_with(*ext))
+}
+
 fn validate_finetune_doc(doc: &Value) -> Result<(String, String), String> {
     let model = doc
         .get("model")
@@ -3320,22 +3601,44 @@ fn validate_finetune_doc(doc: &Value) -> Result<(String, String), String> {
             "\"{arch}\" is not an architecture this Wan2GP build ships — pick one from the list, or update Wan2GP first"
         ));
     }
+    // `URLs` may be a list of sources or a single recipe/model id to reuse
+    // (FINETUNES.md's reusable-property form). Rejecting the latter made the
+    // form's "Reuse weights" field impossible to save.
     let urls = arr(model, "URLs");
-    if urls.is_empty() {
+    let reuse = model
+        .get("URLs")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.trim().is_empty());
+    if urls.is_empty() && reuse.is_none() {
         return Err("\"model.URLs\" is empty — Wan2GP would have nothing to load".into());
     }
     for u in urls {
-        let s = u.as_str().unwrap_or("");
-        if s.is_empty() {
+        let s = u
+            .as_str()
+            .ok_or("\"model.URLs\" must contain only strings")?;
+        if s.trim().is_empty() {
             return Err("\"model.URLs\" has an empty entry".into());
         }
-        if !(s.starts_with("http://")
-            || s.starts_with("https://")
-            || s.starts_with('/')
-            || s.contains(":\\")
-            || s.contains(":/"))
-        {
+        if !usable_weight_source(s) {
             return Err(format!("Unusable URL or path: {s}"));
+        }
+    }
+    // The two lists are positional (FINETUNES.md). A mismatch would apply the
+    // wrong multiplier to the wrong LoRA, so refuse it before writing.
+    if let Some(value) = model.get("loras_multipliers") {
+        let mults = value
+            .as_array()
+            .ok_or("\"model.loras_multipliers\" must be a list")?;
+        let loras_is_reference = matches!(model.get("loras"), Some(Value::String(_)));
+        if !loras_is_reference {
+            let loras = arr(model, "loras");
+            if mults.len() != loras.len() {
+                return Err(format!(
+                    "\"model.loras_multipliers\" has {} entries but \"model.loras\" has {} — they must match, in order",
+                    mults.len(),
+                    loras.len()
+                ));
+            }
         }
     }
     Ok((name, arch))
@@ -3421,6 +3724,7 @@ pub fn adult_pack_remove(ids: Vec<String>) -> Result<Value, String> {
     let custom = load_custom();
     let ckpts = resolve_ckpts_dir();
     let mut removed = vec![];
+    let mut failed: Vec<Value> = vec![];
     for id in ids {
         if let Some(l) = find_merged(m, &custom, "loras", &id) {
             let Some(_name) = safe_file_name(&str_field(l, "file")) else {
@@ -3462,11 +3766,56 @@ pub fn adult_pack_remove(ids: Vec<String>) -> Result<Value, String> {
                 drop_custom_entry(&id)?;
             }
         } else if find(m, "civitai", &id).is_some() {
+            // CivitAI file names are not in the manifest, so use the record the
+            // download wrote. Clear it afterwards or the panel would keep
+            // reporting the item as installed.
+            let mut cfg = pack_config();
+            let rec = cfg
+                .get("civitaiInstalled")
+                .and_then(|x| x.get(&id))
+                .cloned()
+                .unwrap_or(json!({}));
+            let mut n_bytes = 0u64;
+            let mut item_failed = false;
+            if let Some(files) = rec.get("files").and_then(|x| x.as_array()) {
+                for f in files {
+                    let Some(p) = f.as_str() else { continue };
+                    let path = std::path::Path::new(p);
+                    if !path.is_file() {
+                        continue;
+                    }
+                    let b = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                    match std::fs::remove_file(path) {
+                        Ok(()) => n_bytes += b,
+                        Err(e) => {
+                            item_failed = true;
+                            failed.push(json!({"id": &id, "file": p, "error": e.to_string()}));
+                        }
+                    }
+                }
+            }
             let p = finetunes_dir().join(format!("adultpack_{id}.json"));
             if p.is_file() {
-                std::fs::remove_file(&p).ok();
-                removed.push(json!({"id": &id, "bytes": 0}));
+                if let Err(e) = std::fs::remove_file(&p) {
+                    item_failed = true;
+                    failed.push(
+                        json!({"id": &id, "file": p.to_string_lossy(), "error": e.to_string()}),
+                    );
+                }
             }
+            if item_failed {
+                // Keep the install record: some weights are still on disk, so
+                // the row must stay removable instead of pretending it is gone.
+                continue;
+            }
+            if let Some(obj) = cfg
+                .get_mut("civitaiInstalled")
+                .and_then(|x| x.as_object_mut())
+            {
+                obj.remove(&id);
+            }
+            let _ = save_pack_config(cfg);
+            removed.push(json!({"id": &id, "bytes": n_bytes}));
         } else if finetune_id_valid(&id) {
             // A hand-written recipe (or one created in the editor) is not in
             // either catalog. The editor's Delete still has to work, so treat
@@ -3478,7 +3827,7 @@ pub fn adult_pack_remove(ids: Vec<String>) -> Result<Value, String> {
             }
         }
     }
-    Ok(json!({"ok": true, "removed": removed}))
+    Ok(json!({"ok": true, "removed": removed, "failed": failed}))
 }
 
 /// Direct LoRA weights under the LoRAs root, so a file the user copied in by
@@ -3502,9 +3851,31 @@ pub fn adult_pack_lora_inventory() -> Value {
             known.insert(rel.to_string_lossy().replace('\\', "/"), id);
         }
     }
+    // CivitAI installs are not in the manifest (their file name is resolved at
+    // download time), so read their recorded paths to label them as pack files.
+    let mut civ_files: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Some(installed) = load_config_value()
+        .get("adultPack")
+        .and_then(|x| x.get("civitaiInstalled"))
+        .and_then(|x| x.as_object())
+    {
+        for rec in installed.values() {
+            for f in rec
+                .get("files")
+                .and_then(|x| x.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|x| x.as_str())
+            {
+                let p = Path::new(f);
+                let abs = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+                civ_files.insert(abs.to_string_lossy().to_lowercase());
+            }
+        }
+    }
     let mut files: Vec<Value> = vec![];
     let mut bytes = 0u64;
-    collect_lora_files(&root, &root, &known, &mut files, &mut bytes);
+    collect_lora_files(&root, &root, &known, &civ_files, &mut files, &mut bytes);
     files.sort_by(|a, b| {
         str_field(a, "rel")
             .to_lowercase()
@@ -3534,6 +3905,7 @@ fn collect_lora_files(
     root: &Path,
     dir: &Path,
     known: &std::collections::HashMap<String, String>,
+    civ_files: &std::collections::HashSet<String>,
     out: &mut Vec<Value>,
     bytes: &mut u64,
 ) {
@@ -3550,7 +3922,7 @@ fn collect_lora_files(
                 || dir.file_name().map(|n| n == "adult-pack").unwrap_or(false)
                 || p.file_name().map(|n| n == "adult-pack").unwrap_or(false);
             if descend {
-                collect_lora_files(root, &p, known, out, bytes);
+                collect_lora_files(root, &p, known, civ_files, out, bytes);
             }
             continue;
         }
@@ -3568,12 +3940,28 @@ fn collect_lora_files(
             .map(|r| r.to_string_lossy().replace('\\', "/"))
             .unwrap_or_else(|_| name.clone());
         let catalog_id = known.get(&rel).cloned().unwrap_or_default();
+        let abs = p.canonicalize().unwrap_or_else(|_| p.clone());
+        let rel_dir = rel.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        let origin = if civ_files.contains(&abs.to_string_lossy().to_lowercase()) {
+            "Pack · CivitAI"
+        } else if catalog_id.starts_with("custom_civitai_") {
+            "Yours (CivitAI)"
+        } else if catalog_id.starts_with("custom_") {
+            "Yours (added via pack)"
+        } else if !catalog_id.is_empty() {
+            "Pack"
+        } else if rel_dir.split('/').any(|s| s == "adult-pack") {
+            "Pack (unlisted)"
+        } else {
+            "Yours"
+        };
         out.push(json!({
             "rel": rel,
             "name": name,
             "bytes": len,
             "catalogId": if catalog_id.is_empty() { json!(null) } else { json!(catalog_id) },
             "known": !catalog_id.is_empty(),
+            "origin": origin,
         }));
     }
 }
@@ -3900,6 +4288,31 @@ mod tests {
             "both URL halves must be counted: {hit}"
         );
         assert_eq!(hit["origin"].as_str(), Some("local"));
+    }
+
+    #[test]
+    fn a_reused_recipe_counts_its_reused_halves() {
+        // FINETUNES.md's reusable-property form is a single id, not an array.
+        // The manager must not report it as a zero-source recipe.
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+        let doc = json!({
+            "model": {
+                "name": "Reused weights",
+                "architecture": "t2v_2_2",
+                "URLs": "t2v_2_2",
+                "URLs2": "t2v_2_2",
+            }
+        });
+        adult_pack_finetune_write("reuse_smoke".into(), serde_json::to_string(&doc).unwrap())
+            .expect("a reuse-id recipe is valid");
+
+        let list = adult_pack_finetune_list();
+        let hit = arr(&list, "items")
+            .iter()
+            .find(|x| str_field(x, "id") == "reuse_smoke")
+            .expect("the reused recipe must be listed");
+        assert_eq!(hit["urlCount"].as_u64(), Some(2), "{hit}");
     }
 
     #[test]
@@ -4247,6 +4660,8 @@ mod tests {
         let ft = json!({
             "id": "demo", "name": "Demo", "architecture": "i2v_2_2",
             "description": "d", "urls": ["https://h/a.gguf"], "urls2": ["https://h/b.gguf"],
+            "preloadLoras": ["https://h/accel.safetensors"],
+            "loraMultipliers": [0.8],
             "recommended": {"steps": 4, "sampler": "dpmpp_2m_sde_gpu", "shift": 5.0},
             "licenseNote": "note",
         });
@@ -4257,9 +4672,17 @@ mod tests {
         // the pack never mixes with the user's own checkpoints.
         assert_eq!(model["URLs"], json!(["https://h/a.gguf|adult-pack"]));
         assert_eq!(model["URLs2"], json!(["https://h/b.gguf|adult-pack"]));
+        assert_eq!(model["loras"], json!(["https://h/accel.safetensors"]));
+        assert_eq!(model["loras_multipliers"], json!([0.8]));
+        // FINETUNES.md: model notes live in the model subtree, not at the root.
+        assert_eq!(
+            model["infos"],
+            json!("note\n\nFetched by the Wan2GP launcher adult pack.")
+        );
+        assert!(doc.get("infos").is_none());
         assert_eq!(doc["steps"], json!(4));
         assert_eq!(doc["flow_shift"], json!(5.0));
-        assert!(doc.get("infos").is_some());
+        assert_eq!(doc["sampler"], json!("dpmpp_2m_sde_gpu"));
         // JSON round-trip must stay loadable by serde (Wan2GP reads it with json).
         let s = serde_json::to_string(&doc).unwrap();
         assert!(serde_json::from_str::<Value>(&s).is_ok());
@@ -4799,6 +5222,50 @@ mod tests {
     }
 
     #[test]
+    fn the_validator_accepts_the_upstream_reuse_and_local_path_forms() {
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+        let defaults = get_repo_dir().join("defaults");
+        std::fs::create_dir_all(&defaults).unwrap();
+        std::fs::write(defaults.join("only_this.json"), "{}").unwrap();
+
+        // FINETUNES.md: a reusable property may be one recipe/model id.
+        let reuse = json!({
+            "model": {"name": "Reuse", "architecture": "only_this", "URLs": "t2v_2_2"}
+        });
+        assert!(
+            validate_finetune_doc(&reuse).is_ok(),
+            "the form's Reuse weights field must be writable"
+        );
+
+        // ... and a URL entry may be a relative local path or a bare file name.
+        for source in [
+            "ckpts/my_finetune_quanto_bf16_int8.safetensors",
+            "my_finetune_bf16.safetensors",
+        ] {
+            let local = json!({
+                "model": {"name": "Local", "architecture": "only_this", "URLs": [source]}
+            });
+            assert!(
+                validate_finetune_doc(&local).is_ok(),
+                "{source} must be accepted"
+            );
+        }
+
+        // The two positional lists must be the same length.
+        let mismatch = json!({
+            "model": {
+                "name": "Mismatch", "architecture": "only_this", "URLs": ["https://h/a"],
+                "loras": ["a.safetensors", "b.safetensors"],
+                "loras_multipliers": [1.0]
+            }
+        });
+        let err = validate_finetune_doc(&mismatch)
+            .expect_err("a multiplier/LoRA mismatch must be refused");
+        assert!(err.contains("loras_multipliers"), "{err}");
+    }
+
+    #[test]
     fn a_user_added_lora_gets_its_own_group_so_it_can_be_seen() {
         let td = crate::base::TestDataDir::new();
         td.seed_wgp_config("{}");
@@ -5015,5 +5482,115 @@ mod tests {
             "the override must win over <root>/wan: {:?}",
             lora_dest(first)
         );
+    }
+
+    #[test]
+    fn civitai_token_is_optional_and_appended_once() {
+        let base = "https://civitai.red/api/download/models/1";
+        assert_eq!(civitai_download_url(base, None), base);
+        assert_eq!(civitai_download_url(base, Some("  ")), base);
+        assert_eq!(
+            civitai_download_url(base, Some("abc")),
+            "https://civitai.red/api/download/models/1?token=abc"
+        );
+        assert_eq!(
+            civitai_download_url("https://civitai.red/dl?x=1", Some("a b")),
+            "https://civitai.red/dl?x=1&token=a%20b"
+        );
+        // A downloadUrl that already carries a token must not get a second one.
+        let signed = "https://civitai.red/dl?token=abc";
+        assert_eq!(civitai_download_url(signed, Some("xyz")), signed);
+    }
+
+    #[test]
+    fn civitai_auth_attaches_only_a_real_credential() {
+        let client = reqwest::Client::new();
+        let none = civitai_auth(client.get("https://civitai.red"), None)
+            .build()
+            .unwrap();
+        assert!(none.headers().get("authorization").is_none());
+        let some = civitai_auth(client.get("https://civitai.red"), Some("Bearer abc"))
+            .build()
+            .unwrap();
+        assert_eq!(
+            some.headers()
+                .get("authorization")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "Bearer abc"
+        );
+        let bare = civitai_auth(client.get("https://civitai.red"), Some("abc"))
+            .build()
+            .unwrap();
+        assert_eq!(
+            bare.headers()
+                .get("authorization")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "Bearer abc"
+        );
+    }
+
+    #[test]
+    fn civitai_lora_entries_declare_their_kind() {
+        let m = manifest();
+        for id in ["civ_h3_nsfw_unlocked", "civ_h3_dr34ml4y"] {
+            let item = arr(m, "civitai")
+                .iter()
+                .find(|x| str_field(x, "id") == id)
+                .unwrap_or_else(|| panic!("missing {id}"));
+            assert_eq!(str_field(item, "kind"), "lora", "{id} must be a LoRA");
+        }
+    }
+
+    #[test]
+    fn civitai_auxiliary_files_are_not_downloaded() {
+        // A version can publish weights next to configs, VAEs and training data;
+        // only the former belong in a pack install.
+        assert!(civitai_weight_file(
+            &json!({"type": "Model", "primary": true})
+        ));
+        assert!(civitai_weight_file(&json!({"type": "Model"})));
+        assert!(civitai_weight_file(&json!({"type": ""})));
+        assert!(civitai_weight_file(&json!({"primary": true})));
+        assert!(!civitai_weight_file(&json!({"type": "VAE"})));
+        assert!(!civitai_weight_file(
+            &json!({"type": "VAE", "primary": true})
+        ));
+        assert!(!civitai_weight_file(&json!({"type": "Training Data"})));
+        assert!(!civitai_weight_file(&json!({"type": "Config"})));
+    }
+
+    #[test]
+    fn civitai_high_low_files_are_split_into_two_phases() {
+        let names = vec![
+            "tasty_high.safetensors".to_string(),
+            "tasty_low.safetensors".to_string(),
+        ];
+        let paths = vec![
+            "C:/ckpts/tasty_high.safetensors".to_string(),
+            "C:/ckpts/tasty_low.safetensors".to_string(),
+        ];
+        let (high, low) = split_civitai_halves(&names, &paths);
+        assert_eq!(high, vec!["C:/ckpts/tasty_high.safetensors"]);
+        assert_eq!(low, vec!["C:/ckpts/tasty_low.safetensors"]);
+
+        // A single-file checkpoint must keep its only path in phase one.
+        let (high, low) = split_civitai_halves(
+            &["single.safetensors".to_string()],
+            &["C:/ckpts/single.safetensors".to_string()],
+        );
+        assert_eq!(high.len(), 1);
+        assert!(low.is_empty());
+
+        // A low-only release (unlikely, but not impossible) must still load.
+        let (high, low) = split_civitai_halves(
+            &["only_low.safetensors".to_string()],
+            &["C:/ckpts/only_low.safetensors".to_string()],
+        );
+        assert_eq!(high.len(), 1);
+        assert!(low.is_empty());
     }
 }

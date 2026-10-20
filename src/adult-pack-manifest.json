@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "title": "Adult (NSFW) model pack",
-  "generatedAt": "2026-10-19T16:26:16.106Z",
+  "generatedAt": "2026-10-20T20:45:31.744Z",
   "verifiedAgainst": {
     "wan2gp": "v18.17",
     "inventoryCount": 270,
@@ -274,6 +274,13 @@
       "downloads": 0,
       "cardPreview": null
     },
+    "fal/MiniMax-H3-Realism-People-LoRA": {
+      "sha": "039cc8579d7aa357a882d7f4111b25da4f72dccc",
+      "lastModified": "2026-08-12T20:46:37.000Z",
+      "createdAt": "2026-08-10T16:51:40.000Z",
+      "downloads": 90585,
+      "cardPreview": null
+    },
     "TenStrip/LTX2.3_DMD_Lora": {
       "sha": "77203c27a1d4022dab97d4f5a2280656b228fc2a",
       "lastModified": "2026-07-31T03:07:38.000Z",
@@ -334,7 +341,7 @@
       "sha": "af671d9214a6e41ab8c2f43e9f871ea56246115f",
       "lastModified": "2026-09-18T16:17:02.000Z",
       "createdAt": "2026-09-05T18:51:01.000Z",
-      "downloads": 662595,
+      "downloads": 667313,
       "cardPreview": null
     },
     "MATLOWAI/minimax-h3-fused-turbo-int8-convrot": {
@@ -631,10 +638,10 @@
     }
   ],
   "totals": {
-    "loraFiles": 114,
-    "loraBytes": 78442815410,
-    "loraDefaultFiles": 53,
-    "loraDefaultBytes": 22920991796,
+    "loraFiles": 115,
+    "loraBytes": 78574045066,
+    "loraDefaultFiles": 54,
+    "loraDefaultBytes": 23052221452,
     "prefetchBytes": 10849052416
   },
   "loras": [
@@ -4319,6 +4326,39 @@
       "releasedAt": "2026-09-08T01:02:43.000Z"
     },
     {
+      "id": "h3_realism_people",
+      "sourceId": "h3_realism_people",
+      "group": "h3",
+      "family": "h3",
+      "repo": "fal/MiniMax-H3-Realism-People-LoRA",
+      "repoSha": "039cc8579d7aa357a882d7f4111b25da4f72dccc",
+      "preview": null,
+      "version": "2026-08-12",
+      "sourceUpdatedAt": "2026-08-12T20:46:37.000Z",
+      "filePage": "https://huggingface.co/fal/MiniMax-H3-Realism-People-LoRA/blob/main/h3-realism-people-t2v-i2v-r2v.safetensors",
+      "repoPage": "https://huggingface.co/fal/MiniMax-H3-Realism-People-LoRA",
+      "name": "MiniMax H3 Realism People (T2V/I2V/R2V)",
+      "file": "h3-realism-people-t2v-i2v-r2v.safetensors",
+      "url": "https://huggingface.co/fal/MiniMax-H3-Realism-People-LoRA/resolve/main/h3-realism-people-t2v-i2v-r2v.safetensors",
+      "sha256": "acc529601d2da117fb81179e76c56e488a3beab1171659d305f04fa3655b787e",
+      "bytes": 131229656,
+      "pair": null,
+      "pairId": null,
+      "note": "Rank-32 realism adapter for faces, skin texture and handheld film lighting - works on T2V, I2V and R2V. Trigger: r34l1sm.",
+      "trigger": "r34l1sm",
+      "license": "hf-mirror",
+      "licenseNote": "MiniMax H3 Community License (base model).",
+      "wan2gpIds": [
+        "minimax_h3_fl2va_pruned",
+        "minimax_h3_ref2va_pruned",
+        "minimax_h3_fl2va_pruned_veda",
+        "minimax_h3_ref2va_pruned_veda"
+      ],
+      "defaultSelected": true,
+      "civitaiSearch": "https://civitai.red/models?query=h3-realism-people-t2v-i2v-r2v&nsfw=1",
+      "releasedAt": "2026-08-10T16:51:40.000Z"
+    },
+    {
       "id": "ts_ltx_dmd",
       "sourceId": "ts_ltx_dmd",
       "group": "ltx",
@@ -4681,6 +4721,73 @@
       "sha256Low": null,
       "civitaiSearch": "https://civitai.red/models?query=Minimax-h3_Singularity_ref2va_v1.3%20_w4a8&nsfw=1",
       "releasedAt": "2026-09-05T18:51:01.000Z"
+    },
+    {
+      "id": "h3_singularity_pruned_int8",
+      "family": "h3",
+      "architecture": "minimax_h3_ref2va_pruned",
+      "name": "MiniMax H3 Singularity (pruned int8) - quanto_bf16_int8",
+      "precisionToken": "quanto_bf16_int8",
+      "quant": "int8",
+      "description": "Pruned int8 build of the most-downloaded H3 finetune - same v1.3 release, 20.9 GB instead of 34.0 GB.",
+      "urls": [
+        "https://huggingface.co/WarmBloodAban/Minimax-h3_Singularity/resolve/main/Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors"
+      ],
+      "bytes": 20967647456,
+      "sha256": "412a7b126595a958964193f3b42513d7cf2df4196ef04223a0f05e3622949cce",
+      "file": "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
+      "repo": "WarmBloodAban/Minimax-h3_Singularity",
+      "repoSha": "af671d9214a6e41ab8c2f43e9f871ea56246115f",
+      "preview": null,
+      "version": "v1.3",
+      "sourceUpdatedAt": "2026-09-18T16:17:02.000Z",
+      "filePage": "https://huggingface.co/WarmBloodAban/Minimax-h3_Singularity/blob/main/Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
+      "repoPage": "https://huggingface.co/WarmBloodAban/Minimax-h3_Singularity",
+      "urls2": null,
+      "recommended": null,
+      "preloadLoras": [],
+      "loraMultipliers": null,
+      "wan2gpIds": [
+        "minimax_h3_fl2va_pruned",
+        "minimax_h3_ref2va_pruned",
+        "minimax_h3_fl2va_pruned_veda",
+        "minimax_h3_ref2va_pruned_veda"
+      ],
+      "license": "hf-mirror",
+      "licenseNote": "",
+      "source": "hf",
+      "prefetchDefault": false,
+      "defaultSelected": false,
+      "bytesLow": 0,
+      "sha256Low": null,
+      "examples": [
+        {
+          "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/69d499a4-9dfb-49c3-a668-01e70342daf5/original=true/141962844.jpeg",
+          "kind": "image"
+        },
+        {
+          "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/19549ef5-1f2d-4d83-a82c-50713af08f1f/original=true/141962893.mp4",
+          "kind": "video"
+        },
+        {
+          "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/9de73b40-2e5b-40ea-891b-5e10d76ef255/original=true/141962910.mp4",
+          "kind": "video"
+        },
+        {
+          "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/2198c772-bd4f-4805-8539-d5e026580113/original=true/141962940.mp4",
+          "kind": "video"
+        },
+        {
+          "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/4b7de83c-7368-47c9-a5f6-0b1e18f1499d/original=true/141962953.mp4",
+          "kind": "video"
+        }
+      ],
+      "releasedAt": "2026-09-06T02:32:04.677Z",
+      "civitaiId": 2917208,
+      "civitaiName": "Minimax-h3_Singularity",
+      "civitaiVersion": "int8",
+      "civitaiPage": "https://civitai.red/models/2917208",
+      "civitaiSearch": "https://civitai.red/models?query=Minimax-h3_Singularity_ref2va%20_v1.3&nsfw=1"
     },
     {
       "id": "h3_convrot_turbo",
@@ -5323,6 +5430,7 @@
       "id": "civ_h3_nsfw_unlocked",
       "family": "h3",
       "architecture": "minimax_h3_ref2va_pruned",
+      "kind": "lora",
       "name": "MiniMax H3 NSFW Unlocked (LoRA)",
       "query": "MiniMax H3 NSFW Unlocked",
       "baseModelFilter": "MiniMax H3",
@@ -5345,6 +5453,7 @@
       "id": "civ_h3_dr34ml4y",
       "family": "h3",
       "architecture": "minimax_h3_ref2va_pruned",
+      "kind": "lora",
       "name": "DR34ML4Y — All-In-One NSFW (H3 P1)",
       "query": "DR34ML4Y",
       "baseModelFilter": "MiniMax H3",

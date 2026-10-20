@@ -322,10 +322,29 @@ pub fn library_loras() -> serde_json::Value {
         let hits = lora_cache_hits(&cache, &dir_key, &files);
         let truncated = files.len() > 200;
         let sample: Vec<String> = files.iter().take(200).cloned().collect();
+        // The pack (and CivitAI LoRAs installed by it) lives one level deeper,
+        // in `<collection>/adult-pack/`. Wan2GP scans that too, so the library
+        // must count it instead of pretending the family has no pack files.
+        let mut pack_files = 0usize;
+        let mut pack_bytes = 0u64;
+        if let Ok(inner) = std::fs::read_dir(p.join("adult-pack")) {
+            for f in inner.filter_map(|x| x.ok()) {
+                let fp = f.path();
+                if !fp.is_file() {
+                    continue;
+                }
+                if is_lora_file(&f.file_name().to_string_lossy()) {
+                    pack_files += 1;
+                    pack_bytes += f.metadata().map(|m| m.len()).unwrap_or(0);
+                }
+            }
+        }
         folders.push(serde_json::json!({
             "name": name,
             "files": files.len(),
             "bytes": bytes,
+            "pack_files": pack_files,
+            "pack_bytes": pack_bytes,
             "urls_known": hits,
             "truncated": truncated,
             "sample": sample,
@@ -338,6 +357,30 @@ pub fn library_loras() -> serde_json::Value {
 #[tauri::command(async)]
 pub fn library_finetunes() -> serde_json::Value {
     let dir = get_repo_dir().join("finetunes");
+    let defaults = get_repo_dir().join("defaults");
+    // Recipes the user added through the pack's own "Find models" flow are
+    // written with the same `adultpack_` prefix as the curated ones. The custom
+    // list is the only place that distinguishes them, so read it here too.
+    let custom: std::collections::HashMap<String, String> =
+        std::fs::read_to_string(get_data_dir().join("adult-pack-custom.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| {
+                v.get("finetunes").and_then(|x| x.as_array()).map(|a| {
+                    a.iter()
+                        .filter_map(|f| {
+                            let id = f.get("id")?.as_str()?.to_string();
+                            let source = f
+                                .get("source")
+                                .and_then(|x| x.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            Some((id, source))
+                        })
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
     let mut items = vec![];
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for e in entries.filter_map(|x| x.ok()) {
@@ -355,7 +398,28 @@ pub fn library_finetunes() -> serde_json::Value {
             }
             let bytes = e.metadata().map(|m| m.len()).unwrap_or(0);
             let text = std::fs::read_to_string(&p).unwrap_or_default();
-            items.push(summarize_finetune(&id, &text, bytes));
+            let mut item = summarize_finetune(&id, &text, bytes);
+            // `defaults/` are DeepBeepMeep's shipped models. A recipe in
+            // `finetunes/` with the same id overrides one of those; the pack
+            // prefixes its own files with `adultpack_`; everything else is the
+            // user's (imported, hand-written, or from the finetune plugin).
+            let bare = id.strip_prefix("adultpack_").unwrap_or(&id);
+            item["origin"] = serde_json::json!(if id.starts_with("adultpack_civ_") {
+                "Pack · CivitAI"
+            } else if let Some(source) = custom.get(bare) {
+                if source == "civitai" {
+                    "Yours (CivitAI)"
+                } else {
+                    "Yours (added via pack)"
+                }
+            } else if id.starts_with("adultpack_") {
+                "Pack"
+            } else if defaults.join(format!("{id}.json")).is_file() {
+                "Overrides DeepBeepMeep"
+            } else {
+                "Yours"
+            });
+            items.push(item);
         }
     }
     items.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
@@ -476,7 +540,95 @@ pub(crate) fn resolve_ckpts_dir() -> Option<PathBuf> {
     }
 }
 
-/// F4-models: downloaded checkpoint inventory (names, sizes, kind tags).
+/// Base file names referenced by Wan2GP's shipped `defaults/*.json`. A file
+/// with one of these names came with the DeepBeepMeep release (or was fetched
+/// by Wan2GP for it), not from the pack and not from a manual download.
+fn upstream_model_names() -> std::collections::HashSet<String> {
+    fn walk(v: &serde_json::Value, out: &mut std::collections::HashSet<String>) {
+        match v {
+            serde_json::Value::String(s) => {
+                let part = s.split('|').next().unwrap_or(s).trim();
+                if part.starts_with("http://") || part.starts_with("https://") {
+                    let b = part
+                        .rsplit(['/', '\\'])
+                        .next()
+                        .unwrap_or("")
+                        .split('?')
+                        .next()
+                        .unwrap_or("");
+                    if !b.is_empty() {
+                        out.insert(b.to_ascii_lowercase());
+                    }
+                }
+            }
+            serde_json::Value::Array(a) => {
+                for x in a {
+                    walk(x, out);
+                }
+            }
+            serde_json::Value::Object(o) => {
+                for x in o.values() {
+                    walk(x, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = std::collections::HashSet::new();
+    let dir = get_repo_dir().join("defaults");
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.filter_map(|x| x.ok()) {
+            if e.path().extension().and_then(|x| x.to_str()) != Some("json") {
+                continue;
+            }
+            if let Ok(s) = std::fs::read_to_string(e.path()) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+                    walk(&v, &mut out);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn collect_ckpt_files(
+    dir: &Path,
+    pack: bool,
+    upstream: &std::collections::HashSet<String>,
+    files: &mut Vec<serde_json::Value>,
+    bytes: &mut u64,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.filter_map(|x| x.ok()) {
+        let p = e.path();
+        if !p.is_file() {
+            continue;
+        }
+        let name = e.file_name().to_string_lossy().to_string();
+        if !is_ckpt_file(&name) {
+            continue;
+        }
+        let b = e.metadata().map(|m| m.len()).unwrap_or(0);
+        *bytes += b;
+        let origin = if pack {
+            "Pack"
+        } else if upstream.contains(&name.to_ascii_lowercase()) {
+            "DeepBeepMeep"
+        } else {
+            "Yours"
+        };
+        files.push(serde_json::json!({
+            "name": name,
+            "bytes": b,
+            "kind": model_kind_tag(&e.file_name().to_string_lossy()),
+            "origin": origin,
+        }));
+    }
+}
+
+/// F4-models: downloaded checkpoint inventory (names, sizes, kind tags, origin).
 /// Reads file metadata only — never opens weights.
 #[tauri::command]
 pub fn library_models() -> serde_json::Value {
@@ -485,25 +637,17 @@ pub fn library_models() -> serde_json::Value {
     };
     let mut files = vec![];
     let mut bytes = 0u64;
-    if let Ok(entries) = std::fs::read_dir(&root) {
-        for e in entries.filter_map(|x| x.ok()) {
-            let p = e.path();
-            if !p.is_file() {
-                continue;
-            }
-            let name = e.file_name().to_string_lossy().to_string();
-            if !is_ckpt_file(&name) {
-                continue;
-            }
-            let b = e.metadata().map(|m| m.len()).unwrap_or(0);
-            bytes += b;
-            files.push(serde_json::json!({
-                "name": name,
-                "bytes": b,
-                "kind": model_kind_tag(&e.file_name().to_string_lossy()),
-            }));
-        }
-    }
+    let upstream = upstream_model_names();
+    // Root files are the upstream/user mix; `adult-pack/` is what this launcher
+    // fetched. Both are real checkpoints Wan2GP can load, so both belong here.
+    collect_ckpt_files(&root, false, &upstream, &mut files, &mut bytes);
+    collect_ckpt_files(
+        &root.join("adult-pack"),
+        true,
+        &upstream,
+        &mut files,
+        &mut bytes,
+    );
     files.sort_by(|a, b| b["bytes"].as_u64().cmp(&a["bytes"].as_u64()));
     let truncated = files.len() > 300;
     let sample: Vec<serde_json::Value> = files.iter().take(300).cloned().collect();

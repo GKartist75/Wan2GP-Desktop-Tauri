@@ -505,19 +505,16 @@
     if (isCiv) {
       bar.appendChild(
         actionBtn(
-          "Verify & fetch now",
-          "Resolve the current version with your CivitAI token, download it and record a local recipe",
+          item.installed ? "Re-fetch now" : "Fetch now",
+          "Resolve the current version, download it, and file it in the right folder. A token is used when present; public releases need none.",
           () =>
             done(() =>
               withBusy("Fetching from CivitAI…", async () => {
                 const token = ($("apToken").value || "").trim();
-                if (!token) {
-                  logLine("Paste a CivitAI token first.", "err");
-                  return;
-                }
                 try {
-                  const r = await window.w2gp.adultPackCivitaiDownload(item.id, token);
-                  logLine(`✓ ${item.name} → ${(r && r.finetune) || "downloaded"}`, "ok");
+                  const r = await window.w2gp.adultPackCivitaiDownload(item.id, token || null);
+                  const dest = r && r.kind === "lora" ? r.path : (r && r.finetune) || "downloaded";
+                  logLine(`✓ ${item.name} → ${dest}`, "ok");
                 } catch (e) {
                   logLine(`✗ ${item.name}: ${errText(e)}`, "err");
                 }
@@ -620,7 +617,7 @@
             const what = isLora
               ? "its downloaded file"
               : isCiv
-              ? "its local recipe"
+              ? "its downloaded file(s) and local recipe"
               : "its prefetched weights and its finetune recipe";
             if (!(await askConfirm(`Delete ${item.name} — ${what}?\n\nOnly this entry's files and recipe are removed; nothing outside the pack folders is touched.`, "Delete pack item"))) return;
             try {
@@ -829,13 +826,13 @@
         render();
         persist();
       }, c.licenseNote || c.description || "");
-      cb.input.disabled = !(pack.hasToken || ($("apToken").value || "").trim());
       row.appendChild(cb.label);
       const nm = rowEl("ap-name");
       nm.textContent = c.name;
-      nm.appendChild(rowEl("ap-tag token", "token"));
+      if (c.installed) nm.appendChild(rowEl("ap-tag done", "on disk", c.installedPath || ""));
+      else nm.appendChild(rowEl("ap-tag token", "CivitAI", "Public releases need no token; gated ones use the key below."));
       row.appendChild(nm);
-      row.appendChild(rowEl("ap-size", fmtBytes(c.bytesEstimate)));
+      row.appendChild(rowEl("ap-size", fmtBytes(c.installed ? c.installedBytes || c.bytesEstimate : c.bytesEstimate)));
       const gal = galleryEl(c, "civitai");
       row.appendChild(gal.btn);
       const info = rowEl("ap-info-btn", "i", "Show details");
@@ -882,7 +879,7 @@
     const loraIds = Object.keys(sel.loras).filter((k) => sel.loras[k]);
     const ftIds = Object.keys(sel.fts).filter((k) => !k.startsWith("pf:") && sel.fts[k]);
     const prefetchIds = ftIds.filter((k) => sel.fts["pf:" + k]);
-    const civIds = civOn() ? Object.keys(sel.civ).filter((k) => sel.civ[k]) : [];
+    const civSelIds = civOn() ? Object.keys(sel.civ).filter((k) => sel.civ[k]) : [];
     const lm = new Map((pack.loras || []).map((x) => [x.id, x]));
     const fm = new Map((pack.finetunes || []).map((x) => [x.id, x]));
     const cm = new Map((pack.civitai || []).map((x) => [x.id, x]));
@@ -890,33 +887,47 @@
       const f = fm.get(id);
       return f ? (f.bytes || 0) + (f.bytesLow || 0) : 0;
     };
-    // What still costs bytes. A LoRA whose size matches the verified catalog and
-    // a checkpoint whose weights are on disk are not downloads; counting them
-    // made the footer claim gigabytes right after a finished fetch.
+    // What still costs bytes. A LoRA whose size matches the verified catalog, a
+    // checkpoint whose weights are on disk, and a CivitAI item with all its
+    // recorded files present are not downloads; counting them made the footer
+    // claim gigabytes right after a finished fetch.
     const pendingLoras = loraIds.filter((id) => !lm.get(id)?.installed);
     const pendingPrefetch = prefetchIds.filter((id) => !fm.get(id)?.weightsPresent);
+    const civIds = civSelIds.filter((id) => !cm.get(id)?.installed);
     const loraBytes = pendingLoras.reduce((a, id) => a + (lm.get(id)?.bytes || 0), 0);
     const ckptBytes = pendingPrefetch.reduce((a, id) => a + ftCost(id), 0);
     const civBytes = civIds.reduce((a, id) => a + (cm.get(id)?.bytesEstimate || 0), 0);
+    // CivitAI LoRAs land beside the other pack LoRAs, not in ckpts/. Split the
+    // estimate so the free-space check looks at the right drive.
+    const civIsLora = (id) => (cm.get(id)?.installedKind || cm.get(id)?.kind || "checkpoint") === "lora";
+    const civLoraBytes = civIds.reduce(
+      (a, id) => a + (civIsLora(id) ? cm.get(id)?.bytesEstimate || 0 : 0),
+      0,
+    );
+    const civCkptBytes = civBytes - civLoraBytes;
     return {
       active: active(),
       loraIds,
       ftIds,
       prefetchIds,
       civIds,
+      civSelIds,
       pendingLoras,
       pendingPrefetch,
       // Selected and already on disk — shown so "0 to download" is never
       // mistaken for "nothing selected".
       settled:
-        loraIds.length - pendingLoras.length + (prefetchIds.length - pendingPrefetch.length),
+        loraIds.length - pendingLoras.length + (prefetchIds.length - pendingPrefetch.length) +
+        (civSelIds.length - civIds.length),
       loraBytes,
       ckptBytes,
       civBytes,
+      civLoraBytes,
+      civCkptBytes,
       nowBytes: loraBytes + ckptBytes + civBytes,
       // Items that need bytes moved. Recipe-only checkpoints are not one.
       count: pendingLoras.length + pendingPrefetch.length + civIds.length,
-      selected: loraIds.length + ftIds.length + civIds.length,
+      selected: loraIds.length + ftIds.length + civSelIds.length,
     };
   }
 
@@ -936,6 +947,8 @@
       const recipes = fts.filter((f) => f.finetuneWritten).length;
       const weights = fts.filter((f) => f.weightsPresent).length;
       const pinned = loras.filter((l) => l.overridden).length;
+      const civs = (pack.civitai || []);
+      const civGot = civs.filter((c) => c.installed).length;
       const add = (label, value, cls, title) => {
         const c = rowEl("ap-chip " + (cls || ""), `${value} ${label}`, title || "");
         chips.appendChild(c);
@@ -945,6 +958,9 @@
       if (pinned) add("updated pins", String(pinned), "warn", "Local hash newer than the shipped catalog");
       add("recipes written", `${recipes}/${fts.length}`, recipes ? "ok" : "", "finetunes/*.json in place");
       add("weights on disk", `${weights}/${fts.length}`, weights ? "ok" : "", "Checkpoint files already fetched");
+      if (civs.length) {
+        add("CivitAI installed", `${civGot}/${civs.length}`, civGot ? "ok" : "", "CivitAI files this launcher downloaded and still finds on disk");
+      }
     }
     if (!p.selected) {
       t.textContent = enabled()
@@ -981,8 +997,8 @@
     // the folders this selection will actually write to and report the tightest.
     const ckptsRoot = pack.paths && (pack.paths.ckptsPack || pack.paths.ckpts);
     const targets = [
-      { dir: pack.paths && pack.paths.loras, bytes: p.loraBytes },
-      { dir: ckptsRoot, bytes: p.ckptBytes + p.civBytes },
+      { dir: pack.paths && pack.paths.loras, bytes: p.loraBytes + p.civLoraBytes },
+      { dir: ckptsRoot, bytes: p.ckptBytes + p.civCkptBytes },
     ].filter((x) => x.dir && x.bytes > 0);
     if (!targets.length) {
       f.textContent = "";
@@ -1273,8 +1289,9 @@
         setProgress(`CivitAI: ${id}…`);
         try {
           const r = await window.w2gp.adultPackCivitaiDownload(id, token || null);
+          const dest = r && r.kind === "lora" ? r.path : (r && r.finetune) || "";
           logLine(
-            `✓ ${(r && r.files ? r.files.length : 0)} file(s) — ${(r && r.versionName) || id} → ${(r && r.finetune) || ""}`,
+            `✓ ${(r && r.files ? r.files.length : 0)} file(s) — ${(r && r.versionName) || id} → ${dest}`,
             "ok",
           );
         } catch (e) {
@@ -1288,11 +1305,16 @@
 
   async function doMissing() {
     const p = plan();
+    // CivitAI items are downloads too; otherwise "Fetch missing only" would
+    // claim everything is on disk while a selected CivitAI row is untouched.
+    if (p.civIds.length) await doCivitai();
     // Missing bytes only: selected LoRAs not matching the verified size, plus
     // prefetched checkpoints whose weights are not on disk yet.
     const missing = [...p.pendingLoras, ...p.pendingPrefetch];
     if (!missing.length) {
-      logLine("Everything selected is already on disk (and hash-matching).");
+      if (!p.civIds.length) {
+        logLine("Everything selected is already on disk (and hash-matching).");
+      }
       return;
     }
     await doFetch(missing, "Downloading missing files");
@@ -1300,7 +1322,7 @@
 
   async function doRemove() {
     const p = plan();
-    const ids = [...p.loraIds, ...p.ftIds, ...p.civIds];
+    const ids = [...p.loraIds, ...p.ftIds, ...p.civSelIds];
     if (!ids.length) {
       logLine("Nothing selected.");
       return;
@@ -1317,7 +1339,13 @@
     await withBusy("Removing…", async () => {
       const r = await window.w2gp.adultPackRemove(ids);
       const n = ((r && r.removed) || []).length;
-      logLine(`✓ removed ${n} item(s)`, "ok");
+      if (n) logLine(`✓ removed ${n} item(s)`, "ok");
+      for (const f of (r && r.failed) || []) {
+        logLine(`✗ ${f.file || f.id}: ${f.error}`, "err");
+      }
+      if ((r && r.failed && r.failed.length)) {
+        logLine("Some files are still on disk — close Wan2GP or whatever is using them, then remove again.", "err");
+      }
       setProgress("Removed.");
       await init(true);
     });
@@ -1363,11 +1391,17 @@
     const bits = [
       ft.architecture || "—",
       `${ft.urlCount || 0} source(s)`,
-      ft.origin === "pack" ? "from pack" : ft.origin === "custom" ? "yours" : "local",
+      ft.origin === "pack"
+        ? "from pack"
+        : ft.origin === "civitai"
+        ? "from pack (CivitAI)"
+        : ft.origin === "custom"
+        ? "yours (added via pack)"
+        : "yours (imported or handwritten)",
       ft.written ? "in finetunes/" : "not written",
     ];
     if (ft.hasLocalWeights) bits.push(`weights on disk (${fmtBytes(ft.localBytes || 0)})`);
-    if (ft.needsToken) bits.push("needs token");
+    if (ft.needsToken) bits.push("CivitAI · token only if gated");
     main.appendChild(rowEl("ap-sr-meta", bits.join(" · ")));
     row.appendChild(main);
 
@@ -1706,6 +1740,8 @@
     field(panes.urls, "Reuse weights", reuse);
     const urls2 = area("Optional second phase, one URL per line (e.g. Wan 2.2 low-noise weights)");
     field(panes.urls, "Second phase", urls2);
+    const reuse2 = input("Optional: an existing recipe id to reuse its second-phase weights");
+    field(panes.urls, "Reuse second phase", reuse2);
     const te = area("Optional text encoder URLs, one per line — overrides the architecture default");
     field(panes.urls, "Text encoder", te);
     const vae = area("Optional VAE URLs, one per line — overrides the architecture default");
@@ -1805,7 +1841,13 @@
         reuse.value = "";
         setLines(urls, m.URLs);
       }
-      setLines(urls2, m.URLs2);
+      if (typeof m.URLs2 === "string") {
+        reuse2.value = m.URLs2;
+        urls2.value = "";
+      } else {
+        reuse2.value = "";
+        setLines(urls2, m.URLs2);
+      }
       setLines(te, m.text_encoder_URLs);
       setLines(vae, m.VAE_URLs);
       setLines(preload, m.preload_URLs);
@@ -1864,12 +1906,18 @@
       }
       const primary = listLines(urls);
       const reuseId = reuse.value.trim();
+      const second = listLines(urls2);
+      const reuseSecond = reuse2.value.trim();
       if (!primary.length && !reuseId) {
         status.textContent = "✗ at least one source URL (or a recipe to reuse) is required";
         return;
       }
       if (primary.length && reuseId) {
         status.textContent = "✗ use either source URLs or a recipe id, not both";
+        return;
+      }
+      if (second.length && reuseSecond) {
+        status.textContent = "✗ use either second-phase URLs or a recipe id, not both";
         return;
       }
       const loraUrls = listLines(loras);
@@ -1897,8 +1945,8 @@
       addList("VAE_URLs", vae);
       addList("preload_URLs", preload);
       addList("loras", loras);
-      const second = listLines(urls2);
-      if (second.length) model.URLs2 = second;
+      if (reuseSecond) model.URLs2 = reuseSecond;
+      else if (second.length) model.URLs2 = second;
       const notes = infos.value.trim();
       if (notes) model.infos = notes;
       const promptHelp = promptInfos.value.trim();
@@ -2125,6 +2173,14 @@
     );
     head.appendChild(hb);
     box.appendChild(head);
+    if (info.source === "civitai") {
+      box.appendChild(
+        rowEl(
+          "ap-hint",
+          "Public CivitAI files download without a key. For gated files, store a key in the pack settings and use the pack's own fetch button — Wan2GP's auto-download cannot authenticate.",
+        ),
+      );
+    }
     // A CivitAI model usually has several versions. The search hit pins one; this
     // lets the user switch without going back to the search.
     if (info.source === "civitai" && info.versions && info.versions.length > 1) {
@@ -2168,7 +2224,11 @@
       const nm = rowEl("ap-name");
       nm.textContent = f.file;
       if (f.pair) nm.appendChild(rowEl("ap-tag " + f.pair, f.pair.toUpperCase()));
-      if (f.needsToken) nm.appendChild(rowEl("ap-tag token", "token"));
+      if (info.source === "civitai") {
+        nm.appendChild(
+          rowEl("ap-tag token", "CivitAI", "Used only when the release is gated; public files need no key."),
+        );
+      }
       r.appendChild(nm);
       r.appendChild(rowEl("ap-size", fmtBytes(f.bytes)));
       const add = rowEl("ap-sr-add", "Add", "Add this file to your own list");
@@ -2291,10 +2351,16 @@
         main.appendChild(rowEl("ap-sr-title", f.name));
         main.appendChild(rowEl("ap-sr-meta", `${fmtBytes(f.bytes)} · ${f.rel}`));
         row.appendChild(main);
+        const origin = f.origin || (f.known ? "Pack" : "Yours");
+        const packish = origin.startsWith("Pack");
         row.appendChild(
-          f.known
-            ? rowEl("ap-tag done", "in catalog", "This file belongs to a catalog entry")
-            : rowEl("ap-tag", "unknown", "Not in the catalog — remove it if you did not add it"),
+          rowEl(
+            "ap-tag " + (packish ? "done" : ""),
+            origin,
+            packish
+              ? "Shipped or fetched by this launcher's pack manager"
+              : "Not from the curated pack — keep it or delete it yourself",
+          ),
         );
         const del = rowEl("ap-sr-add", "Delete", "Remove this file from disk");
         del.addEventListener("click", async () => {
@@ -2442,7 +2508,10 @@
         render();
         persist();
       });
-      $("apToken").addEventListener("change", render);
+      $("apToken").addEventListener("change", () => {
+        render();
+        persist();
+      });
       $("apCivEnabled").addEventListener("change", async () => {
         const want = $("apCivEnabled").checked;
         try {
@@ -2493,6 +2562,21 @@
       $("apFmRefreshBtn").addEventListener("click", loadFinetunes);
       $("apFmCheckAllBtn").addEventListener("click", checkAllFinetuneLinks);
       $("apFmImportBtn").addEventListener("click", importRecipe);
+      // API-key help links. The account page is the one that shows the key on
+      // both hosts; opening it externally keeps the launcher webview on the app.
+      for (const b of document.querySelectorAll("[data-civ-key]")) {
+        b.addEventListener("click", () => {
+          const host = b.getAttribute("data-civ-key") === "red" ? "civitai.red" : "civitai.com";
+          const url = `https://${host}/user/account`;
+          try {
+            Promise.resolve(window.w2gp.openExternal(url)).catch((e) =>
+              logLine(`✗ Could not open ${host}: ${errText(e)}`, "err"),
+            );
+          } catch (_) {
+            window.open(url, "_blank", "noopener");
+          }
+        });
+      }
       $("apLoraInvRefreshBtn").addEventListener("click", loadLoraInventory);
       $("apUrlBtn").addEventListener("click", addByUrl);
       $("apUrlInput").addEventListener("keydown", (e) => {

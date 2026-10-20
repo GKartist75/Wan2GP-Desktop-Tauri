@@ -756,6 +756,23 @@
       ]
     },
     {
+      "id": "h3_realism_people",
+      "group": "h3",
+      "family": "h3",
+      "name": "MiniMax H3 Realism People (T2V/I2V/R2V)",
+      "repo": "fal/MiniMax-H3-Realism-People-LoRA",
+      "file": "h3-realism-people-t2v-i2v-r2v.safetensors",
+      "trigger": "r34l1sm",
+      "note": "Rank-32 realism adapter for faces, skin texture and handheld film lighting - works on T2V, I2V and R2V. Trigger: r34l1sm.",
+      "licenseNote": "MiniMax H3 Community License (base model).",
+      "wan2gpIds": [
+        "minimax_h3_fl2va_pruned",
+        "minimax_h3_ref2va_pruned",
+        "minimax_h3_fl2va_pruned_veda",
+        "minimax_h3_ref2va_pruned_veda"
+      ]
+    },
+    {
       "id": "ts_ltx_dmd",
       "group": "ltx",
       "family": "ltx",
@@ -920,6 +937,24 @@
       ],
       "prefetchDefault": false,
       "defaultSelected": true
+    },
+    {
+      "id": "h3_singularity_pruned_int8",
+      "family": "h3",
+      "architecture": "minimax_h3_ref2va_pruned",
+      "name": "MiniMax H3 Singularity (pruned int8)",
+      "description": "Pruned int8 build of the most-downloaded H3 finetune - same v1.3 release, 20.9 GB instead of 34.0 GB.",
+      "quant": "int8",
+      "repo": "WarmBloodAban/Minimax-h3_Singularity",
+      "file": "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
+      "wan2gpIds": [
+        "minimax_h3_fl2va_pruned",
+        "minimax_h3_ref2va_pruned",
+        "minimax_h3_fl2va_pruned_veda",
+        "minimax_h3_ref2va_pruned_veda"
+      ],
+      "prefetchDefault": false,
+      "defaultSelected": false
     },
     {
       "id": "h3_convrot_turbo",
@@ -1173,6 +1208,7 @@
       "id": "civ_h3_nsfw_unlocked",
       "family": "h3",
       "architecture": "minimax_h3_ref2va_pruned",
+      "kind": "lora",
       "name": "MiniMax H3 NSFW Unlocked (LoRA)",
       "query": "MiniMax H3 NSFW Unlocked",
       "baseModelFilter": "MiniMax H3",
@@ -1191,6 +1227,7 @@
       "id": "civ_h3_dr34ml4y",
       "family": "h3",
       "architecture": "minimax_h3_ref2va_pruned",
+      "kind": "lora",
       "name": "DR34ML4Y — All-In-One NSFW (H3 P1)",
       "query": "DR34ML4Y",
       "baseModelFilter": "MiniMax H3",
