@@ -44,7 +44,7 @@ test('every lora entry is fetchable and safely named', () => {
     assert.ok(l.group, `${l.id}: needs a group`)
     assert.ok(l.family, `${l.id}: needs a family`)
     assert.ok(l.wan2gpIds && l.wan2gpIds.length, `${l.id}: needs a Wan2GP architecture id`)
-    // The launcher writes these into loras/adult-pack/<family>/ — a path or a
+    // The launcher writes these into loras/<collection>/adult-pack/ — a path or a
     // Win32-reserved character in the name would escape or fail the write.
     assert.ok(!/[\\/]/.test(l.file), `${l.id}: file must be a bare name, got ${l.file}`)
     assert.ok(!/[<>:"|?*]/.test(l.file), `${l.id}: file has reserved characters`)

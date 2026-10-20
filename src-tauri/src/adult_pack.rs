@@ -9,8 +9,11 @@
 //!   * Adding/removing/updating a model is a data edit; nothing here changes.
 //!
 //! Two install tiers:
-//!   * LoRAs are fetched by the launcher into `<loras>/adult-pack/<family>/` so
-//!     they show up in Wan2GP's generic Loras tab.
+//!   * LoRAs are fetched by the launcher into
+//!     `<loras>/<collection>/adult-pack/`, *inside* the folder Wan2GP scans for
+//!     that model family (`get_lora_dir()`): `<loras>/wan/`, `<loras>/minimax_h3/`,
+//!     `<loras>/ltx2/`… A shared `<loras>/adult-pack/` at the root would be
+//!     invisible, because Wan2GP lists `<loras_root>/<collection>/**` only.
 //!   * Checkpoints are *recipes*: we write `finetunes/adultpack_*.json` with the
 //!     remote URLs and let Wan2GP's own downloader fetch weights on first use
 //!     (its resume/progress UX is better than ours for 20 GB files). A per-item
@@ -68,9 +71,91 @@ fn str_field(v: &Value, key: &str) -> String {
 
 // ── paths ───────────────────────────────────────────────────────────────────
 
-/// LoRAs root: wgp_config loras_root/lorasRoot/lora_dir → desktop-config
-/// modelLorasPath → repo/loras. Same precedence chain as resolve_ckpts_dir.
+/// The extra arguments the launcher appends to Wan2GP's own command line
+/// (Manage → Launch arguments). They matter here because `--loras` moves the
+/// root and `--lora-config` remaps a collection.
+fn launcher_launch_args() -> Vec<String> {
+    load_config_value()
+        .get("launchArgs")
+        .and_then(|v| v.as_str())
+        .map(crate::launch::split_launch_args)
+        .unwrap_or_default()
+}
+
+/// `--flag value` or `--flag=value`, the two forms argparse accepts.
+fn flag_value(args: &[String], name: &str) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == name {
+            return it.next().cloned();
+        }
+        if let Some(v) = a.strip_prefix(&format!("{name}=")) {
+            return Some(v.to_string());
+        }
+    }
+    None
+}
+
+/// Wan2GP runs with the repo as its working directory, so a relative path on its
+/// command line is relative to the repo.
+fn absolute_against_repo(p: &str) -> PathBuf {
+    let p = PathBuf::from(p);
+    if p.is_absolute() {
+        p
+    } else {
+        get_repo_dir().join(p)
+    }
+}
+
+/// `--lora-config file.json`: upstream's per-collection directory override.
+/// Relative values resolve against the JSON file's own folder, as upstream does.
+fn lora_config_overrides() -> std::collections::HashMap<String, PathBuf> {
+    let mut out = std::collections::HashMap::new();
+    let Some(file) = flag_value(&launcher_launch_args(), "--lora-config") else {
+        return out;
+    };
+    let path = absolute_against_repo(&file);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return out;
+    };
+    let Ok(v) = serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) else {
+        return out;
+    };
+    let Some(obj) = v.as_object() else {
+        return out;
+    };
+    let base = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    for (k, val) in obj {
+        let Some(s) = val.as_str().filter(|s| !s.trim().is_empty()) else {
+            continue;
+        };
+        if k.trim().is_empty() {
+            continue;
+        }
+        let d = PathBuf::from(s);
+        out.insert(k.clone(), if d.is_absolute() { d } else { base.join(d) });
+    }
+    out
+}
+
+/// Where Wan2GP reads one collection from: `--lora-config` override, else
+/// `<loras root>/<key>` — upstream's `resolve_lora_dir()`.
+fn lora_collection_dir(key: &str) -> PathBuf {
+    lora_config_overrides()
+        .get(key)
+        .cloned()
+        .unwrap_or_else(|| resolve_loras_dir().join(key))
+}
+
+/// LoRAs root: `--loras` on the launch line → wgp_config loras_root/lorasRoot/
+/// lora_dir → desktop-config modelLorasPath → repo/loras. Upstream's
+/// `get_lora_root()` gives the command line the last word, so the pack has to
+/// follow it or it would fill a folder Wan2GP never reads.
 fn resolve_loras_dir() -> PathBuf {
+    let args = launcher_launch_args();
+    if let Some(p) = flag_value(&args, "--loras").filter(|s| !s.is_empty()) {
+        return absolute_against_repo(&p);
+    }
     let repo = get_repo_dir();
     if let Ok(s) = std::fs::read_to_string(repo.join("wgp_config.json")) {
         if let Ok(v) = serde_json::from_str::<Value>(&s) {
@@ -87,7 +172,7 @@ fn resolve_loras_dir() -> PathBuf {
                     .and_then(|x| x.as_str())
                     .filter(|s| !s.is_empty())
                 {
-                    return PathBuf::from(p);
+                    return absolute_against_repo(p);
                 }
             }
         }
@@ -98,13 +183,44 @@ fn resolve_loras_dir() -> PathBuf {
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
     {
-        return PathBuf::from(p);
+        return absolute_against_repo(p);
     }
     repo.join("loras")
 }
 
 fn resolve_ckpts_dir() -> PathBuf {
-    crate::config::resolve_ckpts_dir().unwrap_or_else(|| get_repo_dir().join("ckpts"))
+    // Wan2GP downloads to `checkpoints_paths[0]` and resolves a relative entry
+    // against its working directory, the repo (files_locator.py).
+    crate::config::resolve_ckpts_dir()
+        .map(|p| {
+            if p.is_absolute() {
+                p
+            } else {
+                get_repo_dir().join(p)
+            }
+        })
+        .unwrap_or_else(|| get_repo_dir().join("ckpts"))
+}
+
+/// Subfolder of Wan2GP's download root that holds pack weights, so the pack
+/// never mixes with the user's own or DeepBeepMeep's downloads. Recipes ask for
+/// it with the `url|adult-pack` form: `files_locator.extract_alternate_path`
+/// turns that into a subfolder for both locating and downloading, and
+/// `download_file` strips it before the HTTP request.
+const PACK_CKPT_DIR: &str = "adult-pack";
+
+fn pack_ckpts_dir() -> PathBuf {
+    resolve_ckpts_dir().join(PACK_CKPT_DIR)
+}
+
+/// Point a model URL at `<checkpoints_paths[0]>/adult-pack/`. Local paths are
+/// left alone: they are already absolute and fully resolved by us.
+fn pack_weight_url(u: &str) -> String {
+    if (u.starts_with("http://") || u.starts_with("https://")) && !u.contains('|') {
+        format!("{u}|{PACK_CKPT_DIR}")
+    } else {
+        u.to_string()
+    }
 }
 
 fn finetunes_dir() -> PathBuf {
@@ -156,11 +272,16 @@ fn basename(path: &str) -> String {
 }
 
 /// Where a recipe entry's bytes live on disk. Recipes may hold a download URL
-/// (Wan2GP stores it under its basename in ckpts/), an absolute local path, or
-/// a bare file name written by an earlier launcher run.
+/// (Wan2GP stores it under its basename in ckpts/, or under the subfolder after
+/// a `|`), an absolute local path, or a bare file name written by an earlier
+/// launcher run.
 fn recipe_weight_path(u: &str, ckpts: &Path) -> PathBuf {
     if u.starts_with("http://") || u.starts_with("https://") {
-        return ckpts.join(basename(u));
+        let (u, sub) = match u.split_once('|') {
+            Some((u, sub)) => (u, PathBuf::from(sub)),
+            None => (u, PathBuf::new()),
+        };
+        return ckpts.join(sub).join(basename(u));
     }
     let p = PathBuf::from(u);
     if p.is_absolute() {
@@ -363,7 +484,6 @@ pub async fn adult_pack_updates(app: AppHandle) -> Result<Value, String> {
             .map(|(_, f, d)| (f, d))
     };
 
-    let loras_dir = resolve_loras_dir().join("adult-pack");
     let ckpts_dir = resolve_ckpts_dir();
     let mut items: Vec<Value> = vec![];
 
@@ -433,7 +553,7 @@ pub async fn adult_pack_updates(app: AppHandle) -> Result<Value, String> {
 
     for l in arr(m, "loras") {
         let id = str_field(l, "id");
-        let dest = loras_dir.join(family_dir(l)).join(str_field(l, "file"));
+        let dest = lora_dest(l);
         items.push(describe(
             id,
             str_field(l, "name"),
@@ -449,7 +569,7 @@ pub async fn adult_pack_updates(app: AppHandle) -> Result<Value, String> {
     for f in arr(m, "finetunes") {
         let id = str_field(f, "id");
         let repo = str_field(f, "repo");
-        let dir = ckpts_dir.clone();
+        let dir = pack_ckpts_dir();
         items.push(describe(
             id.clone(),
             str_field(f, "name"),
@@ -502,7 +622,7 @@ pub async fn adult_pack_updates(app: AppHandle) -> Result<Value, String> {
             str_field(l, "repoPath"),
             l.get("sha256").and_then(|x| x.as_str()).map(String::from),
             l.get("bytes").and_then(|x| x.as_u64()).unwrap_or(0),
-            loras_dir.join(family_dir(l)).join(str_field(l, "file")),
+            lora_dest(l),
             "high",
             &pins,
         ));
@@ -519,7 +639,9 @@ pub async fn adult_pack_updates(app: AppHandle) -> Result<Value, String> {
             str_field(f, "repoPath"),
             f.get("sha256").and_then(|x| x.as_str()).map(String::from),
             f.get("bytes").and_then(|x| x.as_u64()).unwrap_or(0),
-            ckpts_dir.join(basename(&str_field(f, "file"))),
+            ckpts_dir
+                .join(PACK_CKPT_DIR)
+                .join(basename(&str_field(f, "file"))),
             "high",
             &pins,
         ));
@@ -600,7 +722,8 @@ pub fn adult_pack_manifest() -> Value {
     let ids = installed_model_ids();
     let loras_dir = resolve_loras_dir();
     let ckpts_dir = resolve_ckpts_dir();
-    let loras_root = loras_dir.join("adult-pack");
+    let migrated = migrate_lora_locations();
+    let migrated_ckpts = migrate_checkpoint_locations();
     let cfg = pack_config();
     let pins = load_pins();
 
@@ -627,7 +750,7 @@ pub fn adult_pack_manifest() -> Value {
                         it.get("bytes").and_then(|b| b.as_u64()).unwrap_or(0),
                         &pins,
                     );
-                    let p = loras_root.join(family_dir(it)).join(&name);
+                    let p = lora_dest(it);
                     let on_disk = p.is_file();
                     // Compare against the size we would actually verify, so a
                     // file fetched after an update is not reported as missing.
@@ -698,10 +821,15 @@ pub fn adult_pack_manifest() -> Value {
         }).collect::<Vec<_>>(),
         "civitai": arr(m, "civitai"),
         "paths": {
-            "loras": loras_root.to_string_lossy(),
+            "loras": loras_dir.to_string_lossy(),
             "ckpts": ckpts_dir.to_string_lossy(),
+            "ckptsPack": ckpts_dir.join(PACK_CKPT_DIR).to_string_lossy(),
             "finetunes": finetunes_dir().to_string_lossy(),
         },
+        // Files moved out of the old shared `adult-pack/` folder by this call.
+        "migrated": migrated,
+        // Weights moved from the checkpoints root into `adult-pack/`.
+        "migratedCheckpoints": migrated_ckpts,
         "wan2gpModelCount": ids.len(),
         "ageConfirmedAt": selected,
         "hasToken": !read_token().is_empty(),
@@ -761,6 +889,333 @@ fn family_for_arch(arch: &str) -> &'static str {
         "image"
     } else {
         "wan"
+    }
+}
+
+/// The Wan2GP LoRA collection folder an architecture reads from: the value the
+/// family handler's `get_lora_dir()` returns upstream. Wan2GP lists
+/// `<loras_root>/<collection>/**` and nothing else, so a pack file must live
+/// inside the collection — a shared `adult-pack/` folder at the root is never
+/// scanned. Mirrors the handlers the pack ships; everything else falls back to
+/// the architecture id, which is what most handlers return verbatim.
+fn lora_collection(arch: &str) -> String {
+    if let Some(key) = wan_lora_collection(arch) {
+        return key.to_string();
+    }
+    let key = if arch.starts_with("minimax_h3") {
+        "minimax_h3"
+    } else if arch.starts_with("ltx2") {
+        "ltx2"
+    } else if arch.starts_with("ltxv") {
+        "ltxv"
+    } else if arch == "qwen_image_21_7B" {
+        "qwen21"
+    } else if arch.starts_with("qwen_image") {
+        "qwen"
+    } else if arch.starts_with("z_image") {
+        "z_image"
+    } else if arch.starts_with("krea") {
+        "krea2"
+    } else if arch == "flux2_klein_4b" || arch == "flux2_klein_9b" || arch.starts_with("flux3") {
+        // These handlers return the architecture id itself.
+        arch
+    } else if arch == "flux2_dev" || arch == "pi_flux2" {
+        "flux2"
+    } else if arch.starts_with("flux") {
+        "flux"
+    } else if arch.starts_with("moss_image") {
+        "moss_image"
+    } else {
+        arch
+    };
+    key.to_string()
+}
+
+/// Mirrors `models/wan/wan_handler.py::get_lora_dir`, branch for branch. Returns
+/// `None` for architectures from other families.
+fn wan_lora_collection(arch: &str) -> Option<&'static str> {
+    let wan = arch.starts_with("i2v")
+        || arch.starts_with("t2v")
+        || arch.starts_with("ti2v")
+        || arch.starts_with("vace")
+        || arch.starts_with("fun_")
+        || arch.starts_with("shotplan")
+        || arch.starts_with("scail")
+        || arch.starts_with("lucy_")
+        || arch.starts_with("kiwi_")
+        || arch.starts_with("phantom_")
+        || (arch.starts_with("animate") && !arch.starts_with("animate_any"))
+        || matches!(
+            arch,
+            "multitalk"
+                | "multitalk_720p"
+                | "infinitetalk"
+                | "infinitetalk_multi"
+                | "flf2v_720p"
+                | "fantasy"
+                | "chrono_edit"
+                | "steadydancer"
+                | "wanmove"
+                | "uni3c"
+                | "ovi"
+                | "recam_1.3B"
+        );
+    if !wan {
+        return None;
+    }
+    // Upstream checks shotplan and animate first, then computes
+    // `i2v = test_class_i2v(arch) and not test_i2v_2_2(arch)` — Wan 2.2 i2v
+    // deliberately shares the plain `wan` folder with t2v.
+    if arch.starts_with("shotplan") {
+        return Some(if arch == "shotplan_t2v_2_2" {
+            "wan_shotplan_2_2"
+        } else {
+            "wan_shotplan"
+        });
+    }
+    if arch == "animate2" {
+        return Some("wan_animate2");
+    }
+    if arch == "fun_camera_1.3B" {
+        return Some("wan_1.3B");
+    }
+    let i2v = !matches!(arch, "i2v_2_2" | "i2v_2_2_multitalk" | "i2v_2_2_svi2pro")
+        && matches!(
+            arch,
+            "i2v"
+                | "fun_inp_1.3B"
+                | "fun_inp"
+                | "flf2v_720p"
+                | "fantasy"
+                | "multitalk"
+                | "infinitetalk"
+                | "animate"
+                | "chrono_edit"
+                | "steadydancer"
+                | "wanmove"
+                | "scail"
+                | "uni3c"
+        );
+    if arch.starts_with("scail2") || i2v {
+        return Some("wan_i2v");
+    }
+    if arch.contains("1.3B") {
+        return Some("wan_1.3B");
+    }
+    if matches!(arch, "ti2v_2_2" | "lucy_edit" | "kiwi_edit" | "ovi") {
+        return Some("wan_5B");
+    }
+    Some("wan")
+}
+
+/// The architecture a LoRA entry targets: catalog rows carry `wan2gpIds`,
+/// entries added through the Add form also carry `architecture`.
+fn lora_arch(item: &Value) -> String {
+    if let Some(a) = item
+        .get("wan2gpIds")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return a.to_string();
+    }
+    str_field(item, "architecture")
+}
+
+/// The Wan2GP collection key a LoRA entry belongs to, or `None` for a
+/// hand-written entry with no architecture at all.
+fn lora_key(item: &Value) -> Option<String> {
+    if let Some(k) = item
+        .get("loraDir")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty() && !s.contains('/') && !s.contains('\\'))
+    {
+        return Some(k.to_string());
+    }
+    let arch = lora_arch(item);
+    (!arch.is_empty()).then(|| lora_collection(&arch))
+}
+
+/// Where a LoRA file lives: `<collection>/adult-pack/<file>`, inside the folder
+/// Wan2GP scans for that family. The extra `adult-pack/` level keeps the pack's
+/// files apart from the user's own without leaving the scanned tree.
+fn lora_dest(item: &Value) -> PathBuf {
+    let file = str_field(item, "file");
+    match lora_key(item) {
+        Some(key) => lora_collection_dir(&key).join("adult-pack").join(&file),
+        // A hand-written entry with no architecture: keep the old layout rather
+        // than inventing a folder Wan2GP may not read.
+        None => resolve_loras_dir()
+            .join("adult-pack")
+            .join(family_dir(item))
+            .join(&file),
+    }
+}
+
+/// Move files written by earlier versions out of `<root>/adult-pack/<family>/`,
+/// which no Wan2GP collection scans, into `<root>/<collection>/adult-pack/`.
+/// Idempotent, never overwrites, and reports what it did so the panel can log it.
+fn migrate_lora_locations() -> Vec<Value> {
+    let old_root = resolve_loras_dir().join("adult-pack");
+    if !old_root.is_dir() {
+        return vec![];
+    }
+    let m = manifest();
+    let custom = load_custom();
+    let mut out = vec![];
+    for l in arr(m, "loras").iter().chain(arr(&custom, "loras").iter()) {
+        let old = old_root.join(family_dir(l)).join(str_field(l, "file"));
+        let new = lora_dest(l);
+        if old == new || !old.is_file() {
+            continue;
+        }
+        let id = str_field(l, "id");
+        if new.exists() {
+            out.push(json!({
+                "id": id, "ok": false, "reason": "already present at the new location",
+                "path": new.to_string_lossy(),
+            }));
+            continue;
+        }
+        if let Some(parent) = new.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::fs::rename(&old, &new) {
+            Ok(_) => out.push(json!({
+                "id": id, "ok": true,
+                "from": old.to_string_lossy(), "to": new.to_string_lossy(),
+            })),
+            Err(e) => out.push(json!({"id": id, "ok": false, "reason": e.to_string()})),
+        }
+    }
+    // Drop the now-empty family folders, never one that still holds files.
+    if let Ok(rd) = std::fs::read_dir(&old_root) {
+        for e in rd.flatten() {
+            let p = e.path();
+            let empty = std::fs::read_dir(&p)
+                .map(|mut i| i.next().is_none())
+                .unwrap_or(false);
+            if p.is_dir() && empty {
+                let _ = std::fs::remove_dir(&p);
+            }
+        }
+    }
+    let _ = std::fs::remove_dir(&old_root);
+    out
+}
+
+/// Move weights fetched by earlier versions out of the checkpoints root and into
+/// the pack's own `adult-pack/` subfolder, then re-point our recipes at it.
+/// Idempotent, never overwrites, and reports what it did so the panel can log it.
+fn migrate_checkpoint_locations() -> Vec<Value> {
+    let root = resolve_ckpts_dir();
+    let pack = root.join(PACK_CKPT_DIR);
+    let m = manifest();
+    let custom = load_custom();
+    let mut out = vec![];
+    for ft in arr(m, "finetunes")
+        .iter()
+        .chain(arr(&custom, "finetunes").iter())
+    {
+        for name in [str_field(ft, "file"), str_field(ft, "fileLow")] {
+            if name.is_empty() {
+                continue;
+            }
+            let name = basename(&name);
+            let old = root.join(&name);
+            let new = pack.join(&name);
+            if old == new || !old.is_file() || new.exists() {
+                continue;
+            }
+            if std::fs::create_dir_all(&pack).is_err() {
+                continue;
+            }
+            match std::fs::rename(&old, &new) {
+                Ok(_) => {
+                    out.push(json!({
+                        "id": str_field(ft, "id"), "ok": true,
+                        "from": old.to_string_lossy(), "to": new.to_string_lossy(),
+                    }));
+                }
+                Err(e) => out
+                    .push(json!({"id": str_field(ft, "id"), "ok": false, "reason": e.to_string()})),
+            }
+        }
+    }
+    // Recipes written before the subfolder existed look for the file flat in
+    // the root. Re-point them even when nothing moved yet, so the first
+    // download also lands in the pack folder.
+    retarget_pack_recipes();
+    out
+}
+
+/// Rewrite `adultpack_*.json` so its URLs carry the `|adult-pack` suffix. Only
+/// files the pack itself owns are touched, and only entries still lacking the
+/// suffix, so user edits elsewhere survive.
+fn retarget_pack_recipes() {
+    let Ok(rd) = std::fs::read_dir(finetunes_dir()) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        let name = e.file_name().to_string_lossy().to_string();
+        if !name.starts_with("adultpack_") || p.extension().and_then(|x| x.to_str()) != Some("json")
+        {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&p) else {
+            continue;
+        };
+        let Ok(mut doc) = serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) else {
+            continue;
+        };
+        if !suffix_model_urls(&mut doc) {
+            continue;
+        }
+        if let Ok(body) = serde_json::to_string_pretty(&doc) {
+            let _ = atomic_write(&p, &body);
+        }
+    }
+}
+
+/// Add the `|adult-pack` suffix to every `URLs`/`URLs2` array in a recipe
+/// document, including one nested under `model`. Returns whether anything
+/// changed.
+fn suffix_model_urls(v: &mut Value) -> bool {
+    match v {
+        Value::Object(o) => {
+            let mut changed = false;
+            for key in ["URLs", "URLs2"] {
+                if let Some(list) = o.get_mut(key).and_then(|x| x.as_array_mut()) {
+                    for item in list.iter_mut() {
+                        if let Some(s) = item.as_str() {
+                            let next = pack_weight_url(s);
+                            if next != s {
+                                *item = json!(next);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            for child in o.values_mut() {
+                if suffix_model_urls(child) {
+                    changed = true;
+                }
+            }
+            changed
+        }
+        Value::Array(a) => {
+            let mut changed = false;
+            for x in a.iter_mut() {
+                if suffix_model_urls(x) {
+                    changed = true;
+                }
+            }
+            changed
+        }
+        _ => false,
     }
 }
 
@@ -942,6 +1397,9 @@ fn finetune_target(id: &str) -> (&str, bool) {
 /// aborts the base install (the caller decides that).
 #[tauri::command]
 pub async fn adult_pack_fetch(ids: Vec<String>, app: AppHandle) -> Result<Value, String> {
+    // Upgrade path: a file fetched flat before the `adult-pack/` subfolder
+    // existed must be found here, not downloaded a second time.
+    migrate_checkpoint_locations();
     let m = manifest();
     let custom = load_custom();
     let client = http_client();
@@ -969,7 +1427,8 @@ pub async fn adult_pack_fetch(ids: Vec<String>, app: AppHandle) -> Result<Value,
                 );
                 continue;
             };
-            let dir = resolve_loras_dir().join("adult-pack").join(family_dir(l));
+            let dest = lora_dest(l);
+            let dir = dest.parent().map(Path::to_path_buf).unwrap_or_default();
             let dest = dir.join(&name);
             if std::fs::create_dir_all(&dir).is_err() {
                 failed.push(
@@ -1014,7 +1473,7 @@ pub async fn adult_pack_fetch(ids: Vec<String>, app: AppHandle) -> Result<Value,
             let Some(f) = find_merged(m, &custom, "finetunes", parent) else {
                 continue;
             };
-            let dir = resolve_ckpts_dir();
+            let dir = pack_ckpts_dir();
             if std::fs::create_dir_all(&dir).is_err() {
                 failed.push(
                     json!({"id": &id, "error": format!("cannot create {}", dir.to_string_lossy())}),
@@ -1106,6 +1565,10 @@ pub async fn adult_pack_fetch(ids: Vec<String>, app: AppHandle) -> Result<Value,
 /// filename (not a defaults/ one) means "additional model", so we never
 /// override a shipped base model. `architecture` points at the base id.
 pub(crate) fn build_finetune_json(ft: &Value, urls: Vec<String>) -> Value {
+    // `url|adult-pack` makes Wan2GP download (and later find) the weights in
+    // `<checkpoints_paths[0]>/adult-pack/`, keeping the pack apart from the
+    // user's own models without touching their config.
+    let urls: Vec<String> = urls.iter().map(|u| pack_weight_url(u)).collect();
     let mut model = json!({
         "name": str_field(ft, "name"),
         "architecture": str_field(ft, "architecture"),
@@ -1114,7 +1577,7 @@ pub(crate) fn build_finetune_json(ft: &Value, urls: Vec<String>) -> Value {
     });
     let urls2: Vec<String> = arr(ft, "urls2")
         .iter()
-        .filter_map(|u| u.as_str().map(|s| s.to_string()))
+        .filter_map(|u| u.as_str().map(pack_weight_url))
         .collect();
     if !urls2.is_empty() {
         model["URLs2"] = json!(urls2);
@@ -1124,7 +1587,10 @@ pub(crate) fn build_finetune_json(ft: &Value, urls: Vec<String>) -> Value {
         .filter_map(|u| u.as_str().map(|s| s.to_string()))
         .collect();
     if !pre.is_empty() {
-        model["preload_URLs"] = json!(pre);
+        // `loras` is the model-def field Wan2GP downloads *and* activates before
+        // any user LoRA (docs/FINETUNES.md). `preload_URLs` only downloads, which
+        // would leave loras_multipliers pointing at nothing.
+        model["loras"] = json!(pre);
     }
     if let Some(l) = ft.get("lorasMultipliers").filter(|x| !x.is_null()) {
         model["loras_multipliers"] = l.clone();
@@ -1375,7 +1841,7 @@ pub async fn adult_pack_civitai_download(
     if files.is_empty() {
         return Err("this CivitAI release has no downloadable files".into());
     }
-    let dir = resolve_ckpts_dir();
+    let dir = pack_ckpts_dir();
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("cannot create {}: {e}", dir.to_string_lossy()))?;
 
@@ -1452,15 +1918,17 @@ pub async fn adult_pack_civitai_download(
 /// a later "missing → fetch" repair possible without guessing.
 #[tauri::command]
 pub fn adult_pack_status() -> Value {
+    // Self-heal files fetched by 0.10.15 and earlier before reporting paths.
+    migrate_lora_locations();
+    migrate_checkpoint_locations();
     let m = manifest();
     let pins = load_pins();
-    let loras_root = resolve_loras_dir().join("adult-pack");
+    let loras_dir = resolve_loras_dir();
     let mut loras = vec![];
     let mut bytes = 0u64;
     let mut present = 0u32;
     for l in arr(m, "loras") {
-        let name = str_field(l, "file");
-        let p = loras_root.join(family_dir(l)).join(&name);
+        let p = lora_dest(l);
         let on = p.is_file();
         if on {
             present += 1;
@@ -1469,7 +1937,7 @@ pub fn adult_pack_status() -> Value {
         loras.push(json!({"id": l.get("id").cloned().unwrap_or(json!("")), "present": on, "path": p.to_string_lossy()}));
     }
     let mut fts = vec![];
-    let ckpts = resolve_ckpts_dir();
+    let ckpts = pack_ckpts_dir();
     let mut ckpt_present = 0u32;
     for ft in arr(m, "finetunes") {
         let id = str_field(ft, "id");
@@ -1507,7 +1975,7 @@ pub fn adult_pack_status() -> Value {
         "lorasPresent": present,
         "lorasTotal": arr(m, "loras").len(),
         "lorasBytes": bytes,
-        "lorasDir": loras_root.to_string_lossy(),
+        "lorasDir": loras_dir.to_string_lossy(),
         "finetunes": fts,
         "ckptsPresent": ckpt_present,
         "ckptsTotal": arr(m, "finetunes").len(),
@@ -2535,6 +3003,9 @@ pub fn adult_pack_add(entry: Value) -> Result<Value, String> {
         let item = if kind == "lora" {
             json!({
                 "id": id, "group": "custom", "family": family,
+                // The collection Wan2GP scans for this architecture. Stored so
+                // later resolution never depends on the architecture list shape.
+                "loraDir": lora_collection(&arch),
                 "name": str_field(&entry, "title"), "file": file,
                 "repoPath": repo_path,
                 "repo": repo_field.clone(),
@@ -2863,7 +3334,7 @@ pub async fn adult_pack_finetune_check(id: String) -> Result<Value, String> {
             results.push(json!({"url": u, "local": true, "ok": p.is_file()}));
             continue;
         }
-        let status = match client.head(&u).send().await {
+        let status = match client.head(u.split('|').next().unwrap_or(&u)).send().await {
             Ok(r) => r.status().as_u16(),
             Err(e) => {
                 results.push(json!({"url": u, "ok": false, "error": e.to_string()}));
@@ -2880,15 +3351,14 @@ pub async fn adult_pack_finetune_check(id: String) -> Result<Value, String> {
 pub fn adult_pack_remove(ids: Vec<String>) -> Result<Value, String> {
     let m = manifest();
     let custom = load_custom();
-    let loras_root = resolve_loras_dir().join("adult-pack");
     let ckpts = resolve_ckpts_dir();
     let mut removed = vec![];
     for id in ids {
         if let Some(l) = find_merged(m, &custom, "loras", &id) {
-            let Some(name) = safe_file_name(&str_field(l, "file")) else {
+            let Some(_name) = safe_file_name(&str_field(l, "file")) else {
                 continue;
             };
-            let p = loras_root.join(family_dir(l)).join(&name);
+            let p = lora_dest(l);
             let custom_item = find(&custom, "loras", &id).is_some();
             if p.is_file() {
                 let n = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
@@ -2911,8 +3381,9 @@ pub fn adult_pack_remove(ids: Vec<String>) -> Result<Value, String> {
             for key in ["urls", "urls2"] {
                 for u in arr(ft, key) {
                     if let Some(u) = u.as_str() {
-                        let n = basename(u);
-                        let p = ckpts.join(&n);
+                        // Catalog URLs have no suffix; the file lives in the
+                        // pack subfolder, so aim at where it actually is.
+                        let p = recipe_weight_path(&pack_weight_url(u), &ckpts);
                         if p.is_file() {
                             std::fs::remove_file(&p).ok();
                         }
@@ -2959,10 +3430,9 @@ pub fn adult_pack_lora_inventory() -> Value {
         if id.is_empty() {
             continue;
         }
-        known.insert(
-            format!("adult-pack/{}/{}", family_dir(l), str_field(l, "file")),
-            id,
-        );
+        if let Ok(rel) = lora_dest(l).strip_prefix(&root) {
+            known.insert(rel.to_string_lossy().replace('\\', "/"), id);
+        }
     }
     let mut files: Vec<Value> = vec![];
     let mut bytes = 0u64;
@@ -3005,9 +3475,12 @@ fn collect_lora_files(
     for e in rd.filter_map(|x| x.ok()) {
         let p = e.path();
         if p.is_dir() {
-            // The root and the pack folder are walked; a deeper tree is not ours.
-            let descend =
-                dir == root || dir.file_name().map(|n| n == "adult-pack").unwrap_or(false);
+            // The root, a collection's `adult-pack/` folder and the legacy
+            // `adult-pack/<family>/` tree are walked; the user's own deeper
+            // folders are not.
+            let descend = dir == root
+                || dir.file_name().map(|n| n == "adult-pack").unwrap_or(false)
+                || p.file_name().map(|n| n == "adult-pack").unwrap_or(false);
             if descend {
                 collect_lora_files(root, &p, known, out, bytes);
             }
@@ -3712,14 +4185,104 @@ mod tests {
         let doc = build_finetune_json(&ft, vec!["https://h/a.gguf".into()]);
         let model = &doc["model"];
         assert_eq!(model["architecture"], json!("i2v_2_2"));
-        assert_eq!(model["URLs"], json!(["https://h/a.gguf"]));
-        assert_eq!(model["URLs2"], json!(["https://h/b.gguf"]));
+        // `url|adult-pack` is upstream's "download into this subfolder" form, so
+        // the pack never mixes with the user's own checkpoints.
+        assert_eq!(model["URLs"], json!(["https://h/a.gguf|adult-pack"]));
+        assert_eq!(model["URLs2"], json!(["https://h/b.gguf|adult-pack"]));
         assert_eq!(doc["steps"], json!(4));
         assert_eq!(doc["flow_shift"], json!(5.0));
         assert!(doc.get("infos").is_some());
         // JSON round-trip must stay loadable by serde (Wan2GP reads it with json).
         let s = serde_json::to_string(&doc).unwrap();
         assert!(serde_json::from_str::<Value>(&s).is_ok());
+    }
+
+    #[test]
+    fn pack_weights_are_found_and_downloaded_in_their_own_subfolder() {
+        // `files_locator.get_local_model_filename` runs the URL through
+        // extract_alternate_path, so the recipe must resolve to
+        // `<ckpts>/adult-pack/<file>`, not `<ckpts>/<file>`.
+        let ckpts = PathBuf::from("C:/models/ckpts");
+        let url = pack_weight_url("https://h/a.safetensors");
+        assert_eq!(url, "https://h/a.safetensors|adult-pack");
+        assert_eq!(
+            recipe_weight_path(&url, &ckpts),
+            ckpts.join("adult-pack").join("a.safetensors")
+        );
+        // An absolute local path (CivitAI flow) already names its file.
+        let local = recipe_weight_path("C:/models/ckpts/adult-pack/b.safetensors", &ckpts);
+        assert_eq!(
+            local,
+            PathBuf::from("C:/models/ckpts/adult-pack/b.safetensors")
+        );
+        // The suffix is added once, never twice.
+        assert_eq!(pack_weight_url(&url), url);
+        assert_eq!(
+            pack_weight_url("C:/models/ckpts/adult-pack/c.safetensors"),
+            "C:/models/ckpts/adult-pack/c.safetensors"
+        );
+    }
+
+    #[test]
+    fn legacy_checkpoint_weights_move_into_the_pack_folder_once() {
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+        let root = resolve_ckpts_dir();
+        let pack = root.join(PACK_CKPT_DIR);
+        let ft = arr(manifest(), "finetunes")[0].clone();
+        let id = str_field(&ft, "id");
+        let name = basename(&str_field(&ft, "file"));
+        let flat = root.join(&name);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&flat, b"weights").unwrap();
+
+        // A recipe written before the subfolder existed.
+        let recipe = finetunes_dir().join(format!("adultpack_{id}.json"));
+        std::fs::create_dir_all(finetunes_dir()).unwrap();
+        std::fs::write(
+            &recipe,
+            serde_json::to_string_pretty(&json!({
+                "model": {"name": "x", "URLs": ["https://h/old.safetensors"]}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let moved = migrate_checkpoint_locations();
+        assert_eq!(moved.len(), 1, "{moved:?}");
+        assert!(pack.join(&name).is_file());
+        assert!(!flat.exists());
+        let after: Value =
+            serde_json::from_str(&std::fs::read_to_string(&recipe).unwrap()).unwrap();
+        assert_eq!(
+            after["model"]["URLs"],
+            json!(["https://h/old.safetensors|adult-pack"])
+        );
+        // Second pass is a no-op.
+        assert!(migrate_checkpoint_locations().is_empty());
+
+        let _ = std::fs::remove_file(pack.join(&name));
+        let _ = std::fs::remove_file(&recipe);
+    }
+
+    #[test]
+    fn status_reports_weights_in_the_pack_folder() {
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+        let ft = arr(manifest(), "finetunes")[0].clone();
+        let id = str_field(&ft, "id");
+        let name = basename(&str_field(&ft, "file"));
+        let p = pack_ckpts_dir().join(&name);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, b"weights").unwrap();
+        let status = adult_pack_status();
+        let row = arr(&status, "finetunes")
+            .iter()
+            .find(|f| str_field(f, "id") == id)
+            .cloned()
+            .unwrap();
+        assert_eq!(row["weightsPresent"], json!(true), "{row}");
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]
@@ -3926,10 +4489,7 @@ mod tests {
         let stored = find(&custom, "loras", &id).expect("stored in the custom file");
         assert_eq!(str_field(stored, "file"), "adapter.safetensors");
 
-        let p = resolve_loras_dir()
-            .join("adult-pack")
-            .join("wan")
-            .join("adapter.safetensors");
+        let p = lora_dest(stored);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, b"weights").unwrap();
 
@@ -4192,11 +4752,11 @@ mod tests {
 
         // One file the catalog knows about, one it does not.
         let first = &arr(manifest(), "loras")[0];
-        let known_rel = format!(
-            "adult-pack/{}/{}",
-            family_dir(first),
-            str_field(first, "file")
-        );
+        let known_rel = lora_dest(first)
+            .strip_prefix(&root)
+            .expect("catalog files live under the root")
+            .to_string_lossy()
+            .replace('\\', "/");
         let known_path = root.join(known_rel.replace('/', std::path::MAIN_SEPARATOR_STR));
         std::fs::create_dir_all(known_path.parent().unwrap()).unwrap();
         std::fs::write(&known_path, b"1234").unwrap();
@@ -4233,5 +4793,132 @@ mod tests {
             .unwrap()
             .join("stray.safetensors")
             .exists());
+    }
+
+    #[test]
+    fn loras_land_inside_the_collection_wan2gp_scans() {
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+        let root = resolve_loras_dir();
+        for l in arr(manifest(), "loras") {
+            let dest = lora_dest(l);
+            let rel = dest.strip_prefix(&root).unwrap_or_else(|_| {
+                panic!("{} must live under the LoRAs root", str_field(l, "id"))
+            });
+            let parts: Vec<String> = rel
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().to_string())
+                .collect();
+            assert_eq!(
+                parts.len(),
+                3,
+                "{} must resolve to <collection>/adult-pack/<file>",
+                str_field(l, "id")
+            );
+            assert_eq!(parts[1], "adult-pack");
+            assert_ne!(
+                parts[0],
+                "adult-pack",
+                "{} would be invisible to Wan2GP",
+                str_field(l, "id")
+            );
+        }
+    }
+
+    #[test]
+    fn lora_collection_mirrors_upstream_get_lora_dir() {
+        // Wan 2.2 i2v shares the `wan` folder: upstream excludes i2v_2_2 from
+        // its i2v branch, so this is deliberately not `wan_i2v`.
+        assert_eq!(lora_collection("i2v_2_2"), "wan");
+        assert_eq!(lora_collection("t2v_2_2"), "wan");
+        assert_eq!(lora_collection("i2v"), "wan_i2v");
+        assert_eq!(lora_collection("ti2v_2_2"), "wan_5B");
+        assert_eq!(lora_collection("minimax_h3_ref2va_pruned"), "minimax_h3");
+        assert_eq!(lora_collection("ltx2_22B"), "ltx2");
+        assert_eq!(lora_collection("qwen_image_20B"), "qwen");
+        assert_eq!(lora_collection("qwen_image_21_7B"), "qwen21");
+        assert_eq!(lora_collection("flux2_klein_9b"), "flux2_klein_9b");
+        // flux3 keeps its own folder (its handler returns base_model_type).
+        assert_eq!(lora_collection("flux3_klein"), "flux3_klein");
+        assert_eq!(lora_collection("z_image"), "z_image");
+        assert_eq!(lora_collection("krea2_turbo"), "krea2");
+
+        // The rest of the Wan handler's branches, mirrored, not guessed.
+        assert_eq!(lora_collection("t2v"), "wan");
+        assert_eq!(lora_collection("i2v_720p"), "wan");
+        assert_eq!(lora_collection("vace_14B_2_2"), "wan");
+        assert_eq!(lora_collection("t2v_1.3B"), "wan_1.3B");
+        assert_eq!(lora_collection("scail2_14B"), "wan_i2v");
+        assert_eq!(lora_collection("animate2"), "wan_animate2");
+        assert_eq!(lora_collection("shotplan_t2v_2_2"), "wan_shotplan_2_2");
+        // A different family that merely starts with "animate".
+        assert_eq!(lora_collection("animate_any_mesh"), "animate_any_mesh");
+        assert_eq!(lora_collection("flux2_dev"), "flux2");
+        assert_eq!(lora_collection("flux2_klein_base_9b"), "flux");
+        assert_eq!(lora_collection("moss_image_sft"), "moss_image");
+    }
+
+    #[test]
+    fn legacy_lora_files_move_into_the_collection_once() {
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+        let root = resolve_loras_dir();
+        let first = &arr(manifest(), "loras")[0];
+        let old = root
+            .join("adult-pack")
+            .join(family_dir(first))
+            .join(str_field(first, "file"));
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::write(&old, b"1234").unwrap();
+
+        let moved = migrate_lora_locations();
+        assert!(
+            moved.iter().any(|m| m["ok"] == json!(true)),
+            "the stranded file must be reported as moved"
+        );
+        assert!(!old.exists(), "the old location must be vacated");
+        assert!(lora_dest(first).is_file(), "the file must arrive intact");
+        assert!(
+            !root.join("adult-pack").join(family_dir(first)).exists(),
+            "an emptied legacy family folder is pruned"
+        );
+        assert!(
+            migrate_lora_locations().is_empty(),
+            "migration is idempotent"
+        );
+    }
+
+    #[test]
+    fn launch_args_move_the_root_and_can_remap_a_collection() {
+        let td = crate::base::TestDataDir::new();
+        td.seed_wgp_config("{}");
+        let repo = get_repo_dir();
+        let config_file = get_data_dir().join("desktop-config.json");
+
+        // `--loras` outranks wgp_config's loras_root, exactly as upstream's
+        // get_lora_root() does.
+        let cli_root = repo.join("cli-loras");
+        std::fs::write(
+            &config_file,
+            json!({"launchArgs": format!("--loras \"{}\"", cli_root.display())}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(resolve_loras_dir(), cli_root);
+
+        // `--lora-config` remaps one collection; relative paths resolve against
+        // the JSON file, not the working directory.
+        std::fs::write(repo.join("lora_paths.json"), r#"{"wan":"wan-alt"}"#).unwrap();
+        std::fs::write(
+            &config_file,
+            json!({"launchArgs": "--lora-config lora_paths.json"}).to_string(),
+        )
+        .unwrap();
+        let first = &arr(manifest(), "loras")[0];
+        assert_eq!(lora_key(first).as_deref(), Some("wan"));
+        assert!(
+            lora_dest(first).starts_with(repo.join("wan-alt").join("adult-pack")),
+            "the override must win over <root>/wan: {:?}",
+            lora_dest(first)
+        );
     }
 }

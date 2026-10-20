@@ -536,7 +536,8 @@ itself, so you never have to select a whole group to act on one entry:
   you added yourself
 
 LoRA rows deliberately have no "make finetune JSON": Wan2GP loads LoRAs from
-`loras\`, so the row says that instead of offering a button that cannot work.
+`loras\<collection>\` — the folder it scans for that model family — so the row
+says that instead of offering a button that cannot work.
 
 ### Updates
 
@@ -586,6 +587,25 @@ a definition. The full field list lives in upstream's
 including files you copied in yourself — rows the catalog knows about are marked
 **in catalog**, the rest are **unknown** and can be deleted from here rather than
 through Explorer. Deletion is confined to the LoRAs folder and always confirmed.
+
+Pack LoRAs are fetched into `loras\<collection>\adult-pack\` — inside the folder
+Wan2GP scans for that family (`wan`, `minimax_h3`, `ltx2`, `qwen`, `z_image`…),
+so they appear in Wan2GP's own LoRA list. The root is the one Wan2GP itself
+resolves: `--loras` from Manage → Launch arguments wins, then `loras_root` in
+`wgp_config.json`, then the launcher's configured folder; a `--lora-config`
+file remaps individual collections and is honoured too. Files downloaded by
+0.10.15 and earlier sat in `loras\adult-pack\<family>\`, which Wan2GP never
+reads; the launcher moves them into place once, automatically, the next time
+the Pack tab opens.
+
+Pack **checkpoints** are recipes, so Wan2GP downloads the weights itself — into
+`ckpts\adult-pack\` (more precisely `<checkpoints_paths[0]>\adult-pack\`),
+keeping the pack apart from your own and DeepBeepMeep's models. Recipes carry
+Wan2GP's `URL|adult-pack` form, which its downloader strips before the request
+and its locator uses to find the file later. Prefetch writes to the same folder,
+and anything fetched flat by 0.10.15 is moved in once. `checkpoints_paths`
+itself is never modified: which drive receives the files is still decided by
+its first entry, exactly as for every other model.
 
 ### CivitAI account tier
 
