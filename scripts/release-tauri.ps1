@@ -1,7 +1,10 @@
 # Release the Tauri launcher: verify, bump every version, build + sign, publish
 # GitHub release with updater artifacts (latest.json + signed setup.exe).
 #
-# Usage:  .\scripts\release-tauri.ps1 -Version 0.2.0 [-Notes "..."]
+# Usage:  .\scripts\release-tauri.ps1 -Version 0.2.0 [-Notes "..."] [-NotesFile path]
+# -NotesFile is read as UTF-8: PowerShell 5.1's `Get-Content -Raw` defaults to
+# the ANSI code page, so "—" or "→" in an inherited -Notes string arrives
+# mojibake and ships that way into both the release body and latest.json.
 # Requires: $env:TAURI_SIGNING_PRIVATE_KEY (the .key contents) or
 # %USERPROFILE%\.tauri\wan2gp-desktop.key, plus TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 # (or %USERPROFILE%\.tauri\wan2gp-desktop.pwd). Keys stay out of the repo.
@@ -9,7 +12,17 @@
 # The preflight is mandatory: a release cannot be published from a tree whose
 # tests, formatter or clippy are red, and it cannot reuse an older installer
 # under a new version (the v0.10.14 artifact-fallback bug).
-param([Parameter(Mandatory=$true)][string]$Version, [string]$Notes = "")
+param(
+  [Parameter(Mandatory=$true)][string]$Version,
+  [string]$Notes = "",
+  [string]$NotesFile = ""
+)
+
+if ($NotesFile) {
+  if ($Notes.Trim()) { throw "Pass -Notes or -NotesFile, not both" }
+  if (-not (Test-Path $NotesFile)) { throw "Notes file not found: $NotesFile" }
+  $Notes = [System.IO.File]::ReadAllText((Resolve-Path $NotesFile), [System.Text.Encoding]::UTF8)
+}
 
 $Repo = "GKartist75/Wan2GP-Desktop-Tauri"
 
