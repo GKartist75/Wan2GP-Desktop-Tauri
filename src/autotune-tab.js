@@ -32,6 +32,14 @@ function memProfileCollect() {
   const vpm = $("memVideoPreload") ? $("memVideoPreload").value : "";
   const ipm = $("memImagePreload") ? $("memImagePreload").value : "";
   const apm = $("memAudioPreload") ? $("memAudioPreload").value : "";
+  // Manual preload amounts (wgp.py preload_mode(): the <kind>_preload_in_VRAM
+  // key is only read when that kind's mode is "manual"). Before these fields
+  // existed, choosing Manual wrote the mode and left the amount at whatever
+  // was on disk — usually nothing — so "Manual" preloaded 0 MB.
+  const vpmb = $("memVideoPreloadMB") ? $("memVideoPreloadMB").value : "";
+  const ipmb = $("memImagePreloadMB") ? $("memImagePreloadMB").value : "";
+  const apmb = $("memAudioPreloadMB") ? $("memAudioPreloadMB").value : "";
+  const llmCpu = $("memLlmCpuCompute") ? $("memLlmCpuCompute").value : "";
   const prm = $("memReservedPct") ? $("memReservedPct").value : "";
   const cc = $("memComputeCache") ? $("memComputeCache").value : "";
   const ccp = $("memComputeCachePath") ? $("memComputeCachePath").value.trim() : "";
@@ -50,6 +58,21 @@ function memProfileCollect() {
   if (vpm) s.video_preload_mode = vpm;
   if (ipm) s.image_preload_mode = ipm;
   if (apm) s.audio_preload_mode = apm;
+  for (const [raw, key] of [
+    [vpmb, "video_preload_in_VRAM"],
+    [ipmb, "image_preload_in_VRAM"],
+    [apmb, "audio_preload_in_VRAM"],
+  ]) {
+    if (raw === "") continue;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 0 || n > 200000) {
+      setMemStatus("VRAM Preload amounts are whole megabytes, 0 to 200000", true);
+      return null;
+    }
+    s[key] = n;
+  }
+  // v18.20 Configuration > Performance > Language Models CPU Compute.
+  if (llmCpu) s.llm_cpu_compute = llmCpu;
   if (prm !== "") {
     const pct = Number(prm);
     if (!(pct >= 0 && pct <= 100)) {
@@ -185,6 +208,27 @@ const MEM_FIELDS = {
     rec: "recReservedPct",
     saved: "savedReservedPct",
   },
+  // v18.20: Manual preload amounts + Deepy/prompt-enhancer CPU offload.
+  video_preload_in_VRAM: {
+    sel: "memVideoPreloadMB",
+    rec: "recVideoPreloadMB",
+    saved: "savedVideoPreloadMB",
+  },
+  image_preload_in_VRAM: {
+    sel: "memImagePreloadMB",
+    rec: "recImagePreloadMB",
+    saved: "savedImagePreloadMB",
+  },
+  audio_preload_in_VRAM: {
+    sel: "memAudioPreloadMB",
+    rec: "recAudioPreloadMB",
+    saved: "savedAudioPreloadMB",
+  },
+  llm_cpu_compute: {
+    sel: "memLlmCpuCompute",
+    rec: "recLlmCpuCompute",
+    saved: "savedLlmCpuCompute",
+  },
   // v18 Compute Cache — Config → Performance → WanGP Compute Cache upstream.
   // rec stays "—" off Blackwell (Detect only recommends it on RTX 50);
   // the path is manual-only (upstream default "ComputeCache" applies unset).
@@ -257,11 +301,25 @@ const PRELOAD_MODE_LABELS = {
   dynamic: "Dynamic — fill the VRAM each generation leaves free",
   manual: "Manual — use the VRAM Preload amount",
 };
+// v18.20 wgp.py:4183 `llm_cpu_compute`: decides only whether the CPU processes
+// the LM layers left in RAM while Deepy / the prompt enhancer writes.
+const LLM_CPU_LABELS = {
+  auto: "Auto — CPU helps when it is faster (default)",
+  on: "On — always help with the CPU",
+  off: "Off — GPU transfers only",
+};
 const COMPILE_MODE_LABELS = {
   disabled: "Disabled (default)",
   cudagraph: "CUDA Graph — faster short steps",
   transformer: "PyTorch — deprecated upstream, very slow first compile",
 };
+// Same naming the dropdowns use: 3.5 renders as P3+, 4.5 as P4+.
+function fmtProfile(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  return n === 3.5 ? "P3+" : n === 4.5 ? "P4+" : "P" + n;
+}
+
 function fmtVal(key, v) {
   if (v == null || v === "") return "—";
   if (key === "vae_config") return v + (Number(v) === 0 ? " (AUTO)" : "");
@@ -283,8 +341,14 @@ function fmtVal(key, v) {
   if (key === "compile") return COMPILE_MODE_LABELS[v] || String(v);
   if (key === "attention_head_split")
     return HEAD_SPLIT_LABELS[Number(v)] || String(v);
+  // Profiles are P-numbered everywhere else (dropdowns, "P4+"), so the
+  // rec:/saved: chips must not regress to a bare "0" for P0.
+  if (key.endsWith("_profile")) return fmtProfile(v);
   if (key.endsWith("_preload_mode"))
     return PRELOAD_MODE_LABELS[v] || String(v);
+  if (key.endsWith("_preload_in_VRAM"))
+    return Number(v) === 0 ? "0 MB (none)" : v + " MB";
+  if (key === "llm_cpu_compute") return LLM_CPU_LABELS[v] || String(v);
   if (key === "smart_memory_pinning" || key === "compute_cache")
     return v === true ? "On" : v === false ? "Off" : String(v);
   if (key === "perc_reserved_mem_max")
@@ -346,6 +410,17 @@ function memProfilePopulate(settings, opts = {}) {
 // override any dropdown before pressing Apply.
 function memProfileFromRecommendation(rec) {
   if (!rec) return;
+  // Name the preferred profile in words above the table: the tier matrix
+  // answers "which one", this says why this PC landed there (P0 on <32 GB
+  // RAM, P4 with the failsafe switch, ...).
+  const line = $("memProfileRecommendation");
+  if (line) {
+    const why = rec._recommendation_label;
+    line.textContent =
+      `Preferred here: video ${fmtProfile(rec.video_profile)} · ` +
+      `image ${fmtProfile(rec.image_profile)} · audio ${fmtProfile(rec.audio_profile)}` +
+      (why ? ` — ${why}` : "");
+  }
   memProfilePopulate(
     {
       video_profile: rec.video_profile,

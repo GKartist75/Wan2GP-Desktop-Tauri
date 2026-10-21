@@ -54,31 +54,31 @@ pub(crate) fn cache_dir() -> PathBuf {
 /// the exact assets the pinned versions resolve to — see the module docs for
 /// why they are pinned here rather than only fetched.
 pub(crate) const PINNED_WHEELS: &[(&str, &str)] = &[
-    // GGUF llama.cpp kernels (upstream gguf-v1.0.27; the HIP one is RDNA4 opt-in).
+    // GGUF llama.cpp kernels (upstream gguf-v1.0.28; the HIP one is RDNA4 opt-in).
     (
-        "llamacpp_gguf_cuda-1.0.27+torch210cu130py311-cp311-cp311-win_amd64.whl",
-        "7a666946c23200bacc5f92f01558d4be5a2c52685dee06e3fc538f1b5359bb44",
+        "llamacpp_gguf_cuda-1.0.28+torch210cu130py311-cp311-cp311-win_amd64.whl",
+        "551eb355c144e653f4416c55de61ac50e7380d5c48336a774f271404832d6148",
     ),
     (
-        "llamacpp_gguf_cuda-1.0.27+torch271cu128py310-cp310-cp310-win_amd64.whl",
-        "1eb5e56d24af0cf9bf14497630a3de5100898e887833e684218b83bbf964ecb0",
+        "llamacpp_gguf_cuda-1.0.28+torch271cu128py310-cp310-cp310-win_amd64.whl",
+        "0c74f83820d461035690cbfae8849e1568866b906304f3857906aecab0b09989",
     ),
     (
-        "llamacpp_gguf_cuda-1.0.27+torch213rocm100py312-cp312-cp312-win_amd64.whl",
-        "09a27db982bda190a50499b5dc5445a03c0a6cd643bd33b95ff3a3fe523aa239",
+        "llamacpp_gguf_cuda-1.0.28+torch213rocm100py312-cp312-cp312-win_amd64.whl",
+        "acd46b919c89e16ec99205e93b6ed3991a54cbce1d89819ef0562e5d8fb9cc84",
     ),
-    // WGPKernels 1.1.2 (NVIDIA cu130/cu128, AMD RDNA4 rocm100).
+    // WGPKernels 1.3.0 (NVIDIA cu130/cu128, AMD RDNA4 rocm100).
     (
-        "wgpkernels-1.1.2+cu130-py3-none-win_amd64.whl",
-        "84f5f892aa1d422846f6ad24fefbc983dbc366eacbbac279f028f47d4880b167",
-    ),
-    (
-        "wgpkernels-1.1.2+cu128-py3-none-win_amd64.whl",
-        "eb948edced4fa9b77c8a6faacacd2bb23aa9d6797fafe95362fa9f636d94e739",
+        "wgpkernels-1.3.0+cu130-py3-none-win_amd64.whl",
+        "dd384bb41a3ee4c8b3c9bb530df43c1ee68c9a74a5b39cc60f0fe4462d41a86a",
     ),
     (
-        "wgpkernels-1.1.2+rocm100-py3-none-win_amd64.whl",
-        "cb99dd4ecb024103dc75dc1c7b7f98ef93bf49fa1348ae3290b4cd9cf04ff53e",
+        "wgpkernels-1.3.0+cu128-py3-none-win_amd64.whl",
+        "8ddaea79c039a3d1cfeb2c8852d189a926a6ae2f366f9b274bea76ab82661f8a",
+    ),
+    (
+        "wgpkernels-1.3.0+rocm100-py3-none-win_amd64.whl",
+        "b1f8b54e1d028c250d24a0211e1dca3c938f7dd07246c98d4ae8e17c6e17ccde",
     ),
     // Nunchaku (upstream torch2.7 build and the cu13.0/torch2.10 build).
     (
@@ -462,8 +462,8 @@ mod tests {
     #[test]
     fn wheel_filename_decodes_and_rejects_non_wheels() {
         assert_eq!(
-            wheel_filename("https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.27/llamacpp_gguf_cuda-1.0.27%2Btorch210cu130py311-cp311-cp311-win_amd64.whl").as_deref(),
-            Some("llamacpp_gguf_cuda-1.0.27+torch210cu130py311-cp311-cp311-win_amd64.whl")
+            wheel_filename("https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.28/llamacpp_gguf_cuda-1.0.28%2Btorch210cu130py311-cp311-cp311-win_amd64.whl").as_deref(),
+            Some("llamacpp_gguf_cuda-1.0.28+torch210cu130py311-cp311-cp311-win_amd64.whl")
         );
         assert_eq!(
             wheel_filename("https://x/y/w.whl?token=1#frag").as_deref(),
@@ -484,10 +484,10 @@ mod tests {
 
     #[test]
     fn pinned_sha_matches_known_assets_only() {
-        let gguf = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.27/llamacpp_gguf_cuda-1.0.27%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+        let gguf = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.28/llamacpp_gguf_cuda-1.0.28%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
         assert_eq!(
             pinned_sha(gguf),
-            Some("7a666946c23200bacc5f92f01558d4be5a2c52685dee06e3fc538f1b5359bb44")
+            Some("551eb355c144e653f4416c55de61ac50e7380d5c48336a774f271404832d6148")
         );
         // A version bump is unknown here on purpose — the GitHub digest covers it.
         let newer = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.99/llamacpp_gguf_cuda-1.0.99%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
@@ -516,7 +516,7 @@ mod tests {
 
     #[test]
     fn evidence_line_prints_the_hash_and_whose_digest_it_matched() {
-        const GGUF: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.27/llamacpp_gguf_cuda-1.0.27%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+        const GGUF: &str = "https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.28/llamacpp_gguf_cuda-1.0.28%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
         let h = pinned_sha(GGUF).unwrap();
         let line = WheelTrust::Pinned.evidence(h, GGUF);
         assert!(line.contains(h), "the hash itself must be printed: {line}");
@@ -525,7 +525,7 @@ mod tests {
             "whose digest it matched must be named: {line}"
         );
         assert!(
-            line.contains("gguf-v1.0.27"),
+            line.contains("gguf-v1.0.28"),
             "the release tag pins it down: {line}"
         );
         assert!(line.contains("matches"), "{line}");
@@ -678,7 +678,7 @@ mod tests {
         for cmd in [
             stale_cu130.to_string(),
             stale_cu128.to_string(),
-            crate::hw::GGUF_1027_WIN_PY312_HIP.to_string(),
+            crate::hw::GGUF_1028_WIN_PY312_HIP.to_string(),
             crate::install::SAGE_SAFE_WIN_URL.to_string(),
         ] {
             let floored = crate::hw::apply_gguf_override_with(&cmd, crate::hw::GGUF_FLOOR);

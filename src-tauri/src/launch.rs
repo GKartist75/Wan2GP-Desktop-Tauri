@@ -10,7 +10,7 @@ use crate::{
 use std::path::{Path, PathBuf};
 use tauri::Emitter;
 
-// Quote-aware split for Extra Launch Args (keeps "--teacache \"a b\"" together).
+// Quote-aware split for Extra Launch Args (keeps "--config \"a b\"" together).
 pub(crate) fn split_launch_args(s: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -2486,8 +2486,8 @@ cmd,
             vec!["--profile", "4", "--attention", "sage2"]
         );
         assert_eq!(
-            split_launch_args("--teacache \"a b\" --verbose 2"),
-            vec!["--teacache", "a b", "--verbose", "2"]
+            split_launch_args("--config \"a b\" --verbose 2"),
+            vec!["--config", "a b", "--verbose", "2"]
         );
         assert_eq!(split_launch_args(""), Vec::<String>::new());
     }

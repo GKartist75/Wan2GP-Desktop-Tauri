@@ -509,7 +509,7 @@ pub async fn auto_tune_detect() -> Result<serde_json::Value, String> {
 }
 
 pub fn auto_tune_detect_blocking() -> serde_json::Value {
-    // real hardware detect — mirrors services/auto-tune.js detect() but sync via nvidia-smi
+    // real hardware detect (auto-tune.js detect() lived here before the Rust port), sync via nvidia-smi
     let gpu = get_gpu_info_sync();
     let vendor = gpu
         .get("vendor")
@@ -639,7 +639,7 @@ pub fn auto_tune_recommend(
             "kernels": ["nunchaku","gguf"]
         });
     }
-    // 7-profile matrix incl. fractional P3.5/P4.5 (mirrors auto-tune.js PROFILE_MATRIX).
+    // 7-profile matrix incl. fractional P3.5/P4.5 (auto-tune.js PROFILE_MATRIX before the port).
     let (profile, coeff): (f64, f64) = if failsafe {
         (5.0, 0.6)
     } else {
@@ -649,18 +649,33 @@ pub fn auto_tune_recommend(
             ("high", "very_low") => 3.5,
             ("low", "high") => 2.0,
             ("low", "low") => 4.0,
-            ("low", "very_low") => 5.0,
+            // P0 (upstream 6f1ebc8) is the low-RAM fast path: P4's part-by-part
+            // placement with no model keeping Reserved RAM for good, the running
+            // model borrowing it and handing it on at the next switch. Both
+            // <32 GB cells reserved RAM that is not there for a whole 14B model,
+            // so P0 replaces P5 on 12–23 GB cards and P4 on <12 GB ones. P5
+            // stays the failsafe (the switch above), and 3.5 keeps whole-model
+            // placement where VRAM alone can hold the model.
+            ("low", "very_low") => 0.0,
             ("tight", "high") => 4.0,
             // v17 + MMGP v4: Profile 4 is up to 50% lower peak VRAM and
             // 11 GB now does 1080p H3, so the tight tier no longer has to
             // fall back to P4+/P5 once the v17 levers below are on.
             ("tight", "low") => 4.0,
+            ("tight", "very_low") => 0.0,
             _ => 4.0,
         };
+        // Upstream 06106f69 (v18.20) raised the default 0.8 -> 0.85, in
+        // `shared/cli_args.py` and in mmgp's own signature: "max VRAM
+        // (between 0 and 1) that should be allocated to preloaded models".
+        // The non-tight tiers track that number — the panel used to write the
+        // old 0.8 and quietly kept 5% of the VRAM away from every model on a
+        // 12 GB+ card. Tight stays at 0.70 (the launcher's own out-of-VRAM
+        // valve for <12 GB) and failsafe at 0.60.
         let c = if vram_tier == "tight" || vram_tier == "none" {
             0.7
         } else {
-            0.8
+            0.85
         };
         (p, c)
     };
@@ -692,6 +707,7 @@ pub fn auto_tune_recommend(
         "Failsafe · P5 (maximum compatibility)".to_string()
     } else {
         match profile.to_string().as_str() {
+            "0" => "LowRAM · no permanent Reserved RAM (upstream: experimental)",
             "1" => "HighRAM · HighVRAM",
             "2" => "HighRAM · LowVRAM",
             "3" => "LowRAM · HighVRAM (upstream: recommended for audio)",
@@ -764,7 +780,9 @@ pub fn auto_tune_recommend(
         // (init_pipe truncates 4.5 -> 4): P1/P3/P3.5 load whole models and
         // have nothing to preload, so recommending Dynamic there would be a
         // setting that silently does nothing — the same rule the CUDA gate
-        // above applies to AMD/Intel.
+        // above applies to AMD/Intel. P0 is the exception: its Default *is*
+        // Dynamic (wgp.py dynamic_preload: profile 0 + "default"), so the
+        // "default" written below already preloads dynamically there.
         let dynamic_images = [2.0, 4.0, 4.5, 5.0].contains(&profile);
         extra.insert("video_preload_mode".into(), serde_json::json!("default"));
         extra.insert(
@@ -2191,6 +2209,11 @@ pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool 
         "video_preload_mode" | "image_preload_mode" | "audio_preload_mode" => {
             ["default", "dynamic", "manual"].contains(&s)
         }
+        // v18.20 Configuration > Performance > Language Models CPU Compute
+        // (wgp.py:4183, "auto" by default): while Deepy or the prompt enhancer
+        // streams layers from RAM, "auto" lets the CPU process them when it
+        // measured faster, "on" forces it, "off" keeps transfers only.
+        "llm_cpu_compute" => ["auto", "on", "off"].contains(&s),
         "video_preload_in_VRAM" | "image_preload_in_VRAM" | "audio_preload_in_VRAM" => {
             matches!(val.as_i64(), Some(n) if (0..=200_000).contains(&n))
         }
@@ -2240,6 +2263,14 @@ pub(crate) const MEMORY_OVERRIDE_KEYS: &[&str] = &[
     "video_preload_mode",
     "image_preload_mode",
     "audio_preload_mode",
+    // The MB amount Manual preloads use (wgp.py `preload_mode()` reads
+    // `<kind>_preload_in_VRAM` when the mode is "manual"). Without these the
+    // panel's "Manual" choice had no amount to keep and preloaded nothing.
+    "video_preload_in_VRAM",
+    "image_preload_in_VRAM",
+    "audio_preload_in_VRAM",
+    // v18.20 LM offload behaviour (Deepy / prompt enhancer).
+    "llm_cpu_compute",
     "perc_reserved_mem_max",
     // Troubleshooting "known-good recipe" writes these two; both verified to
     // exist in a live v17 wgp_config.json.
@@ -2994,19 +3025,28 @@ mod autotune_matrix_tests {
             (("high", "very_low"), (3.5, 3.5)), // P1/P3/P3.5 already give audio its fast path
             (("low", "high"), (2.0, 3.0)),      // v18.11: P3 (not P3+) is the audio default
             (("low", "low"), (4.0, 3.0)),
-            // Video already at P5 → nothing left to spare; audio follows down.
-            (("low", "very_low"), (5.0, 5.0)),
+            // v18.20 P0: under 32 GB RAM neither P4 nor P5's permanent
+            // reservation is affordable, so the low-RAM fast path owns both
+            // cells. Audio inherits it (P0 keeps nothing reserved either).
+            (("low", "very_low"), (0.0, 0.0)),
             (("tight", "high"), (4.0, 3.0)),
             // v17 + MMGP v4: the tight tier rides P4 with the levers on, and
             // audio still gets P3 — audio models fit whole where a 14B video
             // model would not.
             (("tight", "low"), (4.0, 3.0)),
-            (("tight", "very_low"), (4.0, 3.0)),
+            (("tight", "very_low"), (0.0, 0.0)),
         ];
         for ((vt, rt), (v, a)) in cases {
             let r = rec(vt, rt, if vt == "tight" { 8.0 } else { 16.0 }, false);
             assert_eq!(r["video_profile"].as_f64().unwrap(), v, "{vt}/{rt} video");
             assert_eq!(r["audio_profile"].as_f64().unwrap(), a, "{vt}/{rt} audio");
+            // Upstream 06106f69 raised the mmgp/CLI default 0.8 -> 0.85; the
+            // non-tight tiers follow it, tight keeps the launcher's 0.70 valve.
+            assert_eq!(
+                r["vram_safety_coefficient"].as_f64().unwrap(),
+                if vt == "tight" { 0.70 } else { 0.85 },
+                "{vt}/{rt} VRAM safety coefficient"
+            );
             assert_eq!(r["vae_config"], 0);
             assert_eq!(r["transformer_quantization"], "int8");
             // Text encoder quant (Configuration → Text Encoder Quantization):
@@ -3181,6 +3221,48 @@ mod autotune_matrix_tests {
         }
     }
 
+    /// v18.20: Manual preloads need an amount, and Deepy's CPU offload is a
+    /// Performance-panel setting (upstream Configuration > Performance >
+    /// Language Models CPU Compute). All four must survive Apply + Read.
+    #[test]
+    fn apply_allowlist_covers_preload_amounts_and_lm_cpu_compute() {
+        for key in [
+            "video_preload_in_VRAM",
+            "image_preload_in_VRAM",
+            "audio_preload_in_VRAM",
+            "llm_cpu_compute",
+        ] {
+            assert!(MEMORY_OVERRIDE_KEYS.contains(&key), "{key} not appliable");
+        }
+        for (key, good, bad) in [
+            (
+                "image_preload_in_VRAM",
+                serde_json::json!(8000),
+                serde_json::json!(-1),
+            ),
+            // The MB fields are integers only: wgp.py reads them with int().
+            (
+                "video_preload_in_VRAM",
+                serde_json::json!(0),
+                serde_json::json!(1.5),
+            ),
+            (
+                "llm_cpu_compute",
+                serde_json::json!("auto"),
+                serde_json::json!("sometimes"),
+            ),
+        ] {
+            assert!(valid_memory_override(key, &good), "{key} rejects {good}");
+            assert!(!valid_memory_override(key, &bad), "{key} accepts {bad}");
+        }
+        for good in ["on", "off"] {
+            assert!(valid_memory_override(
+                "llm_cpu_compute",
+                &serde_json::json!(good)
+            ));
+        }
+    }
+
     /// The other half of the allowlist contract: what Apply writes, Read must
     /// return. `memory_profile_read` used a hand-written list that predated the
     /// v17 keys — they saved and then displayed "saved: —" forever.
@@ -3188,7 +3270,7 @@ mod autotune_matrix_tests {
     fn memory_profile_read_returns_written_keys_and_invents_none() {
         let td = TestDataDir::new();
         td.seed_wgp_config(
-            r#"{"video_profile":4,"vram_allocator":"vmm_spill","ram_allocator":"mmgp","attention_head_split":2,"read_ahead":true,"smart_memory_pinning":true,"video_preload_mode":"default","image_preload_mode":"dynamic","audio_preload_mode":"default","perc_reserved_mem_max":0,"enable_int8_kernels":0,"unrelated":"x"}"#,
+            r#"{"video_profile":4,"vram_allocator":"vmm_spill","ram_allocator":"mmgp","attention_head_split":2,"read_ahead":true,"smart_memory_pinning":true,"video_preload_mode":"default","image_preload_mode":"dynamic","audio_preload_mode":"default","image_preload_in_VRAM":8000,"audio_preload_in_VRAM":0,"llm_cpu_compute":"auto","perc_reserved_mem_max":0,"enable_int8_kernels":0,"unrelated":"x"}"#,
         );
         let settings = memory_profile_read()
             .get("settings")
@@ -3204,6 +3286,10 @@ mod autotune_matrix_tests {
             ("video_preload_mode", serde_json::json!("default")),
             ("image_preload_mode", serde_json::json!("dynamic")),
             ("audio_preload_mode", serde_json::json!("default")),
+            // v18.20: the Manual preload amount and Deepy's LM CPU offload.
+            ("image_preload_in_VRAM", serde_json::json!(8000)),
+            ("audio_preload_in_VRAM", serde_json::json!(0)),
+            ("llm_cpu_compute", serde_json::json!("auto")),
             ("perc_reserved_mem_max", serde_json::json!(0)),
             // legacy int8 toggle still maps to the replacement key
             ("int8_kernels", serde_json::json!("disabled")),
@@ -3226,6 +3312,35 @@ mod autotune_matrix_tests {
             settings.get("read_ahead").is_none(),
             "read_ahead was retired upstream - never read it back"
         );
+    }
+
+    /// v18.20 P0: upstream's `dynamic_preload()` makes P0's Default preload
+    /// dynamic (wgp.py:4048-4051: `int(profile) == 0 and mode == "default"`),
+    /// so the panel writes Default for every output instead of Dynamic — same
+    /// behaviour, and no setting that reads as manual when it is not.
+    #[test]
+    fn p0_recommendation_uses_the_profile_default_preload() {
+        let r = auto_tune_recommend(
+            Some(serde_json::json!({
+                "vram_tier": "tight", "ram_tier": "very_low", "gpu_vram_gb": 10.0,
+                "cuda_available": true, "vendor": "NVIDIA",
+            })),
+            None,
+        );
+        assert_eq!(r["video_profile"], 0.0);
+        assert_eq!(r["image_profile"], 0.0);
+        assert_eq!(r["audio_profile"], 0.0);
+        assert!(r["_recommendation_label"]
+            .as_str()
+            .unwrap()
+            .starts_with("LowRAM"));
+        for k in [
+            "video_preload_mode",
+            "image_preload_mode",
+            "audio_preload_mode",
+        ] {
+            assert_eq!(r[k], "default", "{k} must ride P0's own Dynamic default");
+        }
     }
 
     #[test]

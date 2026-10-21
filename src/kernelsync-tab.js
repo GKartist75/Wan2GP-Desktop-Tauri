@@ -52,7 +52,7 @@ $("installHipGgufBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   if (
     !(await askConfirm(
-      "Install experimental HIP GGUF 1.0.27 (torch213rocm100py312) for AMD RDNA4 (RX 9060/9070, gfx1200/gfx1201)?\n\nInstalls in this env's torch 2.13+rocm10 stack - the wheel checks the ROCm torch build at import. Update GPU Wheels installs the same wheel automatically. Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
+      "Install experimental HIP GGUF 1.0.28 (torch213rocm100py312) for AMD RDNA4 (RX 9060/9070, gfx1200/gfx1201)?\n\nInstalls in this env's torch 2.13+rocm10 stack - the wheel checks the ROCm torch build at import. Update GPU Wheels installs the same wheel automatically. Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
     ))
   )
     return;
@@ -70,16 +70,16 @@ $("installHipGgufBtn")?.addEventListener("click", async function () {
     setTimeout(refreshDashboard, 1500);
   }
 });
-// Optional WGPKernels INT8 wheel (deepbeepmeep/WGPKernels v1.1.2, in
+// Optional WGPKernels INT8 wheel (deepbeepmeep/WGPKernels v1.3.0, in
 // setup_config since upstream 17307e5 but still an explicit opt-in here).
 // The backend picks the wheel from the active env's torch build
 // (cu130/cu128, or rocm100 on an AMD ROCm 10 env) and refuses
-// GPUs below compute 8.0 / outside RDNA4.
+// GPUs below Turing (7.5) / outside RDNA4.
 $("installWgpkernelsBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   if (
     !(await askConfirm(
-      "Install the WGPKernels 1.1.2 wheel for INT8 fast kernels?\n\nOptional upstream wheel (also installed by Update GPU Wheels). It matches your torch build automatically: cu130/cu128 for NVIDIA RTX 30/40/50, or the experimental rocm100 build for AMD RDNA4 (RX 9060/9070 series). WanGP's int8_kernels = Auto will prefer it once present.",
+      "Install the WGPKernels 1.3.0 wheel for INT8 fast kernels?\n\nOptional upstream wheel (also installed by Update GPU Wheels). It matches your torch build automatically: cu130/cu128 for NVIDIA RTX 20/30/40/50, or the experimental rocm100 build for AMD RDNA4 (RX 9060/9070 series). WanGP's int8_kernels = Auto will prefer it once present.",
     ))
   )
     return;

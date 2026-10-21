@@ -619,8 +619,17 @@ fn collect_ckpt_files(
         } else {
             "Yours"
         };
+        // `rel` is what library_model_delete takes: the file's path from the
+        // checkpoints root, so the UI never has to guess which folder a name
+        // came from (root files and `adult-pack/` share one list).
+        let rel = if pack {
+            format!("adult-pack/{name}")
+        } else {
+            name.clone()
+        };
         files.push(serde_json::json!({
             "name": name,
+            "rel": rel,
             "bytes": b,
             "kind": model_kind_tag(&e.file_name().to_string_lossy()),
             "origin": origin,
@@ -659,6 +668,54 @@ pub fn library_models() -> serde_json::Value {
         "truncated": truncated,
         "sample": sample,
     })
+}
+
+/// Resolve a `library_models` `rel` to the file it names. Only `name.ext` and
+/// `adult-pack/name.ext` with a checkpoint extension are accepted, then the
+/// canonical path must still sit under the canonical root — so a crafted
+/// payload cannot walk out of the checkpoints folder, and a symlinked subfolder
+/// cannot turn the button into a general file-delete primitive.
+fn safe_ckpt_path(root: &Path, rel: &str) -> Result<PathBuf, String> {
+    if rel.is_empty() || rel.contains('\0') {
+        return Err("Empty file name".into());
+    }
+    let (base, name) = match rel.split_once('/') {
+        Some(("adult-pack", n)) => (root.join("adult-pack"), n),
+        Some(_) => return Err("Invalid checkpoint path".into()),
+        None => (root.to_path_buf(), rel),
+    };
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || !is_ckpt_file(name)
+    {
+        return Err("Invalid checkpoint path".into());
+    }
+    let canon_root =
+        std::fs::canonicalize(root).map_err(|e| format!("Checkpoints folder unavailable ({e})"))?;
+    let canon =
+        std::fs::canonicalize(base.join(name)).map_err(|_| "Checkpoint not found".to_string())?;
+    if !canon.starts_with(&canon_root) {
+        return Err("Refusing to delete outside the checkpoints folder".into());
+    }
+    if !canon.is_file() {
+        return Err("Not a file".into());
+    }
+    Ok(canon)
+}
+
+/// Delete one checkpoint file from the inventory. The frontend confirms with
+/// the name and size first; this only re-validates the path and reports the
+/// bytes it freed.
+#[tauri::command]
+pub fn library_model_delete(rel: String) -> Result<serde_json::Value, String> {
+    let root = resolve_ckpts_dir().ok_or("No checkpoints folder configured")?;
+    let target = safe_ckpt_path(&root, &rel)?;
+    let bytes = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
+    std::fs::remove_file(&target).map_err(|e| format!("Cannot delete ({e})"))?;
+    Ok(serde_json::json!({"ok": true, "rel": rel, "bytes": bytes}))
 }
 
 #[tauri::command]
@@ -1132,7 +1189,10 @@ pub fn uv_cache_clean(action: Option<String>) -> serde_json::Value {
 
 #[cfg(test)]
 mod library_tests {
-    use super::{finetune_id_valid, lora_cache_hits, summarize_finetune, summarize_workspace};
+    use super::{
+        collect_ckpt_files, finetune_id_valid, lora_cache_hits, safe_ckpt_path, summarize_finetune,
+        summarize_workspace,
+    };
     use std::collections::HashMap;
 
     #[test]
@@ -1212,5 +1272,65 @@ mod library_tests {
         let s = summarize_workspace("x", &serde_json::json!({"nope": 1}));
         assert_eq!(s["files"], serde_json::json!(0));
         assert_eq!(s["archive_protected"], serde_json::json!(false));
+    }
+
+    /// Unique scratch root per test binary, so parallel tests never share files.
+    fn scratch_root(tag: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("wgp-ckpt-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(p.join("adult-pack")).unwrap();
+        p
+    }
+
+    #[test]
+    fn model_inventory_carries_the_delete_target() {
+        let root = scratch_root("inventory");
+        std::fs::write(root.join("root_model_int8.safetensors"), b"x").unwrap();
+        std::fs::write(root.join("adult-pack/pack_model_int8.safetensors"), b"x").unwrap();
+        let mut files = vec![];
+        let mut bytes = 0;
+        let upstream = std::collections::HashSet::new();
+        collect_ckpt_files(&root, false, &upstream, &mut files, &mut bytes);
+        collect_ckpt_files(
+            &root.join("adult-pack"),
+            true,
+            &upstream,
+            &mut files,
+            &mut bytes,
+        );
+        let rels: Vec<&str> = files.iter().filter_map(|f| f["rel"].as_str()).collect();
+        assert!(rels.contains(&"root_model_int8.safetensors"), "{rels:?}");
+        assert!(
+            rels.contains(&"adult-pack/pack_model_int8.safetensors"),
+            "{rels:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn checkpoint_delete_rejects_paths_outside_the_inventory() {
+        let root = scratch_root("reject");
+        std::fs::write(root.join("ok_int8.safetensors"), b"x").unwrap();
+        std::fs::write(root.join("adult-pack/pack_int8.safetensors"), b"x").unwrap();
+        std::fs::write(root.join("readme.txt"), b"x").unwrap();
+        for bad in [
+            "",
+            "../ok_int8.safetensors",
+            "..\\ok_int8.safetensors",
+            "adult-pack/../ok_int8.safetensors",
+            "sub/ok_int8.safetensors",
+            "C:\\Windows\\system32\\x.safetensors",
+            "readme.txt",
+            ".",
+        ] {
+            assert!(
+                safe_ckpt_path(&root, bad).is_err(),
+                "{bad:?} must be rejected"
+            );
+        }
+        assert!(safe_ckpt_path(&root, "missing.safetensors").is_err());
+        assert!(safe_ckpt_path(&root, "ok_int8.safetensors").is_ok());
+        assert!(safe_ckpt_path(&root, "adult-pack/pack_int8.safetensors").is_ok());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

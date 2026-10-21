@@ -26,7 +26,7 @@ flowchart TD
 - [Manage → Auto-Tune](#manage--auto-tune)
 - [Manage → Plugins](#manage--plugins)
 - [Manage → Library](#manage--library)
-- [Manage → Pack](#manage--pack)
+- [Finetune Manager (companion plugin)](#finetune-manager-companion-plugin)
 - [Guide (topbar)](#guide-topbar)
 - [Console & logs](#console--logs)
 - [Typical workflows](#typical-workflows)
@@ -71,8 +71,8 @@ The home screen. Top to bottom:
 
 **AMD and the experimental kernels (RX 9060 / 9070 series — gfx1200/gfx1201).** Both wheels now install straight into the installer's torch 2.13+rocm10 env — there is no separate environment any more:
 
-- **WGPKernels (INT8)** — the INT8 fast path. One-click on NVIDIA RTX 30/40/50 (the launcher picks `cu130`/`cu128` from your torch build) and on AMD RDNA4 (the `rocm100` build installs right in the installer's TheRock torch 2.13+rocm10 env). *↻ Update GPU Wheels* also installs it now that upstream profiles list it.
-- **HIP GGUF (exp)** — the AMD build of the GGUF wheel (1.0.27, `torch213rocm100py312`). It is built for **this** env — torch 2.13.0+rocm10.0.0 — and the wheel checks the ROCm torch build at import. *↻ Update GPU Wheels* lands it automatically on RDNA4; the button stays as a reinstall path.
+- **WGPKernels (INT8)** — the INT8 fast path. One-click on NVIDIA RTX 20/30/40/50 (the launcher picks `cu130`/`cu128` from your torch build; Turing 7.5 is in since 1.3.0) and on AMD RDNA4 (the `rocm100` build installs right in the installer's TheRock torch 2.13+rocm10 env). *↻ Update GPU Wheels* also installs it now that upstream profiles list it.
+- **HIP GGUF (exp)** — the AMD build of the GGUF wheel (1.0.28, `torch213rocm100py312`). It is built for **this** env — torch 2.13.0+rocm10.0.0 — and the wheel checks the ROCm torch build at import. *↻ Update GPU Wheels* lands it automatically on RDNA4; the button stays as a reinstall path.
 
 RDNA 1–3.5 cards have **no** WGPKernels/HIP wheel. Upstream's own HIP validation is still pending (no RDNA4 board on their side), so treat the HIP path as experimental.
 
@@ -310,7 +310,7 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 ## Manage → Launch
 
 - **Share Link** — Gradio public tunnel (only if localhost isn't reachable; your server becomes internet-visible).
-- **Presets & flag builder** — Balanced / Low VRAM / Max perf / Emergency preset buttons stage a known-good arg string; attention/profile/teacache dropdowns + compile/fp16 toggles patch single flags. The Extra Launch Args field below updates — press **Save**.
+- **Presets & flag builder** — Balanced / Low VRAM / Max perf / Emergency preset buttons stage a known-good arg string; attention/profile dropdowns + compile/fp16 toggles patch single flags (step skipping such as TeaCache is a WanGP generation setting, not a launch flag). The Extra Launch Args field below updates — press **Save**.
 - **Agent API (MCP server)** — transport/host/port/version picker shows the exact launch command + client URL, with copy. stdio = local spawn; HTTP needs `--mcp-auth` + HTTPS off-localhost.
 - **Headless batch** — queue `.zip`/settings `.json` path + optional output dir + dry-run → runs `wgp.py --process` with console streaming; exit 0 = done, 1 = error.
 - **Extra Launch Args** — appended to `wgp.py` verbatim.
@@ -391,7 +391,7 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 | **SpargeAttn** | RTX 30+ | — | sparsity-aware speed-up alongside Sage |
 | **FlashAttention** | `2.8.3` (RTX 30+, Ampere+) | `2.8.4` (ROCm/Triton, prebuilt wheel) | memory-efficient exact attention |
 | **Nunchaku** | `1.2.1` | — | SVD-quantized (NF4/SVDQ) runtime |
-| **GGUF llama.cpp** | CUDA `1.0.27` build (`cu130` or `cu128` per env) | HIP `1.0.27` build (in-env ROCm 10, RDNA4, experimental) | 4-bit GGUF kernels (single-launch row loop from 1.0.27 — 2–10% faster decode, less VRAM; packed rows from 1.0.26 — fixes MiniMax H3 image-reference projections) |
+| **GGUF llama.cpp** | CUDA `1.0.28` build (`cu130` or `cu128` per env) | HIP `1.0.28` build (in-env ROCm 10, RDNA4, experimental) | 4-bit GGUF kernels (single-launch row loop from 1.0.27 — 2–10% faster decode, less VRAM; packed rows from 1.0.26 — fixes MiniMax H3 image-reference projections; 1.0.28 adds RTX 20's PTQ1_0/Bonsai decode win — each weight block is decoded once for all tokens of a step) |
 | **LightX2V** | RTX 50xx only | — | FP4 kernels (sm120+) |
 | **bitsandbytes NF4** | `0.49.2` (optional — *not* installed by the default set) | — | 8-bit / NF4 dequant (one-click install from the dashboard, pinned) |
 
@@ -460,7 +460,9 @@ Two caveats if you override video to `dynamic`: it **only engages with the MMGP 
 
 ### Settings written by older Auto-Tune tiers
 
-`video/image/audio_profile` (1–5), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `text_encoder_quantization` (bf16 / int8), `int8_kernels` (Auto / WGPKernels / Comfy Kitchen / Triton / Disabled), `fp8_kernels` (Auto / CUDA / Triton / PyTorch), `kernel_precision` (fast approximate / strict), `vae_config` (always Auto: 16GB+ / 8GB+ / 6GB+ presets), `vram_safety_coefficient` (0.80 / 0.70 / 0.60). **Failsafe** forces P5 for hardware where the recommendation still crashes. Audio models now default to **P3** (upstream's "recommended for audio": P4 + Dynamic Preload), not P3+.
+`video/image/audio_profile` (upstream accepts 0–5; Auto-Tune writes **P0** — *More Speed with Less RAM*, no permanent Reserved RAM — wherever RAM is under 32 GB, P1–P5 above that, and names its pick above the matrix), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `text_encoder_quantization` (bf16 / int8), `int8_kernels` (Auto / WGPKernels / Comfy Kitchen / Triton / Disabled), `fp8_kernels` (Auto / CUDA / Triton / PyTorch), `kernel_precision` (fast approximate / strict), `vae_config` (always Auto: 16GB+ / 8GB+ / 6GB+ presets), `vram_safety_coefficient` (**0.85 / 0.70 / 0.60** — upstream raised its own default from 0.80 to 0.85 in v18.20, so the non-tight tiers track it; 0.70 is the launcher's own valve under 12 GB). **Failsafe** forces P5 for hardware where the recommendation still crashes. Audio models now default to **P3** (upstream's "recommended for audio": P4 + Dynamic Preload), not P3+, except where the video profile is P0 or P5 — those inherit, since neither keeps Reserved RAM to hand over.
+
+The panel also carries settings Auto-Tune never recommends, only writes when you set them: `video/image/audio_preload_in_VRAM` (the megabytes a **Manual** VRAM Preload keeps — upstream measured ~6000 MB taking Flux dev 1024² P4 steps within ~20% of P1, 8000 MB or more bringing it close to P1) and `llm_cpu_compute` (*Language Models CPU Compute*: **Auto** by default, **On** to force the CPU to help Deepy and the prompt enhancer while their layers stream from RAM, **Off** for GPU transfers only).
 
 
 ## Manage → Plugins
@@ -482,204 +484,43 @@ URL/LoRA counts and an origin column (`Pack`, `Pack · CivitAI`,
 `Overrides DeepBeepMeep`, or `Yours`); checkpoint inventory with origin
 (`DeepBeepMeep` when the file is named in the shipped `defaults/`, `Pack` when it
 is in `adult-pack/`, otherwise `Yours`), plus import (validated, never
-overwrites), export (download JSON to share) and delete. Refresh Model List in
-WanGP afterwards.
+overwrites), export (download JSON to share) and delete. Every checkpoint row
+carries a **Delete** button: it confirms with the name and size first, then
+removes only that file — the backend accepts just `name.ext` or
+`adult-pack/name.ext` with a model extension and re-checks that the resolved
+path is still inside the checkpoints folder, so it can never remove anything
+else. Refresh Model List in WanGP afterwards.
 
 **Workspaces** — per-project media counts, real on-disk sizes, moved/missing
 file flags, archive-lock toggle, definitions backup ZIP (back up outputs too
 for a portable archive).
 
-## Manage → Pack
+## Finetune Manager (companion plugin)
 
-📦 **Adult (NSFW) model pack** — a curated catalog of adult checkpoints and
-LoRAs that Wan2GP can actually load, plus a way to find and add your own.
+The launcher contains no model-pack manager: no catalog, no registry, no search,
+no download code. Pack recipes, the community registry, CivitAI search, local
+imports/exports and missing-file downloads are owned entirely by the
+**Finetune Manager** plugin, which the launcher installs and enables by default
+from a pinned, known-good release.
 
-> **In development.** Catalog entries, sources and install locations can change
-> between releases. Adult content is optional and off by default — use it only
-> if you are 18 or older and it is legal where you live. You are responsible for
-> what you download and generate.
+- **Manage -> Plugins -> Finetune Manager (recommended)** shows whether the
+  companion is installed, offers **Install / repair**, and has an opt-out for
+  automatic installs.
+- On a fresh install, after Repair, and on startup for existing installs, the
+  launcher ensures the companion is present. It never defaults to `master`.
+- If the plugin is missing or you opt out, the launcher simply has no pack UI:
+  nothing is installed silently and there is no hidden tab or fallback.
+- Open Wan2GP after installing and use the Finetune Manager tab for recipes,
+  registry, CivitAI and file downloads. The plugin resolves assets with Wan2GP's
+  own locator rules, including `|subfolder`, `|%lora_dir`, second-phase URLs and
+  pack aliases.
 
-The tab is ordered as a workflow: **disclaimer → pack gate and catalogue →
-Downloads → Find models → Finetune recipes → LoRA files**. The pack is the
-headline; everything below Downloads is optional tooling for models the pack
-does not carry.
+> The Library tab still lists files already on disk under `adult-pack/` folders
+> from earlier launcher versions, so nothing you downloaded disappears from the
+> inventory. It only reads and reports those files.
 
-This tab is **off by default and nothing is downloaded until you tick it** — the
-18+ confirmation gates the whole panel. Installing Wan2GP must never carry an
-opt-in adult-content decision, which is why this lives in Manage and not in
-Setup.
-
-**CivitAI is a second, separate switch — also off by default.** CivitAI lives at
-`civitai.red`, the adult host, and many security suites and ISPs block that
-domain outright. While the switch is off the launcher makes **no request to
-CivitAI at all**: the account tier is hidden, both source pickers fall back to
-HuggingFace, and every CivitAI command returns "CivitAI is turned off" without
-opening a connection. Turn it on under the pack's own settings when you want
-search, browse, examples or the account tier; if your antivirus blocks adult
-sites, allow `civitai.red` (and `image.civitai.com`) first. HuggingFace-only
-browsing, updates and catalog fetches work with the switch off.
-
-**A CivitAI token is optional.** Public releases download without an account. A
-token is only needed for auth-gated or early-access files, and it raises the API
-rate limit. Create one from **Account → API Keys** on
-[civitai.com](https://civitai.com/user/account) or
-[civitai.red](https://civitai.red/user/account) — the same key works on both
-hosts, and the pack's token row has buttons that open either page. When a release
-rejects an anonymous request the panel says so instead of pretending the item is
-broken.
-
-**Every row shows what you actually have:**
-
-| On the row | Meaning |
-| --- | --- |
-| thumbnail | a pinned preview from the repo, or example renders matched on CivitAI |
-| `v1.4 · 2025-10-24` | version and release date |
-| **downloaded** | on disk and matching the verified size |
-| **update available** | on disk, but the author has published newer bytes |
-| **recipe written** | its `finetunes/*.json` is in place |
-| **weights on disk** | a checkpoint's files were prefetched |
-
-The chips above the list answer "what do I already have" at a glance.
-
-### Four ways in
-
-1. **Browse the catalog** — 108 LoRA files and 19 checkpoint recipes across Wan
-   2.2, MiniMax H3, LTX 2.3 and image models. Ticking a group selects it;
-   HIGH/LOW halves always travel together, because Wan2GP loads both in one job.
-2. **Trending & most downloaded** — no keyword needed. Rank by trending, most
-   downloaded, most liked or newest; filter by type and base model. The list is
-   *"what is hot among models Wan2GP can load"*, not a generic firehose: anything
-   that does not map to a real architecture is never shown.
-3. **Search by name, then Add…** — search HuggingFace or CivitAI, inspect the
-   repo's files, pick one, and **Add** it. Adding writes
-   `finetunes/adultpack_<id>.json`, so **Wan2GP downloads the weights itself on
-   first run** — the launcher never re-hosts a model. Anything you add is
-   remembered in `adult-pack-custom.json`, outside the shipped catalog, so
-   updates cannot drop it.
-4. **Add by link** — when you already know the model, paste a HuggingFace repo
-   (`owner/name` or its URL), a CivitAI model URL, or a CivitAI model id, pick the
-   architecture, and **Open…**. This is the path for a model whose name matches no
-   keyword, so nothing is limited to the catalog's own vocabulary. On a CivitAI
-   model with several versions you can switch version before adding, and the
-   auto-detected file kind (LoRA vs checkpoint) can be overridden before you
-   confirm — a wrong guess never forces a file into the wrong folder.
-   Public CivitAI files need no key. A gated CivitAI *checkpoint* added this way
-   is first fetched by the pack's own button (which can authenticate); Wan2GP's
-   automatic first-run download cannot supply your key, so fetch it here first.
-
-Examples: **Examples** on a row opens the model's own sample media (video reels
-included). Most mirrors publish no media of their own, so unmatched models get
-**Find examples on CivitAI**, which shows candidate renders *with their model
-names* — check the name before trusting a picture.
-
-### Every row has its own actions
-
-The `⋯` button at the end of a row does everything that one model can do to
-itself, so you never have to select a whole group to act on one entry:
-
-- **Make / Rewrite finetune JSON** — writes the recipe Wan2GP reads
-- **Fetch weights now** — prefetch a checkpoint's files instead of waiting
-- **Open recipe** — jump to it in the finetune manager
-- **Copy URL / Copy file name / Open source page**
-- **Delete…** — the only red action; always confirmed. It removes exactly the
-  selected pack item (and, for a CivitAI item, the files it recorded), never
-  cleans a folder or touches unrelated models.
-
-LoRA rows deliberately have no "make finetune JSON": Wan2GP loads LoRAs from
-`loras\<collection>\adult-pack\` — inside the folder it scans for that model
-family — so the row says that instead of offering a button that cannot work.
-CivitAI LoRAs use the same path; CivitAI checkpoints go to
-`ckpts\adult-pack\` with a local-path recipe.
-
-### Updates
-
-**Check for updates** lists every catalog repo and compares each file's current
-SHA-256 against the pinned one — so an update is reported only when the bytes
-really changed, not because a date moved. **Apply & download selected** re-points
-the local hash (in `adult-pack-pins.json`) and then downloads, verified against
-that new hash. A downloaded file whose size no longer matches is flagged as
-**update available** with its before/after size.
-
-### Downloads
-
-**Download selected** is a queue, not a wall of log lines: one row per ticked
-item shows its size as it arrives and whether it is downloading, verifying or
-done. Files are fetched one at a time; an item that fails never stops the rest,
-and its row says **failed** while the log carries the reason. A file already on
-disk and hash-matching is reported as done without being re-downloaded. CivitAI
-author-exclusive items resolve and download before the batch and report in the
-log; every other file goes through the queue.
-
-### Finetune manager
-
-Every recipe Wan2GP will offer, from all three origins — this pack, your own
-additions, and anything you imported by hand. Edit the JSON in place, **Form
-view** to edit it with the same form used to create one, **Check links** (HEADs
-every source URL), **Copy** or **Export** to share, or delete a recipe (the
-weights stay on disk). **Import…** takes the full path to a shared `.json` and
-files it into `finetunes/`. Writes are validated first: a recipe needs a name, an
-architecture this build actually ships, and at least one usable URL, and it can
-never overwrite a shipped base model in `defaults/`.
-
-**＋ New finetune.json** creates one from scratch without hand-writing JSON:
-pick the file id, a display name, the base architecture (the list is what this
-build ships in `defaults/`, plus the curated map — so a recipe that could never
-load cannot be written), a description, and the source URLs one per line. Two
-optional extras cover the WanGP fields that matter most: **Second phase** for
-HIGH/LOW models such as Wan 2.2 (written as `URLs2`), and **Model notes** /
-**Prompt help** for the Markdown WanGP shows behind the model's info buttons
-(`infos` and `prompt_infos`). An id that already exists is refused — open that
-recipe below and press **Edit** instead, so a creation can never silently replace
-a definition. The full field list lives in upstream's
-[`docs/FINETUNES.md`](https://github.com/deepbeepmeep/WanGP/blob/main/docs/FINETUNES.md).
-
-### LoRA files on disk
-
-**Refresh files** scans your LoRAs folder and lists every weight it finds,
-including files you copied in yourself. Each row says where it came from:
-**Pack** (a curated catalog file), **Pack · CivitAI** (fetched by the CivitAI
-tier), **Yours (added via pack)** (your own Find models addition), **Yours
-(CivitAI)**, **Pack (unlisted)** (in an `adult-pack` folder but not in the
-current catalog), or **Yours** (everything else). Any of them can be deleted from
-here rather than through Explorer. Deletion is confined to the LoRAs folder and
-always confirmed.
-
-Pack LoRAs are fetched into `loras\<collection>\adult-pack\` — inside the folder
-Wan2GP scans for that family (`wan`, `minimax_h3`, `ltx2`, `qwen`, `z_image`…),
-so they appear in Wan2GP's own LoRA list. The root is the one Wan2GP itself
-resolves: `--loras` from Manage → Launch arguments wins, then `loras_root` in
-`wgp_config.json`, then the launcher's configured folder; a `--lora-config`
-file remaps individual collections and is honoured too. Files downloaded by
-0.10.15 and earlier sat in `loras\adult-pack\<family>\`, which Wan2GP never
-reads; the launcher moves them into place once, automatically, the next time
-the Pack tab opens.
-
-Pack **checkpoints** are recipes, so Wan2GP downloads the weights itself — into
-`ckpts\adult-pack\` (more precisely `<checkpoints_paths[0]>\adult-pack\`),
-keeping the pack apart from your own and DeepBeepMeep's models. Recipes carry
-Wan2GP's `URL|adult-pack` form, which its downloader strips before the request
-and its locator uses to find the file later. Prefetch writes to the same folder,
-and anything fetched flat by 0.10.15 is moved in once. `checkpoints_paths`
-itself is never modified: which drive receives the files is still decided by
-its first entry, exactly as for every other model.
-
-### CivitAI account tier
-
-Turn on the CivitAI switch first (see above) — it is off by default and nothing
-here contacts `civitai.red` until it is on.
-
-Four CivitAI entries (two checkpoint collections and two LoRAs) are resolved
-live — the version id is looked up at the moment you fetch, because a pinned id
-would be stale as soon as the author publishes. The token is stored in its own
-file, never in `desktop-config.json`, and the launcher never re-hosts anything.
-If the launcher has no token of its own it reuses the `civitai_api_key` from the
-Wan2GP Finetune Manager plugin's `config.json`, read-only, so the key is entered
-once. A token is optional: public releases download without one; only gated or
-early-access files need it, and it raises the API rate limit. Browsing and
-searching CivitAI need no token. LoRAs land in `<collection>\adult-pack\`;
-checkpoints land in `ckpts\adult-pack\` with a local-path recipe.
-
----
+> Adult content remains opt-in. Installing Wan2GP or the companion never
+> downloads adult weights or makes an adult-content decision for you.
 
 ## Guide (topbar)
 

@@ -1,4 +1,3 @@
-mod adult_pack;
 mod amd;
 mod base;
 mod config;
@@ -109,6 +108,13 @@ pub fn run() {
                 let _ = w.show();
                 let _ = w.set_focus();
             }
+            // Existing installs predate the companion: seed it once in the
+            // background. It is a no-op when Wan2GP is absent, opted out, or
+            // already installed; failures only go to the setup log.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                crate::plugins::ensure_companion_plugin(handle, false).await;
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -198,6 +204,7 @@ pub fn run() {
             config::manage_list,
             config::library_loras,
             config::library_models,
+            config::library_model_delete,
             config::library_finetunes,
             config::library_finetune_import,
             config::library_finetune_delete,
@@ -301,6 +308,9 @@ pub fn run() {
             plugins::plugin_update,
             plugins::plugin_uninstall,
             plugins::plugin_refresh_catalog,
+            plugins::companion_plugin_status,
+            plugins::companion_plugin_install,
+            plugins::companion_plugin_set_opt_out,
             features::set_theme_follow_system,
             features::set_notifications_enabled,
             features::set_window_mode,
@@ -364,32 +374,7 @@ pub fn run() {
             deepy_web::main_lan_urls,
             log_server::log_server_start,
             log_server::log_server_stop,
-            log_server::log_server_status,
-            adult_pack::adult_pack_manifest,
-            adult_pack::adult_pack_save,
-            adult_pack::adult_pack_set_civitai,
-            adult_pack::adult_pack_fetch,
-            adult_pack::adult_pack_write_finetunes,
-            adult_pack::adult_pack_civitai_verify,
-            adult_pack::adult_pack_civitai_download,
-            adult_pack::adult_pack_status,
-            adult_pack::adult_pack_remove,
-            adult_pack::adult_pack_gallery,
-            adult_pack::adult_pack_civitai_gallery,
-            adult_pack::adult_pack_search,
-            adult_pack::adult_pack_browse,
-            adult_pack::adult_pack_updates,
-            adult_pack::adult_pack_apply_updates,
-            adult_pack::adult_pack_inspect,
-            adult_pack::adult_pack_add,
-            adult_pack::adult_pack_arches,
-            adult_pack::adult_pack_resolve_url,
-            adult_pack::adult_pack_lora_inventory,
-            adult_pack::adult_pack_lora_delete,
-            adult_pack::adult_pack_finetune_list,
-            adult_pack::adult_pack_finetune_read,
-            adult_pack::adult_pack_finetune_write,
-            adult_pack::adult_pack_finetune_check
+            log_server::log_server_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -24,27 +24,27 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
       hipBtn.style.display = p.indexOf("AMD") === 0 ? "" : "none";
       if (p.indexOf("AMD") === 0 && p !== "AMD_GFX1200" && p !== "AMD_GFX1201") {
         hipBtn.title =
-          "Experimental AMD-only: GGUF 1.0.27 torch213rocm100py312 HIP wheel (upstream targets RDNA4 gfx1200/gfx1201 - installing on " +
+          "Experimental AMD-only: GGUF 1.0.28 torch213rocm100py312 HIP wheel (upstream targets RDNA4 gfx1200/gfx1201 - installing on " +
           p +
           " is unvalidated). Installs in this env's torch 2.13+rocm10 stack; Update GPU Wheels installs it too.";
       } else if (hipBtn.title && hipBtn.title.indexOf("torch213rocm100") === -1) {
         hipBtn.title =
-          "Experimental AMD-only: GGUF 1.0.27 torch213rocm100py312 HIP wheel (RDNA4 gfx1200/gfx1201). Installs in this env's torch 2.13+rocm10 stack; Update GPU Wheels installs it too.";
+          "Experimental AMD-only: GGUF 1.0.28 torch213rocm100py312 HIP wheel (RDNA4 gfx1200/gfx1201). Installs in this env's torch 2.13+rocm10 stack; Update GPU Wheels installs it too.";
       }
     }
   } catch {}
-  // Optional WGPKernels INT8 opt-in: NVIDIA RTX 30/40/50 (compute 8.0+) and
+  // Optional WGPKernels INT8 opt-in: NVIDIA RTX 20/30/40/50 (Turing 7.5+) and
   // AMD RDNA4 (gfx1200/gfx1201) via the rocm100 wheel, which installs in
   // the installer's torch 2.13+rocm10 env — no separate env needed.
   try {
     const wgpkBtn = $("installWgpkernelsBtn");
     if (wgpkBtn) {
       const p = String(kernelProfile || "");
-      const ok = ["RTX_30", "RTX_40", "RTX_50", "AMD_GFX1200", "AMD_GFX1201"].includes(p);
+      const ok = ["RTX_20", "RTX_30", "RTX_40", "RTX_50", "AMD_GFX1200", "AMD_GFX1201"].includes(p);
       wgpkBtn.style.display = ok ? "" : "none";
       if (p === "AMD_GFX1200" || p === "AMD_GFX1201") {
         wgpkBtn.title =
-          "Experimental AMD-only on RDNA4 (RX 9060/9070 series): the WGPKernels 1.1.2 " +
+          "Experimental AMD-only on RDNA4 (RX 9060/9070 series): the WGPKernels 1.3.0 " +
           "rocm100 wheel installs directly in the installer's torch 2.13+rocm10 env.";
       }
     }

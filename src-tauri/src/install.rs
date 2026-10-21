@@ -2386,7 +2386,7 @@ pub async fn install(
                 // ROCm 7.14 environment any more.
                 if ["AMD_GFX1200", "AMD_GFX1201"].contains(&plan["profile"].as_str().unwrap_or(""))
                 {
-                    emit("[i] Experimental HIP GGUF wheel (RDNA4, gguf 1.0.27+torch213rocm100py312) installs in this env via Sync GPU Wheels → GGUF, or the HIP GGUF (exp) button. Validation pending.\n");
+                    emit("[i] Experimental HIP GGUF wheel (RDNA4, gguf 1.0.28+torch213rocm100py312) installs in this env via Sync GPU Wheels → GGUF, or the HIP GGUF (exp) button. Validation pending.\n");
                 }
             }
             // Fail-closed (issue #15): without the TheRock entry setup.py
@@ -3269,6 +3269,9 @@ pub async fn install(
     );
     // favourite plugins (Manage → Plugins ★): auto-clone after fresh setup
     crate::plugins::ensure_favorite_plugins(app.clone()).await;
+    // Default companion: Finetune Manager owns the pack/recipe UI. Best-effort,
+    // pinned tag, and respects the explicit opt-out in desktop-config.json.
+    crate::plugins::ensure_companion_plugin(app.clone(), false).await;
     mutating_done();
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
@@ -3751,8 +3754,8 @@ pub async fn restore_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,
     sync_kernels_inner(app, true).await
 }
 
-/// Experimental AMD HIP GGUF wheel (upstream gguf-v1.0.27, llama.cpp/HIP.md):
-/// `llamacpp_gguf_cuda-1.0.27+torch213rocm100py312` for RDNA4
+/// Experimental AMD HIP GGUF wheel (upstream gguf-v1.0.28, llama.cpp/HIP.md):
+/// `llamacpp_gguf_cuda-1.0.28+torch213rocm100py312` for RDNA4
 /// (gfx1200/gfx1201). Same package name as the CUDA wheel, so --force-reinstall
 /// swaps it; --no-deps preserves the installed torch. It installs into the
 /// ACTIVE AMD env — the launcher's own torch 2.13.0+rocm10.0.0 / py3.12 stack,
@@ -3762,7 +3765,7 @@ pub async fn restore_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,
 /// AMD-gated; non-RDNA4 AMD allowed with a warning (upstream targets
 /// gfx1200/gfx1201, validation pending). URL lives in hw.rs alongside the CUDA
 /// wheels (single source of truth).
-use crate::hw::GGUF_1027_WIN_PY312_HIP as HIP_GGUF_WHEEL_URL;
+use crate::hw::GGUF_1028_WIN_PY312_HIP as HIP_GGUF_WHEEL_URL;
 
 #[tauri::command]
 pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
@@ -3788,7 +3791,7 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
     if !["AMD_GFX1200", "AMD_GFX1201"].contains(&profile.as_str()) {
         emit_log(&format!("[!] {profile} is not the upstream RDNA4 target (gfx1200/gfx1201) — installing anyway, validation pending.\n"));
     }
-    emit_log("[*] Installing experimental HIP GGUF wheel 1.0.27+torch213rocm100py312 (uses this env's torch 2.13.0+rocm10.0.0; RDNA4 only; validation pending)…\n");
+    emit_log("[*] Installing experimental HIP GGUF wheel 1.0.28+torch213rocm100py312 (uses this env's torch 2.13.0+rocm10.0.0; RDNA4 only; validation pending)…\n");
     let repo = get_repo_dir();
     let env = get_active_env();
     let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
@@ -3891,8 +3894,8 @@ fn env_torch_kind(py: &str) -> Option<String> {
 }
 
 /// Opt-in WGPKernels INT8 wheel (upstream docs/INSTALLATION.md, Oct 2026;
-/// deepbeepmeep/WGPKernels v1.1.2). Since upstream 17307e5 the wheels are
-/// listed in setup_config (RTX_30/40/50 + AMD profiles), so Sync installs
+/// deepbeepmeep/WGPKernels v1.3.0). Since upstream 17307e5 the wheels are
+/// listed in setup_config (RTX_20/30/40/50 + AMD profiles), so Sync installs
 /// them — this button stays as the explicit opt-in / reinstall path.
 /// The dist name is `wgpkernels`, so `--force-reinstall` swaps the
 /// CUDA/ROCm variant cleanly; `--no-deps` preserves the installed torch.
@@ -3913,7 +3916,7 @@ pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_jso
     if !crate::hw::wgpkernels_supported_profile(&profile) {
         mutating_done();
         return Err(format!(
-            "WGPKernels needs an NVIDIA RTX 30/40/50 (compute capability 8.0+) or an AMD RDNA4 card (RX 9060/9070 series); this box reports {profile}."
+            "WGPKernels needs an NVIDIA RTX 20/30/40/50 (Turing 7.5 and up) or an AMD RDNA4 card (RX 9060/9070 series); this box reports {profile}."
         ));
     }
     let repo = get_repo_dir();
@@ -4543,7 +4546,7 @@ async fn sync_kernels_inner(
                         .and_then(|u| u.as_str())
                         .unwrap_or("")
                         .to_string()
-                // GGUF build split (upstream 5533384 + the 1.0.27 ROCm wheel):
+                // GGUF build split (upstream 5533384 + the 1.0.28 ROCm wheel):
                 // profiles list `gguf` (cu130/py311), but py310 envs need
                 // `gguf_cu128` and RDNA4 AMD envs need `gguf_rocm10`. Mirror
                 // setup.py's (torch_k, py_k) table off the LIVE env — it is the
@@ -5094,10 +5097,10 @@ mod wangp_git_tests {
     fn kernel_spec_version_reads_wheels_and_pins() {
         assert_eq!(
             super::kernel_spec_version_full(
-                "--no-deps https://x/llamacpp_gguf_cuda-1.0.27%2Btorch210cu130py311-cp311-cp311-win_amd64.whl"
+                "--no-deps https://x/llamacpp_gguf_cuda-1.0.28%2Btorch210cu130py311-cp311-cp311-win_amd64.whl"
             )
             .as_deref(),
-            Some("1.0.27+torch210cu130py311")
+            Some("1.0.28+torch210cu130py311")
         );
         assert_eq!(
             super::kernel_spec_version_full(
@@ -5128,7 +5131,7 @@ mod wangp_git_tests {
 
     #[test]
     fn base_version_strips_local_build_tags() {
-        assert_eq!(super::base_version("1.0.27+torch210cu130py311"), "1.0.27");
+        assert_eq!(super::base_version("1.0.28+torch210cu130py311"), "1.0.28");
         assert_eq!(
             super::base_version("2.2.0+cu130torch2.10.0andhigher.post6"),
             "2.2.0"
@@ -5384,8 +5387,8 @@ pub(crate) fn kernel_version_matches(installed: &str, wanted_full: &str) -> bool
     !wanted_full.contains('+') && base_version(have) == base_version(want)
 }
 
-/// Base version before a local build tag: `1.0.27+torch210cu130py311`
-/// → `1.0.25`, `2.2.0+cu130torch2.10.post6` → `2.2.0`. Pure.
+/// Base version before a local build tag: `1.0.28+torch210cu130py311`
+/// → `1.0.28`, `2.2.0+cu130torch2.10.post6` → `2.2.0`. Pure.
 pub(crate) fn base_version(v: &str) -> String {
     v.trim()
         .split(['+', '%'])
@@ -5811,6 +5814,7 @@ pub async fn repair_wangp_files(app: tauri::AppHandle) -> Result<serde_json::Val
     if record_wangp_pin(&repo) {
         emit("[*] Recorded this upstream commit as the rollback point.\n");
     }
+    crate::plugins::ensure_companion_plugin(app.clone(), false).await;
     mutating_done();
     Ok(serde_json::json!({"ok": true, "repaired": true, "stashed": had_edits}))
 }
@@ -6240,8 +6244,8 @@ mod kernel_skip_tests {
                 "1.2.1+cu13.0torch2.10",
             ),
             (
-                "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.27/llamacpp_gguf_cuda-1.0.27%2Btorch210cu130py311-cp311-cp311-win_amd64.whl",
-                "1.0.27+torch210cu130py311",
+                "--no-deps https://github.com/deepbeepmeep/kernels/releases/download/gguf-v1.0.28/llamacpp_gguf_cuda-1.0.28%2Btorch210cu130py311-cp311-cp311-win_amd64.whl",
+                "1.0.28+torch210cu130py311",
             ),
             (
                 "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl",
@@ -6278,10 +6282,10 @@ mod kernel_skip_tests {
 
     #[test]
     fn untagged_specs_still_compare_on_the_base_version() {
-        let spec = "https://example.com/kernels/releases/download/v1.0.27/llamacpp_gguf_cuda-1.0.27%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
+        let spec = "https://example.com/kernels/releases/download/v1.0.28/llamacpp_gguf_cuda-1.0.28%2Btorch210cu130py311-cp311-cp311-win_amd64.whl";
         let full = kernel_spec_version_full(spec).unwrap();
-        assert_eq!(full, "1.0.27+torch210cu130py311");
-        assert!(kernel_version_matches("1.0.27+torch210cu130py311", &full));
+        assert_eq!(full, "1.0.28+torch210cu130py311");
+        assert!(kernel_version_matches("1.0.28+torch210cu130py311", &full));
         assert!(!kernel_version_matches("1.0.24+torch210cu130py311", &full));
     }
 
@@ -6417,10 +6421,10 @@ mod sync_transcript_tests {
         // Built from the same four helpers the loop calls, so this asserts the
         // wording *and* the assembly order at once.
         let block = [
-            kernel_cfg_header_line("fdc63bdf", "1.0.27+torch210cu130py311"),
-            kernel_skip_line("wgpkernels", "1.1.2+cu130"),
+            kernel_cfg_header_line("fdc63bdf", "1.0.28+torch210cu130py311"),
+            kernel_skip_line("wgpkernels", "1.3.0+cu130"),
             kernel_skip_line("nunchaku_cu13", "1.2.1+cu13.0torch2.10"),
-            kernel_skip_line("gguf", "1.0.27+torch210cu130py311"),
+            kernel_skip_line("gguf", "1.0.28+torch210cu130py311"),
             kernel_skip_line("sage", "2.2.0+cu130torch2.10.0andhigher.post6"),
             // Triton is handled by the no-downgrade guard *before* the skip
             // branch, which is why the summary counts four kernels and the
@@ -6430,10 +6434,10 @@ mod sync_transcript_tests {
         ]
         .concat();
         let expected = "\
-[*] setup_config.json @ fdc63bdf (gguf 1.0.27+torch210cu130py311) — deepbeepmeep's wanted wheels
-[*] sync kernel wgpkernels — already at 1.1.2+cu130, skipped
+[*] setup_config.json @ fdc63bdf (gguf 1.0.28+torch210cu130py311) — deepbeepmeep's wanted wheels
+[*] sync kernel wgpkernels — already at 1.3.0+cu130, skipped
 [*] sync kernel nunchaku_cu13 — already at 1.2.1+cu13.0torch2.10, skipped
-[*] sync kernel gguf — already at 1.0.27+torch210cu130py311, skipped
+[*] sync kernel gguf — already at 1.0.28+torch210cu130py311, skipped
 [*] sync kernel sage — already at 2.2.0+cu130torch2.10.0andhigher.post6, skipped
 [*] keeping installed triton 3.7.1.post27 (newer than wanted 3.7.0) — not downgrading (#2264); pin an older triton manually if the old build is required
 [✓] kernel sync complete — 0 synced, 4 already current, 0 failed
@@ -6465,8 +6469,8 @@ mod sync_transcript_tests {
     /// up as a blank row.
     #[test]
     fn the_skip_line_names_the_env_version_in_one_line() {
-        let line = kernel_skip_line("gguf", "1.0.27+torch210cu130py311");
-        assert!(line.contains("— already at 1.0.27+torch210cu130py311, skipped"));
+        let line = kernel_skip_line("gguf", "1.0.28+torch210cu130py311");
+        assert!(line.contains("— already at 1.0.28+torch210cu130py311, skipped"));
         assert!(!line.contains("want"), "the pin is not repeated here");
         assert!(line.ends_with(", skipped\n"));
         assert_eq!(line.matches('\n').count(), 1);
@@ -6496,7 +6500,7 @@ mod override_wheels_tests {
             true,
         );
         let gguf = w.gguf.expect("stale gguf must swap");
-        assert!(gguf.contains("1.0.27"), "got {gguf}");
+        assert!(gguf.contains("1.0.28"), "got {gguf}");
         let sage = w.sage.expect("post4 must swap when safe");
         assert!(sage.contains("post6"), "got {sage}");
     }
@@ -6535,20 +6539,20 @@ mod override_wheels_tests {
     fn quiet_when_already_current_or_opted_out() {
         // Current GGUF + safe sage → nothing to do.
         let cur = cfg_with(
-            &GGUF_1014.replace("1.0.14", "1.0.27"),
+            &GGUF_1014.replace("1.0.14", "1.0.28"),
             "v220_cu13",
             super::SAGE_SAFE_WIN_URL,
         );
         let w = post_install_override_urls(&cur, "RTX_30", true);
         assert!(w.gguf.is_none() && w.sage.is_none());
-        // 1.0.26 is now stale too (floor 1.0.27).
-        let old26 = cfg_with(
-            &GGUF_1014.replace("1.0.14", "1.0.26"),
+        // 1.0.27 is now stale too (floor 1.0.28).
+        let old27 = cfg_with(
+            &GGUF_1014.replace("1.0.14", "1.0.27"),
             "v220_cu13",
             super::SAGE_SAFE_WIN_URL,
         );
-        let w26 = post_install_override_urls(&old26, "RTX_30", true);
-        assert!(w26.gguf.is_some(), "1.0.26 must swap to 1.0.27");
+        let w27 = post_install_override_urls(&old27, "RTX_30", true);
+        assert!(w27.gguf.is_some(), "1.0.27 must swap to 1.0.28");
         // User chose upstream sage → sage untouched, gguf still swaps.
         let w = post_install_override_urls(
             &cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4),
@@ -6567,7 +6571,7 @@ mod override_wheels_tests {
     #[test]
     fn swaps_stale_gguf_cu128_split() {
         // Upstream splits `gguf_cu128` (cu128/py310) at 1.0.25. A stale
-        // cu128 pin must swap to its matching 1.0.27 cu128 build.
+        // cu128 pin must swap to its matching 1.0.28 cu128 build.
         let stale_cu128 = GGUF_1014
             .replace("torch210cu130py311", "torch271cu128py310")
             .replace("py311", "py310");
@@ -6585,7 +6589,7 @@ mod override_wheels_tests {
         let w = post_install_override_urls(&cfg, "RTX_30", true);
         let gguf = w.gguf.expect("stale gguf_cu128 must swap");
         assert!(
-            gguf.contains("1.0.27") && gguf.contains("torch271cu128py310"),
+            gguf.contains("1.0.28") && gguf.contains("torch271cu128py310"),
             "got {gguf}"
         );
     }

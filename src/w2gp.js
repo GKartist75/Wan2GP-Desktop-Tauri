@@ -257,42 +257,6 @@ if (!window.__TAURI__) {
         },
         isDataDirRoaming: () => call("is_data_dir_roaming"),
         writeWgpConfig: (cfg) => call("write_wgp_config", { cfg }),
-        // Adult (NSFW) model pack — opt-in installer content.
-        adultPackManifest: () => call("adult_pack_manifest"),
-        adultPackSave: (selection, token) =>
-            call("adult_pack_save", { selection, token }),
-        adultPackSetCivitai: (enabled) =>
-            call("adult_pack_set_civitai", { enabled }),
-        adultPackFetch: (ids) => call("adult_pack_fetch", { ids }),
-        adultPackWriteFinetunes: (ids) =>
-            call("adult_pack_write_finetunes", { ids }),
-        adultPackCivitaiVerify: (token) =>
-            call("adult_pack_civitai_verify", { token }),
-        adultPackCivitaiDownload: (id, token) =>
-            call("adult_pack_civitai_download", { id, token }),
-        adultPackStatus: () => call("adult_pack_status"),
-        adultPackRemove: (ids) => call("adult_pack_remove", { ids }),
-        adultPackGallery: (repo, rev) => call("adult_pack_gallery", { repo, rev }),
-        adultPackCivitaiGallery: (id) => call("adult_pack_civitai_gallery", { id }),
-        adultPackSearch: (source, query, kind, family, limit) =>
-            call("adult_pack_search", { source, query, kind, family, limit }),
-        adultPackBrowse: (source, sort, period, kind, family, limit) =>
-            call("adult_pack_browse", { source, sort, period, kind, family, limit }),
-        adultPackUpdates: () => call("adult_pack_updates"),
-        adultPackApplyUpdates: (ids) => call("adult_pack_apply_updates", { ids }),
-        adultPackInspect: (source, id, architecture, version) =>
-            call("adult_pack_inspect", { source, id, architecture, version }),
-        adultPackAdd: (entry) => call("adult_pack_add", { entry }),
-        adultPackArches: () => call("adult_pack_arches"),
-        adultPackResolveUrl: (input) => call("adult_pack_resolve_url", { input }),
-        adultPackLoraInventory: () => call("adult_pack_lora_inventory"),
-        adultPackLoraDelete: (rel) => call("adult_pack_lora_delete", { rel }),
-        adultPackFinetuneList: () => call("adult_pack_finetune_list"),
-        adultPackFinetuneRead: (id) => call("adult_pack_finetune_read", { id }),
-        adultPackFinetuneWrite: (id, content) =>
-            call("adult_pack_finetune_write", { id, content }),
-        adultPackFinetuneCheck: (id) => call("adult_pack_finetune_check", { id }),
-        onAdultPackProgress: (cb) => listen("adult-pack-progress", cb),
         selectFolder: () => call("select_folder"),
         resetWgpConfig: () => call("reset_wgp_config"),
         confirmDialog: async (opts) => {
@@ -724,8 +688,13 @@ if (!window.__TAURI__) {
         pluginUpdate: (id) => call("plugin_update", { id }),
         pluginUninstall: (id) => call("plugin_uninstall", { id }),
         pluginRefreshCatalog: () => call("plugin_refresh_catalog"),
+        companionPluginStatus: () => call("companion_plugin_status"),
+        companionPluginInstall: () => call("companion_plugin_install"),
+        companionPluginSetOptOut: (enabled) =>
+            call("companion_plugin_set_opt_out", { enabled: !!enabled }),
         libraryLoras: () => call("library_loras"),
         libraryModels: () => call("library_models"),
+        libraryModelDelete: (rel) => call("library_model_delete", { rel }),
         libraryFinetunes: () => call("library_finetunes"),
         libraryFinetuneImport: (source) =>
             call("library_finetune_import", { source }),

@@ -2,6 +2,106 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.10.19] — 2026-10-21
+
+- **Auto-Tune follows upstream's new VRAM coefficient.** Upstream `06106f69`
+  raised `vram_safety_coefficient` from `0.80` to `0.85` — the CLI default and
+  mmgp's own signature ("max VRAM that should be allocated to preloaded
+  models"). The panel kept writing the old 0.80 on every 12 GB+ card, so 5% of
+  the VRAM was held back from the models for no reason. Non-tight tiers now
+  write **0.85**; tight (under 12 GB) keeps the launcher's own 0.70 valve and
+  failsafe 0.60. A test pins all three.
+
+- **Manual VRAM Preload now has an amount.** `video/image/audio_preload_in_VRAM`
+  are validated by `memory_profile_apply` but were missing from the Apply
+  allowlist and had no control, so choosing **Manual** wrote the mode and left
+  the megabytes at whatever was on disk — normally nothing, i.e. a preload of
+  0 MB. Three *VRAM Preload (MB)* fields now sit beside the video, image and
+  audio preload choices (0–200000, integers, 0 = none), are seeded from disk
+  and shown as `saved: 8000 MB`. The image field carries upstream's own
+  measurement: ~6000 MB brought Flux dev 1024² P4 steps within ~20% of P1, and
+  8000 MB or more comes close to P1.
+
+- **Language Models CPU Compute is settable in the launcher.** v18.20's
+  `llm_cpu_compute` (`wgp.py:4183`, `Configuration > Performance > Language
+  Models CPU Compute`) decides whether the CPU processes the layers a local
+  language model streams from RAM — Deepy and the prompt enhancer answer about
+  twice as fast when it does. The Performance Settings panel now carries
+  **Auto / On / Off**; it is written only when you pick one, so upstream's
+  `Auto` default applies otherwise, and 2-bit / ternary weights (IQ2, Bonsai)
+  keep streaming to the GPU either way.
+
+- **P0 is now the preferred profile under 32 GB of RAM.** v18.20's Profile 0
+  (*More Speed with Less RAM*) loads models part by part exactly like P4 but
+  keeps nothing in Reserved RAM — the running model borrows it and hands it on
+  at the next switch. Both `<32 GB` matrix cells reserved RAM that is not there
+  for a whole 14B model, so Auto-Tune now writes **P0** for 12–23 GB and under
+  12 GB cards with less than 32 GB of RAM (P5 remains the **Prefer failsafe**
+  net), and audio follows P0 instead of jumping to P3. The panel also names
+  its pick above the matrix — "Preferred here: video P0 · image P0 · audio P0
+  — P0 · LowRAM (upstream: experimental …)" — instead of leaving the table to
+  be decoded, and the rec:/saved: chips now read P3+/P4+ rather than 3.5/4.5.
+
+- **The Library can delete checkpoints.** Each row of *Downloaded models* now
+  has a **Delete** button: it names the file and its size in the confirmation,
+  then calls `library_model_delete`, which accepts only `name.ext` or
+  `adult-pack/name.ext` with a model extension and re-checks that the canonical
+  path is under the checkpoints folder — so the button can never remove
+  anything else. The inventory payload gained `rel` for that (a name alone is
+  ambiguous between the root and `adult-pack/`), and the compact table gained a
+  fixed-width action column beside Size.
+
+- **The launcher no longer contains a model-pack manager.** The Pack tab,
+  the 6.9k-line `adult_pack` backend and its 29 Tauri commands, the pinned
+  catalog (`adult-pack-manifest.json`), the sources/verify/refresh scripts,
+  the `pack:*` npm scripts and the pack test suite are all gone. Pack recipes,
+  registry, CivitAI search and downloads are owned by the **Finetune Manager**
+  companion plugin, which the launcher installs from a pinned release and can
+  repair or opt out of under Manage → Plugins. The CSP no longer allows the
+  HuggingFace/CivitAI preview origins. The Library still *reads* files already
+  on disk under `adult-pack/` so earlier downloads remain visible; it does not
+  manage them.
+
+- **Upstream v18.20 parity (`dee66357`, 2026-10-21): GGUF 1.0.28, WGPKernels
+  1.3.0 — and Turing is back in.** The GGUF floor moves to `1.0.28` — the same
+  three wheels (cu130/py311, cu128/py310, rocm10/py312) plus the RTX 20
+  `PTQ1_0`/Bonsai decode win, where each weight block is decoded once for all
+  tokens of a step — so `1.0.27` and everything older now flags stale and
+  re-syncs. WGPKernels **1.3.0** supports RTX 20XX and newer, and upstream
+  listed `wgpkernels` in the `RTX_20` profile: the launcher's kernel gate,
+  profile row and the button's tooltip/refusal text follow, so a 2080 gets the
+  INT8 button it was previously told it could not have. Both changes are
+  code-only upstream, so the wheels are version-only bumps — but every pin is
+  re-hashed: the 16 SHA-256 launcher pins now cover GGUF 1.0.28
+  (cu130/cu128/rocm10) and WGPKernels 1.3.0 (cu130/cu128/rocm100), taken from
+  GitHub's published release digests.
+- **The Wan2GP guide is reconciled to v18.20.** 276 models — including
+  `fibo2_dev`, `fibo2_edit_turbo` and `minimax_h3_fasth3_omni` (+ its NVFP4
+  variant) — the retired *Language Models Decoder Engine* setting (vLLM is
+  replaced by the in-tree `lmgp` rewrite; CUDA Graphs on every profile), the
+  `0.85` `vram_safety_coefficient` default, and the Linux DLSS 5
+  frame-generation worker with its WSL caveat.
+- **Memory profile P0 is selectable.** Upstream's `profile 0` commit adds a
+  profile that transfers models part by part like P4 but keeps none of them in
+  Reserved RAM for good — each model's parts live there only while it runs, and
+  *Dynamic* preload fills the VRAM a generation leaves free. `docs/CLI.md` now
+  documents `--profile 0-5` (default 4); the Performance Settings
+  video/image/audio dropdowns and the launch-builder profile patch offer P0,
+  the arguments help reads 0-5, and Auto-Tune still recommends P1–P5 only.
+- **The guide's code notes point at files that exist.** The generation-settings,
+  Deepy, install-plan and audio-profile notes cited six renderer services
+  deleted in the Rust port (`memory-profile.js`, `auto-tune.js`,
+  `deepy-config.js`, `llm-engines.js`, `install-plan.js`, `kernel-resolver.js`);
+  they now name `src-tauri/src/features.rs`, `hw.rs` and `wheels.rs`, and the
+  profile note lists the real `0-5` domain from `docs/CLI.md`. The "What's new"
+  line no longer claims an upstream changelog entry that was never written: it
+  cites the changelog's real latest entry (26 Aug 2026) and the four commits
+  since the previous pin. The Guide tab's curated picks gain the three v18.20
+  models (`minimax_h3_fasth3_omni`, `fibo2_dev`, `fibo2_edit_turbo`) — all
+  38 picks re-verified against upstream `defaults/` — and the user guide no
+  longer advertises a TeaCache dropdown (the flag is gone; step skipping is a
+  WanGP generation setting).
+
 ## [0.10.18] — 2026-10-20
 
 - **Finetune JSON now matches Wan2GP's documented shape.** Pack and CivitAI

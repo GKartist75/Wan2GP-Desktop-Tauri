@@ -1,6 +1,6 @@
 /**
  * library-table-layout.test.js — the Library checkpoint table lives in a
- * 600px side panel with four columns. The generic `.args-table td:last-child
+ * 600px side panel with four data columns plus a delete action. The generic `.args-table td:last-child
  * { width: 100% }` rule used to hand the whole table to Size, leaving the
  * Checkpoint and Origin columns at zero width; long filenames then wrapped one
  * character per line. Keep explicit column widths so that cannot regress.
@@ -39,6 +39,12 @@ test('the checkpoint table gives Size a real width instead of 100%', () => {
   assert.match(origin, /width:\s*108px/, 'Origin needs enough room for DeepBeepMeep')
   const kind = declarations('table.args-table.lib-table.compact td:nth-child(3)')
   assert.match(kind, /width:\s*64px/, 'Kind is a short tag')
+  const action = declarations('table.args-table.lib-table.compact td:nth-child(5)')
+  assert.match(
+    action,
+    /width:\s*64px/,
+    'the Delete column needs its own width, not the generic last-child 100%',
+  )
 })
 
 test('long checkpoint names wrap in the remaining space, not per character', () => {
@@ -55,6 +61,14 @@ test('the Library renderer still builds the compact checkpoint table', () => {
   assert.ok(
     renderer.includes('class="args-table lib-table compact"'),
     'the checkpoint table must keep the compact class',
+  )
+  assert.ok(
+    renderer.includes('data-lib-model-del='),
+    'each checkpoint row must carry its delete target',
+  )
+  assert.ok(
+    renderer.includes('libraryModelDelete('),
+    'the Delete button must call the backend command',
   )
   for (const heading of ['Checkpoint', 'Origin', 'Kind', 'Size']) {
     assert.ok(
