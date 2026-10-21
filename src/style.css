@@ -513,12 +513,12 @@ html[data-theme="dark"][data-accent="rose"],
  height: var(--topbar-h);
  display: flex;
  align-items: center;
- padding: 0 16px;
+ padding: 0 12px;
  background: var(--surface);
  border-bottom: 1px solid var(--border);
  flex-shrink: 0;
  -webkit-app-region: drag;
- gap: 10px;
+ gap: 8px;
  position: relative;
 }
 .topbar-left {
@@ -531,14 +531,22 @@ html[data-theme="dark"][data-accent="rose"],
  min-width: 0;
  display: flex;
  align-items: center;
- gap: 6px;
+ flex-wrap: nowrap;
+ gap: 5px;
  justify-content: flex-end;
  -webkit-app-region: no-drag;
+}
+/* The right-hand controls must keep their full labels. Letting flex shrink a
+   button is what turned "← Back to Dashboard" into a two-line label that
+   overlapped its neighbours; the metrics ladder, not button shrink, decides
+   what gives way when the bar is tight. */
+.topbar-right > * {
+ flex-shrink: 0;
 }
 .topbar-center {
  display: flex;
  align-items: center;
- gap: 8px;
+ gap: 6px;
  pointer-events: none;
  white-space: nowrap;
  flex: 0 1 auto;
@@ -547,12 +555,13 @@ html[data-theme="dark"][data-accent="rose"],
 }
 .brand-mark-small {
  font-family: "Instrument Serif", "Georgia", serif;
- font-size: 1.25rem;
+ font-size: 1rem;
  font-weight: 400;
  letter-spacing: -0.03em;
  line-height: 1;
  color: var(--text-primary);
  display: flex;
+ flex: 0 0 auto;
  align-items: center;
  gap: 2px;
 }
@@ -2377,7 +2386,14 @@ table.args-table.lib-table.compact td:nth-child(3) {
    fixed-layout table squeezes the name and Origin columns to zero. Give Size
    a real width so the remaining space goes to the filename. */
 table.args-table.lib-table.compact td:nth-child(4) {
- width: 82px;
+  width: 82px;
+}
+/* Action column: also explicit, or the generic last-child 100% rule hands the
+   table to the Delete buttons and collapses the filename column again. */
+table.args-table.lib-table.compact td:nth-child(5) {
+  width: 64px;
+  text-align: right;
+  white-space: nowrap;
 }
 
 /* ── Settings Panel ── */
@@ -2512,9 +2528,10 @@ table.args-table.lib-table.compact td:nth-child(4) {
 }
 
 .token-field {
- display: flex;
- gap: 6px;
- margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
 }
 .token-field .input {
  flex: 1;
@@ -2529,7 +2546,16 @@ table.args-table.lib-table.compact td:nth-child(4) {
  transition: border-color 0.15s;
 }
 .token-field .input:focus {
- border-color: var(--accent);
+  border-color: var(--accent);
+}
+/* A long hint inside a row (plugin status, library counts) must yield its
+   width to the buttons, not force them to shrink until their labels wrap. */
+.token-field > .token-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.token-field > .btn {
+  flex-shrink: 0;
 }
 .token-hint {
  font-size: 0.75rem;
@@ -3265,11 +3291,18 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
  margin-top: 0;
 }
 .browser-opt {
- display: flex;
- align-items: center;
- gap: 6px;
- cursor: pointer;
- color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* Standalone option labels (companion opt-out, backup contents) sit
+     directly in a settings section, where nothing sets a size — they
+     inherited the panel's 16px base while every hint and row around them is
+     0.75rem. Rows already set 0.75rem themselves, so this only fixes the
+     outliers. */
+  font-size: 0.75rem;
+  line-height: 1.45;
+  cursor: pointer;
+  color: var(--text-secondary);
 }
 .browser-opt input {
  accent-color: var(--accent);
@@ -3389,12 +3422,12 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
 .topbar-metrics {
  display: flex;
  align-items: center;
- gap: 12px;
- margin-right: 10px;
+ gap: 8px;
+ margin-right: 6px;
  -webkit-app-region: no-drag;
- flex: 0 1 auto;
+ flex: 0 0 auto;
  min-width: 0;
- overflow: hidden;
+ overflow: visible;
 }
 /* The metrics row is the first thing to run out of room (the bar needs ~1440px
    for every sparkline, ~1550px with a second GPU), and it used to answer that by
@@ -3460,7 +3493,10 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
   display: none;
  }
 }
-@media (max-width: 900px) {
+/* The wordmark is the first thing to go when the bar needs room. The status
+   cluster and every right-hand control keep their space; at 1920px and below
+   the logo + version still identify the app without the redundant title. */
+@media (max-width: 1920px) {
  .app-title {
   display: none;
  }
@@ -3480,7 +3516,7 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
  letter-spacing: 0.03em;
 }
 .metric-spark {
- width: 44px;
+ width: 36px;
  height: 18px;
  display: block;
  background: var(--surface-hover);
@@ -3914,6 +3950,11 @@ input[type="radio"] {
  height: 26px;
  box-sizing: border-box;
 }
+.topbar .btn,
+.topbar .btn-icon {
+ flex-shrink: 0;
+ white-space: nowrap;
+}
 .topbar .btn svg,
 .topbar .btn-icon svg {
  display: block;
@@ -3928,898 +3969,3 @@ input[type="radio"] {
  line-height: 1;
 }
 
-/* -- Adult (NSFW) model pack (installer panel) ---------------------------
-   Opt-in content card. Rows are dense on purpose: a pack with 100 adapters is
-   only reviewable if every line costs one short row with a size and a badge. */
-.ap-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.ap-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  flex: 1;
-  min-width: 0;
-}
-.ap-title {
-  font-weight: 600;
-  font-size: 0.82rem;
-}
-.ap-title-sm {
-  font-weight: 600;
-  font-size: 0.78rem;
-}
-.ap-badge {
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  padding: 2px 7px;
-  border-radius: 99px;
-  white-space: nowrap;
-  background: var(--signal-green-bg, #edf3ec);
-  color: var(--signal-green, #346538);
-}
-.ap-badge.off {
-  background: var(--bg-tertiary, #efeeeb);
-  color: var(--text-tertiary, #b8b8b6);
-}
-.ap-age {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 8px 10px;
-  font-size: 0.74rem;
-  color: var(--text-secondary, #787774);
-  border: 1px dashed var(--border-hover, #d4d4d2);
-  border-radius: 8px;
-  cursor: pointer;
-}
-.ap-groups {
-  margin-top: 10px;
-}
-.ap-filter {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin: 8px 0 2px;
-  padding: 8px 10px;
-  border: 1px solid var(--border, #eaeaea);
-  border-radius: 8px;
-  background: var(--bg-secondary, #f7f6f3);
-}
-.ap-filter .input {
-  flex: 1 1 200px;
-  min-width: 150px;
-}
-.ap-filter-opt {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 0.7rem;
-  color: var(--text-secondary, #787774);
-  white-space: nowrap;
-  cursor: pointer;
-}
-.ap-filter-opt input {
-  accent-color: var(--accent, #1a1a1a);
-  width: 14px;
-  height: 14px;
-  margin: 0;
-}
-.ap-block {
-  border: 1px solid var(--border, #eaeaea);
-  border-radius: 8px;
-  padding: 8px 10px;
-  margin-bottom: 8px;
-  background: var(--bg-secondary, #f7f6f3);
-}
-.ap-block-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.ap-block-title {
-  flex: 1;
-  font-weight: 600;
-  font-size: 0.76rem;
-}
-.ap-check {
-  display: inline-flex;
-  align-items: center;
-  cursor: pointer;
-}
-.ap-check input {
-  accent-color: var(--accent, #1a1a1a);
-  width: 14px;
-  height: 14px;
-  margin: 0;
-}
-.ap-list {
-  margin-top: 4px;
-  max-height: 260px;
-  overflow-y: auto;
-}
-.ap-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 4px;
-  border-radius: 5px;
-}
-.ap-row:hover {
-  background: var(--surface, #fff);
-}
-.ap-name {
-  flex: 1;
-  font-size: 0.74rem;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ap-size {
-  font-size: 0.68rem;
-  color: var(--text-tertiary, #b8b8b6);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.ap-tag {
-  font-size: 0.58rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  padding: 1px 5px;
-  border-radius: 4px;
-  margin-left: 6px;
-  background: var(--bg-tertiary, #efeeeb);
-  color: var(--text-tertiary, #b8b8b6);
-}
-.ap-tag.high {
-  background: var(--signal-blue-bg, #e1f3fe);
-  color: var(--signal-blue, #1f6c9f);
-}
-.ap-tag.done {
-  background: var(--signal-green-bg, #edf3ec);
-  color: var(--signal-green, #346538);
-}
-.ap-tag.token {
-  background: var(--signal-yellow-bg, #fbf3db);
-  color: var(--signal-yellow, #956400);
-}
-/* An update is neither "missing" nor "fine": it is something the user should
-   act on, so it gets its own colour rather than borrowing "done". */
-.ap-tag.upd {
-  background: var(--signal-blue-bg, #e8f0f8);
-  color: var(--signal-blue, #1f5c96);
-}
-.ap-tag.info {
-  background: var(--panel-2, #eceff2);
-  color: var(--text-dim, #5b6672);
-}
-
-/* version + release date, inline after the model name */
-.ap-ver {
-  margin-left: 6px;
-  font-size: 0.58rem;
-  color: var(--text-dim, #5b6672);
-  white-space: nowrap;
-}
-.ap-ver-date {
-  margin-left: 5px;
-  opacity: 0.75;
-}
-
-/* headline counters: what is already downloaded, and what is out of date */
-.ap-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 10px 0 4px;
-}
-.ap-chip {
-  font-size: 0.62rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: var(--panel-2, #eceff2);
-  color: var(--text-dim, #5b6672);
-}
-.ap-chip.ok {
-  background: var(--signal-green-bg, #edf3ec);
-  color: var(--signal-green, #346538);
-}
-.ap-chip.warn {
-  background: var(--signal-blue-bg, #e8f0f8);
-  color: var(--signal-blue, #1f5c96);
-}
-
-/* update check results */
-.ap-upd {
-  margin: 14px 0;
-}
-.ap-upd-list {
-  margin-top: 8px;
-  max-height: 260px;
-  overflow: auto;
-}
-.ap-upd-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 0;
-  border-bottom: 1px solid var(--panel-2, #eceff2);
-}
-.ap-civ-cell {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
-  margin: 6px 0;
-  padding: 6px;
-  border: 1px solid var(--panel-2, #eceff2);
-  border-radius: 6px;
-}
-.ap-civ-cap {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 0.66rem;
-}
-
-/* per-row actions: everything one model can do to itself, so a single row
-   never needs the whole panel selected around it */
-.ap-act-btn {
-  flex: 0 0 auto;
-  min-width: 22px;
-  height: 20px;
-  padding: 0 5px;
-  border: 1px solid var(--panel-2, #d6dbe0);
-  border-radius: 5px;
-  background: var(--panel-2, #f1f3f5);
-  color: var(--text-dim, #5b6672);
-  font-size: 0.72rem;
-  line-height: 1;
-  cursor: pointer;
-  text-align: center;
-}
-.ap-act-btn:hover {
-  background: var(--panel-3, #e4e8ec);
-  color: var(--text, #1b2129);
-}
-.ap-actions-row {
-  padding: 2px 0 8px 26px;
-}
-.ap-act-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  align-items: center;
-}
-.ap-act {
-  border: 1px solid var(--panel-2, #d6dbe0);
-  border-radius: 5px;
-  background: var(--panel-2, #f1f3f5);
-  color: var(--text, #1b2129);
-  font-size: 0.62rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  padding: 3px 8px;
-  cursor: pointer;
-}
-.ap-act:hover {
-  background: var(--panel-3, #e4e8ec);
-}
-.ap-act.danger {
-  background: var(--signal-red-bg, #fbeceb);
-  color: var(--signal-red, #9a2c22);
-}
-.ap-actions-row .ap-hint {
-  flex: 1 1 220px;
-  margin: 0;
-}
-.ap-tag.warn {
-  background: var(--signal-red-bg, #fdebec);
-  color: var(--signal-red, #9f2f2d);
-}
-.ap-prefetch {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.66rem;
-  color: var(--text-secondary, #787774);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.ap-prefetch input {
-  accent-color: var(--accent, #1a1a1a);
-  width: 12px;
-  height: 12px;
-  margin: 0;
-}
-.ap-civ {
-  margin-top: 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--border, #eaeaea);
-  border-radius: 8px;
-}
-.ap-sub {
-  font-weight: 600;
-  font-size: 0.76rem;
-  margin-bottom: 2px;
-}
-.ap-token-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-}
-.ap-token-row input {
-  flex: 1 1 220px;
-  min-width: 0;
-  font-size: 0.74rem;
-  padding: 6px 9px;
-  border: 1px solid var(--border, #eaeaea);
-  border-radius: 6px;
-  background: var(--surface, #fff);
-  color: var(--text-primary, #111);
-}
-.ap-verify {
-  font-size: 0.7rem;
-  color: var(--text-secondary, #787774);
-  margin-top: 4px;
-}
-.ap-total {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border, #eaeaea);
-  font-size: 0.74rem;
-}
-.ap-hint {
-  font-size: 0.68rem;
-  color: var(--text-tertiary, #b8b8b6);
-}
-.ap-legal {
-  margin-top: 8px;
-}
-.ap-legal-line {
-  font-size: 0.66rem;
-  line-height: 1.5;
-  color: var(--text-tertiary, #b8b8b6);
-}
-.ap-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border, #eaeaea);
-}
-.ap-progress {
-  margin-top: 10px;
-}
-/* One row per item in the current fetch batch. Kept above the log so the
-   overall shape ("4 of 7 done") is visible without reading the messages. */
-.ap-queue {
-  margin-top: 10px;
-  border: 1px solid var(--border, #eaeaea);
-  border-radius: 6px;
-  overflow: hidden;
-}
-.ap-queue:empty {
-  display: none;
-}
-.ap-queue-head {
-  padding: 4px 9px;
-  font-size: 0.68rem;
-  color: var(--text-secondary, #787774);
-  border-bottom: 1px solid var(--border, #eaeaea);
-  font-variant-numeric: tabular-nums;
-}
-.ap-queue-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 3px 9px;
-  font-size: 0.7rem;
-}
-.ap-queue-row + .ap-queue-row {
-  border-top: 1px solid var(--border, #eaeaea);
-}
-.ap-queue-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ap-queue-status {
-  flex: none;
-  color: var(--text-secondary, #787774);
-  font-variant-numeric: tabular-nums;
-}
-.ap-queue-row.done .ap-queue-status {
-  color: var(--signal-green, #346538);
-}
-.ap-queue-row.failed .ap-queue-status {
-  color: var(--signal-red, #9f2f2d);
-}
-.ap-queue-row.downloading .ap-queue-status,
-.ap-queue-row.verifying .ap-queue-status {
-  color: var(--signal-blue, #1f6c9f);
-}
-.ap-queue-row.skipped .ap-queue-status {
-  color: var(--signal-yellow, #956400);
-}
-.ap-progress-line {
-  font-size: 0.72rem;
-  color: var(--text-secondary, #787774);
-  font-variant-numeric: tabular-nums;
-  margin-bottom: 6px;
-}
-.ap-log {
-  max-height: 150px;
-  overflow-y: auto;
-  background: var(--term-bg, #0a0a0a);
-  color: var(--term-green, #9ae6b4);
-  font-family: "Geist Mono", "SF Mono", ui-monospace, monospace;
-  font-size: 0.68rem;
-  line-height: 1.6;
-  padding: 8px 10px;
-  border-radius: 6px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.ap-log-line.err {
-  color: #f2a6a2;
-}
-.ap-log-line.ok {
-  color: var(--term-green, #9ae6b4);
-}
-/* -- Model Pack: previews, source links, detail drawer ------------------- */
-.ap-thumb {
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
-  border-radius: 5px;
-  overflow: hidden;
-  background: var(--bg-tertiary, #efeeeb);
-  border: 1px solid var(--border, #eaeaea);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.6rem;
-  color: var(--text-tertiary, #b8b8b6);
-  cursor: pointer;
-}
-.ap-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.ap-thumb-none {
-  background: repeating-linear-gradient(
-    45deg,
-    transparent,
-    transparent 3px,
-    var(--bg-tertiary, #efeeeb) 3px,
-    var(--bg-tertiary, #efeeeb) 6px
-  );
-}
-.ap-info-btn {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
-  border-radius: 99px;
-  border: 1px solid var(--border-hover, #d4d4d2);
-  color: var(--text-tertiary, #b8b8b6);
-  font-size: 0.58rem;
-  font-style: italic;
-  font-family: Georgia, "Times New Roman", serif;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  user-select: none;
-}
-.ap-info-btn:hover {
-  color: var(--text-primary, #111);
-  border-color: var(--text-tertiary, #b8b8b6);
-}
-.ap-link {
-  color: var(--signal-blue, #1f6c9f);
-  text-decoration: none;
-  cursor: pointer;
-}
-.ap-link:hover {
-  text-decoration: underline;
-}
-/* Buttons used as links (API-key help) must not look like action buttons. */
-button.ap-link {
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  text-align: left;
-}
-.ap-key-hint {
-  margin: 6px 0 0;
-}
-.ap-disclaimer {
-  margin: 0 0 14px;
-  padding: 10px 12px;
-  border: 1px solid var(--signal-yellow, #d9a400);
-  border-left-width: 4px;
-  border-radius: 6px;
-  background: var(--signal-yellow-bg, rgba(217, 164, 0, 0.1));
-  color: var(--text-secondary, #444);
-  font-size: 0.72rem;
-  line-height: 1.5;
-}
-.ap-disclaimer strong {
-  color: var(--text-primary, #111);
-}
-.ap-details {
-  margin: 2px 0 8px 46px;
-  padding: 8px 10px;
-  border-left: 2px solid var(--border, #eaeaea);
-  background: var(--bg-secondary, #f7f6f3);
-  border-radius: 0 6px 6px 0;
-}
-.ap-detail-row {
-  display: grid;
-  grid-template-columns: 76px 1fr;
-  gap: 4px 10px;
-  padding: 2px 0;
-}
-.ap-detail-k {
-  font-size: 0.64rem;
-  color: var(--text-tertiary, #b8b8b6);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.ap-detail-v {
-  font-size: 0.7rem;
-  color: var(--text-secondary, #787774);
-  word-break: break-all;
-}
-/* -- Model Pack: live example galleries (images + sample video) ---------- */
-.ap-gallery-btn {
-  font-size: 0.62rem;
-  padding: 2px 7px;
-  border-radius: 99px;
-  border: 1px solid var(--border, #eaeaea);
-  background: var(--surface, #fff);
-  color: var(--text-secondary, #787774);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.ap-gallery-btn:hover {
-  color: var(--text-primary, #111);
-  border-color: var(--text-tertiary, #b8b8b6);
-}
-.ap-gallery {
-  margin: 2px 0 8px 46px;
-  padding: 8px 10px;
-  border-left: 2px solid var(--border, #eaeaea);
-  background: var(--bg-secondary, #f7f6f3);
-  border-radius: 0 6px 6px 0;
-}
-.ap-gallery-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 8px;
-}
-.ap-media-img {
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  object-fit: cover;
-  border-radius: 5px;
-  border: 1px solid var(--border, #eaeaea);
-  cursor: zoom-in;
-  background: var(--bg-tertiary, #efeeeb);
-  display: block;
-}
-.ap-media-img:hover {
-  border-color: var(--text-tertiary, #b8b8b6);
-}
-.ap-media-video {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  object-fit: cover;
-  border-radius: 5px;
-  border: 1px solid var(--border, #eaeaea);
-  background: #000;
-  display: block;
-}
-.ap-lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.86);
-  padding: 32px;
-}
-.ap-lightbox-body {
-  max-width: min(1100px, 92vw);
-  max-height: 88vh;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: center;
-}
-.ap-lightbox-body img,
-.ap-lightbox-body video {
-  max-width: 100%;
-  max-height: 80vh;
-  object-fit: contain;
-  border-radius: 8px;
-  background: #000;
-}
-.ap-lightbox-cap {
-  color: #d8d8d6;
-  font-size: 0.7rem;
-  text-align: center;
-  word-break: break-all;
-}
-.ap-lightbox-close {
-  position: absolute;
-  top: 14px;
-  right: 18px;
-  width: 30px;
-  height: 30px;
-  border-radius: 99px;
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 0.85rem;
-}
-.ap-lightbox-close:hover {
-  background: rgba(255, 255, 255, 0.22);
-}
-/* -- Model Pack: search & add your own ----------------------------------- */
-.ap-search {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border, #eaeaea);
-}
-.ap-search-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-.ap-search-row > .input,
-.ap-search-row > select,
-.ap-search-row > input[type="text"] {
-  /* Let controls shrink and wrap instead of pushing the Search/Browse button
-     off the edge of a narrow Manage panel. */
-  min-width: 0;
-  flex: 1 1 140px;
-  width: auto;
-}
-.ap-search-row > input[type="text"] {
-  flex: 2 1 240px;
-  font-size: 0.74rem;
-  padding: 6px 9px;
-}
-.ap-search-row > .btn {
-  flex: 0 0 auto;
-}
-.ap-search-status {
-  margin-top: 8px;
-}
-.ap-search-results {
-  margin-top: 6px;
-}
-.ap-sr {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 4px;
-  border-radius: 5px;
-}
-.ap-sr:hover {
-  background: var(--bg-secondary, #f7f6f3);
-}
-.ap-sr-body {
-  flex: 1;
-  min-width: 0;
-}
-.ap-sr-title {
-  font-size: 0.74rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ap-sr-title .ap-link {
-  margin-left: 8px;
-  font-size: 0.62rem;
-}
-.ap-sr-meta {
-  font-size: 0.64rem;
-  color: var(--text-tertiary, #b8b8b6);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ap-sr-add {
-  font-size: 0.64rem;
-  padding: 3px 10px;
-  border-radius: 99px;
-  border: 1px solid var(--border-hover, #d4d4d2);
-  background: var(--surface, #fff);
-  color: var(--text-primary, #111);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.ap-sr-add:hover {
-  background: var(--accent, #1a1a1a);
-  color: var(--surface, #fff);
-  border-color: var(--accent, #1a1a1a);
-}
-.ap-sr-add[disabled] {
-  opacity: 0.5;
-  cursor: default;
-}
-.ap-sr-box {
-  margin: 8px 0 4px 46px;
-  padding: 10px;
-  border: 1px solid var(--border, #eaeaea);
-  border-radius: 8px;
-  background: var(--bg-secondary, #f7f6f3);
-}
-.ap-sr-box-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.ap-sr-file {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
-  border-top: 1px solid var(--border, #eaeaea);
-}
-/* Kind override in the Add flow: compact, so it lines up with the tag it replaced. */
-.ap-sr-file .ap-kind-sel {
-  width: auto;
-  min-width: 96px;
-  padding: 2px 6px;
-  font-size: 0.7rem;
-}
-/* -- Model Pack: finetune manager --------------------------------------- */
-.ap-fm-list {
-  margin-top: 8px;
-  max-height: 320px;
-  overflow-y: auto;
-}
-.ap-fm-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 4px;
-  border-bottom: 1px solid var(--border, #eaeaea);
-}
-.ap-fm-main {
-  flex: 1;
-  min-width: 0;
-}
-.ap-fm-editor {
-  margin: 6px 0 10px 0;
-  padding: 10px;
-  border: 1px solid var(--border, #eaeaea);
-  border-radius: 8px;
-  background: var(--bg-secondary, #f7f6f3);
-}
-.ap-fm-text {
-  width: 100%;
-  min-height: 190px;
-  font-family: "Geist Mono", "SF Mono", ui-monospace, monospace;
-  font-size: 0.68rem;
-  line-height: 1.5;
-  padding: 8px 10px;
-  border: 1px solid var(--border, #eaeaea);
-  border-radius: 6px;
-  background: var(--surface, #fff);
-  color: var(--text-primary, #111);
-  resize: vertical;
-  user-select: text;
-}
-.ap-fm-bar {
-  margin-top: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.ap-fm-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.ap-fm-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-}
-.ap-fm-field-top {
-  align-items: flex-start;
-}
-.ap-fm-field-top .ap-detail-k {
-  padding-top: 8px;
-}
-.ap-fm-field .ap-detail-k {
-  min-width: 86px;
-}
-.ap-fm-field .input,
-.ap-fm-field .ap-fm-text {
-  flex: 1;
-  min-width: 0;
-}
-.ap-fm-field .ap-fm-text {
-  min-height: 96px;
-}
-.ap-fm-field .ap-fm-text-sm {
-  min-height: 64px;
-}
-.ap-fm-tabs {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-  margin: 10px 0 6px;
-}
-.ap-fm-tab {
-  font-size: 0.68rem;
-  line-height: 1.2;
-  padding: 4px 9px;
-  border: 1px solid var(--border, #eaeaea);
-  border-radius: 999px;
-  color: var(--text-secondary, #787774);
-  cursor: pointer;
-  user-select: none;
-}
-.ap-fm-tab:hover {
-  border-color: var(--border-hover, #d4d4d2);
-  color: var(--text-primary, #111);
-}
-.ap-fm-tab.active {
-  background: var(--surface, #fff);
-  border-color: var(--text-secondary, #787774);
-  color: var(--text-primary, #111);
-  font-weight: 600;
-}
-.ap-fm-check {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 8px;
-  font-size: 0.7rem;
-  color: var(--text-secondary, #787774);
-  cursor: pointer;
-}
-.ap-fm-check input {
-  accent-color: var(--accent, #1a1a1a);
-  width: 14px;
-  height: 14px;
-  margin: 0;
-}

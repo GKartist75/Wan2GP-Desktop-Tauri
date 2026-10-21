@@ -37,7 +37,6 @@
       <button class="settings-tab" data-tab="autotune" title="Auto-Tune: hardware-calibrated performance settings">⚡ Auto-Tune</button>
       <button class="settings-tab" data-tab="plugins" title="Plugins: enable and install Wan2GP plugins">🧩 Plugins</button>
       <button class="settings-tab" data-tab="library" title="Library: LoRA families and finetune definitions">📚 Library</button>
-      <button class="settings-tab" data-tab="pack" title="Model Pack: optional adult (NSFW) checkpoints and LoRAs, installed on demand">📦 Pack</button>
     </div>
     <div class="settings-scroll">
       <div class="settings-tab-content active" data-tab="general">
@@ -235,7 +234,7 @@
           <div class="token-field" style="margin-top:8px">
             <button class="btn btn-ghost small" data-launch-preset="balanced" title="Everyday default: sage2 attention, P4 profile">Balanced</button>
             <button class="btn btn-ghost small" data-launch-preset="lowvram" title="Small VRAM: SDPA, P5 failsafe profile, fp16">Low VRAM</button>
-            <button class="btn btn-ghost small" data-launch-preset="maxperf" title="Fast GPU: --compile (PyTorch transformer, deprecated upstream), sage2, P3, teacache 2.0">Max perf</button>
+            <button class="btn btn-ghost small" data-launch-preset="maxperf" title="Fast GPU: --compile (PyTorch transformer, deprecated upstream), sage2, P3">Max perf</button>
             <button class="btn btn-primary small" data-launch-preset="emergency" title="Upstream absolute minimum that boots almost anywhere">Emergency</button>
             <span class="token-hint" id="launchBuilderStatus" style="margin-left:8px"></span>
           </div>
@@ -249,20 +248,15 @@
             </select>
             <select id="lbProfile" class="input" style="max-width:150px" title="Patch --profile">
               <option value="">Profile: (keep)</option>
+              <option value="0">0 (no permanent Reserved RAM)</option>
               <option value="3">3 (24 GB+)</option>
               <option value="4">4 (default)</option>
               <option value="5">5 (failsafe)</option>
             </select>
-            <select id="lbTeacache" class="input" style="max-width:150px" title="Patch --teacache">
-              <option value="">TeaCache: (keep)</option>
-              <option value="0">0 (off)</option>
-              <option value="1.5">1.5</option>
-              <option value="2.0">2.0</option>
-              <option value="2.5">2.5 (lossy)</option>
-            </select>
             <label class="toggle-row" title="Patch --compile"><input type="checkbox" id="lbCompile"> <span>compile</span></label>
             <label class="toggle-row" title="Patch --fp16"><input type="checkbox" id="lbFp16"> <span>fp16</span></label>
           </div>
+          <p class="token-hint">TeaCache / step skipping is a WanGP generation setting (<strong>Advanced Mode → Steps Skipping</strong>), not a launch flag. Current WanGP rejects <code>--teacache</code>.</p>
         </div>
         <div class="settings-section">
           <h3>Extra Launch Args</h3>
@@ -335,7 +329,7 @@
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>GGUF CUDA Kernel</h3>
-            <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the weight-multiply policy: <code>fast</code>/<code>low_vram</code> use the packed MMVQ/MMQ kernels, <code>materialized</code> dequantizes and uses cuBLAS. <em>Short-batch mode</em> drives the Q4_K/PTQ1_0 tensor-core path for 2–8 row batches (auto = per-shape). These are the knobs wheel <strong>1.0.27</strong> actually reads — the older Stream-K and BF16→FP16 switches were dropped upstream.</p>
+            <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the weight-multiply policy: <code>fast</code>/<code>low_vram</code> use the packed MMVQ/MMQ kernels, <code>materialized</code> dequantizes and uses cuBLAS. <em>Short-batch mode</em> drives the Q4_K/PTQ1_0 tensor-core path for 2–8 row batches (auto = per-shape). These are the knobs wheel <strong>1.0.28</strong> actually reads — the older Stream-K and BF16→FP16 switches were dropped upstream.</p>
             <label class="toggle-row"><input type="checkbox" id="ggufEnabled"> <span>Enable GGUF CUDA kernels</span></label>
             <div class="token-field" style="margin-top:8px">
               <label class="token-hint" style="display:block;margin-bottom:4px">Matmul mode</label>
@@ -422,12 +416,11 @@
           <details class="launch-args-help">
             <summary>Common launch arguments</summary>
             <table class="args-table">
-              <tr><td><code>--profile 4</code></td><td>Profile 1-5 (4=default, 5=min RAM)</td></tr>
+              <tr><td><code>--profile 4</code></td><td>Profile 0-5 (4=default, 5=min RAM, 0=no permanent Reserved RAM)</td></tr>
               <tr><td><code>--attention sage2</code></td><td>Attention: sdpa, flash, sage, sage2</td></tr>
               <tr><td><code>--compile</code></td><td>Force PyTorch transformer compilation (deprecated upstream, very slow first compile; CUDA Graph mode is config-only — set it in Performance Settings)</td></tr>
               <tr><td><code>--fp16</code></td><td>Force fp16 instead of bf16</td></tr>
               <tr><td><code>--perc-reserved-mem-max 0.3</code></td><td>% RAM for model swap cache (0-0.5)</td></tr>
-              <tr><td><code>--teacache 2.0</code></td><td>Speed multiplier 0, 1.5, 1.75, 2.0, 2.5</td></tr>
               <tr><td><code>--preload 2000</code></td><td>MB of model to keep in VRAM</td></tr>
               <tr><td><code>--listen</code></td><td>Accessible on local network</td></tr>
               <tr><td><code>--share</code></td><td>HuggingFace share URL</td></tr>
@@ -435,6 +428,7 @@
               <tr><td><code>--seed 42</code></td><td>Default generation seed</td></tr>
               <tr><td><code>--verbose 2</code></td><td>Log detail 0-2 (1=default, 2=debug)</td></tr>
             </table>
+            <p class="token-hint" style="margin-top:8px">TeaCache, MagCache and First Block Cache are configured inside WanGP under <strong>Advanced Mode → Steps Skipping</strong> (<code>skip_steps_cache_type</code> + <code>skip_steps_multiplier</code>). They are not launch arguments; current WanGP rejects <code>--teacache</code>.</p>
           </details>
         </div>
       </div>
@@ -489,7 +483,7 @@
         </div>
         <div class="settings-section">
           <h3>Emergency Failsafe</h3>
-          <p class="token-hint">Upstream absolute-minimum setup: <code>--attention sdpa --profile 4 --teacache 0 --fp16</code> + P5 profiles in <code>wgp_config.json</code> (backed up first). Use when nothing else boots.</p>
+          <p class="token-hint">Upstream absolute-minimum setup: <code>--attention sdpa --profile 4 --fp16</code> + P5 profiles in <code>wgp_config.json</code> (backed up first). Use when nothing else boots.</p>
           <div class="token-field" style="margin-top:8px">
             <button class="btn btn-primary small" id="tsFailsafeBtn" title="Apply minimum settings that boot on almost any GPU (backed up first)">Apply failsafe</button>
             <button class="btn btn-ghost small" id="tsCudaBtn" title="Run a torch + CUDA smoke test in the active environment">Test torch + CUDA</button>
@@ -628,6 +622,19 @@
           <h3>🧩 Wan2GP Plugins</h3>
           <p class="token-hint">Enable your favourite plugins (e.g. Status Pro) or install new ones from a git URL. Changes apply on next Wan2GP launch.</p>
         </div>
+        <div class="settings-section" id="companionPluginSection">
+          <h3>Finetune Manager (recommended)</h3>
+          <p class="token-hint">Pack recipes, the registry, CivitAI search, imports/exports and missing-file downloads are owned by the Finetune Manager plugin. The launcher installs a pinned, known-good version by default; update it from the plugin. Install / repair restores a missing or disabled companion without downgrading a newer one.</p>
+          <div class="token-field" style="margin-top:8px">
+            <span class="token-hint" id="companionPluginStatus">Checking...</span>
+            <button class="btn btn-primary small" id="companionPluginInstallBtn" title="Install or repair the pinned Finetune Manager companion">Install / repair</button>
+            <button class="btn btn-ghost small" id="companionPluginRefreshBtn" title="Re-check the companion plugin">Recheck</button>
+          </div>
+          <label class="browser-opt" style="margin-top:8px;display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="companionPluginOptOut">
+            Don't install Finetune Manager automatically on fresh installs (you can still install it here)
+          </label>
+        </div>
         <div class="settings-section">
           <h3>Installed & Available</h3>
           <div class="token-field" style="margin-bottom:6px">
@@ -699,206 +706,6 @@
         </div>
       </div>
 
-      <!-- ═══════ Model Pack Tab (opt-in adult content) ═══════ -->
-      <div class="settings-tab-content" data-tab="pack">
-        <div class="ap-disclaimer" role="note">
-          <strong>The Pack Manager is in development.</strong>
-          Catalog entries, sources and install locations can change between releases.
-          Adult content is optional and off by default — use it only if you are 18 or older and
-          it is legal where you live. You are responsible for what you download and generate.
-        </div>
-
-        <div class="settings-section">
-          <h3>⬇ Downloads</h3>
-          <p class="ap-hint">Shared by the adult pack and by anything you add under Find models: selected models are fetched, verified and filed into the right folder.</p>
-          <div class="ap-total">
-            <span id="apTotalText">—</span>
-            <span id="apFreeText" class="ap-hint"></span>
-          </div>
-          <div class="ap-actions">
-            <button class="btn btn-primary small" id="apDownloadBtn" title="Download the selected LoRAs and prefetched checkpoints now">Download selected</button>
-            <button class="btn btn-ghost small" id="apRecipesBtn" title="Write the selected checkpoint definitions into finetunes/ so Wan2GP offers them">Write finetune recipes</button>
-            <button class="btn btn-ghost small" id="apMissingBtn" title="Download only what is missing or incomplete">Fetch missing only</button>
-            <button class="btn btn-ghost small" id="apRemoveBtn" title="Delete the selected files and recipes from disk">Remove selected…</button>
-            <button class="btn btn-ghost small" id="apRefreshBtn" title="Re-read the manifest and what is on disk">↻ Refresh</button>
-          </div>
-          <div class="ap-queue" id="apQueue"></div>
-          <div class="ap-progress">
-            <div class="ap-progress-line" id="apProgress">Idle.</div>
-            <div class="ap-log" id="apLog"></div>
-          </div>
-        </div>
-        <div class="settings-section">
-          <h3>🔎 Find models</h3>
-          <p class="token-hint">
-            Search HuggingFace or CivitAI for anything this Wan2GP build can load — SFW or adult —
-            then add it in one click. The launcher writes the finetune recipe and files the download
-            into the right folder; it never re-hosts the weights.
-          </p>
-          <div class="ap-search" id="apDiscover">
-            <div class="ap-sub">Search by name</div>
-            <p class="ap-hint">Search HuggingFace or CivitAI for anything Wan2GP can load. Only families this Wan2GP build supports are listed; the launcher writes the finetune recipe and files the download into the right folder.</p>
-            <p class="ap-hint ap-split-note"><strong>civitai.com is now the SFW library</strong> — adult content moved to <strong>civitai.red</strong> in April 2026, and this search queries <code>civitai.red</code> because that is where mature models live. Your token works on both.</p>
-            <div class="ap-search-row">
-              <input type="text" id="apSearchQuery" class="input" placeholder="e.g. wan 2.2, minimax h3, ltx 2.3, krea 2" autocomplete="off" spellcheck="false">
-              <select id="apSearchSource" class="input">
-                <option value="hf">HuggingFace</option>
-                <option value="civitai">CivitAI — adult (civitai.red)</option>
-              </select>
-              <select id="apSearchKind" class="input" title="Model type to search for">
-                <option value="any">Any type</option>
-                <option value="lora">LoRA</option>
-                <option value="checkpoint">Checkpoint</option>
-                <option value="gguf">GGUF</option>
-              </select>
-              <select id="apSearchFamily" class="input" title="Base model — filled from the supported families">
-                <option value="any">Any base model</option>
-              </select>
-              <button class="btn btn-primary small" id="apSearchBtn" title="Search the source">Search</button>
-            </div>
-            <div class="ap-search-status ap-hint" id="apSearchStatus"></div>
-            <div class="ap-search-results" id="apSearchResults"></div>
-
-            <div class="ap-sub" style="margin-top:14px">Trending &amp; most downloaded</div>
-            <p class="ap-hint">What is hot right now, filtered to families this Wan2GP build can load. Adding a checkpoint writes <code>finetunes/&lt;id&gt;.json</code>, so Wan2GP downloads the weights itself on first run.</p>
-            <div class="ap-search-row">
-              <select id="apBrowseSource" class="input" title="Where to look">
-                <option value="hf">HuggingFace</option>
-                <option value="civitai">CivitAI — adult (civitai.red)</option>
-              </select>
-              <select id="apBrowseSort" class="input" title="Ranking">
-                <option value="trending">Trending</option>
-                <option value="downloads">Most downloaded</option>
-                <option value="likes">Most liked</option>
-                <option value="newest">Newest</option>
-              </select>
-              <select id="apBrowsePeriod" class="input" title="Time window (CivitAI)">
-                <option value="week">This week</option>
-                <option value="month">This month</option>
-                <option value="year">This year</option>
-              </select>
-              <select id="apBrowseKind" class="input" title="Model type">
-                <option value="any">Any type</option>
-                <option value="lora">LoRA</option>
-                <option value="checkpoint">Checkpoint</option>
-                <option value="gguf">GGUF</option>
-              </select>
-              <select id="apBrowseFamily" class="input" title="Base model">
-                <option value="any">Any base model</option>
-              </select>
-              <button class="btn btn-ghost small" id="apBrowseBtn" title="Load the ranking">Browse</button>
-            </div>
-            <div class="ap-search-status ap-hint" id="apBrowseStatus"></div>
-            <div class="ap-search-results" id="apBrowseResults"></div>
-
-            <div class="ap-sub" style="margin-top:14px">Add by link</div>
-            <p class="ap-hint">Already know exactly what you want? Paste a HuggingFace repo (<code>owner/name</code> or its URL), a CivitAI model URL, or a CivitAI model id. Use this when the name does not match a keyword search — nothing here is limited to the pack's own catalogue.</p>
-            <div class="ap-search-row">
-              <input type="text" id="apUrlInput" class="input" placeholder="owner/repo · https://huggingface.co/owner/repo · https://civitai.red/models/123" autocomplete="off" spellcheck="false">
-              <select id="apUrlArch" class="input" title="The Wan2GP architecture to load it with"></select>
-              <button class="btn btn-primary small" id="apUrlBtn" title="Look inside this model">Open…</button>
-            </div>
-            <div class="ap-search-status ap-hint" id="apUrlStatus"></div>
-            <div class="ap-search-results" id="apUrlResults"></div>
-          </div>
-        </div>
-
-
-        <div class="settings-section">
-          <h3>🧩 Finetune recipes</h3>
-          <p class="ap-hint">Every recipe Wan2GP will offer — from the pack, your own additions, and anything you imported. Create one by hand, edit it in a form or as raw JSON, check the source links still resolve, export it to share, or delete it.</p>
-          <div class="token-field" style="margin-top:8px">
-            <button class="btn btn-primary small" id="apFmNewBtn" title="Create a new finetunes/<id>.json by hand">＋ New finetune.json</button>
-            <button class="btn btn-ghost small" id="apFmRefreshBtn" title="Re-read finetunes/">↻ Refresh recipes</button>
-            <button class="btn btn-ghost small" id="apFmCheckAllBtn" title="HEAD every recipe's source URL and report what is gone">Check all links</button>
-            <span class="token-hint" id="apFmStatus" style="margin-left:8px"></span>
-          </div>
-          <div class="ap-search-row" style="margin-top:8px">
-            <input type="text" id="apFmImportInput" class="input" placeholder="Import a shared recipe — paste the full path to a .json" autocomplete="off" spellcheck="false">
-            <button class="btn btn-ghost small" id="apFmImportBtn" title="Copy a shared finetune JSON into finetunes/ (validated, never overwrites a base model)">Import…</button>
-          </div>
-          <div id="apFmNewHost"></div>
-          <div class="ap-fm-list" id="apFmList"><p class="token-hint">Loading recipes…</p></div>
-        </div>
-
-        <div class="settings-section">
-          <h3>🗂 LoRA files on disk</h3>
-          <p class="ap-hint">Every LoRA weight under your LoRAs folder — including files you copied in yourself or Wan2GP downloaded on its own. Files a catalog entry knows about are linked to it; the rest can be removed here without leaving the launcher.</p>
-          <div class="token-field" style="margin-top:8px">
-            <button class="btn btn-ghost small" id="apLoraInvRefreshBtn" title="Re-scan the LoRAs folder">↻ Refresh files</button>
-            <span class="token-hint" id="apLoraInvStatus" style="margin-left:8px"></span>
-          </div>
-          <div class="ap-fm-list" id="apLoraInvList"><p class="token-hint">Press “Refresh files” to scan your LoRAs folder.</p></div>
-        </div>
-
-        <div class="settings-section">
-          <h3>📦 Adult (NSFW) model pack</h3>
-          <p class="token-hint">
-            Optional trending adult checkpoints and LoRAs, installed on demand — never part of the Wan2GP
-            install. Everything is fetched from its published source and verified against a pinned
-            SHA-256; the launcher never re-hosts anything.
-          </p>
-          <div class="ap-header" style="margin-top:10px">
-            <label class="ap-head">
-              <input type="checkbox" id="apEnabled">
-              <span class="ap-title">Use the adult model pack</span>
-              <span class="ap-badge" id="apBadge">off</span>
-            </label>
-            <span class="ap-hint" id="apMeta"></span>
-          </div>
-          <label class="ap-age">
-            <input type="checkbox" id="apAge">
-            <span>I confirm I am 18 or older, and that adult content is legal where I live.</span>
-          </label>
-          <div id="apBody" style="display:none;margin-top:10px">
-            <div class="ap-filter">
-              <input type="text" id="apFilter" class="input" placeholder="Filter by name, family or file…" autocomplete="off" spellcheck="false">
-              <label class="ap-filter-opt"><input type="checkbox" id="apFilterSel"> selected only</label>
-              <label class="ap-filter-opt"><input type="checkbox" id="apFilterMissing"> not downloaded</label>
-              <button class="btn btn-ghost small" id="apFilterSelect" title="Tick every LoRA and checkpoint currently shown">Select shown</button>
-              <button class="btn btn-ghost small" id="apFilterUnselect" title="Untick every LoRA and checkpoint currently shown">Deselect shown</button>
-              <button class="btn btn-ghost small" id="apFilterClear" title="Clear the filter">Clear</button>
-              <span class="ap-hint" id="apFilterCount"></span>
-            </div>
-            <div id="apGroups" class="ap-groups">
-              <p class="token-hint">Loading the pack catalog…</p>
-            </div>
-            <div class="ap-chips" id="apChips"></div>
-            <div class="ap-upd">
-              <div class="ap-sub">Updates</div>
-              <p class="ap-hint">The catalog pins every file's SHA-256, so a check compares each file's current hash against the pinned one — an update is reported only when the bytes really changed. Applying one re-points the local hash, then downloads and verifies the new file.</p>
-              <div class="token-field" style="margin-top:8px">
-                <button class="btn btn-ghost small" id="apUpdCheckBtn" title="List every catalog repo and compare each file hash">Check for updates</button>
-                <button class="btn btn-primary small" id="apUpdApplyBtn" disabled title="Point the selected files at their new hashes and download them">Apply &amp; download selected</button>
-                <span class="token-hint" id="apUpdStatus" style="margin-left:8px"></span>
-              </div>
-              <div class="ap-upd-list" id="apUpdList"></div>
-            </div>
-            <label class="ap-age" style="margin-top:12px">
-              <input type="checkbox" id="apCivEnabled">
-              <span>Use CivitAI (adult host, <code>civitai.red</code>) — off by default. Nothing contacts it until you turn this on. If your antivirus or ISP blocks adult sites, allow <code>civitai.red</code> first.</span>
-            </label>
-            <div id="apCivSection" class="ap-civ" style="display:none">
-              <div class="ap-sub">CivitAI releases (civitai.red)</div>
-              <div class="ap-hint">Author-exclusive releases, resolved live. Public releases download without a token; a token is only needed for auth-gated or early-access files, and it raises the API rate limit. The launcher fetches them with your own credentials and records where they landed — it never re-hosts them.</div>
-              <div id="apCivItems"></div>
-              <div class="ap-token-row">
-                <input type="password" id="apToken" placeholder="CivitAI API key (optional — public models need none)" autocomplete="off" spellcheck="false">
-                <button class="btn btn-ghost small" id="apVerifyBtn" title="Check the token with one small request — no download">Verify</button>
-              </div>
-              <p class="ap-hint ap-key-hint">
-                Get a key: <button type="button" class="ap-link" data-civ-key="com">civitai.com → Account → API Keys</button>
-                · <button type="button" class="ap-link" data-civ-key="red">civitai.red → Account → API Keys</button>.
-                The same key works on both hosts.
-              </p>
-              <div class="ap-verify" id="apVerifyResult"></div>
-            </div>
-            <div class="ap-legal" id="apLegal"></div>
-          </div>
-        </div>
-
-      </div>
-
       <!-- ═══════ Auto-Tune Tab ═══════ -->
       <div class="settings-tab-content" data-tab="autotune">
         <div class="settings-section">
@@ -936,7 +743,7 @@
             <button class="btn btn-primary small" id="memProfileApplyBtn" style="margin-left:auto" title="Write these performance settings to wgp_config.json">Apply Overrides</button>
           </div>
           <p class="token-hint" style="padding:4px 12px 0">Detect scans your hardware and calibrates these mmgp knobs in <code>wgp_config.json</code>. Each dropdown defaults to the <strong>recommended</strong> value — change any to override. <span class="tag-rec">rec</span> = recommended, <span class="tag-saved">saved</span> = currently written to disk. Values changed inside WanGP show up here as <span class="tag-saved">saved</span> — Detect only proposes, <strong>Apply Overrides</strong> is what writes.</p>
-            <p class="token-hint" style="padding:4px 12px 0;margin:0"><strong>v17 RAM/VRAM controls:</strong> the allocator needs a restart · Smart Memory Pinning reloads the model · Head Split only engages on long sequences (8192+ tokens) and its output is not bit-identical to Off — details, sometimes motion, can differ · Dynamic preload needs the MMGP allocator: it is built into Profiles 1 and 3 (they are P2/P4 + Dynamic Preload) and selectable on Profiles 2, 4 and 5 · most of the v17 gain assumes Sage2/2+ attention · all of them are NVIDIA-only (upstream skips them on AMD/Intel), so Detect leaves them unset on those cards.</p>
+            <p class="token-hint" style="padding:4px 12px 0;margin:0"><strong>v17 RAM/VRAM controls:</strong> the allocator needs a restart · Smart Memory Pinning reloads the model · Head Split only engages on long sequences (8192+ tokens) and its output is not bit-identical to Off — details, sometimes motion, can differ · Dynamic preload needs the MMGP allocator: it is built into Profiles 1 and 3 (they are P2/P4 + Dynamic Preload) and selectable on Profiles 2, 4 and 5 · a <em>Manual</em> VRAM Preload keeps the megabytes set beside it in VRAM (image steps are short, so that is where it pays) · <strong>Language Models CPU Compute</strong> only decides whether the CPU helps Deepy and the prompt enhancer while their layers stream from RAM · most of the v17 gain assumes Sage2/2+ attention · all of them are NVIDIA-only (upstream skips them on AMD/Intel), so Detect leaves them unset on those cards.</p>
           <label style="display:flex;align-items:center;gap:8px;padding:8px 12px 0;font-size:0.75rem;color:var(--text-secondary);cursor:pointer"
                  title="Force the P5 minimum-compatibility profile — slower, but maximizes the chance generation works (e.g. a 10GB card that still crashes on P4+). Check and press Detect to re-seed these fields with P5 values.">
             <input type="checkbox" id="autotuneFailsafeChk" style="accent-color:var(--signal-yellow)">
@@ -947,6 +754,7 @@
               <label class="token-hint">Video Profile</label>
               <select id="memVideoProfile" class="input">
                 <option value="">— unset —</option>
+                <option value="0">P0 — P4 transfers with no permanent Reserved RAM; Dynamic Preload keeps what fits in VRAM (much less RAM)</option>
                 <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM (fastest; most RAM &amp; VRAM)</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part (needs a lot of RAM)</option>
                   <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM (recommended for audio)</option>
@@ -961,6 +769,7 @@
               <label class="token-hint">Image Profile</label>
               <select id="memImageProfile" class="input">
                 <option value="">— unset —</option>
+                <option value="0">P0 — P4 transfers with no permanent Reserved RAM; Dynamic Preload keeps what fits in VRAM (much less RAM)</option>
                 <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM (fastest; most RAM &amp; VRAM)</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part (needs a lot of RAM)</option>
                   <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM</option>
@@ -975,6 +784,7 @@
               <label class="token-hint">Audio Profile</label>
               <select id="memAudioProfile" class="input">
                 <option value="">— unset —</option>
+                <option value="0">P0 — P4 transfers with no permanent Reserved RAM; Dynamic Preload keeps what fits in VRAM</option>
                 <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part</option>
                   <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM (recommended for audio)</option>
@@ -987,7 +797,7 @@
             </div>
             <div class="mem-field">
               <label class="token-hint">VRAM Safety Coeff (0.1–1)</label>
-              <input type="number" id="memCoeff" class="input" min="0.1" max="1" step="0.05" placeholder="0.80">
+              <input type="number" id="memCoeff" class="input" min="0.1" max="1" step="0.05" placeholder="0.85">
               <div class="mem-hint"><span id="recCoeff" class="tag-rec">rec: —</span><span id="savedCoeff" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
@@ -1123,6 +933,11 @@
               <div class="mem-hint"><span id="recVideoPreload" class="tag-rec">rec: —</span><span id="savedVideoPreload" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
+              <label class="token-hint" title="Used when VRAM Preload — Video is Manual: how many MB of each video model stay in VRAM. 0 = preload nothing (same as Default on Profiles 2, 4 and 5).">VRAM Preload (MB) — Video</label>
+              <input type="number" id="memVideoPreloadMB" class="input" min="0" max="200000" step="250" placeholder="0 = none">
+              <div class="mem-hint"><span id="recVideoPreloadMB" class="tag-rec">rec: —</span><span id="savedVideoPreloadMB" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
               <label class="token-hint" title="Image steps are short, so the transfers set the speed — Dynamic keeps as much of the model in VRAM as each generation leaves free. Needs the MMGP Optimized allocator; only used on Profiles 2, 4 and 5 (4.5 counts as 4).">VRAM Preload — Image</label>
               <select id="memImagePreload" class="input">
                 <option value="">— unset —</option>
@@ -1133,6 +948,11 @@
               <div class="mem-hint"><span id="recImagePreload" class="tag-rec">rec: —</span><span id="savedImagePreload" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
+              <label class="token-hint" title="Used when VRAM Preload — Image is Manual: how many MB of each image model stay in VRAM. Upstream's own measurement: 6000 MB shortened Flux dev 1024x1024 Profile 4 steps by about 22%, within about 20% of Profile 1; 8000 MB or more brings Flux close to Profile 1. 0 = preload nothing.">VRAM Preload (MB) — Image</label>
+              <input type="number" id="memImagePreloadMB" class="input" min="0" max="200000" step="250" placeholder="0 = none">
+              <div class="mem-hint"><span id="recImagePreloadMB" class="tag-rec">rec: —</span><span id="savedImagePreloadMB" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
               <label class="token-hint" title="Shown by WanGP for Profiles 2, 4 and 5 only — Profiles 1, 3 and 3+ load whole models and have nothing to preload.">VRAM Preload — Audio</label>
               <select id="memAudioPreload" class="input">
                 <option value="">— unset —</option>
@@ -1141,6 +961,21 @@
                 <option value="manual">Manual</option>
               </select>
               <div class="mem-hint"><span id="recAudioPreload" class="tag-rec">rec: —</span><span id="savedAudioPreload" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="Used when VRAM Preload — Audio is Manual: how many MB of each audio model stay in VRAM. Audio language models stay whole on their own, and the larger of both applies. 0 = preload nothing.">VRAM Preload (MB) — Audio</label>
+              <input type="number" id="memAudioPreloadMB" class="input" min="0" max="200000" step="250" placeholder="0 = none">
+              <div class="mem-hint"><span id="recAudioPreloadMB" class="tag-rec">rec: —</span><span id="savedAudioPreloadMB" class="tag-saved">saved: —</span></div>
+            </div>
+            <div class="mem-field">
+              <label class="token-hint" title="v18.20 Configuration > Performance > Language Models CPU Compute. Deepy and the prompt enhancer always run their language model on Profile 0 with Dynamic preload; when their layers stream from RAM, the CPU can process them instead of transferring them. Auto (default) measures whether your CPU is faster for the model's format — about twice as fast responses when it is; On forces it so you can compare both ways; Off keeps transfers only. 2-bit / ternary weights (IQ2, Bonsai) always stay on the GPU.">Language Models CPU Compute</label>
+              <select id="memLlmCpuCompute" class="input">
+                <option value="">— unset —</option>
+                <option value="auto">Auto (default) — let the CPU help when it is faster</option>
+                <option value="on">On — always let the CPU help</option>
+                <option value="off">Off — GPU transfers only</option>
+              </select>
+              <div class="mem-hint"><span id="recLlmCpuCompute" class="tag-rec">rec: —</span><span id="savedLlmCpuCompute" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
               <label class="token-hint" title="Share of RAM that pinning may lock. Auto is 40% on Windows and 60% on Linux (upstream lowered Linux from 80% in v17.10). WanGP's own slider stops at 80, so this stops there too. Lower it and keep Smart Memory Pinning On if you are short of RAM.">Reserved RAM for Pinning (% — 0 = Auto)</label>
@@ -1162,20 +997,20 @@
               <div class="mem-hint"><span id="recComputeCachePath" class="tag-rec">rec: —</span><span id="savedComputeCachePath" class="tag-saved">saved: —</span></div>
             </div>
             </div>
+          <div id="memProfileRecommendation" class="token-hint" style="padding:10px 12px 0;margin:0"></div>
           <div class="mem-hint" style="padding:10px 12px 0">
             <span class="token-hint" style="font-weight:600">Profile matrix (reference)</span>
           </div>
           <table class="profile-matrix" style="margin:4px 12px 0">
             <tr><th>VRAM \ RAM</th><th style="text-align:center">high<br><span class="tier-range">≥64GB</span></th><th style="text-align:center">low<br><span class="tier-range">≥32GB</span></th><th style="text-align:center">very low<br><span class="tier-range">&lt;32GB</span></th></tr>
             <tr><td>high<br><span class="tier-range">≥24GB</span></td><td style="text-align:center;color:#6ee7b7">P1</td><td style="text-align:center">P3</td><td style="text-align:center;color:#67e8f9">P3+</td></tr>
-            <tr><td>low<br><span class="tier-range">12–23GB</span></td><td style="text-align:center">P2</td><td style="text-align:center">P4</td><td style="text-align:center;color:#f87171">P5</td></tr>
-            <tr><td>tight<br><span class="tier-range">&lt;12GB</span></td><td style="text-align:center;color:#6ee7b7">P4</td><td style="text-align:center;color:#6ee7b7">P4</td><td style="text-align:center;color:#6ee7b7">P4</td></tr>
+            <tr><td>low<br><span class="tier-range">12–23GB</span></td><td style="text-align:center">P2</td><td style="text-align:center">P4</td><td style="text-align:center;color:#a78bfa">P0</td></tr>
+            <tr><td>tight<br><span class="tier-range">&lt;12GB</span></td><td style="text-align:center;color:#6ee7b7">P4</td><td style="text-align:center;color:#6ee7b7">P4</td><td style="text-align:center;color:#a78bfa">P0</td></tr>
           </table>
-          <p class="token-hint" style="padding:8px 12px 0;margin:0">v17 / MMGP v4 recalibrates the tight row: Profile 4 now uses up to 50% less VRAM, so a card under 12 GB rides P4 plus Attention Head Split and the MMGP allocator instead of dropping to P4+/P5. Use <strong>Prefer failsafe</strong> above to force P5 back.</p>
+          <p class="token-hint" style="padding:8px 12px 0;margin:0">v17 / MMGP v4 recalibrates the tight row: Profile 4 now uses up to 50% less VRAM, so a card under 12 GB rides P4 plus Attention Head Split and the MMGP allocator instead of dropping to P4+/P5. <strong style="color:#a78bfa">P0</strong> owns both &lt;32 GB RAM cells: under 32 GB neither P4 nor P5 can afford the Reserved RAM they keep for good, and P0 sends models part by part like P4 while the running model borrows the RAM and hands it on when you switch — upstream calls it <em>More Speed with Less RAM</em>, and still labels it experimental. <strong>Prefer failsafe</strong> above forces P5 back; P1–P4 remain the picks where the RAM is there.</p>
           <div id="memProfileStatus" class="token-hint" style="padding:8px 12px 12px;min-height:1em"></div>
         </div>
       </div>
-      
     </div>
   </div>
   </div>
@@ -1277,19 +1112,19 @@
           </select>
         </span>
         <div class="topbar-metrics" id="topbarMetrics">
-          <div class="metric" id="metricCpu" title="CPU"><span class="metric-label">CPU</span><canvas class="metric-spark" id="sparkCpu" width="44" height="18"></canvas><span class="metric-val" id="valCpu">—</span></div>
-          <div class="metric" id="metricGpu" title="GPU"><span class="metric-label">GPU</span><canvas class="metric-spark" id="sparkGpu" width="44" height="18"></canvas><span class="metric-val" id="valGpu">—</span></div>
-          <div class="metric" id="metricGpu2" style="display:none" title="GPU 2"><span class="metric-label">GPU2</span><canvas class="metric-spark" id="sparkGpu2" width="44" height="18"></canvas><span class="metric-val" id="valGpu2">—</span></div>
-          <div class="metric" id="metricRam" title="RAM used / total"><span class="metric-label">RAM</span><canvas class="metric-spark" id="sparkRam" width="44" height="18"></canvas><span class="metric-val" id="valRam">—</span></div>
-          <div class="metric metric-vram" id="metricVram" title="VRAM used / total"><span class="metric-label">VRAM</span><canvas class="metric-spark" id="sparkVram" width="44" height="18"></canvas><span class="metric-val" id="valVram">—</span></div>
-          <div class="metric metric-vram" id="metricVram2" style="display:none" title="VRAM 2"><span class="metric-label">VRAM2</span><canvas class="metric-spark" id="sparkVram2" width="44" height="18"></canvas><span class="metric-val" id="valVram2">—</span></div>
+          <div class="metric" id="metricCpu" title="CPU"><span class="metric-label">CPU</span><canvas class="metric-spark" id="sparkCpu" width="36" height="18"></canvas><span class="metric-val" id="valCpu">—</span></div>
+          <div class="metric" id="metricGpu" title="GPU"><span class="metric-label">GPU</span><canvas class="metric-spark" id="sparkGpu" width="36" height="18"></canvas><span class="metric-val" id="valGpu">—</span></div>
+          <div class="metric" id="metricGpu2" style="display:none" title="GPU 2"><span class="metric-label">GPU2</span><canvas class="metric-spark" id="sparkGpu2" width="36" height="18"></canvas><span class="metric-val" id="valGpu2">—</span></div>
+          <div class="metric" id="metricRam" title="RAM used / total"><span class="metric-label">RAM</span><canvas class="metric-spark" id="sparkRam" width="36" height="18"></canvas><span class="metric-val" id="valRam">—</span></div>
+          <div class="metric metric-vram" id="metricVram" title="VRAM used / total"><span class="metric-label">VRAM</span><canvas class="metric-spark" id="sparkVram" width="36" height="18"></canvas><span class="metric-val" id="valVram">—</span></div>
+          <div class="metric metric-vram" id="metricVram2" style="display:none" title="VRAM 2"><span class="metric-label">VRAM2</span><canvas class="metric-spark" id="sparkVram2" width="36" height="18"></canvas><span class="metric-val" id="valVram2">—</span></div>
         </div>
         <div id="wvControls" class="wv-controls" style="display:none">
           <span class="wv-sep"></span>
           <input type="range" id="zoomSlider" class="zoom-slider" min="25" max="200" value="100" title="Zoom">
           <span class="zoom-label" id="zoomLabel">100%</span>
           <span class="wv-sep"></span>
-          <button class="btn btn-ghost small" id="backToDashboardBtn" title="Close the Wan2GP view and return to the Dashboard">← Back to Dashboard</button>
+          <button class="btn btn-ghost small" id="backToDashboardBtn" title="Close the Wan2GP view and return to the Dashboard">← Dashboard</button>
           <button class="btn btn-ghost small" id="ftToggleBtn" title="Toggle floating terminal console">⊞ Console</button>
           <button class="btn-icon wv-btn" id="wvReloadBtn" aria-label="Reload Wan2GP view" title="Reload Wan2GP view"><svg viewBox="0 0 24 24" width="14" height="14"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>
         </div>
@@ -1384,9 +1219,9 @@
             <span class="card-title">GPU Kernel Wheels</span>
             <span class="env-type-tag" id="kernelProfileTag"></span>
             <button class="btn btn-ghost small hide-on-collapse" id="restoreKernelsBtn" title="Reinstall setup_config wheels exactly as published — drops launcher overrides (GGUF floor; sage swap only if setup_config ever lags to post4). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
-                <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.27 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
-                <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only (RDNA4 gfx1200/gfx1201): installs the GGUF 1.0.27 torch213rocm100py312 HIP wheel into this env's torch 2.13+rocm10 stack (Update GPU Wheels installs it too). Replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
-                <button class="btn btn-ghost small hide-on-collapse" id="installWgpkernelsBtn" title="Optional INT8 fast path (WGPKernels 1.1.2, in setup_config since upstream 17307e5). Installs the wheel matching your torch build (cu130/cu128) for RTX 30/40/50 (compute 8.0+), or the rocm100 build for AMD RDNA4 (gfx1200/gfx1201) right in the installer's torch 2.13+rocm10 env." style="margin-left:8px;display:none">WGPKernels (INT8)</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.28 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only (RDNA4 gfx1200/gfx1201): installs the GGUF 1.0.28 torch213rocm100py312 HIP wheel into this env's torch 2.13+rocm10 stack (Update GPU Wheels installs it too). Replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="installWgpkernelsBtn" title="Optional INT8 fast path (WGPKernels 1.3.0, in setup_config since upstream 17307e5). Installs the wheel matching your torch build (cu130/cu128) for RTX 20/30/40/50 (Turing 7.5+), or the rocm100 build for AMD RDNA4 (gfx1200/gfx1201) right in the installer's torch 2.13+rocm10 env." style="margin-left:8px;display:none">WGPKernels (INT8)</button>
           </div>
           <div class="env-subsection" id="kernelWheelsSubsection" style="margin-top:0;border-top:none;padding-top:0">
             <div class="env-specs" id="kernelWheels">
@@ -1508,7 +1343,7 @@
             <div class="deepy-cost-note">
               <span class="dot-ok">●</span> <strong>OpenCode</strong> — free, local models, no account.
               <span class="dot-bad">●</span> <strong>Claude Code / Codex</strong> — paid (subscription or API credits).
-              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 9B/27B (local)</strong> — runs on your GPU (needs GGUF kernels 1.0.27 via Sync Kernels); pick model + quantization below. Auto-sets 32k context + Summarize.
+              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 9B/27B (local)</strong> — runs on your GPU (needs GGUF kernels 1.0.28 via Sync Kernels); pick model + quantization below. Auto-sets 32k context + Summarize.
               <br>Prime plans advanced multi-step work and is required for every external LLM (it exposes WanGP's MCP tools). Zero is lightweight and local-only.
             </div>
             <div class="deepy-sub-label">Local engine</div>
@@ -1789,7 +1624,6 @@
                     </ol>
                     <p class="path-hint">Notes: both devices must stay signed in (the free personal plan is enough); approve new devices at login.tailscale.com if asked. Turn Auth on above (2 · Auth) — every device on your tailnet can reach the port.</p>
                   </details>
-              
                   <details style="margin-top:6px">
                     <summary class="deepy-sub-label" style="cursor:pointer">Protection quick guide (when to use Auth / HTTPS)</summary>
                     <ul class="path-hint" style="margin:6px 0 6px 18px;line-height:1.6">
@@ -2102,9 +1936,6 @@
         <p class="path-hint path-hint-warn">⚠ Model checkpoints &amp; LoRAs are large (tens–hundreds of GB). Store them on a fast, non-system drive — <strong>not</strong> in AppData/Roaming, which roams with your profile and can bloat or sync unexpectedly. Default <code>C:\Wan2GP-Models\ckpts</code> keeps them separate from the repo.</p>
       </div>
 
-      <!-- Adult pack lives in Manage → Model Pack, never in Setup: installing
-           Wan2GP must not carry an opt-in adult-content decision. -->
-
       <!-- Target-folder verdict (classify_target): checks first, Install button after -->
       <div id="targetVerdict" class="install-stack" style="display:none">
         <div class="ipkgs-header">Install location check</div>
@@ -2381,7 +2212,6 @@
     </div>
   </div>
 </div>
-    
   <!-- escape.js first: defines window.escHtml used by app.js. Loaded as a plain
        script tag (NOT via preload require — the window is sandboxed, and
        sandboxed preloads can only require whitelisted modules). Same module the
@@ -2405,7 +2235,6 @@
   <script src="deepy-web-tab.js" defer></script>
   <!-- Same rule: installer-tab.js registers a listener over $, defined by app.js. -->
   <script src="installer-tab.js" defer></script>
-<script src="adult-pack-tab.js" defer></script>
   <!-- Extracted sections, same rule: each reads globals ($/showToast/window.w2gp) defined by app.js. -->
   <script src="plugins-tab.js" defer></script>
   <script src="theme-tab.js" defer></script>

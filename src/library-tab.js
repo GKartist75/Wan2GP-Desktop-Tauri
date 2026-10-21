@@ -46,7 +46,7 @@
           '</td><td>' + esc(f.files) + '</td><td>' + esc(fmtBytes((Number(f.bytes) || 0) + (Number(f.pack_bytes) || 0))) + '</td>' +
           '<td>' + esc(f.urls_known) + ' / ' + esc(f.files) + '</td></tr>'
         )).join('') + '</table>' +
-        '<p class="token-hint">Root: <code>' + esc(r.root) + '</code> — “Yours” counts files directly in each family folder; “Pack” counts the <code>adult-pack/</code> subfolder this launcher fills. URLs known come from <code>loras_url_cache_v2.json</code> (share it to save friends re-hunting LoRAs).</p>'
+        '<p class="token-hint">Root: <code>' + esc(r.root) + '</code> — “Yours” counts files directly in each family folder; “Pack” counts the <code>adult-pack/</code> subfolder the Finetune Manager plugin fills. URLs known come from <code>loras_url_cache_v2.json</code> (share it to save friends re-hunting LoRAs).</p>'
       if (status) status.textContent = folders.length + ' families'
     } catch (e) {
       box.innerHTML = '<p class="token-hint">Failed: ' + esc((e && e.message) || e) + '</p>'
@@ -154,13 +154,34 @@
       }
       const sample = Array.isArray(r.sample) ? r.sample : []
       box.innerHTML = '<table class="args-table lib-table compact">' +
-        '<tr><td><strong>Checkpoint</strong></td><td><strong>Origin</strong></td><td><strong>Kind</strong></td><td><strong>Size</strong></td></tr>' +
+        '<tr><td><strong>Checkpoint</strong></td><td><strong>Origin</strong></td><td><strong>Kind</strong></td><td><strong>Size</strong></td><td></td></tr>' +
         sample.map((f) => (
-          '<tr><td><code>' + esc(f.name) + '</code></td><td>' + esc(f.origin || 'Yours') + '</td><td>' + esc(f.kind || '—') + '</td><td>' + esc(fmtBytes(f.bytes)) + '</td></tr>'
+          '<tr><td><code>' + esc(f.name) + '</code></td><td>' + esc(f.origin || 'Yours') + '</td><td>' + esc(f.kind || '—') + '</td><td>' + esc(fmtBytes(f.bytes)) + '</td>' +
+          '<td><button class="btn btn-ghost small lib-del" data-lib-model-del="' + esc(f.rel || '') + '" data-lib-model-bytes="' + esc(f.bytes || 0) + '" title="Delete this checkpoint from disk">Delete</button></td></tr>'
         )).join('') + '</table>' +
         (r.truncated ? '<p class="token-hint">First 300 of ' + esc(r.files) + ' shown (largest first).</p>' : '') +
         '<p class="token-hint">Root: <code>' + esc(r.root) + '</code> — <strong>DeepBeepMeep</strong> files are named in the shipped <code>defaults/</code>, <strong>Pack</strong> files live in <code>adult-pack/</code>, and <strong>Yours</strong> is everything else.</p>'
       if (status) status.textContent = r.files + ' files · ' + fmtBytes(r.bytes)
+      box.querySelectorAll('[data-lib-model-del]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const rel = btn.getAttribute('data-lib-model-del')
+          const bytes = Number(btn.getAttribute('data-lib-model-bytes')) || 0
+          if (!rel) return
+          if (!(await askConfirm(
+            'Delete checkpoint "' + rel + '" (' + fmtBytes(bytes) + ')?\n\n' +
+            'The file is removed from disk. WanGP downloads it again if a workflow needs it.'
+          ))) return
+          btn.disabled = true
+          try {
+            await window.w2gp.libraryModelDelete(rel)
+            await refreshModels()
+            if (status) status.textContent = 'Deleted ' + rel + ' — freed ' + fmtBytes(bytes) + '; Refresh Model List in WanGP to apply'
+          } catch (e) {
+            btn.disabled = false
+            if (status) status.textContent = 'Delete failed: ' + ((e && e.message) || e)
+          }
+        })
+      })
     } catch (e) {
       box.innerHTML = '<p class="token-hint">Failed: ' + esc((e && e.message) || e) + '</p>'
     }

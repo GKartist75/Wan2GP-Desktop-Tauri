@@ -64,11 +64,15 @@ function applyPatch(argStr, patch) {
 }
 
 /** Named presets (F2). Values mirror docs/WAN2GP-GUIDE.md + upstream TROUBLESHOOTING. */
+// Current WanGP (shared/cli_args.py) no longer defines --teacache. Step
+// skipping is a generation setting (Advanced Mode -> Steps Skipping:
+// skip_steps_cache_type + skip_steps_multiplier), not a launch flag. Passing
+// --teacache now makes argparse exit with "unrecognized arguments".
 const LAUNCH_PRESETS = {
   balanced: '--attention sage2 --profile 4',
-  lowvram: '--attention sdpa --profile 5 --fp16 --teacache 1.5',
-  maxperf: '--compile --attention sage2 --profile 3 --teacache 2.0',
-  emergency: '--attention sdpa --profile 4 --teacache 0 --fp16'
+  lowvram: '--attention sdpa --profile 5 --fp16',
+  maxperf: '--compile --attention sage2 --profile 3',
+  emergency: '--attention sdpa --profile 4 --fp16'
 }
 
 if (typeof module !== 'undefined' && module.exports) {

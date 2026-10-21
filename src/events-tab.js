@@ -175,16 +175,7 @@ function switchSettingsTab(tabName) {
     setTimeout(() => {
       try {
         refreshPluginsLazy();
-      } catch (e) {}
-    }, 30);
-  }
-
-  // Model Pack tab: read the pinned catalog only when it is opened, so the
-  // opt-in adult pack costs nothing at boot.
-  if (tabName === "pack") {
-    setTimeout(() => {
-      try {
-        if (window.adultPack) window.adultPack.init();
+        refreshCompanionPlugin();
       } catch (e) {}
     }, 30);
   }

@@ -14,7 +14,7 @@ Upstream truth: model selector in WanGP, `defaults/*.json`, `profiles/*/*.json`,
 - [Install prerequisites](#install-prerequisites-what-the-launcher-sets-up-for-you)
 - [Guided paths](#guided-paths)
 - [Launcher vs WanGP settings map](#launcher-vs-wangp-settings-map)
-- [Models reference](#models-reference--complete-inventory-232-defaultsjson)
+- [Models reference](#models-reference--complete-inventory-276-defaultsjson)
 - [Generation settings reference](#generation-settings-reference)
 - [LoRAs + accelerator profiles](#loras--accelerator-profiles)
 - [Prompts + sliding windows](#prompts--sliding-windows)
@@ -40,23 +40,23 @@ flowchart TD
   G --> E[Edit existing video]
 
   V --> V1[T2V from text: Wan 2.2 T2V / LTX-2.5 Distilled / H3 FL2VA]
-  V --> V2[I2V animate a photo: Wan 2.2 I2V / H3 / Animate / Scail-2]
+  V --> V2[I2V animate a photo: Wan 2.2 I2V / H3 / FastH3 Omni / Animate / Scail-2]
   V --> V3[Talking head + dialogue: LongCat Avatar / InfiniteTalk / MagiHuman / H3 Ref2VA]
   E --> E1[Replace/inpaint/outpaint: VACE / VACE Fusionix / Bernini]
 
-  I --> I1[General image: Krea 2 / Z-Image Turbo]
-  I --> I2[Edit + identity: Krea 2 Identity / Qwen Image Edit Plus]
+  I --> I1[General image: Krea 2 / Z-Image Turbo / Fibo 2.0 Dev]
+  I --> I2[Edit + identity: Krea 2 Identity / Qwen Image Edit Plus / Fibo 2.0 Edit Turbo]
   I --> I3[Text-heavy poster: Ideogram 4 / SenseNova]
 
   A --> A1[Clone voice / dialogue: Qwen3 TTS Base / IndexTTS2]
   A --> A2[Full song with lyrics: ACE-Step 1.5 XL / MiniMax Music 3]
   A --> A3[Ambience / SFX: Stable Audio 3]
 
-  V1 & V2 & V3 & E1 & I1 & I2 & I3 & A1 & A2 & A3 --> P{VRAM?}
-  P -->|>=24 GB| P1[P1 max perf]
-  P -->|12-23 GB| P4[P4 balanced]
-  P -->|<12 GB| P5[P5 failsafe + quantized ckpt]
-  P1 & P4 & P5 --> L[Launcher Auto-Tune writes video/image/audio_profile 1-5 to wgp_config.json]
+  V1 & V2 & V3 & E1 & I1 & I2 & I3 & A1 & A2 & A3 --> P{VRAM x RAM?}
+  P -->|">=32 GB RAM, >=24 GB VRAM"| P1[P1 max perf]
+  P -->|">=32 GB RAM"| P4[P4 balanced]
+  P -->|"<32 GB RAM"| P0[P0 low-RAM fast]
+  P1 & P4 & P0 --> L[Launcher Auto-Tune writes video/image/audio_profile P0-P5 to wgp_config.json]
 ```
 
 Rules that save hours:
@@ -78,7 +78,7 @@ From `INSTALLATION.md` — the launcher automates all of this; listed so you kno
 | PyTorch | 2.10.0 + CUDA 13.0/13.1 (cu130, needs R580+ driver) | 2.7.1 + CUDA 12.8 (no R580 needed) | 2.13.0 ROCm 10 TheRock (stable whl-next, per-box device-gfx targets) | CPU / MPS (SDPA only) |
 | Triton | `triton-windows>=3.7.0.post26,<=3.7.1.post27` (torch 2.10, recommended since v18.18 — ships WanGP's prebuilt CUDA helper, no JIT helper compile, no antivirus exclusion needed on these builds); `>=3.6,<3.7` legacy (torch 2.10, launcher Repair/roll-back target); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | `triton-windows>=3.7.0.post26,<=3.7.1.post27` (torch 2.13; prebuilt HIP helper, experimental) | — |
 | Attention | Sage 2.2.0 (RTX 30+, Ampere+) / Sage 1.0.6 (RTX 20) / Flash 2.8.3 / Sparge 0.1.0 | SDPA | SDPA (default, AOTriton on RDNA3+) / Sage 1.0.6 / Flash 2.8.4 (ROCm/Triton) | SDPA |
-| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.27 (single-launch row loop — 2–10% faster decode, less VRAM; packed rows crossing quant blocks — fixes MiniMax H3 image-reference projections), LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2 (optional, manual), Comfy Kitchen via requirements, WGPKernels 1.1.2 (in setup_config: RTX 30+/RDNA4, recommended) | — | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back); HIP GGUF 1.0.27 wheel (in-env ROCm 10, RDNA4 opt-in, version-only bump) | — |
+| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.28 (packed MMVQ/MMQ, direct FP16/BF16 activation quantization, CUDA-graph-safe workspaces, quantized KV-cache attention; single-launch row loop — 2–10% faster decode, less VRAM; packed rows crossing quant blocks — fixes MiniMax H3 image-reference projections), LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2 (optional, manual), Comfy Kitchen via requirements, WGPKernels 1.3.0 (in setup_config: RTX 20XX+/RDNA4, recommended) | — | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back); HIP GGUF 1.0.28 wheel (in-env ROCm 10, RDNA4 opt-in, version-only bump — keeps the previous kernels, the single-kernel row loop is CUDA-only) | — |
 
 Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
 `int8_kernels`: Auto tries WGPKernels → Kitchen CUDA/HIP → Triton → PyTorch
@@ -87,17 +87,24 @@ Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
 garbage output means trying Triton/PyTorch explicitly);
 `fp8_kernels` (Auto / CUDA / Triton / PyTorch) picks the same kind of kernel for
 FP8 checkpoints; `kernel_precision` fast/strict controls H3 VAE fusions.
-WGPKernels 1.1.2 is in `setup_config.json` (RTX 30/40/50 + AMD profiles) —
-install/update it from **GPU Kernel Wheels → WGPKernels (INT8)** or
+WGPKernels 1.3.0 is in `setup_config.json` (the Windows and Linux install
+scripts include WGPKernels for RTX 20XX, 30XX, 40XX and 50XX; upstream labels it
+"WGPKernels 1.3.0 (CUDA 13, RTX 20XX+)", "(CUDA 12.8, RTX 20XX+)" and
+"(ROCm 10, RDNA4, experimental)", the `RTX_20` GPU profile now lists
+`wgpkernels` and every other NVIDIA/AMD profile is unchanged) — WanGP checks the
+kernels on your GPU before using them; install/update it from
+**GPU Kernel Wheels → WGPKernels (INT8)** or
 **↻ Update GPU Wheels** (after a WanGP update, re-run Sync: upstream's
 *Update* only refreshes code and requirements, new pinned wheels arrive via
 Sync); Auto prefers it once present.
 On AMD, RDNA4 (RX 9060/9060 XT gfx1200 + RX 9070/9070 XT/R9700 gfx1201) uses
 the experimental `rocm100` build, which loads in the installer's torch
-2.13+rocm10 env — no separate env. The HIP GGUF wheel (1.0.27,
+2.13+rocm10 env — no separate env. The HIP GGUF wheel (1.0.28,
 `torch213rocm100py312`) is built for that same env and *↻ Update GPU Wheels*
 installs it automatically on RDNA4. RDNA 1–3.5 cards have no WGPKernels/HIP
-wheel.
+wheel. GGUF 1.0.28 also speeds RTX 20 language models: Bonsai and other PTQ1_0
+models decode their tokens and speculative drafts faster because each block of
+weights is decoded once for all the tokens of a step.
 
 Every kernel wheel is downloaded over TLS, hashed and checked **before** pip
 runs. The launcher pins the SHA-256 of the exact assets above (trust on first
@@ -152,6 +159,14 @@ flowchart TD
 Image goes in **Start Image**. Prompt describes **motion/camera**, not the
 subject (already in the image): `she smiles, turns toward the window, camera
 pushes in`. Try several motions via queue mode `G` (one line = one job).
+Starter pick ★ `minimax_h3_fasth3_omni` — 8-step FastVideo-distilled video +
+synced audio from text and ordered image/video/audio references (124 frames,
+8 steps, guidance 1); distilled with references, so give it at least one image
+or video reference — the NVFP4 variant is 13 GB and fastest on RTX 50xx.
+For stills instead of motion, ★ `fibo2_dev` is the launcher's image starter:
+unified text-to-image plus reference and masked editing from plain-language or
+structured captions (0 frames, 50 steps, guidance 5) — Fibo 2.0 Edit Turbo does
+4-step instruction edits instead.
 
 ### Path 3 — talking head / dialogue
 
@@ -175,6 +190,10 @@ two-speaker dialogue. Style tags go in the alt/extra field, not scattered lines.
 4. Grey `127` = replace with prompt/refs; pose wireframe = animate a person.
 5. Enable Skip Layer Guidance for CFG VACE (not for Fusionix/CausVid no-CFG),
    15 steps min, 30+ best.
+6. Still images (no video path needed): ★ `fibo2_edit_turbo` does four-step
+   instruction editing with 1–4 references or a masked source image — editing
+   only, no CFG, so keep guidance 1 and supply the references (or the mask) the
+   instruction is about.
 
 ```mermaid
 flowchart LR
@@ -215,7 +234,7 @@ Don't regenerate a good scene — late-postprocess it: spatial upscale
 | Goal | Set in launcher | Set in WanGP UI |
 | --- | --- | --- |
 | Install / env / kernels / paths | Dashboard + Installer + GPU Wheels + Active Env | — |
-| VRAM/RAM profile 1-5, quant, attention | Auto-Tune writes `video/image/audio_profile`, `transformer_quantization`, `int8_kernels`, `kernel_precision`, `vae_config` | Fine-tune per task via `overrides` |
+| VRAM/RAM profile P0-P5, quant, attention | Auto-Tune writes `video/image/audio_profile`, `transformer_quantization`, `int8_kernels`, `kernel_precision`, `vae_config` | Fine-tune per task via `overrides` |
 | Model choice | — (update/sync only) | Model dropdown + toolbar search; finetune `+` tool |
 | Prompt + steps/frames/guidance/seed | — | Generation form per model |
 | LoRAs + multipliers, `.lset` | — (folders under `loras_root`) | Advanced -> Loras tab, `activated_loras` + `loras_multipliers` |
@@ -233,12 +252,14 @@ WanGP owns **model, prompt, generation, LoRA pick, control, post**.
 
 ---
 
-## Models reference — complete inventory (272 `defaults/*.json`)
+## Models reference — complete inventory (276 `defaults/*.json`)
 
-Reconciled live against upstream `defaults/` (272 files + ReadMe, WanGP v18.19 /
-22d1f26 — adds MOSS-TTS v1.5 (8B + Local 4B) and names the Krea 2 Edit v2 ids;
-the v18.18 reconciliation added the 3D-gen wave, Kandinsky 6, Wan 2.2 Prism,
-camera control, H3 Veda, MOSS Image, Ming Image and the v2 Krea edit presets).
+Reconciled live against upstream `defaults/` (276 files + `ReadMe.txt`, WanGP v18.20 /
+dee66357 — adds Fibo 2.0 Dev, Fibo 2.0 Edit Turbo and the two MiniMax H3 FastH3
+Omni presets; the v18.19 reconciliation added MOSS-TTS v1.5 (8B + Local 4B) and
+named the Krea 2 Edit v2 ids; the v18.18 reconciliation added the 3D-gen wave,
+Kandinsky 6, Wan 2.2 Prism, camera control, H3 Veda, MOSS Image, Ming Image and
+the v2 Krea edit presets).
 Every id below is
 a selectable `model_type`. Starred = guided-path starter; rest = same workflows,
 different speed/memory/quality trade (distilled/Turbo/Lightning/PDD/NVFP4/GGUF/
@@ -283,6 +304,7 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 | `minimax_h3_fl2va` ★, `..._pruned` ★, `..._pdd`, `..._pruned_pdd`, `..._veda`, `..._pruned_veda` | ★ `minimax_h3_fl2va_pruned` (video+soundtrack, start/end, inject `KFI`+`frames_positions`, control, outpaint, 2-phase+tiling, Spectrum/First-Block-Cache, Sol-Attn); `_veda` variants use learned sparse attention (up to 2× faster at high res/longer videos, same settings+LoRAs) |
 | `minimax_h3_control`, `..._pruned` | ControlNet-Union 2.0 branch on FL2VA (33B / pruned 20B): pose, depth, edge, shape and recoloring controls, plus inpainting and spatial outpainting |
 | `minimax_h3_ref2va`, `..._pruned` ★, `..._pdd`, `..._pruned_pdd`, `..._veda`, `..._pruned_veda` | ★ pruned (refs guide result, ref pixel budget 50-400%, persists across windows); `_veda` = Veda sparse attention |
+| `minimax_h3_ref2va_pruned` (FastH3 Omni) | ★ `minimax_h3_fasth3_omni` — MiniMax H3 FastH3 Omni 8-Step 20B: FastVideo distillation + sparse video attention (VSA), 8 steps, `guidance_phases 1` (no CFG), `flow_shift 12`, `video_prompt_type "I"`; same Ref2VA inputs (ordered images/videos/audio clips, start/end images, frame injection, reference or control video, soundtracks, continuation), faster than Ref2VA PDD at the same VRAM, distilled with references so best with ≥1 image/video reference; `minimax_h3_fasth3_omni_nvfp4` — MiniMax H3 FastH3 Omni NVFP4 QAD 8-Step 20B: same settings, 13 GB (smallest FastH3 Omni, lowest VRAM), NVFP4 weights trained for 4-bit inference, fastest on RTX 50xx FP4 tensor cores, slower on RTX 30xx/40xx |
 | `minimax_h3_vdn`, `..._pruned`, `minimax_h3_tts_ref2va_pruned` | VDN 20%+ faster; TTS preset (hidden 32x32 video, 32 kHz audio only) |
 | `k6_pro_distill`, `k6_lite_distill` | Kandinsky 6: 5s video with synchronized soundtrack (speech with lip-sync, music, sound effects) from text or a start image; Pro 30B / Lite 3B, both distilled (10 steps), low-VRAM with a faster in-house VAE |
 | `k5_lite_t2v` (+`_10s_distil`, `..._sparse`, `_5s_distil`), `k5_lite_i2v`, `k5_pro_t2v` (+`_10s_sft`, `..._sparse`), `k5_pro_i2v` | Kandinsky 5 Pro/Lite, camera-motion control |
@@ -298,6 +320,8 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 | `flux`, `flux_schnell`, `flux_chroma`, `flux_chroma_radiance`, `flux_krea`, `flux_srpo`, `flux_srpo_uso`, `flux_dev_kontext` ★, `flux_dev_kontext_dreamomni2`, `flux_dev_umo`, `flux_dev_uso` | Schnell/Dev/Kontext (instruction edit)/Krea/Chroma/SRPO/USO |
 | `flux2_dev`, `flux2_dev_nvfp4`, `flux2_klein_4b`, `flux2_klein_9b`, `flux2_klein_base_4b`, `flux2_klein_base_9b`, `pi_flux2`, `pi_flux2_nvfp4` | Flux 2 + Klein 4B/9B (+base), Pi VAE variants |
 | `flux3_klein` ★, `flux3_klein_base`, `flux3_klein_nvfp4`, `flux3_klein_base_nvfp4` | ★ Flux 3 Klein 5.6B distilled (16 steps, no CFG) + Base (50 steps, CFG); up to 10 ordered references; NVFP4 variants |
+| `fibo2_dev` ★ | ★ Fibo 2.0 Dev (Bria AI): unified text-to-image plus reference and masked editing from plain-language or structured Fibo captions; 1024x1024, 50 steps, guidance 5.0, bf16 + int8_convrot |
+| `fibo2_edit_turbo` ★ | ★ Fibo 2.0 Edit Turbo: four-step instruction editing with 1–4 references or a masked source image; editing only, no CFG (guidance 1.0), 1024x1024, `video_prompt_type "KI"` (needs a reference) |
 | `qwen_image_20B` ★, `qwen_image_21_7B` ★, `qwen_image_21_turbo_7B`, `qwen_image_2512_20B`, `qwen_image_edit_20B`, `qwen_image_edit_plus_20B` ★, `qwen_image_edit_plus2_20B`, `qwen_image_edit_plus_20B_nunchaku_r128_fp4/int4`, `qwen_image_layered_20B` | ★ base/edit-plus (multi-subject, long text); 2.1 new; 2.1 Turbo 7B (8-step distilled, Turbo scheduler at guidance 1, no acceleration LoRA); layered; Nunchaku quant |
 | `z_image` ★, `z_image_base`, `z_image_control`, `z_image_control2`, `z_image_control2_1`, `z_image_control2_1_8s`, `z_image_twinflow_turbo`, `z_image_nunchaku_r128_fp4/r256_int4` | ★ Turbo 6B fast; Control/Control2.x edit; TwinFlow; Nunchaku |
 | `krea2_raw` ★, `krea2_turbo` ★, `krea2_raw_edit`, `krea2_turbo_edit`, `krea2_turbo_general_edit_v2`, `krea2_turbo_identity_edit_v2` (+ per-model `general`/`identity` **v2** full-rank edit LoRAs) | ★ RAW (CFG) / Turbo (distilled); Edit presets: General (recolor, relight, backgrounds, objects, text, restyle), Identity (2 refs + scene/pose/outfit restaging with likeness preserved; LanPaint inpaint/outpaint, NAG negatives); the named `_v2` ids are the 8-step General/Identity Edit v2 models |
@@ -331,7 +355,7 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 
 | Architecture ids | Model_type ids |
 | --- | --- |
-| `moss_tts_v1_5` ★, `moss_tts_local_v1_5` | MOSS-TTS v1.5 (OpenMOSS): 8B (★) and Local 4B multilingual speech with cloning of up to three voices, dialogue with adjustable pauses, optional script writing (Local 4B outputs 48 kHz stereo); BF16 / INT8 ConvRot and PyTorch / CUDA Graphs / vLLM |
+| `moss_tts_v1_5` ★, `moss_tts_local_v1_5` | MOSS-TTS v1.5 (OpenMOSS): 8B (★) and Local 4B multilingual speech with cloning of up to three voices, dialogue with adjustable pauses, optional script writing (Local 4B outputs 48 kHz stereo); BF16 / INT8 ConvRot; LM decode is automatic — CUDA Graphs with every profile |
 | `qwen3_tts_base` ★, `qwen3_tts_customvoice`, `qwen3_tts_voicedesign` | ★ Base (clone + 2-speaker, low VRAM); Custom Voice; Voice Design |
 | `index_tts2` ★, `index_tts25` | ★ expressive clone, tagged/auto emotion, long dialogue |
 | `fish_drama3` ★, `fish_drama3_int4` | ★ Fish Audio Drama 3 expressive speech/dialogue (optional voice ref + exact transcript); INT4 Experts halves RAM/VRAM |
@@ -340,7 +364,7 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 | `omnivoice` | Multilingual + design + clone |
 | `auk`, `auk_flash` | Instruction speech / source-record edits (Flash 4-step) |
 | `ace_step_v1`, `ace_step_v1_5` (+`_turbo_lm_0_6b/1_7b/4b`), `ace_step_v1_5_xl` ★ (+turbo LM) | ★ XL lyrics-faithful songs |
-| `minimax_music3` | 5-min 44.1 kHz stereo songs (vllm/cg LM decoder, INT8 ConvRot) |
+| `minimax_music3` | 5-min 44.1 kHz stereo songs (automatic LM decode with CUDA Graphs, INT8 ConvRot) |
 | `heartmula_oss_3b`, `heartmula_rl_oss_3b_20260123` | Songs + style tags |
 | `stable_audio3_small` ★, `stable_audio3_medium`, `stable_audio3_small_sfx` | ★ music/loops/ambience/SFX |
 | `scenema_audio`, `dramabox_audio` | LTX-audio scene speech/dialogue |
@@ -353,24 +377,39 @@ Variant suffixes (`_distilled/_turbo/_pdd/_pruned/_nvfp4/_gguf_* /_nunchaku_*/_l
 
 ## Generation settings reference
 
-Essentials (names as in `SETTINGS.md` / Export Settings JSON):
+Essentials (names as in `docs/SETTINGS.md` / Export Settings JSON):
 
-> Code notes: valid profiles are `1, 2, 3, 3.5, 4, 4.5, 5`
-> (`src/services/memory-profile.js:VALID_PROFILES`) — P1 max perf, P4 balanced
-> default, P5 failsafe. `vae_config` is `0=auto, 1=16GB+, 2=8GB+, 3=6GB+` — Auto
-> defers tiling to runtime (Wan vs Qwen 2.1 tile presets + 16000/8000 MiB
-> thresholds), so a fixed tier wastes VRAM or adds banding. `transformer_quantization`
+> Code notes: valid profiles are `0, 1, 2, 3, 3.5, 4, 4.5, 5` (upstream
+> `docs/CLI.md`; upstream default `4`) — P0 = P4's part-by-part transfers with
+> no permanent Reserved RAM, so each model's parts live in Reserved RAM only
+> while it runs and the VRAM they leave free stays filled (Dynamic Preload);
+> P1 max perf, P4 balanced default, P5 failsafe. The launcher's memory panel
+> offers all eight; Auto-Tune recommends P0 wherever RAM is under 32 GB (the
+> low-RAM fast path, since neither P4 nor P5 can afford their permanent
+> reservation there), P1–P4 above that, and P5 only through *Prefer failsafe*
+> (`src-tauri/src/features.rs`, the profile matrix). `vae_config` is
+> `0=auto, 1=16GB+, 2=8GB+, 3=6GB+` — Auto defers tiling to runtime (Wan vs
+> Qwen 2.1 tile presets + 16000/8000 MiB thresholds), so a fixed tier wastes
+> VRAM or adds banding. `transformer_quantization`
 > is `none/int8/fp8/nvfp4`; int8 is the recommended balance. `text_encoder_quantization`
 > is `bf16` (16-bit, better quality, more RAM) or `int8` (8-bit, less RAM). `int8_kernels`
 > (`auto/disabled/wgpkernels/triton/kitchen`) + `fp8_kernels` (`auto/pytorch/triton/cuda`)
 > + `kernel_precision` (`fast/strict`) are the kernel settings (v18.11). There is NO reserved-memory key in `wgp_config.json` —
-> that is the CLI `--perc-reserved-mem-max`. Safety: `0.80` for >=12 GB VRAM,
-> `0.70` below; failsafe forces P5 + `0.60`. Upstream default when unset is
-> `LowRAM_LowVRAM` (`wgp.py:_normalize_profile_defaults`), audio `3.5`.
-> Audio rule: fast LM decoders (vllm/cg) only engage when profile loads models
-> fully in VRAM (`int(profile) in (1,3)`), else ACE audio falls back to <1 tok/s
-> — so >=12 GB cards use audio profile 3 even when video is P4
-> (`src/services/auto-tune.js:audioProfile`).
+> that is the CLI `--perc-reserved-mem-max`. `vram_safety_coefficient` default is
+> now `0.85` (upstream `shared/cli_args.py`; `mmgp/README.md` says "0.85 by
+> default") for >=12 GB VRAM — the launcher's own tighter tiers keep their
+> values (`0.70` tight, `0.60` failsafe, failsafe forces P5). Upstream profile
+> default when unset is `LowRAM_LowVRAM` (`wgp.py:_normalize_profile_defaults`),
+> audio `3.5`.
+> Audio rule: the LM decoder choice is gone — the Configuration plugin's
+> "Language Models Decoder Engine" dropdown (`lm_decoder_engine`) was removed
+> and the vLLM engine was replaced by the in-tree `lmgp` rewrite
+> (`shared/llm_engines/lmgp/*`, `nanovllm` removed). LM acceleration is now
+> automatic: CUDA Graphs with every profile, and on RTX 20 the language models
+> of autoregressive models (speech, music, prompt enhancer) use WanGP's PyTorch
+> kernels with CUDA Graphs automatically — so >=12 GB cards still use audio
+> profile 3 even when video is P4
+> (`src-tauri/src/features.rs` — audio rides P3 for P2/P4/P4.5, else inherits).
 
 | Setting | Meaning | Starter |
 | --- | --- | --- |
@@ -390,7 +429,9 @@ Essentials (names as in `SETTINGS.md` / Export Settings JSON):
 ### Complete settings key list (118 keys, `models/_settings.json`)
 
 Model handlers show/hide per model; Export Settings JSON is the per-model truth.
-Groups follow `SETTINGS.md`; `model_type`/`settings_version` are UI/export labels, not stored keys:
+Groups follow `docs/SETTINGS.md` (the `spatial_upsampler_*` names come from
+`docs/SPATIAL_UPSAMPLERS.md`); `model_type`/`settings_version` are UI/export
+labels, not stored keys:
 
 * Model/identity: `client_id`, `model_mode`, `config`
 * Prompt: `prompt`, `negative_prompt`, `alt_prompt`, `prompt_enhancer`, `multi_prompts_gen_type`, `multi_images_gen_type`, `custom_settings`
@@ -542,6 +583,27 @@ LTX windows default 81f/17 overlap (`8n+1` cadence, 9–481).
 * Install: launcher DLSS5 card (or `scripts\install_dlss5.bat`), type `I ACCEPT`
   (third-party, unsigned, community-hosted binaries — your risk, verify hashes),
   **Stop WanGP first**; `-Force` backs up + replaces conflicts. Restarts WanGP after.
+* Native Linux Frame Generation x2 ships a compiled worker: release
+  `wangp-linux-v0.1.0` on `DeepBeepMeep/dlss5-visual-enhancer`, asset
+  `WanGP-DLSSG-linux-x86_64-v0.1.0.tar.gz` + `SHA256SUMS.txt` — needs Linux
+  x86_64, glibc 2.34+, `libstdc++.so.6` with `GLIBCXX_3.4.32+` and the Vulkan
+  loader (`libvulkan.so.1`); verify with `sha256sum -c SHA256SUMS.txt`, extract
+  `tar -xzf … -C dlss5`. NVIDIA's `libnvidia-ngx-dlssg.so.310.9.16` + `LICENSE.txt`
+  still come from the pinned NVIDIA SDK commit
+  `9981c6350dc58c0ce21f024fd65e31e851c31689`
+  (`cp NVIDIA-DLSS/lib/Linux_x86_64/rel/libnvidia-ngx-dlssg.so.310.9.16 dlss5/dlssg/`);
+  probe with `./dlss5/dlssg/dlssg-worker --probe`, transfer check `--self-test`.
+  Build-it-yourself moved from `native/dlss5/build_linux.sh` to
+  `native/WanGP-Adapter/build_linux.sh` at tag `wangp-linux-v0.1.0`.
+* WSL: Neural Rendering under WSL uses the Windows worker (Windows installer) —
+  it does **not** need the Linux worker or its Linux NVIDIA runtime; that Linux
+  package is only for the separate experimental native Linux Frame Generation x2.
+* Hybrid-graphics boxes: set `dlss5\host\nr-depth-worker.exe` (and
+  `dlss5\dlssg\dlssg-worker.exe` when used) to **High performance** in
+  Windows Settings > Display > Graphics.
+* Upstream `scripts/install_dlss5.ps1` did not change this cycle, so the
+  launcher's local DLSS 5 pins, verification and *Compare with upstream* are
+  unchanged.
 * Tune: Config → Extensions → Spatial Upsamplers: depth `Half Res` default
   (Full/Quarter trade detail vs memory), motion `Original` (fast) vs `RAFT` (slower,
   better); NR Intensity `0–2` (default 1.0) in Post/Late/Media Flow.
@@ -565,9 +627,10 @@ Apply via Settings dropdown -> Apply; missing LoRAs auto-download on first gen.
 * VRAM mode: `unload ASAP` (safest) / `unload if needed` (balanced) / `always loaded` (fast Deepy, less gen VRAM).
 * Context 16K Zero / 32K Prime / 48K+ long Prime; `Summarize` (>=32K) / `Summarize+Thinking` (>=48K).
 * Sessions: Disabled (temp) / selectable Workspace (share) / dedicated Workspace (self-contained, robot icon). Gallery media: keep-links (lean) vs copy-into-session (portable).
+* Upstream v18.20 ships Deepy settings presets for the new models: `gen_image/Fibo 2.0 Dev`, `edit_image/Fibo 2.0 Dev`, `edit_image/Fibo 2.0 Edit Turbo`, `gen_video_with_refs/MiniMax H3 FastH3 Omni 8 Steps` and `.../MiniMax H3 FastH3 Omni NVFP4 QAD 8 Steps`.
 * Launcher cards write the same `wgp_config.json` (`deepy_*`, `llm_engines`, `enhancer_*`, `prompt_enhancer_*`); Apply with backup.
 
-> Code notes (`src/services/deepy-config.js`, `src/services/llm-engines.js`):
+> Code notes (`src-tauri/src/features.rs` — `deepy_set` / `deepy_activate`):
 > canonical modes are `disabled: enabled=0`, `zero: enabled=1/type=zero` (local
 > Qwen, no remote LLM), `prime: enabled=1/type=prime` (requires remote LLM
 > engine). Local model ids: `1=Florence2+Llama3.2-3B` (Disabled default),
@@ -677,14 +740,14 @@ flowchart TD
 
 From `shared/cli_args.py` (launcher exposes the useful subset):
 
-### Complete launch-flag list (45 flags)
+### Complete launch-flag list
 
 | Flag | Use |
 | --- | --- |
 | `--attention sdpa/sage/sage2/flash` | GTX10->sdpa, RTX20->sage, RTX30+->sage2 |
-| `--profile 1-5` | 1 all-VRAM+RAM-cache … 4 default flexible … 5 min RAM (`--profile` overrides all three config profiles) |
+| `--profile 0-5` | 0 no permanent Reserved RAM (like P4 + Dynamic Preload) … 1 all-VRAM+RAM-cache … 4 default flexible … 5 min RAM (`--profile` overrides all three config profiles) |
 | `--vae-config` | VAE mode override (default Auto) |
-| `--teacache 0/1.5/2.0/2.5`, `--compile`, `--preload MB`, `--fp16/--bf16`, `--perc-reserved-mem-max`, `--vram-safety-coefficient`, `--gpu` | Speed/memory levers |
+| `--compile`, `--preload MB`, `--fp16/--bf16`, `--perc-reserved-mem-max`, `--vram-safety-coefficient`, `--gpu` | Speed/memory levers (`--vram-safety-coefficient` default 0.85) |
 | `--steps/--frames/--seed`, `--advanced` | Default gen values + advanced UI |
 | `--save-quantized`, `--convrot` (+`--save-quantized`) | Build INT8 Quanto / ConvRot ckpt on load |
 | `--test`, `--betatest`, `--debug-gen-form`, `--verbose 0-2`, `--debug-deepy`, `--llm-io` | Test/debug/transcripts |
@@ -700,10 +763,17 @@ From `shared/cli_args.py` (launcher exposes the useful subset):
 
 Deprecated `--t2v/--i2v/--t2v-14B/--t2v-1-3B/--vace-1-3B/--i2v-1-3B/--i2v-14B` still accepted (hidden). Env alternatives: `WANGP_AUTH_PASSWORD`, `WANGP_MCP_AUTH_PASSWORD`, `WANGP_SSL_CERT/KEY`, `CUDA_VISIBLE_DEVICES`.
 
+> **TeaCache is no longer a launch flag.** Current WanGP's `shared/cli_args.py`
+> does not define `--teacache`, and `parse_args` exits with *unrecognized
+> arguments* if it is passed. Step skipping is configured per generation under
+> **Advanced Mode → Steps Skipping** (`skip_steps_cache_type` =
+> `tea`/`mag`/`spectrum`/`first_block`, plus `skip_steps_multiplier` and
+> `skip_steps_start_step_perc`). Some upstream docs still show the old flag.
+
 Emergency: `--attention sdpa --profile 4 --fp16`, then `torch.cuda.is_available()`.
 
-> Code notes (`src/services/install-plan.js`, `shared/attention.py`,
-> `src/services/kernel-resolver.js`): RTX 20/30/40/50 = PyTorch 2.10 + CUDA 13
+> Code notes (`src-tauri/src/hw.rs` — GPU tier plan, `shared/attention.py`,
+> `src-tauri/src/wheels.rs` — kernel wheels): RTX 20/30/40/50 = PyTorch 2.10 + CUDA 13
 > (cu130, needs R580+ driver — older driver = CUDA failure after install, hence
 > the pre-install gate); GTX 10/16 = legacy PyTorch 2.7.1 + CUDA 12.8 (no R580
 > needed, no kernel wheels). Comfy Kitchen ships via `requirements.txt` (same
@@ -721,7 +791,7 @@ Emergency: `--attention sdpa --profile 4 --fp16`, then `torch.cuda.is_available(
 flowchart TD
   S["What broke?"]
   S --> O["Out of memory? Smaller model, quant on, P4 or P5, fewer frames"]
-  S --> L["Too slow? Compile plus sage2 on RTX 30+, teacache 2.0, profile 3"]
+  S --> L["Too slow? Compile plus sage2 on RTX 30+, Steps Skipping (TeaCache) in WanGP, profile 3"]
   S --> K["Sage or Triton error? Check import, wipe the triton cache, fall back to sdpa"]
   S --> Q["Bad quality? Guidance 1 with accelerators, 30+ steps, longer prompt"]
   S --> P["Port busy? Try 7861 or kill the 7860 holder from System tab"]
@@ -732,7 +802,7 @@ flowchart TD
 | --- | --- |
 | OOM load | Smaller model, quant on, profile 4/5, `--preload 0` |
 | OOM gen | Fewer frames, lower res, clear cache between gens |
-| Slow | `--compile` (needs Triton), `sage2` (30/40/50), `--teacache 2.0`, profile 3 |
+| Slow | `--compile` (needs Triton), `sage2` (30/40/50), Steps Skipping (TeaCache) in WanGP, profile 3 |
 | Sage fail | `import triton` version, wipe Triton cache (`~/.triton` + pinned `triton-cache` — Manage → Troubleshooting), fallback `--attention sdpa` |
 | LoRA missing/incompat | Right family folder, Refresh, `--check-loras`, 1.3B vs 14B, t2v vs i2v |
 | VACE poor | Skip Layer Guidance (CFG only), longer prompt, 30+ steps, mask check |
@@ -746,6 +816,10 @@ Still stuck: export launcher diagnostics (GPU/VRAM, torch/CUDA, triton, versions
 Upstream docs: `OVERVIEW/MODELS/PROMPTS/PROCESSING/VACE/LORAS/FINETUNES/WORKSPACES/
 PLUGINS/CLI/API/DEEPY/REMOTE_LLMS/AUTHENTICATION/TROUBLESHOOTING/INSTALLATION/DLSS5` in
 `deepbeepmeep/Wan2GP/docs`. Launcher screens: `USER-GUIDE.md`.
-What's new: upstream `docs/CHANGELOG.md` (v13.13: Qwen Image 2.1, JIT checkpoint
-loading, Comfy Kitchen kernels, H3 INT8 ConvRot VAE, Bonsai PTQ1 Deepy Prime at
-~10 GB VRAM) + launcher `CHANGELOG.md`.
+What's new: upstream `docs/CHANGELOG.md` (latest entry 26 Aug 2026, WanGP
+12.643–12.645: H3 two-phase/tiling, H3 Face Refiner, H3 PDD LoRA, SenseNova
+U1.5, Deepy Prime via Codex/Claude, remote notifications) + launcher
+`CHANGELOG.md`. The four upstream commits since the previous pin are not in
+that changelog yet — `profile 0`, `vllm rewrite, added fibo2`,
+`added FastH3 Omni, LTX2 VAE turing optimization`, `fixed audio continuity`;
+their user-visible effects are in this guide's model and kernel tables.

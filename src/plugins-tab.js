@@ -441,6 +441,73 @@ $("pluginInstallBtn")?.addEventListener("click", async () => {
     refreshPlugins();
   }
 });
+// Finetune Manager is the default companion: the launcher only bootstraps it.
+async function refreshCompanionPlugin() {
+  const st = $("companionPluginStatus");
+  const btn = $("companionPluginInstallBtn");
+  const opt = $("companionPluginOptOut");
+  if (!st || !btn) return;
+  try {
+    const r = await window.w2gp.companionPluginStatus();
+    if (opt) opt.checked = !!r.optOut;
+    const pinned = r.pinnedRef ? " (pinned " + r.pinnedRef + ")" : "";
+    if (r.installed) {
+      st.textContent =
+        "Installed" +
+        (r.version ? " v" + r.version : "") +
+        pinned +
+        (r.enabled ? " - enabled" : " - installed, not enabled");
+      btn.textContent = r.enabled ? "Repair" : "Enable";
+    } else {
+      st.textContent = "Not installed - the plugin owns pack recipes, the registry and downloads" + pinned;
+      btn.textContent = "Install pinned";
+    }
+    btn.disabled = false;
+  } catch (e) {
+    st.textContent = "Could not read companion status: " + ((e && e.message) || e);
+  }
+}
+$("companionPluginRefreshBtn")?.addEventListener("click", refreshCompanionPlugin);
+$("companionPluginInstallBtn")?.addEventListener("click", async () => {
+  const btn = $("companionPluginInstallBtn");
+  const st = $("companionPluginStatus");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Installing...";
+  if (st) st.textContent = "Installing the pinned Finetune Manager... progress is in the console.";
+  appendLog("[*] Installing the Finetune Manager companion plugin...");
+  try {
+    const r = await window.w2gp.companionPluginInstall();
+    if (r && r.ok) {
+      showToast("Finetune Manager installed - restart Wan2GP to load it");
+      appendLog("[OK] Finetune Manager companion installed: " + (r.id || ""));
+    } else {
+      const msg = (r && r.error) || "install failed";
+      showToast(msg);
+      if (st) st.textContent = msg;
+    }
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    showToast(msg);
+    if (st) st.textContent = msg;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+    refreshCompanionPlugin();
+    refreshPlugins();
+  }
+});
+$("companionPluginOptOut")?.addEventListener("change", async (e) => {
+  const enabled = !!e.target.checked;
+  try {
+    const r = await window.w2gp.companionPluginSetOptOut(enabled);
+    showToast(enabled ? "Automatic Finetune Manager install disabled" : "Automatic Finetune Manager install enabled");
+    if (r && r.optOut !== undefined) e.target.checked = !!r.optOut;
+  } catch (err) {
+    showToast("Could not save preference: " + ((err && err.message) || err));
+    e.target.checked = !enabled;
+  }
+});
 // Populate the Manage "Default Browser" list from the main process.
 async function loadBrowserList() {
   const list = $("browserList");

@@ -3,7 +3,8 @@
  *
  * Pure, side-effect-free data module (no Tauri, no Node, no DOM). Mirrors the
  * starters in docs/WAN2GP-GUIDE.md; every model_type must exist in WanGP's
- * defaults/*.json (verified 2026-09-21: 25/25 present).
+ * defaults/*.json (verified 2026-10-21 against upstream v18.20 / `dee66357`:
+ * 38/38 present).
  *
  * Shape per goal: { id, label, picks: [{ model, why, frames, steps, guidance, tip }] }
  * Frames/steps/guidance are starters, not rules — the per-model form owns truth.
@@ -27,7 +28,8 @@ const GUIDE_GOALS = [
     picks: [
       { model: 'i2v_2_2', why: 'Mature general image-to-video.', frames: 49, steps: 20, guidance: 5, tip: 'Start Image holds the subject — prompt only motion/camera: "she smiles, turns toward the window, camera pushes in".' },
       { model: 'minimax_h3_fl2va_pruned', why: 'Realistic motion + synced audio in one pass.', frames: 124, steps: 15, guidance: 5, tip: 'Needs 15-20 steps minimum (no distilled ckpt yet).' },
-      { model: 'minimax_h3_fl2va_pruned_veda', why: 'Same settings/LoRAs as pruned FL2VA, up to 2x faster on long/high-res gens.', frames: 124, steps: 15, guidance: 5, tip: 'Needs Triton and a CC 8.0+ NVIDIA GPU; compare fine detail against the standard variant first.' }
+      { model: 'minimax_h3_fl2va_pruned_veda', why: 'Same settings/LoRAs as pruned FL2VA, up to 2x faster on long/high-res gens.', frames: 124, steps: 15, guidance: 5, tip: 'Needs Triton and a CC 8.0+ NVIDIA GPU; compare fine detail against the standard variant first.' },
+      { model: 'minimax_h3_fasth3_omni', why: 'FastH3 Omni (v18.20): 8-step FastVideo-distilled video + synced audio from text and ordered image/video/audio references.', frames: 124, steps: 8, guidance: 1, tip: 'Distilled with references — give it at least one image or video reference. No CFG (guidance 1), flow_shift 12; the NVFP4 variant is 13 GB and fastest on RTX 50xx, slower on RTX 30xx/40xx.' }
     ]
   },
   {
@@ -84,7 +86,8 @@ const GUIDE_GOALS = [
     picks: [
       { model: 'z_image', why: 'Fast 6B iteration for posters, key art, i2v sources.', frames: 0, steps: 8, guidance: 1, tip: 'Turbo distilled; iterate fast, upscale later.' },
       { model: 'flux3_klein', why: 'FLUX 3 Klein 5.6B distilled — 16-step text-to-image plus up to 10 ordered references for edits.', frames: 0, steps: 16, guidance: 1, tip: 'Distilled flow-map checkpoint: no CFG in the default profile. The Base variant is 50 steps with CFG when a prompt needs more.' },
-      { model: 'krea2_turbo', why: 'Polished/aesthetic + world knowledge (people, landmarks).', frames: 0, steps: 12, guidance: 4, tip: 'RAW checkpoint for CFG control; Turbo for speed.' }
+      { model: 'krea2_turbo', why: 'Polished/aesthetic + world knowledge (people, landmarks).', frames: 0, steps: 12, guidance: 4, tip: 'RAW checkpoint for CFG control; Turbo for speed.' },
+      { model: 'fibo2_dev', why: 'Fibo 2.0 Dev (Bria, v18.20): unified text-to-image plus reference and masked editing from plain-language or structured captions.', frames: 0, steps: 50, guidance: 5, tip: '1024x1024, bf16 + int8_convrot. For instruction edits use Fibo 2.0 Edit Turbo instead — it does four steps, not fifty.' }
     ]
   },
   {
@@ -92,7 +95,8 @@ const GUIDE_GOALS = [
     label: 'Image edit / identity',
     picks: [
       { model: 'qwen_image_edit_plus_20B', why: 'Multi-subject combine + long rendered text.', frames: 0, steps: 30, guidance: 4, tip: 'Instruction verbs: add/remove/replace/change — keep face/scene explicitly.' },
-      { model: 'krea2_turbo_edit', why: 'Up to 2 refs + inpaint/outpaint built in.', frames: 0, steps: 12, guidance: 4, tip: 'Good for keyframes before video runs.' }
+      { model: 'krea2_turbo_edit', why: 'Up to 2 refs + inpaint/outpaint built in.', frames: 0, steps: 12, guidance: 4, tip: 'Good for keyframes before video runs.' },
+      { model: 'fibo2_edit_turbo', why: 'Fibo 2.0 Edit Turbo (v18.20): four-step instruction editing with 1–4 references or a masked source image.', frames: 0, steps: 4, guidance: 1, tip: 'Editing only, no CFG — keep guidance 1 and supply the references (or the mask) the instruction is about.' }
     ]
   },
   {
@@ -191,7 +195,11 @@ const MODEL_NAMES = {
   flux3_klein_nvfp4: 'Flux 3 Klein NVFP4 5.6B',
   flux3_klein_base_nvfp4: 'Flux 3 Klein Base NVFP4 5.6B',
   fish_drama3: 'TTS Fish Audio Drama 3',
-  fish_drama3_int4: 'TTS Fish Audio Drama 3 INT4 Experts'
+  fish_drama3_int4: 'TTS Fish Audio Drama 3 INT4 Experts',
+  minimax_h3_fasth3_omni: 'MiniMax H3 FastH3 Omni 8-Step 20B',
+  minimax_h3_fasth3_omni_nvfp4: 'MiniMax H3 FastH3 Omni NVFP4 QAD 8-Step 20B',
+  fibo2_dev: 'Fibo 2.0 Dev',
+  fibo2_edit_turbo: 'Fibo 2.0 Edit Turbo'
 }
 
 /**

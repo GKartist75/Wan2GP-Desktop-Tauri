@@ -63,8 +63,8 @@ fn split_args(s: &str) -> Vec<String> {
     out
 }
 
-/// Replace whole flags: `--attention X`, `--teacache X`, `--profile X` take a
-/// value; `--fp16` is bare. Everything else passes through untouched.
+/// Replace whole flags: `--attention X`, `--profile X` take a value; `--fp16`
+/// is bare. Everything else passes through untouched.
 fn merge_launch_flags(existing: &str, want: &[(&str, Option<&str>)]) -> String {
     let mut out: Vec<String> = Vec::new();
     let cur = split_args(existing);
@@ -94,7 +94,7 @@ fn merge_launch_flags(existing: &str, want: &[(&str, Option<&str>)]) -> String {
 }
 
 /// Emergency failsafe (upstream "Absolute minimum setup"):
-/// `wgp.py --attention sdpa --profile 4 --teacache 0 --fp16`
+/// `wgp.py --attention sdpa --profile 4 --fp16`
 /// plus P5 profiles in wgp_config.json. Backs up wgp_config first.
 #[tauri::command]
 pub fn troubleshoot_failsafe_apply() -> Result<serde_json::Value, String> {
@@ -142,7 +142,6 @@ pub fn troubleshoot_failsafe_apply() -> Result<serde_json::Value, String> {
         &[
             ("--attention", Some("sdpa")),
             ("--profile", Some("4")),
-            ("--teacache", Some("0")),
             ("--fp16", None),
         ],
     );
@@ -1419,10 +1418,9 @@ mod troubleshoot_tests {
             &[
                 ("--attention", Some("sdpa")),
                 ("--profile", Some("4")),
-                ("--teacache", Some("0")),
                 ("--fp16", None),
             ],
         );
-        assert_eq!(m2, "--attention sdpa --profile 4 --teacache 0 --fp16");
+        assert_eq!(m2, "--attention sdpa --profile 4 --fp16");
     }
 }

@@ -80,3 +80,22 @@ test('the embedded view marks the dashboard so the ladder can key off it', () =>
   assert.match(show[0], /classList\.add\("wv-active"\)/)
   assert.match(hide[0], /classList\.remove\("wv-active"\)/)
 })
+
+test('the bar compacts instead of shrinking metrics or wrapping controls', () => {
+  // The metrics row is content-sized; if it shrinks, its last reading is cut
+  // mid-label. The right-hand buttons are content-sized too: a shrunken
+  // "← Back to Dashboard" used to wrap onto a second line and overlap.
+  assert.match(css, /\.topbar-metrics\s*\{[^}]*flex:\s*0 0 auto/s)
+  assert.match(css, /\.topbar-right > \*\s*\{[^}]*flex-shrink:\s*0/s)
+  assert.match(css, /\.topbar \.btn,\s*\.topbar \.btn-icon\s*\{[^}]*white-space:\s*nowrap/s)
+  assert.match(html, /id="backToDashboardBtn"[^>]*>← Dashboard</)
+  assert.doesNotMatch(html, /← Back to Dashboard/)
+})
+
+test('the logo and wordmark give the controls room on normal windows', () => {
+  assert.match(css, /\.brand-mark-small\s*\{[^}]*font-size:\s*1rem/s)
+  assert.ok(rule(1920, '.app-title'), 'wordmark hide rung missing')
+  // Sparklines stay crisp at their new, narrower CSS size.
+  assert.match(css, /\.metric-spark\s*\{[^}]*width:\s*36px/s)
+  assert.match(html, /class="metric-spark" id="sparkCpu" width="36" height="18"/)
+})

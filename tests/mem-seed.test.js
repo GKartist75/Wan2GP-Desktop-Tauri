@@ -89,6 +89,7 @@ function harness(present = null) {
     [
       extractConst('MEM_FIELDS'),
       ...LABELS.map(extractConst),
+      extractFn('fmtProfile'),
       extractFn('fmtVal'),
       extractFn('setTag'),
       extractFn('memProfilePopulate'),
@@ -130,6 +131,18 @@ test('saved-seed fills only empty dropdowns (the reported bug)', () => {
     '4',
     'a Detect-populated dropdown must not be clobbered by disk',
   )
+})
+
+test('profile chips read P-labels, matching the dropdowns', () => {
+  const h = harness()
+  h.populate(
+    { video_profile: '0', image_profile: '4.5', audio_profile: '3.5' },
+    { mode: 'saved' },
+  )
+  const F = h.MEM_FIELDS
+  assert.equal(h.__els.get(F.video_profile.saved).textContent, 'saved: P0')
+  assert.equal(h.__els.get(F.image_profile.saved).textContent, 'saved: P4+')
+  assert.equal(h.__els.get(F.audio_profile.saved).textContent, 'saved: P3+')
 })
 
 test('saved tags show disk while rec tags stay untouched by the seed', () => {

@@ -36,7 +36,6 @@
     })
     $('lbAttention')?.addEventListener('change', (e) => patch({ '--attention': e.target.value || null }))
     $('lbProfile')?.addEventListener('change', (e) => patch({ '--profile': e.target.value || null }))
-    $('lbTeacache')?.addEventListener('change', (e) => patch({ '--teacache': e.target.value || null }))
     $('lbCompile')?.addEventListener('change', (e) => patch({ '--compile': e.target.checked ? true : null }))
     $('lbFp16')?.addEventListener('change', (e) => patch({ '--fp16': e.target.checked ? true : null }))
     initMcpHelper()

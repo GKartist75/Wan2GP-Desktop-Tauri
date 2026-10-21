@@ -259,7 +259,7 @@ pub(crate) fn kernel_probe_failures(
 }
 
 /// Known-stale kernel versions in a kernel-probe map: GGUF builds older
-/// than the 1.0.27 floor look healthy (import ok) while silently disabling
+/// than the 1.0.28 floor look healthy (import ok) while silently disabling
 /// the single-launch row loop, packed rows (MiniMax H3 image-reference
 /// projections) or the SM120 async path — 6 tok/s Deepy decode instead of 37
 /// (#2274).
@@ -502,7 +502,7 @@ mod probe_tests {
     fn stale_gguf_flagged_floor_passes() {
         // #2274: 1.0.2 imports fine but silently disables the SM120 async
         // path — Verify must say so instead of reporting healthy.
-        let floor = "1.0.27";
+        let floor = "1.0.28";
         let raw_old =
             r#"{"llamacpp-gguf-cuda": {"version": "1.0.2", "import": "ok", "extra": ""}}"#;
         let stale = kernel_probe_stale(&parse_kernel_json(raw_old).unwrap(), floor);
@@ -512,10 +512,12 @@ mod probe_tests {
             "got {stale:?}"
         );
         let raw_floor =
-            r#"{"llamacpp-gguf-cuda": {"version": "1.0.27", "import": "ok", "extra": ""}}"#;
+            r#"{"llamacpp-gguf-cuda": {"version": "1.0.28", "import": "ok", "extra": ""}}"#;
         assert!(kernel_probe_stale(&parse_kernel_json(raw_floor).unwrap(), floor).is_empty());
-        // 1.0.21-1.0.26 predate the 1.0.27 floor (docs prescription) — now stale.
-        for v in ["1.0.21", "1.0.22", "1.0.23", "1.0.24", "1.0.25", "1.0.26"] {
+        // 1.0.21-1.0.27 predate the 1.0.28 floor (docs prescription) — now stale.
+        for v in [
+            "1.0.21", "1.0.22", "1.0.23", "1.0.24", "1.0.25", "1.0.26", "1.0.27",
+        ] {
             let raw = format!(
                 r#"{{"llamacpp-gguf-cuda": {{"version": "{v}", "import": "ok", "extra": ""}}}}"#
             );
@@ -527,9 +529,9 @@ mod probe_tests {
         }
         // A higher effective floor (setup_config bump) raises the threshold.
         let raw_newer =
-            r#"{"llamacpp-gguf-cuda": {"version": "1.0.27", "import": "ok", "extra": ""}}"#;
+            r#"{"llamacpp-gguf-cuda": {"version": "1.0.28", "import": "ok", "extra": ""}}"#;
         assert_eq!(
-            kernel_probe_stale(&parse_kernel_json(raw_newer).unwrap(), "1.0.28").len(),
+            kernel_probe_stale(&parse_kernel_json(raw_newer).unwrap(), "1.0.29").len(),
             1
         );
         let raw_missing = r#"{"torch": {"version": "x", "import": "ok", "extra": ""}}"#;

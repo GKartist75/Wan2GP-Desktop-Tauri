@@ -139,7 +139,9 @@ test('the helpers are defined before the tab files that use them', () => {
   const appAt = order.indexOf('app.js')
   assert.ok(appAt > -1, 'app.js is loaded')
   const users = files
-    .filter(([name, src]) => name !== 'app.js' && /\b(askConfirm|notifyUser)\s*\(/.test(src))
+    .filter(
+      ([name, src]) => name !== 'app.js' && /\b(askConfirm|notifyUser)\s*\(/.test(src),
+    )
     .map(([name]) => name)
   assert.ok(users.length > 0, 'tab files use the helpers')
   for (const name of users) {

@@ -23,6 +23,13 @@ const BUNDLED_PLUGINS: &[&str] = &[
     "sample",
 ];
 
+// The launcher's pack/recipe UI is intentionally thin: Finetune Manager owns
+// recipe editing, the registry, CivitAI, imports and missing-file downloads.
+// Install a pinned, known-good tag by default; never float master.
+const COMPANION_PLUGIN_ID: &str = "Wan2GP-finetune-manager";
+const COMPANION_PLUGIN_URL: &str = "https://github.com/GKartist75/Wan2GP-finetune-manager.git";
+const COMPANION_PLUGIN_REF: &str = "v3.7.0";
+
 // repo dir name from a git URL (mirrors shared/utils/plugins.py plugin_id_from_url).
 fn plugin_id_from_url(url: &str) -> String {
     let mut t = url.trim().to_string();
@@ -292,11 +299,31 @@ fn scrub_config_lists(repo: &Path, id: &str) -> Result<(), String> {
 
 // guard-free core: clone (+requirements) + record + enable. plugin_install wraps
 // it with the mutating guard; ensure_favorites calls it in a loop (best-effort).
-async fn install_plugin_inner(app: &tauri::AppHandle, url: &str) -> Result<String, String> {
+fn enable_plugin_in_config(repo: &Path, id: &str) -> Result<(), String> {
+    // record + auto-enable in wgp_config.json (mirrors _finish_install_from_url)
+    let p = repo.join("wgp_config.json");
+    let mut cfg = read_wgp_config(repo);
+    for key in ["installed_remote_plugins", "enabled_plugins"] {
+        let mut list = str_list(&cfg, key);
+        if !list.iter().any(|x| x == id) {
+            list.push(id.to_string());
+        }
+        cfg[key] =
+            serde_json::Value::Array(list.into_iter().map(serde_json::Value::String).collect());
+    }
+    atomic_write(&p, &serde_json::to_string_pretty(&cfg).unwrap_or_default())
+        .map_err(|e| e.to_string())
+}
+
+async fn install_plugin_inner_at(
+    app: &tauri::AppHandle,
+    url: &str,
+    git_ref: Option<&str>,
+) -> Result<String, String> {
     // Plaintext git clone is a MITM code-execution path (plugins load into
     // Wan2GP). scp-style github.com: URLs ride over SSH and stay allowed.
     if url.starts_with("http://") {
-        return Err("refusing plaintext http:// plugin URL — use https://".into());
+        return Err("refusing plaintext http:// plugin URL - use https://".into());
     }
     let id = plugin_id_from_url(url);
     if id.is_empty() {
@@ -309,39 +336,36 @@ async fn install_plugin_inner(app: &tauri::AppHandle, url: &str) -> Result<Strin
     };
     let target = repo.join("plugins").join(&id);
     if !target.exists() {
-        log(&format!("[*] Cloning plugin {id}…\n"));
+        log(&format!("[*] Cloning plugin {id}...\n"));
         std::fs::create_dir_all(repo.join("plugins")).map_err(|e| e.to_string())?;
         let target_s = target.to_string_lossy().to_string();
-        if !run_logged(
-            app,
-            "git",
-            &["clone", "--depth", "1", url, target_s.as_str()],
-            None,
-            &log,
-        )
-        .await
-            || !target.exists()
-        {
-            return Err("git clone failed — check console output".into());
+        let mut args = vec!["clone", "--depth", "1"];
+        if let Some(r) = git_ref {
+            args.push("--branch");
+            args.push(r);
+        }
+        args.push(url);
+        args.push(target_s.as_str());
+        if !run_logged(app, "git", &args, None, &log).await || !target.exists() {
+            // A failed clone can leave a partial target; do not let it block the
+            // retry by making the next run think a plugin is already installed.
+            if target.exists() {
+                let _ = std::fs::remove_dir_all(&target);
+            }
+            return Err("git clone failed - check console output".into());
         }
         install_requirements(app, &repo, &id, &target, &log).await;
     } else {
-        log(&format!("[*] Plugin {id} already installed — enabling…\n"));
+        log(&format!(
+            "[*] Plugin {id} already installed - enabling...\n"
+        ));
     }
-    // record + auto-enable in wgp_config.json (mirrors _finish_install_from_url)
-    let p = repo.join("wgp_config.json");
-    let mut cfg = read_wgp_config(&repo);
-    for key in ["installed_remote_plugins", "enabled_plugins"] {
-        let mut list = str_list(&cfg, key);
-        if !list.contains(&id) {
-            list.push(id.clone());
-        }
-        cfg[key] =
-            serde_json::Value::Array(list.into_iter().map(serde_json::Value::String).collect());
-    }
-    atomic_write(&p, &serde_json::to_string_pretty(&cfg).unwrap_or_default())
-        .map_err(|e| e.to_string())?;
+    enable_plugin_in_config(&repo, &id)?;
     Ok(id)
+}
+
+async fn install_plugin_inner(app: &tauri::AppHandle, url: &str) -> Result<String, String> {
+    install_plugin_inner_at(app, url, None).await
 }
 
 async fn install_requirements(
@@ -384,6 +408,153 @@ async fn install_requirements(
             "[!] No active env python — skipped requirements for {id}\n"
         )),
     }
+}
+
+fn companion_target(repo: &Path) -> PathBuf {
+    repo.join("plugins").join(COMPANION_PLUGIN_ID)
+}
+
+fn companion_version(repo: &Path) -> Option<String> {
+    let p = companion_target(repo).join("plugin_info.json");
+    let s = std::fs::read_to_string(p).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&s).ok()?;
+    v.get("version")
+        .and_then(|x| x.as_str())
+        .map(str::to_string)
+}
+
+fn companion_installed(repo: &Path) -> bool {
+    let target = companion_target(repo);
+    target.join("plugin.py").is_file() && target.join("plugin_info.json").is_file()
+}
+
+fn companion_enabled(repo: &Path) -> bool {
+    let cfg = read_wgp_config(repo);
+    str_list(&cfg, "enabled_plugins")
+        .iter()
+        .any(|x| x == COMPANION_PLUGIN_ID)
+}
+
+fn companion_opt_out() -> bool {
+    load_config_value()
+        .get("companionPluginOptOut")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false)
+}
+
+pub fn companion_plugin_status_value() -> serde_json::Value {
+    let repo = get_repo_dir();
+    let target = companion_target(&repo);
+    let installed = companion_installed(&repo);
+    serde_json::json!({
+        "id": COMPANION_PLUGIN_ID,
+        "url": COMPANION_PLUGIN_URL,
+        "pinnedRef": COMPANION_PLUGIN_REF,
+        "installed": installed,
+        "enabled": installed && companion_enabled(&repo),
+        "version": companion_version(&repo),
+        "path": target.to_string_lossy(),
+        "optOut": companion_opt_out(),
+    })
+}
+
+#[tauri::command]
+pub fn companion_plugin_status() -> serde_json::Value {
+    companion_plugin_status_value()
+}
+
+#[tauri::command]
+pub fn companion_plugin_set_opt_out(enabled: bool) -> Result<serde_json::Value, String> {
+    let p = get_config_file();
+    let mut cfg = load_config_value();
+    if !cfg.is_object() {
+        cfg = serde_json::json!({});
+    }
+    cfg["companionPluginOptOut"] = serde_json::Value::Bool(enabled);
+    atomic_write(&p, &serde_json::to_string_pretty(&cfg).unwrap_or_default())
+        .map_err(|e| e.to_string())?;
+    Ok(companion_plugin_status_value())
+}
+
+async fn install_companion_inner(app: &tauri::AppHandle) -> Result<String, String> {
+    let repo = get_repo_dir();
+    if !repo.join("wgp.py").exists() && !repo.join("wgp_config.json").exists() {
+        return Err("Wan2GP is not installed yet".into());
+    }
+    let target = companion_target(&repo);
+    if target.exists() {
+        if companion_installed(&repo) {
+            enable_plugin_in_config(&repo, COMPANION_PLUGIN_ID)?;
+            return Ok(COMPANION_PLUGIN_ID.to_string());
+        }
+        // A failed/partial clone is safe to discard only when it has no local
+        // config. config.json holds the registry token, so never delete that.
+        if target.join("config.json").exists() {
+            return Err(format!(
+                "{} is incomplete and contains config.json - back it up, remove the folder, then retry",
+                target.display()
+            ));
+        }
+        std::fs::remove_dir_all(&target)
+            .map_err(|e| format!("could not clear incomplete companion checkout: {e}"))?;
+    }
+    let id = install_plugin_inner_at(app, COMPANION_PLUGIN_URL, Some(COMPANION_PLUGIN_REF)).await?;
+    if !companion_installed(&repo) {
+        let cloned = companion_target(&repo);
+        if !cloned.join("config.json").exists() {
+            let _ = std::fs::remove_dir_all(&cloned);
+        }
+        return Err("Finetune Manager cloned but plugin.py/plugin_info.json is missing".into());
+    }
+    Ok(id)
+}
+
+/// Default companion install for fresh installs, reinstall/repair and existing
+/// installs that predate this feature. Best-effort: never fails setup.
+pub async fn ensure_companion_plugin(app: tauri::AppHandle, force: bool) {
+    if !force && companion_opt_out() {
+        return;
+    }
+    let repo = get_repo_dir();
+    if !repo.join("wgp.py").exists() && !repo.join("wgp_config.json").exists() {
+        return;
+    }
+    let log = |m: &str| {
+        crate::base::push_log(m, "setup");
+        let _ = app.emit("setup-output", m.to_string());
+    };
+    if companion_installed(&repo) {
+        if !companion_enabled(&repo) {
+            match enable_plugin_in_config(&repo, COMPANION_PLUGIN_ID) {
+                Ok(()) => log("[*] Finetune Manager enabled.\n"),
+                Err(e) => log(&format!("[!] Could not enable Finetune Manager: {e}\n")),
+            }
+        }
+        return;
+    }
+    log("[*] Installing Finetune Manager (pinned companion plugin)...\n");
+    match install_companion_inner(&app).await {
+        Ok(id) => log(&format!("[OK] Companion plugin {id} ready.\n")),
+        Err(e) => log(&format!(
+            "[!] Finetune Manager was not installed: {e}. You can retry from Manage > Plugins.\n"
+        )),
+    }
+}
+
+#[tauri::command]
+pub async fn companion_plugin_install(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    mutating_try("companion-plugin-install")?;
+    let r = install_companion_inner(&app).await;
+    mutating_done();
+    let id = r?;
+    let log = |m: &str| {
+        crate::base::push_log(m, "launch");
+        let _ = app.emit("launch-log", m.to_string());
+    };
+    log(&format!(
+        "[OK] Finetune Manager {id} installed and enabled - restart Wan2GP to load it.\n"
+    ));
+    Ok(serde_json::json!({"ok": true, "id": id, "status": companion_plugin_status_value()}))
 }
 
 // Favourites (desktop-config.json `favoritePlugins: [urls]`) auto-install.
@@ -866,4 +1037,50 @@ pub async fn plugin_refresh_catalog(app: tauri::AppHandle) -> Result<serde_json:
 
 fn chrono_now() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string()
+}
+
+#[cfg(test)]
+mod companion_tests {
+    use super::*;
+
+    #[test]
+    fn companion_pin_is_a_release_tag_not_a_branch() {
+        assert!(COMPANION_PLUGIN_REF.starts_with('v'));
+        assert_ne!(COMPANION_PLUGIN_REF, "master");
+    }
+
+    #[test]
+    fn installed_requires_both_plugin_files() {
+        let repo = tempfile::tempdir().unwrap();
+        let target = companion_target(repo.path());
+        std::fs::create_dir_all(&target).unwrap();
+        assert!(!companion_installed(repo.path()));
+        std::fs::write(target.join("plugin.py"), "x").unwrap();
+        assert!(!companion_installed(repo.path()));
+        std::fs::write(target.join("plugin_info.json"), r#"{"version":"1.2.3"}"#).unwrap();
+        assert!(companion_installed(repo.path()));
+        assert_eq!(companion_version(repo.path()).as_deref(), Some("1.2.3"));
+    }
+
+    #[test]
+    fn enabling_records_and_enables_the_companion_once() {
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::write(repo.path().join("wgp_config.json"), "{}").unwrap();
+        enable_plugin_in_config(repo.path(), COMPANION_PLUGIN_ID).unwrap();
+        enable_plugin_in_config(repo.path(), COMPANION_PLUGIN_ID).unwrap();
+        let cfg = read_wgp_config(repo.path());
+        let enabled = str_list(&cfg, "enabled_plugins");
+        let installed = str_list(&cfg, "installed_remote_plugins");
+        assert_eq!(
+            enabled.iter().filter(|x| *x == COMPANION_PLUGIN_ID).count(),
+            1
+        );
+        assert_eq!(
+            installed
+                .iter()
+                .filter(|x| *x == COMPANION_PLUGIN_ID)
+                .count(),
+            1
+        );
+    }
 }
