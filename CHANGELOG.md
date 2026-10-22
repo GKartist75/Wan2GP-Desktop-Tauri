@@ -19,6 +19,15 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   (`defaults/` gained no file) and all 38 Guide-tab picks still resolve against
   `9d25c601`.
 
+- **Upstream-docs audit closed three gaps.** All 25 files in upstream `docs/` were
+  re-read at `9d25c601` (byte-identical to `dee66357` — 18.21 changed no doc, only
+  the root README) and the guide's references were completed: the audio processor
+  inventory was missing `remove_vocals` (Remove Vocals, `audio_edit`, the
+  `audio_background_removal` handler), the guide never mentioned *Generation
+  Preview*'s two Tiny VAE modes and the decoder residency they cost, and its
+  upstream-docs list named 17 of 25 files. No launcher code touches any of these
+  names — the guide and the README table are the only mirrors.
+
 ## [0.10.19] — 2026-10-21
 
 - **Auto-Tune follows upstream's new VRAM coefficient.** Upstream `06106f69`

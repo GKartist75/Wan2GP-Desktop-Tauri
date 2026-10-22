@@ -90,9 +90,16 @@ FP8 checkpoints; `kernel_precision` fast/strict controls H3 VAE fusions.
 **v18.21 widens WanGP's own Triton kernels** instead of whitelisting the cards
 they were first timed on: `shared/kernels/dispatch.py` now gates them by what the
 arithmetic needs — BF16 from compute capability 8.0 (RTX 30+), FP16/FP32 from 7.5
-(RTX 20 / GTX 16xx) — and Triton compiles each kernel for the card it runs on. GTX
-10xx (SM 6.1) stays out. This changes no wheel, pin or setting: the kernel wheels
-above are unaffected and eligibility is still checked before launch.
+(RTX 20 / GTX 16xx) — and Triton compiles each kernel for the card it runs on. It
+only lands where the environment has Triton, i.e. RTX 20+ here: the GTX 10xx/16xx
+profile installs no Triton (and SM 6.1 is below every floor anyway). This changes
+no wheel, pin or setting: the kernel wheels above are unaffected and eligibility is
+still checked before launch. Upstream measures the release itself as "many image,
+video, 3D, speech and music models up to 10% faster with slightly less VRAM"
+(README, v18.21). On RTX 20 the same release lifts two Sage 1 limits: masked calls
+(inpainting, VACE masks) now run on WanGP's Turing kernel instead of falling back to
+SDPA, and BF16 q/k/v are read as bits for sequences up to 2,048 tokens instead of
+being copied to FP16 first (`shared/sage1_core.py`).
 WGPKernels 1.3.0 is in `setup_config.json` (the Windows and Linux install
 scripts include WGPKernels for RTX 20XX, 30XX, 40XX and 50XX; upstream labels it
 "WGPKernels 1.3.0 (CUDA 13, RTX 20XX+)", "(CUDA 12.8, RTX 20XX+)" and
@@ -460,6 +467,19 @@ Flag strings (`image/video/audio_prompt_type`, `prompt_enhancer`, `multi_prompts
 
 Accelerator LoRAs demand `guidance 1` — forgetting this is the #1 bad-quality cause.
 
+### Generation preview cost (Configuration → General)
+
+`docs/PREVIEWS.md` offers three **Generation Preview** modes: *Frames Selection
+using RGB Factors* (default — no download), *Frames Selection using Tiny VAE* and
+*Video using Tiny VAE*. Both Tiny VAE modes download a small decoder on first use
+and keep it resident during generation (the usual model-unload actions release it),
+so they cost extra VRAM and decoding time — RGB is the right pick when memory is
+tight, and a change takes effect on the next generation. Tiny VAE previews cover
+Wan 2.1/2.2 with their VACE/Phantom/MultiTalk/InfiniteTalk/Animate/Alpha/Ovi/Lucy
+variants, Hunyuan Video/1.5, Kandinsky 5, LongCat, MAGI Human, LTX-2/2.3/2.5,
+MiniMax H3, Flux/Flux 2, Z-Image, Qwen Image 20B, Krea 2 and Ideogram 4; other
+architectures keep the RGB frame strip.
+
 ---
 
 ## LoRAs + accelerator profiles
@@ -567,7 +587,7 @@ short window, keep originals before multi-pass post.
 | --- | --- | --- |
 | Spatial (generation + late) | Lanczos, DLSS5, FlashVSR (v1.1 / +Turbo), SeedVR2, PiD (1.5/1.x, incl. Qwen/Flux VAE plug), H3 Face Refiner, Chain-of-Zoom (to x16), LTX2 (2.3/2.5 x2 video), Wan VAE 2x | `lanczos*2`, `vae*2`, `dlss5*1…*3`, `flashvsr*…`, `seedvr2*…`, `pid*…`, `coz*4…`, refiners bare id (no Scale control) |
 | Temporal (video only) | RIFE v4.26, DLSS Frame Generation | `rife*2/*3/*4`, `dlssg*2…*6` (x5/x6 RTX 50) |
-| Audio | custom soundtrack, MMAudio, PrismAudio, SeedVC 1-/2-speaker, background removal | `custom`, `mmaudio`, `prismaudio`, `seedvc_one_speaker`, `seedvc_two_speakers`, `remove_background` (+ legacy `seedvc/seedvc2` normalized) |
+| Audio | custom soundtrack, MMAudio, PrismAudio, SeedVC 1-/2-speaker, background/music removal, vocal removal | `custom`, `mmaudio`, `prismaudio`, `seedvc_one_speaker`, `seedvc_two_speakers`, `remove_background` (Remove Music / Background noise), `remove_vocals` (Remove Vocals — same `audio_background_removal` handler, `audio_edit` type) (+ legacy `seedvc/seedvc2` normalized) |
 | Misc | Film grain, control-track reuse | `film_grain_intensity/saturation`, pseudo-method `control` (do not register) |
 
 Plugin authors: new spatial/temporal/audio handlers via `plugin_info.json`
@@ -639,7 +659,9 @@ LTX windows default 81f/17 overlap (`8n+1` cadence, 9–481).
 * The old decoder labels are gone: the mode choices now read **Tiny Decoder**
   (faster, less RAM) / **Full Wan VAE Decoder** (best quality, more RAM); the stored
   values (`flashvsr*`, `flashvsr2pass*`) are unchanged, so existing post-processing
-  strings keep working.
+  strings keep working. The Model dropdown exists only once WanGP itself is on
+  18.21 (`C:\Wan2GP` `git log`: `9d25c601`) — an install still on `dee66357`
+  shows the two old decoder modes until *Update Wan2GP* runs.
 
 ### Accelerator profile folders (all 25, `profiles/`)
 
@@ -846,9 +868,12 @@ Still stuck: export launcher diagnostics (GPU/VRAM, torch/CUDA, triton, versions
 `boot.log`, redacted config) + exact command + full error -> Discord
 `discord.gg/g7efUW9jGV`. Minimal repro beats screenshots.
 
-Upstream docs: `OVERVIEW/MODELS/PROMPTS/PROCESSING/VACE/LORAS/FINETUNES/WORKSPACES/
-PLUGINS/CLI/API/DEEPY/REMOTE_LLMS/AUTHENTICATION/TROUBLESHOOTING/INSTALLATION/DLSS5` in
-`deepbeepmeep/Wan2GP/docs`. Launcher screens: `USER-GUIDE.md`.
+Upstream docs (all 25 files in `deepbeepmeep/Wan2GP/docs`, read at `9d25c601`):
+`AMD-INSTALLATION`, `API`, `AUDIO_PROCESSORS`, `AUTHENTICATION`, `CHANGELOG`, `CLI`,
+`DEEPY`, `DLSS5`, `FINETUNES`, `GETTING_STARTED`, `INSTALLATION`, `LORAS`, `MODELS`,
+`OVERVIEW`, `PLUGINS`, `PREVIEWS`, `PROCESSING`, `PROMPTS`, `REMOTE_LLMS`, `SETTINGS`,
+`SPATIAL_UPSAMPLERS`, `TEMPORAL_UPSAMPLERS`, `TROUBLESHOOTING`, `VACE`, `WORKSPACES`.
+Launcher screens: `USER-GUIDE.md`.
 What's new: upstream `docs/CHANGELOG.md` (latest entry 26 Aug 2026, WanGP
 12.643–12.645: H3 two-phase/tiling, H3 Face Refiner, H3 PDD LoRA, SenseNova
 U1.5, Deepy Prime via Codex/Claude, remote notifications) + launcher
