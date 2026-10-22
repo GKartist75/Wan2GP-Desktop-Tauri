@@ -14,7 +14,7 @@ let _mainLan = {
   lanOn: false,
   serving: false,
   servingLan: false,
-  port: 7860,
+  port: 7861,
   samePc: "",
   phone: null,
   phoneDeepy: null,
@@ -29,7 +29,7 @@ async function refreshMainLan() {
       window.w2gp.mainLanUrls().catch(() => null),
     ]);
     const lanOn = !!(cfg && cfg.mainLan);
-    const port = (u && u.port) || (cfg && cfg.serverPort) || 7860;
+    const port = (u && u.port) || (cfg && cfg.serverPort) || 7861;
     const samePc = (u && u.samePc) || "http://localhost:" + port;
     const phone = (u && u.phone) || null;
     const phoneDeepy = (u && u.phoneDeepy) || null;

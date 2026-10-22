@@ -94,12 +94,13 @@ $("amdSaveBtn")?.addEventListener("click", async () => {
   const cfg = await window.w2gp.configLoad();
   cfg.amdEnv = {
     miopenDisabled: $("amdMiopenDisabled")?.checked === true,
+    deviceTarget: ($("amdDeviceTarget")?.value || "").trim(),
   };
   await window.w2gp.configSave(cfg);
   showToast("AMD settings saved — applies on next launch");
 });
 $("portSaveBtn")?.addEventListener("click", async () => {
-  const val = parseInt($("portInput")?.value) || 7860;
+  const val = parseInt($("portInput")?.value) || 7861;
   if (val < 1024 || val > 65535) {
     showToast("Port must be between 1024 and 65535");
     return;

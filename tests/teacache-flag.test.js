@@ -37,10 +37,28 @@ test('the launch builder has no TeaCache control or patch', () => {
   assert.match(html, /Advanced Mode → Steps Skipping/)
 })
 
-test('the emergency failsafe and launch splitter do not use --teacache', () => {
-  for (const file of ['src-tauri/src/troubleshoot.rs', 'src-tauri/src/launch.rs']) {
-    assert.doesNotMatch(read(file), /--teacache/, `${file} still mentions the removed flag`)
-  }
+test('the emergency failsafe never emits --teacache', () => {
+  assert.doesNotMatch(read('src-tauri/src/troubleshoot.rs'), /--teacache/)
+})
+
+test('launch.rs only names --teacache in the scrub list', () => {
+  // 0.10.19: saved Extra Launch Args may still carry the flag, so launch.rs
+  // strips it. That is the ONE allowed mention — it must never be staged.
+  const src = read('src-tauri/src/launch.rs')
+  const scrub = src.match(/const REMOVED_LAUNCH_FLAGS[^\n]*/)
+  assert.ok(scrub, 'REMOVED_LAUNCH_FLAGS missing')
+  assert.match(scrub[0], /"--teacache"/)
+  // Outside the unit tests, every --teacache token is either the scrub list
+  // entry or the doc comment explaining it — never an argv builder.
+  const prod = src.split('#[cfg(test)]')[0]
+  const allowed =
+    scrub[0].split('--teacache').length - 1 +
+    (prod.match(/\/\/\/[^\n]*--teacache/g) || []).length
+  const occurrences = prod.split('--teacache').length - 1
+  assert.equal(occurrences, allowed, 'a --teacache mention escaped the scrub list')
+  assert.doesNotMatch(src, /push\("--teacache"/)
+  // And the saved-args read path actually applies it.
+  assert.match(src, /strip_removed_launch_flags\(/)
 })
 
 test('the guide explains where step skipping moved', () => {

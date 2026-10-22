@@ -21,6 +21,9 @@ struct LogServerState {
     running: bool,
     port: u64,
     lan: bool,
+    /// Random per-start access token. Logs can contain paths, hosts and API
+    /// keys, so a bare port on the LAN is not enough protection.
+    token: String,
 }
 
 static STATE: LazyLock<Mutex<LogServerState>> = LazyLock::new(|| {
@@ -28,6 +31,7 @@ static STATE: LazyLock<Mutex<LogServerState>> = LazyLock::new(|| {
         running: false,
         port: 0,
         lan: false,
+        token: String::new(),
     })
 });
 static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -75,7 +79,74 @@ fn log_lines() -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn viewer_html(port: u64) -> String {
+/// 128-bit hex token without pulling in a RNG crate: time + pid + a
+/// process-local counter through SplitMix64. Good enough to stop other LAN
+/// hosts and DNS-rebinding pages from reading the console.
+fn new_token() -> String {
+    static N: AtomicU64 = AtomicU64::new(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let mut x = now ^ ((std::process::id() as u64) << 32) ^ N.fetch_add(1, Ordering::SeqCst);
+    let mut out = String::with_capacity(32);
+    for _ in 0..2 {
+        x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = x;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        out.push_str(&format!("{z:016x}"));
+    }
+    out
+}
+
+/// Query-string value (`?a=1&b=2`), ignoring the fragment.
+fn query_param<'a>(path: &'a str, key: &str) -> Option<&'a str> {
+    let q = path.split_once('?')?.1.split('#').next().unwrap_or("");
+    q.split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        if k == key {
+            Some(v)
+        } else {
+            None
+        }
+    })
+}
+
+/// DNS-rebinding defence: only `localhost` or an IP literal may be the Host.
+/// A page on `evil.com` that resolves to 127.0.0.1 still sends
+/// `Host: evil.com`; LAN phones send `Host: 192.168.x.y:<port>`.
+fn host_allowed(host: &str) -> bool {
+    let h = host.trim();
+    if h.is_empty() {
+        return false;
+    }
+    // [::1]:7862 → ::1, 127.0.0.1:7862 → 127.0.0.1
+    let h = if let Some(rest) = h.strip_prefix('[') {
+        match rest.split_once(']') {
+            Some((inner, _)) => inner,
+            None => return false,
+        }
+    } else {
+        h.rsplit_once(':').map(|(h, _)| h).unwrap_or(h)
+    };
+    h.eq_ignore_ascii_case("localhost") || h.parse::<std::net::IpAddr>().is_ok()
+}
+
+/// Constant-time-ish token compare (length leak only).
+fn token_ok(expected: &str, given: Option<&str>) -> bool {
+    let Some(g) = given else { return false };
+    if expected.is_empty() || g.len() != expected.len() {
+        return false;
+    }
+    g.bytes()
+        .zip(expected.bytes())
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        == 0
+}
+
+fn viewer_html(port: u64, token: &str) -> String {
     format!(
         r#"<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -89,7 +160,7 @@ button{{background:#1b2434;color:#d6deeb;border:1px solid #334155;border-radius:
 <button onclick="load()">refresh</button>
 <label><input type="checkbox" id="auto" checked> auto (2s)</label></header>
 <div id="log">loading…</div>
-<script>async function load(){{try{{const r=await fetch('/logs.txt?n=600');document.getElementById('log').textContent=await r.text();window.scrollTo(0,document.body.scrollHeight);}}catch(e){{document.getElementById('st').textContent='offline: '+e;}}}}
+<script>async function load(){{try{{const r=await fetch('/logs.txt?n=600&token={token}');document.getElementById('log').textContent=await r.text();window.scrollTo(0,document.body.scrollHeight);}}catch(e){{document.getElementById('st').textContent='offline: '+e;}}}}
 load();setInterval(()=>{{if(document.getElementById('auto').checked)load();}},2000);</script>
 </body></html>"#
     )
@@ -121,10 +192,48 @@ fn serve_one(mut stream: std::net::TcpStream, port: u64) {
     let req = String::from_utf8_lossy(&buf[..n]);
     let line = req.lines().next().unwrap_or("");
     let path = line.split_whitespace().nth(1).unwrap_or("/");
+    let route = path.split('?').next().unwrap_or("/");
+    let token = state().lock().map(|s| s.token.clone()).unwrap_or_default();
+    let host = req.lines().skip(1).find_map(|l| {
+        l.split_once(':').and_then(|(k, v)| {
+            if k.trim().eq_ignore_ascii_case("host") {
+                Some(v.trim())
+            } else {
+                None
+            }
+        })
+    });
+    let given = query_param(path, "token").or_else(|| {
+        req.lines().skip(1).find_map(|l| {
+            l.split_once(':').and_then(|(k, v)| {
+                if k.trim().eq_ignore_ascii_case("x-log-token") {
+                    Some(v.trim())
+                } else {
+                    None
+                }
+            })
+        })
+    });
 
-    let (status, ctype, body) = if path == "/" || path == "/index.html" {
-        ("200 OK", "text/html; charset=utf-8", viewer_html(port))
-    } else if path.starts_with("/logs.json") {
+    let (status, ctype, body) = if !host.map(host_allowed).unwrap_or(false) {
+        (
+            "403 Forbidden",
+            "text/plain; charset=utf-8",
+            "Host not allowed — open the viewer through the URL the launcher shows.".to_string(),
+        )
+    } else if !token_ok(&token, given) {
+        (
+            "401 Unauthorized",
+            "text/plain; charset=utf-8",
+            "Missing or wrong token — open the viewer with the URL from Manage > Logs.".to_string(),
+        )
+    } else if route == "/" || route == "/index.html" {
+        (
+            "200 OK",
+            "text/html; charset=utf-8",
+            viewer_html(port, &token),
+        )
+    } else if route == "/logs.json" {
         let lines = log_lines();
         let tail: Vec<String> = lines.into_iter().rev().take(600).rev().collect();
         (
@@ -221,11 +330,13 @@ pub async fn log_server_start(
         ));
     }
     let gen = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let token = new_token();
     spawn_listener(bind, p, gen);
     if let Ok(mut s) = state().lock() {
         s.running = true;
         s.port = p;
         s.lan = lan;
+        s.token = token;
     }
     persist(p, lan, true);
     // Brief settle so the first open doesn't 404 on a cold bind.
@@ -248,17 +359,17 @@ pub async fn log_server_stop() -> Result<serde_json::Value, String> {
 }
 
 fn log_server_status_inner() -> serde_json::Value {
-    let (running, port, lan) = state()
+    let (running, port, lan, token) = state()
         .lock()
-        .map(|s| (s.running, s.port, s.lan))
-        .unwrap_or((false, 0, false));
+        .map(|s| (s.running, s.port, s.lan, s.token.clone()))
+        .unwrap_or((false, 0, false, String::new()));
     let same_pc = if port > 0 {
-        Some(format!("http://localhost:{port}"))
+        Some(format!("http://localhost:{port}/?token={token}"))
     } else {
         None
     };
     let phone_str = if lan {
-        lan_ip().map(|ip| format!("http://{ip}:{port}"))
+        lan_ip().map(|ip| format!("http://{ip}:{port}/?token={token}"))
     } else {
         None
     };
@@ -268,6 +379,7 @@ fn log_server_status_inner() -> serde_json::Value {
         "samePc": same_pc.map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
         "phone": phone_str.map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
         "phoneUnavailable": phone_unavailable,
+        "token": token,
     })
 }
 
@@ -279,6 +391,78 @@ pub async fn log_server_status() -> Result<serde_json::Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static HTTP_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Real HTTP round-trip through `serve_one` on an ephemeral port.
+    fn round_trip(request: &str, token: &str) -> String {
+        {
+            let mut st = state().lock().unwrap();
+            st.running = true;
+            st.port = 1;
+            st.token = token.to_string();
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let h = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            serve_one(stream, u64::from(addr.port()));
+        });
+        let mut c = std::net::TcpStream::connect(addr).unwrap();
+        c.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        c.write_all(request.as_bytes()).unwrap();
+        let mut out = String::new();
+        let _ = c.read_to_string(&mut out);
+        h.join().unwrap();
+        out
+    }
+
+    #[test]
+    fn unauthenticated_requests_are_refused() {
+        let _g = HTTP_LOCK.lock().unwrap();
+        let r = round_trip(
+            "GET /logs.txt?n=100 HTTP/1.1\r\nHost: 127.0.0.1:7862\r\n\r\n",
+            "secret123",
+        );
+        assert!(r.starts_with("HTTP/1.1 401"), "{r}");
+        assert!(!r.contains("Wan2GP console"));
+    }
+
+    #[test]
+    fn foreign_host_header_is_refused_even_with_the_token() {
+        let _g = HTTP_LOCK.lock().unwrap();
+        let r = round_trip(
+            "GET /?token=secret123 HTTP/1.1\r\nHost: evil.example:7862\r\n\r\n",
+            "secret123",
+        );
+        assert!(r.starts_with("HTTP/1.1 403"), "{r}");
+    }
+
+    #[test]
+    fn authorised_viewer_and_logs_are_served() {
+        let _g = HTTP_LOCK.lock().unwrap();
+        let page = round_trip(
+            "GET /?token=secret123 HTTP/1.1\r\nHost: localhost:7862\r\n\r\n",
+            "secret123",
+        );
+        assert!(page.starts_with("HTTP/1.1 200"), "{page}");
+        assert!(page.contains("Wan2GP console"));
+        // The page's own fetches carry the token.
+        assert!(page.contains("token=secret123"));
+        let logs = round_trip(
+            "GET /logs.txt?n=100&token=secret123 HTTP/1.1\r\nHost: 192.168.1.20:7862\r\n\r\n",
+            "secret123",
+        );
+        assert!(logs.starts_with("HTTP/1.1 200"), "{logs}");
+        assert!(logs.contains("text/plain"));
+        // A wrong token is still refused.
+        let bad = round_trip(
+            "GET /logs.txt?n=100&token=nope HTTP/1.1\r\nHost: localhost:7862\r\n\r\n",
+            "secret123",
+        );
+        assert!(bad.starts_with("HTTP/1.1 401"), "{bad}");
+    }
 
     #[test]
     fn tail_count_parses_the_n_parameter() {
@@ -316,7 +500,44 @@ mod tests {
     }
 
     #[test]
-    fn viewer_page_names_its_port() {
-        assert!(viewer_html(7862).contains("Wan2GP console :7862"));
+    fn viewer_page_names_its_port_and_carries_the_token() {
+        let html = viewer_html(7862, "deadbeef");
+        assert!(html.contains("Wan2GP console :7862"));
+        assert!(html.contains("/logs.txt?n=600&token=deadbeef"));
+    }
+
+    #[test]
+    fn host_must_be_localhost_or_an_ip_literal() {
+        assert!(host_allowed("localhost:7862"));
+        assert!(host_allowed("127.0.0.1:7862"));
+        assert!(host_allowed("192.168.1.20:7862"));
+        assert!(host_allowed("[::1]:7862"));
+        assert!(!host_allowed("evil.com:7862"));
+        assert!(!host_allowed("localhost.evil.com"));
+        assert!(!host_allowed(""));
+    }
+
+    #[test]
+    fn token_must_match_exactly() {
+        assert!(token_ok("abc123", Some("abc123")));
+        assert!(!token_ok("abc123", Some("abc124")));
+        assert!(!token_ok("abc123", Some("abc1")));
+        assert!(!token_ok("abc123", None));
+        assert!(!token_ok("", Some("")));
+        // 32 hex chars, different every start.
+        let a = new_token();
+        assert_eq!(a.len(), 32);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, new_token());
+    }
+
+    #[test]
+    fn query_param_survives_the_other_parameters() {
+        assert_eq!(query_param("/?token=abc", "token"), Some("abc"));
+        assert_eq!(
+            query_param("/logs.txt?n=600&token=abc", "token"),
+            Some("abc")
+        );
+        assert_eq!(query_param("/logs.txt", "token"), None);
     }
 }

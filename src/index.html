@@ -268,10 +268,10 @@
           <div class="settings-section" style="margin-top:12px">
             <h3>Server Port</h3>
             <div class="token-field">
-              <input type="number" id="portInput" class="input" placeholder="7860" min="1024" max="65535" style="width:120px">
+              <input type="number" id="portInput" class="input" placeholder="7861" min="1024" max="65535" style="width:120px">
               <button class="btn btn-primary small" id="portSaveBtn" title="Save server port (applies on next launch)">Save</button>
             </div>
-            <p class="token-hint">Port for the Wan2GP web interface. Default: <code>7860</code>. Changes apply on next launch.</p>
+            <p class="token-hint">Port for the Wan2GP web interface. Default: <code>7861</code> (side-by-side with the Electron build on 7860). Changes apply on next launch.</p>
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>GPU Device</h3>
@@ -354,6 +354,10 @@
             <h3>AMD ROCm</h3>
             <p class="token-hint">AMD-only, applies on next launch. <em>Disable MIOpen</em> leaves <code>MIOPEN_FIND_MODE</code> fully unset (the guide's <code>cudnn.enabled = False</code> alternative) — try it if generation crashes with MIOpen/hip errors while <em>FAST</em> (default) is set.</p>
             <label class="toggle-row"><input type="checkbox" id="amdMiopenDisabled"> <span>Disable MIOpen (unset MIOPEN_FIND_MODE)</span></label>
+            <div class="token-field" style="margin-top:10px">
+              <input id="amdDeviceTarget" class="input" style="max-width:320px" placeholder="gfx1100 (leave empty to auto-detect)" title="ROCm device target(s), comma-separated">
+            </div>
+            <p class="token-hint">Optional ROCm device target. Leave empty to use <code>clinfo</code> (or the GPU name). Set it when Windows only reports <code>AMD Radeon(TM) Graphics</code> — the installer refuses to guess then — or to pin e.g. <code>gfx1036,gfx1201</code> on an iGPU + dGPU box. See <code>docs/AMD-INSTALLATION.md</code> for the table.</p>
             <button class="btn btn-primary small" id="amdSaveBtn" style="margin-top:8px" title="Save AMD ROCm settings (applies on next launch)">Save AMD settings</button>
           </div>
           <div class="settings-section" style="margin-top:12px">
@@ -624,15 +628,16 @@
         </div>
         <div class="settings-section" id="companionPluginSection">
           <h3>Finetune Manager (recommended)</h3>
-          <p class="token-hint">Pack recipes, the registry, CivitAI search, imports/exports and missing-file downloads are owned by the Finetune Manager plugin. The launcher installs a pinned, known-good version by default; update it from the plugin. Install / repair restores a missing or disabled companion without downgrading a newer one.</p>
+          <p class="token-hint">Pack recipes, the registry, CivitAI search, imports/exports and missing-file downloads are owned by the Finetune Manager plugin. The launcher can install a pinned, known-good version, but it is not installed automatically. Install / repair restores a missing or disabled companion without downgrading a newer one.</p>
           <div class="token-field" style="margin-top:8px">
             <span class="token-hint" id="companionPluginStatus">Checking...</span>
             <button class="btn btn-primary small" id="companionPluginInstallBtn" title="Install or repair the pinned Finetune Manager companion">Install / repair</button>
             <button class="btn btn-ghost small" id="companionPluginRefreshBtn" title="Re-check the companion plugin">Recheck</button>
+            <button class="btn btn-ghost small" id="companionPluginUninstallBtn" title="Remove the plugin and turn off its automatic install">Uninstall</button>
           </div>
           <label class="browser-opt" style="margin-top:8px;display:flex;align-items:center;gap:8px">
             <input type="checkbox" id="companionPluginOptOut">
-            Don't install Finetune Manager automatically on fresh installs (you can still install it here)
+            Don't install Finetune Manager automatically (you can still install it here)
           </label>
         </div>
         <div class="settings-section">

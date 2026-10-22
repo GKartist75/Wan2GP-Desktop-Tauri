@@ -211,7 +211,8 @@ pub fn plugins_list() -> serde_json::Value {
             "installed": local.contains_key(&id),
             "enabled": SYSTEM_PLUGINS.contains(&id.as_str()) || enabled.contains(&id),
             "system": SYSTEM_PLUGINS.contains(&id.as_str()),
-            "locked": false,
+            "companion": id == COMPANION_PLUGIN_ID,
+            "locked": id == COMPANION_PLUGIN_ID,
             "group": if SYSTEM_PLUGINS.contains(&id.as_str()) || BUNDLED_PLUGINS.contains(&id.as_str()) { "system" } else { "community" },
         }));
     }
@@ -256,7 +257,8 @@ pub fn plugins_list() -> serde_json::Value {
             "installed": local.contains_key(&id),
             "enabled": SYSTEM_PLUGINS.contains(&id.as_str()) || enabled.contains(&id),
             "system": SYSTEM_PLUGINS.contains(&id.as_str()),
-            "locked": false,
+            "companion": id == COMPANION_PLUGIN_ID,
+            "locked": id == COMPANION_PLUGIN_ID,
             "group": if SYSTEM_PLUGINS.contains(&id.as_str()) || BUNDLED_PLUGINS.contains(&id.as_str()) { "system" } else { "community" },
         }));
     }
@@ -326,8 +328,8 @@ async fn install_plugin_inner_at(
         return Err("refusing plaintext http:// plugin URL - use https://".into());
     }
     let id = plugin_id_from_url(url);
-    if id.is_empty() {
-        return Err("Could not derive a plugin id from that URL".into());
+    if !valid_plugin_id(&id) {
+        return Err("Could not derive a usable plugin id from that URL".into());
     }
     let repo = get_repo_dir();
     let log = |m: &str| {
@@ -436,10 +438,26 @@ fn companion_enabled(repo: &Path) -> bool {
 }
 
 fn companion_opt_out() -> bool {
+    // Opt-in by default: the Finetune Manager is not installed automatically on
+    // fresh installs, after Repair or at startup. Uncheck the Manage → Plugins
+    // toggle to let the launcher seed/repair it again.
     load_config_value()
         .get("companionPluginOptOut")
         .and_then(|x| x.as_bool())
-        .unwrap_or(false)
+        .unwrap_or(true)
+}
+
+/// Persist `companionPluginOptOut` (true = the startup seeder leaves the
+/// plugin alone). Shared by the UI toggle and uninstall.
+fn set_companion_opt_out(enabled: bool) -> Result<(), String> {
+    let p = get_config_file();
+    let mut cfg = load_config_value();
+    if !cfg.is_object() {
+        cfg = serde_json::json!({});
+    }
+    cfg["companionPluginOptOut"] = serde_json::Value::Bool(enabled);
+    atomic_write(&p, &serde_json::to_string_pretty(&cfg).unwrap_or_default())
+        .map_err(|e| e.to_string())
 }
 
 pub fn companion_plugin_status_value() -> serde_json::Value {
@@ -465,14 +483,7 @@ pub fn companion_plugin_status() -> serde_json::Value {
 
 #[tauri::command]
 pub fn companion_plugin_set_opt_out(enabled: bool) -> Result<serde_json::Value, String> {
-    let p = get_config_file();
-    let mut cfg = load_config_value();
-    if !cfg.is_object() {
-        cfg = serde_json::json!({});
-    }
-    cfg["companionPluginOptOut"] = serde_json::Value::Bool(enabled);
-    atomic_write(&p, &serde_json::to_string_pretty(&cfg).unwrap_or_default())
-        .map_err(|e| e.to_string())?;
+    set_companion_opt_out(enabled)?;
     Ok(companion_plugin_status_value())
 }
 
@@ -595,7 +606,9 @@ pub async fn ensure_favorite_plugins(app: tauri::AppHandle) {
 }
 
 fn check_update_inner(id: &str) -> (bool, u64, Option<String>) {
-    let target = get_repo_dir().join("plugins").join(id);
+    let Ok(target) = plugin_dir(id) else {
+        return (false, 0, Some("bad plugin id".into()));
+    };
     if !target.join(".git").exists() {
         return (false, 0, Some("not a git checkout".into()));
     }
@@ -632,8 +645,33 @@ fn check_update_inner(id: &str) -> (bool, u64, Option<String>) {
     }
 }
 
+/// A plugin id is ONE directory name under `<repo>/plugins`. Letters, digits,
+/// `_`, `-` and inner dots only: separators, `..`, a leading/trailing dot
+/// (`__pycache__`, hidden dirs) or a drive prefix must never reach a
+/// remove_dir_all/clone target.
 fn valid_plugin_id(id: &str) -> bool {
-    !id.is_empty() && !id.contains('/') && !id.contains('\\')
+    !id.is_empty()
+        && id.len() <= 100
+        && !id.starts_with('.')
+        && !id.ends_with('.')
+        && !id.contains("..")
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
+/// `<repo>/plugins/<id>` after validation — the only way callers should build
+/// a path from a user-supplied plugin id.
+fn plugin_dir(id: &str) -> Result<std::path::PathBuf, String> {
+    if !valid_plugin_id(id) {
+        return Err("Bad plugin id".into());
+    }
+    let root = crate::base::get_repo_dir().join("plugins");
+    let target = root.join(id);
+    if target.parent() != Some(root.as_path()) {
+        return Err("Bad plugin id".into());
+    }
+    Ok(target)
 }
 
 #[tauri::command]
@@ -693,7 +731,7 @@ pub async fn plugin_update(
         return Err("Bad plugin id".into());
     }
     let repo = get_repo_dir();
-    let target = repo.join("plugins").join(&id);
+    let target = plugin_dir(&id)?;
     if !target.join(".git").exists() {
         return Err("Not a git checkout — cannot update".into());
     }
@@ -736,14 +774,20 @@ pub fn plugin_uninstall(id: Option<String>) -> Result<serde_json::Value, String>
         return Err("System/bundled plugins cannot be uninstalled".into());
     }
     let repo = get_repo_dir();
-    let target = repo.join("plugins").join(&id);
+    let target = plugin_dir(&id)?;
     if !target.exists() {
         return Err("Not installed".into());
     }
     // files may be locked (Wan2GP running) — mirror upstream pending_plugin_deletions.
+    let is_companion = id == COMPANION_PLUGIN_ID;
     match std::fs::remove_dir_all(&target) {
         Ok(()) => {
             scrub_config_lists(&repo, &id)?;
+            if is_companion {
+                // Otherwise the startup seeder silently reinstalls what the
+                // user just removed (0.10.19 fix).
+                let _ = set_companion_opt_out(true);
+            }
         }
         Err(e) => {
             let p = repo.join("wgp_config.json");
@@ -756,6 +800,9 @@ pub fn plugin_uninstall(id: Option<String>) -> Result<serde_json::Value, String>
                 serde_json::Value::Array(list.into_iter().map(serde_json::Value::String).collect());
             atomic_write(&p, &serde_json::to_string_pretty(&cfg).unwrap_or_default())
                 .map_err(|e| e.to_string())?;
+            if is_companion {
+                let _ = set_companion_opt_out(true);
+            }
             return Ok(
                 serde_json::json!({"ok": true, "id": id, "pending": true, "hint": format!("Files locked ({e}) — will delete on next Wan2GP start. Disabled now.")}),
             );
@@ -1060,6 +1107,86 @@ mod companion_tests {
         std::fs::write(target.join("plugin_info.json"), r#"{"version":"1.2.3"}"#).unwrap();
         assert!(companion_installed(repo.path()));
         assert_eq!(companion_version(repo.path()).as_deref(), Some("1.2.3"));
+    }
+
+    #[test]
+    fn uninstall_opts_out_so_the_seeder_leaves_it_alone() {
+        // Uninstalling from the UI used to be undone by the next startup seed,
+        // which saw "not installed" and cloned it back (0.10.19 fix).
+        let _data = crate::base::TestDataDir::new();
+        let repo = get_repo_dir();
+        std::fs::create_dir_all(repo.join("plugins")).unwrap();
+        std::fs::write(repo.join("wgp.py"), "").unwrap();
+        std::fs::write(repo.join("wgp_config.json"), "{}").unwrap();
+        let target = companion_target(&repo);
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("plugin.py"), "x").unwrap();
+        std::fs::write(target.join("plugin_info.json"), r#"{"version":"3.7.0"}"#).unwrap();
+        enable_plugin_in_config(&repo, COMPANION_PLUGIN_ID).unwrap();
+        // Default is now opt-in (the user asked for the companion NOT to install
+        // automatically): the launcher considers it opted out until enabled.
+        assert!(companion_opt_out());
+
+        // Installed: the row is marked managed (locked checkbox, no delete).
+        let list = plugins_list();
+        let rows = list.get("plugins").and_then(|v| v.as_array()).unwrap();
+        let row = rows
+            .iter()
+            .find(|p| p.get("id").and_then(|v| v.as_str()) == Some(COMPANION_PLUGIN_ID))
+            .expect("companion row listed");
+        assert_eq!(row.get("companion").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(row.get("locked").and_then(|v| v.as_bool()), Some(true));
+
+        let r = plugin_uninstall(Some(COMPANION_PLUGIN_ID.to_string())).unwrap();
+        assert_eq!(r.get("ok").and_then(|v| v.as_bool()), Some(true));
+        assert!(!target.exists());
+        assert!(companion_opt_out(), "uninstall must stop the re-seed");
+        // Status reflects it, and the list row carries the managed flags.
+        let st = companion_plugin_status_value();
+        assert_eq!(st.get("optOut").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(st.get("installed").and_then(|v| v.as_bool()), Some(false));
+        reset_dir_caches();
+    }
+
+    #[test]
+    fn plugin_ids_cannot_escape_the_plugins_dir() {
+        for bad in [
+            "..", ".", "../evil", "a/b", "a\\b", "", "..\\..", ".hidden", "trail.", "C:evil",
+        ] {
+            assert!(!valid_plugin_id(bad), "{bad:?} must be rejected");
+        }
+        assert!(!valid_plugin_id(&"x".repeat(101)));
+        for good in [
+            "Wan2GP-finetune-manager",
+            "sd_perturbation",
+            "my.plugin",
+            "StatusPro",
+        ] {
+            assert!(valid_plugin_id(good), "{good:?} must be accepted");
+        }
+        let _data = crate::base::TestDataDir::new();
+        let repo = get_repo_dir();
+        assert!(plugin_dir("..").is_err());
+        assert!(plugin_dir("../..").is_err());
+        let ok = plugin_dir("StatusPro").unwrap();
+        assert_eq!(ok, repo.join("plugins").join("StatusPro"));
+        reset_dir_caches();
+    }
+
+    #[test]
+    fn uninstall_refuses_a_traversing_id() {
+        // ".." used to pass the old slash-only check and remove_dir_all'd the
+        // whole Wan2GP repo.
+        let _data = crate::base::TestDataDir::new();
+        let repo = get_repo_dir();
+        std::fs::create_dir_all(repo.join("plugins")).unwrap();
+        std::fs::write(repo.join("wgp.py"), "").unwrap();
+        std::fs::write(repo.join("wgp_config.json"), "{}").unwrap();
+        let err = plugin_uninstall(Some("..".to_string())).unwrap_err();
+        assert!(err.contains("Bad plugin id"), "got {err}");
+        assert!(repo.join("wgp.py").exists());
+        assert!(repo.join("plugins").exists());
+        reset_dir_caches();
     }
 
     #[test]

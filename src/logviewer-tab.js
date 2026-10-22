@@ -16,7 +16,7 @@ async function refreshLogServer() {
       window.w2gp.logServerStatus().catch(() => null),
     ]);
     const running = !!(st && st.running);
-    const port = (st && st.port) || (cfg && cfg.logPort) || ((cfg && cfg.serverPort) || 7860) + 2;
+    const port = (st && st.port) || (cfg && cfg.logPort) || ((cfg && cfg.serverPort) || 7861) + 2;
     const lan = !!(st && st.lan) || !!(cfg && cfg.logLan);
     const samePc = (st && st.samePc) || ("http://localhost:" + port);
     const phone = (st && st.phone) || null;

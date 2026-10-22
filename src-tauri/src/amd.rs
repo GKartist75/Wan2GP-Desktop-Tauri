@@ -3,8 +3,10 @@
 //! `import torch` is not proof the stack runs — 0.5.2 imported fine and
 //! died at the first int8 GEMM (`hipErrorInvalidValue` in quanto's
 //! `qbytes_mm`). This probe runs a real workload instead: a bf16 GEMM
-//! (rocBLAS path) plus the exact pattern that crashed (int8 weights ×
-//! fp32 scales broadcast). Device-agnostic (`cuda` == HIP on ROCm).
+//! (rocBLAS path), the int8 weights × fp32 scales broadcast, and — when
+//! optimum-quanto is present — the actual `qbytes_mm` int8 GEMM that
+//! crashed, so the failure is reproduced at install time instead of on the
+//! user's first quantized model. Device-agnostic (`cuda` == HIP on ROCm).
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -12,7 +14,7 @@ use std::time::{Duration, Instant};
 /// (HIP init dominates). 256-wide keeps it fast on weak GPUs while still
 /// exercising the kernels that failed on gfx1201.
 pub(crate) const COMPUTE_PROBE: &str = r#"import json, torch
-out = {"torch": torch.__version__, "cuda_available": torch.cuda.is_available(), "device": None, "gemm": None, "int8_broadcast": None}
+out = {"torch": torch.__version__, "cuda_available": torch.cuda.is_available(), "device": None, "gemm": None, "int8_broadcast": None, "quanto_qbytes_mm": None}
 if torch.cuda.is_available():
     out["device"] = torch.cuda.get_device_name(0)
     x = torch.randn(256, 256, device="cuda", dtype=torch.bfloat16)
@@ -21,6 +23,23 @@ if torch.cuda.is_available():
     w = torch.randint(-128, 127, (256, 256), device="cuda", dtype=torch.int8)
     s = torch.rand(256, 1, device="cuda", dtype=torch.float32)
     out["int8_broadcast"] = float(((s * w).to(torch.bfloat16)).sum().item())
+    # The kernel that actually crashed 0.5.2. Absent when quanto is not
+    # installed ("unavailable"); a HIP failure is re-raised so stderr carries
+    # the signature and the install stops here instead of at the first model.
+    try:
+        _mm = torch.ops.quanto.qbytes_mm
+    except AttributeError:
+        _mm = None
+    if _mm is not None:
+        try:
+            qa = torch.randint(-127, 127, (256, 256), device="cuda", dtype=torch.int8)
+            qb = torch.randint(-127, 127, (256, 256), device="cuda", dtype=torch.int8)
+            sa = torch.ones(256, 1, device="cuda", dtype=torch.float32)
+            sb = torch.ones(1, 256, device="cuda", dtype=torch.float32)
+            out["quanto_qbytes_mm"] = float(_mm(qa, qb, sa, sb).float().sum().item())
+        except Exception as e:
+            out["quanto_qbytes_mm"] = "fail: " + type(e).__name__
+            raise
 print(json.dumps(out))"#;
 
 pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(300);

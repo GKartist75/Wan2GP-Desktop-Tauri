@@ -87,6 +87,19 @@ Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
 garbage output means trying Triton/PyTorch explicitly);
 `fp8_kernels` (Auto / CUDA / Triton / PyTorch) picks the same kind of kernel for
 FP8 checkpoints; `kernel_precision` fast/strict controls H3 VAE fusions.
+**v18.21 widens WanGP's own Triton kernels** instead of whitelisting the cards
+they were first timed on: `shared/kernels/dispatch.py` now gates them by what the
+arithmetic needs — BF16 from compute capability 8.0 (RTX 30+), FP16/FP32 from 7.5
+(RTX 20 / GTX 16xx) — and Triton compiles each kernel for the card it runs on. It
+only lands where the environment has Triton, i.e. RTX 20+ here: the GTX 10xx/16xx
+profile installs no Triton (and SM 6.1 is below every floor anyway). This changes
+no wheel, pin or setting: the kernel wheels above are unaffected and eligibility is
+still checked before launch. Upstream measures the release itself as "many image,
+video, 3D, speech and music models up to 10% faster with slightly less VRAM"
+(README, v18.21). On RTX 20 the same release lifts two Sage 1 limits: masked calls
+(inpainting, VACE masks) now run on WanGP's Turing kernel instead of falling back to
+SDPA, and BF16 q/k/v are read as bits for sequences up to 2,048 tokens instead of
+being copied to FP16 first (`shared/sage1_core.py`).
 WGPKernels 1.3.0 is in `setup_config.json` (the Windows and Linux install
 scripts include WGPKernels for RTX 20XX, 30XX, 40XX and 50XX; upstream labels it
 "WGPKernels 1.3.0 (CUDA 13, RTX 20XX+)", "(CUDA 12.8, RTX 20XX+)" and
@@ -254,9 +267,12 @@ WanGP owns **model, prompt, generation, LoRA pick, control, post**.
 
 ## Models reference — complete inventory (276 `defaults/*.json`)
 
-Reconciled live against upstream `defaults/` (276 files + `ReadMe.txt`, WanGP v18.20 /
-dee66357 — adds Fibo 2.0 Dev, Fibo 2.0 Edit Turbo and the two MiniMax H3 FastH3
-Omni presets; the v18.19 reconciliation added MOSS-TTS v1.5 (8B + Local 4B) and
+Reconciled live against upstream `defaults/` (276 files + `ReadMe.txt`, WanGP v18.21 /
+`9d25c601` — 18.21 adds **no** `defaults/*.json`, so the count is unchanged: its two
+commits are kernel and model-internals work plus the new **FlashVSR+ Turbo**
+extension model, which is a `postprocessing/` handler and not a `model_type`; the
+v18.20 reconciliation added Fibo 2.0 Dev, Fibo 2.0 Edit Turbo and the two MiniMax
+H3 FastH3 Omni presets; v18.19 added MOSS-TTS v1.5 (8B + Local 4B) and
 named the Krea 2 Edit v2 ids; the v18.18 reconciliation added the 3D-gen wave,
 Kandinsky 6, Wan 2.2 Prism, camera control, H3 Veda, MOSS Image, Ming Image and
 the v2 Krea edit presets).
@@ -301,9 +317,9 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 | `ltx2_22B` ★, `ltx2_22B_1_1`, `ltx2_22B_distilled` ★, `ltx2_22B_distilled_1_1` ★, `ltx2_22B_nvfp4`, `ltx2_22B_msr`, `ltx2_22B_msr_v2`, `ltx2_22B_edit_anything` (+distilled/edit variants, GGUF) | ★ `ltx2_22B_distilled_1_1` fast general; Dev for control; MSR/MSR-v2 2-5 refs; Ingredients; edit-anything |
 | `ltx2_25_22B`, `ltx2_25_22B_distilled` ★, `ltx2_25_22B_distilled_nvfp4`, `ltx2_25_22B_msr`, `ltx2_25_22B_alpha_gen`, `ltx2_25_22B_layout_to_render` | ★ 2.5 Distilled (native audio-video, IC-LoRA, Ingredients, unblur/uncompress); Alpha Gen (soft alpha matte from any video, optional selection mask → transparent PNG frames ZIP / ProRes 4444); Layout to Render (playblast + appearance ref → finished shot) |
 | `joyai_echo`, `joyai_echo_surgical` ★ | ★ Surgical: connected multi-shot stories, reusable memories (`[/store_mem]`/`[/load_mem]`/`[/drop_mem]`) |
-| `minimax_h3_fl2va` ★, `..._pruned` ★, `..._pdd`, `..._pruned_pdd`, `..._veda`, `..._pruned_veda` | ★ `minimax_h3_fl2va_pruned` (video+soundtrack, start/end, inject `KFI`+`frames_positions`, control, outpaint, 2-phase+tiling, Spectrum/First-Block-Cache, Sol-Attn); `_veda` variants use learned sparse attention (up to 2× faster at high res/longer videos, same settings+LoRAs) |
+| `minimax_h3_fl2va` ★, `..._pruned` ★, `..._pdd`, `..._pruned_pdd`, `..._veda`, `..._pruned_veda` | ★ `minimax_h3_fl2va_pruned` (video+soundtrack, start/end, inject `KFI`+`frames_positions`, control, outpaint, 2-phase+tiling, Spectrum/First-Block-Cache, Sol-Attn); `_veda` variants use learned sparse attention (up to 2× faster at high res/longer videos, same settings+LoRAs); `_pdd` variants are locked to 8 steps + Euler with two-phase off and **accept base-model LoRAs** — their output-layer change reaches every PDD head |
 | `minimax_h3_control`, `..._pruned` | ControlNet-Union 2.0 branch on FL2VA (33B / pruned 20B): pose, depth, edge, shape and recoloring controls, plus inpainting and spatial outpainting |
-| `minimax_h3_ref2va`, `..._pruned` ★, `..._pdd`, `..._pruned_pdd`, `..._veda`, `..._pruned_veda` | ★ pruned (refs guide result, ref pixel budget 50-400%, persists across windows); `_veda` = Veda sparse attention |
+| `minimax_h3_ref2va`, `..._pruned` ★, `..._pdd`, `..._pruned_pdd`, `..._veda`, `..._pruned_veda` | ★ pruned (refs guide result, ref pixel budget 50-400%, persists across windows); `_veda` = Veda sparse attention; `_pdd` = 8 steps + Euler, two-phase off, base-model LoRAs apply (all PDD heads) |
 | `minimax_h3_ref2va_pruned` (FastH3 Omni) | ★ `minimax_h3_fasth3_omni` — MiniMax H3 FastH3 Omni 8-Step 20B: FastVideo distillation + sparse video attention (VSA), 8 steps, `guidance_phases 1` (no CFG), `flow_shift 12`, `video_prompt_type "I"`; same Ref2VA inputs (ordered images/videos/audio clips, start/end images, frame injection, reference or control video, soundtracks, continuation), faster than Ref2VA PDD at the same VRAM, distilled with references so best with ≥1 image/video reference; `minimax_h3_fasth3_omni_nvfp4` — MiniMax H3 FastH3 Omni NVFP4 QAD 8-Step 20B: same settings, 13 GB (smallest FastH3 Omni, lowest VRAM), NVFP4 weights trained for 4-bit inference, fastest on RTX 50xx FP4 tensor cores, slower on RTX 30xx/40xx |
 | `minimax_h3_vdn`, `..._pruned`, `minimax_h3_tts_ref2va_pruned` | VDN 20%+ faster; TTS preset (hidden 32x32 video, 32 kHz audio only) |
 | `k6_pro_distill`, `k6_lite_distill` | Kandinsky 6: 5s video with synchronized soundtrack (speech with lip-sync, music, sound effects) from text or a start image; Pro 30B / Lite 3B, both distilled (10 steps), low-VRAM with a faster in-house VAE |
@@ -451,6 +467,19 @@ Flag strings (`image/video/audio_prompt_type`, `prompt_enhancer`, `multi_prompts
 
 Accelerator LoRAs demand `guidance 1` — forgetting this is the #1 bad-quality cause.
 
+### Generation preview cost (Configuration → General)
+
+`docs/PREVIEWS.md` offers three **Generation Preview** modes: *Frames Selection
+using RGB Factors* (default — no download), *Frames Selection using Tiny VAE* and
+*Video using Tiny VAE*. Both Tiny VAE modes download a small decoder on first use
+and keep it resident during generation (the usual model-unload actions release it),
+so they cost extra VRAM and decoding time — RGB is the right pick when memory is
+tight, and a change takes effect on the next generation. Tiny VAE previews cover
+Wan 2.1/2.2 with their VACE/Phantom/MultiTalk/InfiniteTalk/Animate/Alpha/Ovi/Lucy
+variants, Hunyuan Video/1.5, Kandinsky 5, LongCat, MAGI Human, LTX-2/2.3/2.5,
+MiniMax H3, Flux/Flux 2, Z-Image, Qwen Image 20B, Krea 2 and Ideogram 4; other
+architectures keep the RGB frame strip.
+
 ---
 
 ## LoRAs + accelerator profiles
@@ -556,9 +585,9 @@ short window, keep originals before multi-pass post.
 
 | Type | Handlers (all) | Methods / values |
 | --- | --- | --- |
-| Spatial (generation + late) | Lanczos, DLSS5, FlashVSR, SeedVR2, PiD (1.5/1.x, incl. Qwen/Flux VAE plug), H3 Face Refiner, Chain-of-Zoom (to x16), LTX2 (2.3/2.5 x2 video), Wan VAE 2x | `lanczos*2`, `vae*2`, `dlss5*1…*3`, `flashvsr*…`, `seedvr2*…`, `pid*…`, `coz*4…`, refiners bare id (no Scale control) |
+| Spatial (generation + late) | Lanczos, DLSS5, FlashVSR (v1.1 / +Turbo), SeedVR2, PiD (1.5/1.x, incl. Qwen/Flux VAE plug), H3 Face Refiner, Chain-of-Zoom (to x16), LTX2 (2.3/2.5 x2 video), Wan VAE 2x | `lanczos*2`, `vae*2`, `dlss5*1…*3`, `flashvsr*…`, `seedvr2*…`, `pid*…`, `coz*4…`, refiners bare id (no Scale control) |
 | Temporal (video only) | RIFE v4.26, DLSS Frame Generation | `rife*2/*3/*4`, `dlssg*2…*6` (x5/x6 RTX 50) |
-| Audio | custom soundtrack, MMAudio, PrismAudio, SeedVC 1-/2-speaker, background removal | `custom`, `mmaudio`, `prismaudio`, `seedvc_one_speaker`, `seedvc_two_speakers`, `remove_background` (+ legacy `seedvc/seedvc2` normalized) |
+| Audio | custom soundtrack, MMAudio, PrismAudio, SeedVC 1-/2-speaker, background/music removal, vocal removal | `custom`, `mmaudio`, `prismaudio`, `seedvc_one_speaker`, `seedvc_two_speakers`, `remove_background` (Remove Music / Background noise), `remove_vocals` (Remove Vocals — same `audio_background_removal` handler, `audio_edit` type) (+ legacy `seedvc/seedvc2` normalized) |
 | Misc | Film grain, control-track reuse | `film_grain_intensity/saturation`, pseudo-method `control` (do not register) |
 
 Plugin authors: new spatial/temporal/audio handlers via `plugin_info.json`
@@ -607,6 +636,32 @@ LTX windows default 81f/17 overlap (`8n+1` cadence, 9–481).
 * Tune: Config → Extensions → Spatial Upsamplers: depth `Half Res` default
   (Full/Quarter trade detail vs memory), motion `Original` (fast) vs `RAFT` (slower,
   better); NR Intensity `0–2` (default 1.0) in Post/Late/Media Flow.
+* **FlashVSR** (dropdown label: *FlashVSR Spatial Upsampling (Needs Triton; SpargeAttn
+  optional)*) gained a **Model** choice in v18.21: **FlashVSR+ Turbo** (hybrid
+  attention — faster at high resolutions, preference-aligned detail) or **FlashVSR
+  v1.1**. Upstream's `MODEL_DEFAULT` is `plus_turbo`, so a config that never stored a
+  model choice runs **FlashVSR+ Turbo** after the update. It covers 1× refinement to
+  4× upscaling, images and video.
+* FlashVSR+ Turbo always runs with **memory profile 0** and processes **16 frames per
+  step** (upstream's own info text), whatever generation profile the task uses — its
+  transformer is loaded the way P0 loads models, part by part through RAM with
+  nothing permanently reserved. Weights download from `DeepBeepMeep/Wan2.1` on
+  first use: transformer **2.84 GB BF16** or **1.45 GB INT8 ConvRot** (*Transformer
+  Quantization*, default BF16 — INT8 halves the transformer and is faster where the
+  INT8 kernels above are installed, i.e. with the WGPKernels wheel) plus a 0.58 GB
+  LQ projection; the TCDecoder, the Wan 2.1 VAE and the position prompt are shared
+  with v1.1.
+* `FlashVSR Quality / Sparse Top-K Ratio` `0 = Auto` resolves to the released
+  **2.5 per 16-frame step** on FlashVSR+; **FlashVSR+ Cache Windows** 1–3 (default
+  **3** = the released setting) is how many previous 8-frame windows the global
+  attention layers remember — fewer windows save RAM at high resolution with less
+  temporal context.
+* The old decoder labels are gone: the mode choices now read **Tiny Decoder**
+  (faster, less RAM) / **Full Wan VAE Decoder** (best quality, more RAM); the stored
+  values (`flashvsr*`, `flashvsr2pass*`) are unchanged, so existing post-processing
+  strings keep working. The Model dropdown exists only once WanGP itself is on
+  18.21 (`C:\Wan2GP` `git log`: `9d25c601`) — an install still on `dee66357`
+  shows the two old decoder modes until *Update Wan2GP* runs.
 
 ### Accelerator profile folders (all 25, `profiles/`)
 
@@ -813,13 +868,18 @@ Still stuck: export launcher diagnostics (GPU/VRAM, torch/CUDA, triton, versions
 `boot.log`, redacted config) + exact command + full error -> Discord
 `discord.gg/g7efUW9jGV`. Minimal repro beats screenshots.
 
-Upstream docs: `OVERVIEW/MODELS/PROMPTS/PROCESSING/VACE/LORAS/FINETUNES/WORKSPACES/
-PLUGINS/CLI/API/DEEPY/REMOTE_LLMS/AUTHENTICATION/TROUBLESHOOTING/INSTALLATION/DLSS5` in
-`deepbeepmeep/Wan2GP/docs`. Launcher screens: `USER-GUIDE.md`.
+Upstream docs (all 25 files in `deepbeepmeep/Wan2GP/docs`, read at `9d25c601`):
+`AMD-INSTALLATION`, `API`, `AUDIO_PROCESSORS`, `AUTHENTICATION`, `CHANGELOG`, `CLI`,
+`DEEPY`, `DLSS5`, `FINETUNES`, `GETTING_STARTED`, `INSTALLATION`, `LORAS`, `MODELS`,
+`OVERVIEW`, `PLUGINS`, `PREVIEWS`, `PROCESSING`, `PROMPTS`, `REMOTE_LLMS`, `SETTINGS`,
+`SPATIAL_UPSAMPLERS`, `TEMPORAL_UPSAMPLERS`, `TROUBLESHOOTING`, `VACE`, `WORKSPACES`.
+Launcher screens: `USER-GUIDE.md`.
 What's new: upstream `docs/CHANGELOG.md` (latest entry 26 Aug 2026, WanGP
 12.643–12.645: H3 two-phase/tiling, H3 Face Refiner, H3 PDD LoRA, SenseNova
 U1.5, Deepy Prime via Codex/Claude, remote notifications) + launcher
-`CHANGELOG.md`. The four upstream commits since the previous pin are not in
+`CHANGELOG.md`. The six upstream commits since the previous pin are not in
 that changelog yet — `profile 0`, `vllm rewrite, added fibo2`,
-`added FastH3 Omni, LTX2 VAE turing optimization`, `fixed audio continuity`;
-their user-visible effects are in this guide's model and kernel tables.
+`added FastH3 Omni, LTX2 VAE turing optimization`, `fixed audio continuity`,
+`Fused Kernels optimisations` and `Bumped version to 18.21`; their
+user-visible effects are in this guide's model, processor and kernel tables
+(v18.21 = FlashVSR+ Turbo, H3 PDD LoRAs, faster kernels, 18.21 label).

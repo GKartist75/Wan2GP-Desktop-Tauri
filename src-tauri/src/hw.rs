@@ -13,12 +13,10 @@ pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
     {
         if out.status.success() {
             let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !s.is_empty() {
-                // GPU names can contain commas — split on ',' then trim
-                // (mirrors detect_gpus; the old split(", ") mis-indexed
-                // vramMB/driverVersion on such names).
-                let parts: Vec<&str> = s.split(',').map(|p| p.trim()).collect();
-                return serde_json::json!({"vendor":"NVIDIA","name":parts.first().unwrap_or(&"").trim(),"vramMB":parts.get(1).unwrap_or(&"0 MiB").trim(),"driverVersion":parts.get(2).unwrap_or(&"").trim(),"raw":s});
+            // Multi-GPU boxes print one row per card; the old "split the whole
+            // blob on ','" read the second card's name into driverVersion.
+            if let Some((name, mb, driver)) = pick_smi_row(&s) {
+                return serde_json::json!({"vendor":"NVIDIA","name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":s});
             }
         }
     }
@@ -93,6 +91,11 @@ pub(crate) fn wmi_all_gpus() -> Vec<(String, String, u64, String)> {
             "AMD"
         } else if lower.contains("intel") || lower.contains("arc") {
             "INTEL"
+        } else if lower.contains("basic display") {
+            // No driver installed: the preflight's fatal check keys on this
+            // name, but filtering it out as "unknown vendor" left the check
+            // unreachable (everything downstream saw "Unknown").
+            "unknown"
         } else {
             continue;
         };
@@ -173,11 +176,75 @@ pub(crate) fn wmi_virtual_adapters() -> Vec<String> {
     Vec::new()
 }
 
+/// One `nvidia-smi --query-gpu=name,memory.total,driver_version` row:
+/// `(name, vramMiB, driver)`. Names may contain commas, so the memory and
+/// driver fields are read from the right. Multi-GPU output (one row per card)
+/// keeps the largest card — the one that can actually run WanGP. Pure +
+/// unit-tested.
+pub(crate) fn pick_smi_row(text: &str) -> Option<(String, u64, String)> {
+    let mut best: Option<(String, u64, String)> = None;
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split(',').map(str::trim).collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        let driver = parts[parts.len() - 1].to_string();
+        let mb = parts[parts.len() - 2]
+            .split_whitespace()
+            .next()
+            .and_then(|n| n.parse::<u64>().ok())
+            .unwrap_or(0);
+        let name = parts[..parts.len() - 2].join(", ");
+        if name.is_empty() {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(_, b, _)| mb > *b) {
+            best = Some((name, mb, driver));
+        }
+    }
+    best
+}
+
+/// Preference class for the WMI primary pick: integrated adapters (Intel
+/// UHD/Iris/Arc and AMD APUs) lose to discrete cards no matter what WMI
+/// enumerates first — a Ryzen laptop used to tier as its 780M iGPU even with
+/// an RX 7600S installed. Pure + unit-tested.
+pub(crate) fn gpu_primary_class(vendor: &str, name: &str) -> u8 {
+    let g = name.to_uppercase();
+    if vendor == "unknown" {
+        // Only the driverless Basic Display Adapter gets here; it must never
+        // beat a real adapter, but it must stay visible so the preflight can
+        // refuse the install.
+        return 0;
+    }
+    if vendor == "INTEL" {
+        return 1;
+    }
+    const APU_TOKENS: [&str; 12] = [
+        "680M", "660M", "610M", "780M", "760M", "740M", "890M", "880M", "860M", "820M", "8060S",
+        "8050S",
+    ];
+    if APU_TOKENS.iter().any(|t| g.contains(t)) {
+        return 1;
+    }
+    2
+}
+
+/// Primary non-NVIDIA controller: highest class (dGPU over iGPU), then
+/// AdapterRAM (0/0xFFFFFFFF on big cards ties), then enumeration order.
 #[cfg(windows)]
 pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64, String)> {
-    // First non-NVIDIA, non-virtual controller wins (historical behavior);
-    // preflight warns when several AMD entries make that order significant.
-    wmi_all_gpus().into_iter().next()
+    let mut best: Option<(String, String, u64, String)> = None;
+    for g in wmi_all_gpus() {
+        let better = match &best {
+            None => true,
+            Some(b) => (gpu_primary_class(&g.1, &g.0), g.2) > (gpu_primary_class(&b.1, &b.0), b.2),
+        };
+        if better {
+            best = Some(g);
+        }
+    }
+    best
 }
 #[cfg(not(windows))]
 pub(crate) fn wmi_gpu_fallback() -> Option<(String, String, u64, String)> {
@@ -262,10 +329,13 @@ pub(crate) fn known_vram_mb(name: &str) -> Option<u64> {
     if g.contains("R9700") {
         return Some(32 * GB);
     }
-    // RDNA 4 consumer (9070 GRE is the 12GB exception; 9060 XT is 16GB,
-    // plain 9060 is 8GB — upstream gfx1200 row).
+    // RDNA 4 consumer (9070 GRE is the 12GB exception).
+    // 9060 XT ships in 8GB and 16GB variants under the same name, so this
+    // last-resort table under-tiers it: the registry probe normally reports
+    // the true size, and when it fails an 8GB answer costs a slower P5 while
+    // a 16GB answer OOMs on the 8GB card.
     if g.contains("9060") {
-        return Some(if g.contains("XT") { 16 * GB } else { 8 * GB });
+        return Some(8 * GB);
     }
     if g.contains("9070") {
         return Some(if g.contains("GRE") { 12 * GB } else { 16 * GB });
@@ -462,44 +532,47 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
         return "GTX_10".into();
     }
     if v == "AMD" {
-        // RDNA 2 (gfx103X-dgpu): no upstream setup_config profile — dedicated key so
-        // install/launch treat it per docs/AMD-INSTALLATION.md instead of GFX110X.
+        // RDNA 2 (gfx103X): dGPUs plus the 680M/660M/610M APUs. No upstream
+        // setup_config profile — dedicated key so install/launch treat it per
+        // docs/AMD-INSTALLATION.md instead of GFX110X.
         if g.contains("GFX103")
             || g.contains("RX 6")
             || [
                 "6300", "6400", "6450", "6500", "6600", "6650", "6700", "6750", "6800", "6850",
                 "6900", "6950", "W6200", "W6400", "W6600", "W6800",
+                // APUs (gfx1035/gfx1037) report "Radeon(TM) 680M" & co.
+                "680M", "660M", "610M",
             ]
             .iter()
             .any(|x| g.contains(x))
         {
             return "AMD_GFX103X".into();
         }
-        if g.contains("7600")
-            || g.contains("7700")
-            || g.contains("7800")
-            || g.contains("7900")
-            || g.contains("780M")
+        // RDNA 3 (gfx110X): dGPUs, the 780M/760M/740M APUs and the ROG Ally's
+        // Z1 (gfx1103 — Z1 Extreme is a 780M-class part, NOT Strix Point).
+        if ["7600", "7700", "7800", "7900", "780M", "760M", "740M", "Z1"]
+            .iter()
+            .any(|x| g.contains(x))
         {
             return "AMD_GFX110X".into();
         }
-        if g.contains("890M")
-            || g.contains("STRIX")
-            || g.contains("HALO")
-            || g.contains("Z1")
-            || g.contains("PHOENIX")
+        // RDNA 3.5 APUs (gfx1150/1151/1152/1153): Strix Point (890M/880M),
+        // Strix Halo (8060S/8050S), Ryzen AI 7 350 (860M), 840M/820M.
+        // One launcher tier — upstream's unified `AMD` profile — and
+        // amd_fallback_target narrows the device target by name.
+        if [
+            "890M", "880M", "860M", "840M", "820M", "8060S", "8050S", "STRIX", "HALO", "AI MAX",
+        ]
+        .iter()
+        .any(|x| g.contains(x))
         {
             return "AMD_GFX1151".into();
         }
+        // RDNA 4: Navi 44 = gfx1200, Navi 48 = gfx1201 (incl. PRO R9700).
         if g.contains("9060") || g.contains("1200") {
             return "AMD_GFX1200".into();
         }
-        if g.contains("9070")
-            || g.contains("9700")
-            || g.contains("9000")
-            || g.contains("8000")
-            || g.contains("1201")
-        {
+        if g.contains("9070") || g.contains("9700") || g.contains("1201") {
             return "AMD_GFX1201".into();
         }
         return "AMD_GFX110X".into();
@@ -512,6 +585,21 @@ pub(crate) fn kernel_profile_key(vendor: &str, name: &str) -> String {
         return "INTEL_XPU".into();
     }
     "CPU".into()
+}
+
+/// Windows reports some APUs only as a generic adapter name, carrying no model
+/// token the tier/device-target tables can match ("AMD Radeon(TM) Graphics" on
+/// Ryzen 7000/8000 desktop parts and the ROG Ally). Callers must not guess a
+/// gfx target for these. Pure + unit-tested.
+pub(crate) fn amd_name_is_generic(name: &str) -> bool {
+    let g = name.trim().to_uppercase();
+    matches!(
+        g.as_str(),
+        "AMD RADEON(TM) GRAPHICS"
+            | "AMD RADEON GRAPHICS"
+            | "RADEON(TM) GRAPHICS"
+            | "RADEON GRAPHICS"
+    )
 }
 
 /// Upstream's attention mode per GPU class.
@@ -1028,6 +1116,44 @@ mod amd_profile_tests {
             "AMD_GFX103X"
         );
     }
+    #[test]
+    fn apu_names_tier_by_architecture() {
+        use super::{amd_name_is_generic, kernel_profile_key};
+        // RDNA 3 APUs + ROG Ally (gfx1103) must not read as Strix Point.
+        for n in [
+            "AMD Radeon 780M",
+            "AMD Radeon 760M",
+            "AMD Radeon 740M",
+            "AMD Radeon Graphics (Z1 Extreme)",
+        ] {
+            assert_eq!(kernel_profile_key("AMD", n), "AMD_GFX110X", "{n}");
+        }
+        // RDNA 3.5 APUs.
+        for n in [
+            "AMD Radeon 890M",
+            "AMD Radeon 880M",
+            "AMD Radeon 860M",
+            "AMD Radeon 820M",
+            "AMD Radeon(TM) 8060S Graphics",
+            "AMD RADEON 8050S",
+        ] {
+            assert_eq!(kernel_profile_key("AMD", n), "AMD_GFX1151", "{n}");
+        }
+        // RDNA 2 APUs.
+        for n in ["AMD Radeon 680M", "AMD Radeon 660M", "AMD Radeon 610M"] {
+            assert_eq!(kernel_profile_key("AMD", n), "AMD_GFX103X", "{n}");
+        }
+        // Generic adapter name: only the preflight's target field can resolve
+        // it, so the key stays the family default and the detector fires.
+        assert!(amd_name_is_generic("AMD Radeon(TM) Graphics"));
+        assert!(amd_name_is_generic("  AMD Radeon Graphics "));
+        assert_eq!(
+            kernel_profile_key("AMD", "AMD Radeon(TM) Graphics"),
+            "AMD_GFX110X"
+        );
+        assert!(!amd_name_is_generic("AMD Radeon RX 7900 XTX"));
+        assert!(!amd_name_is_generic("AMD Radeon 780M"));
+    }
 }
 #[cfg(test)]
 mod nvidia_profile_tests {
@@ -1096,6 +1222,50 @@ mod nvidia_profile_tests {
     }
 }
 #[cfg(test)]
+mod gpu_pick_tests {
+    use super::{gpu_primary_class, pick_smi_row};
+    #[test]
+    fn smi_rows_pick_the_largest_card() {
+        // Two cards: the old blob-split put the second name into
+        // driverVersion. Names may contain commas, memory is right-aligned.
+        let multi = "NVIDIA GeForce RTX 4070, 8188 MiB, 566.03\nNVIDIA GeForce RTX 4090, 24564 MiB, 566.03\n";
+        assert_eq!(
+            pick_smi_row(multi),
+            Some(("NVIDIA GeForce RTX 4090".into(), 24564, "566.03".into()))
+        );
+        let single = "NVIDIA GeForce RTX 3080, 10240 MiB, 546.01";
+        assert_eq!(
+            pick_smi_row(single),
+            Some(("NVIDIA GeForce RTX 3080".into(), 10240, "546.01".into()))
+        );
+        let comma = "NVIDIA RTX A5000, 24564 MiB, 537.99";
+        assert_eq!(
+            pick_smi_row(comma),
+            Some(("NVIDIA RTX A5000".into(), 24564, "537.99".into()))
+        );
+        assert_eq!(pick_smi_row(""), None);
+        assert_eq!(pick_smi_row("no csv here"), None);
+    }
+    #[test]
+    fn integrated_adapters_lose_to_discrete() {
+        // Ryzen laptop order: the 780M iGPU is enumerated first, the dGPU
+        // second — the dGPU must win or tiering runs on the iGPU.
+        assert_eq!(gpu_primary_class("AMD", "AMD Radeon 780M"), 1);
+        assert_eq!(gpu_primary_class("AMD", "AMD Radeon RX 7600S"), 2);
+        assert_eq!(gpu_primary_class("INTEL", "Intel Arc A770 Graphics"), 1);
+        assert_eq!(gpu_primary_class("AMD", "AMD Radeon 880M"), 1);
+        assert_eq!(gpu_primary_class("AMD", "AMD Radeon RX 9070 XT"), 2);
+        assert_eq!(gpu_primary_class("AMD", "AMD Radeon AI PRO R9700"), 2);
+        // Driverless boxes: the Basic Display Adapter is surfaced (so the
+        // preflight can refuse) but ranks below every real adapter.
+        assert_eq!(
+            gpu_primary_class("unknown", "Microsoft Basic Display Adapter"),
+            0
+        );
+    }
+}
+
+#[cfg(test)]
 mod virtual_adapter_tests {
     use super::is_virtual_display_adapter;
     #[test]
@@ -1157,7 +1327,8 @@ mod known_vram_tests {
         // The 0.5.1 reporter card: registry probe missed, table must hit.
         assert_eq!(known_vram_mb("AMD Radeon AI PRO R9700"), Some(32768));
         assert_eq!(known_vram_mb("AMD Radeon RX 9070 XT"), Some(16384));
-        assert_eq!(known_vram_mb("AMD Radeon RX 9060 XT"), Some(16384));
+        // Ambiguous 8/16GB SKU: the fallback under-tiers (safe direction).
+        assert_eq!(known_vram_mb("AMD Radeon RX 9060 XT"), Some(8192));
         assert_eq!(known_vram_mb("AMD Radeon RX 9060"), Some(8192));
         assert_eq!(known_vram_mb("AMD Radeon RX 9070 GRE"), Some(12288));
         assert_eq!(known_vram_mb("AMD Radeon RX 7900 XTX"), Some(24576));
@@ -2002,6 +2173,28 @@ pub(crate) fn hardware_profile_detail_with_ram(
 }
 
 static LAST_NVIDIA: LazyLock<Mutex<Option<serde_json::Value>>> = LazyLock::new(|| Mutex::new(None));
+/// Registry VRAM lookup memoized per display name: the metrics tile asked
+/// powershell for the driver key on **every** tick (1-2 s) even though VRAM
+/// never changes. `None` is cached too, so a card without a QWORD stops
+/// re-probing as well.
+type VramCache = Option<(String, Option<u64>)>;
+static CACHED_VRAM_MB: LazyLock<Mutex<VramCache>> = LazyLock::new(|| Mutex::new(None));
+
+pub(crate) fn cached_dedicated_vram_mb(display_name: &str) -> Option<u64> {
+    if let Ok(g) = CACHED_VRAM_MB.lock() {
+        if let Some((n, v)) = g.as_ref() {
+            if n == display_name {
+                return *v;
+            }
+        }
+    }
+    let v = wmi_dedicated_vram_mb(display_name);
+    if let Ok(mut g) = CACHED_VRAM_MB.lock() {
+        *g = Some((display_name.to_string(), v));
+    }
+    v
+}
+
 pub(crate) fn get_cached_igpu() -> Option<serde_json::Value> {
     // ponytail: WMI probed once, cached forever — was running powershell every 2s in hot loop
     let m = &CACHED_IGPU;
@@ -2068,10 +2261,10 @@ pub fn get_system_metrics() -> serde_json::Value {
         if total > 0 {
             result["ram"] = serde_json::json!((used as f64 / total as f64 * 100.0).round() as i64);
         }
-        let cpu = sys.global_cpu_usage().round() as i64;
-        if cpu > 0 {
-            result["cpu"] = serde_json::json!(cpu);
-        }
+        // Always publish it: a real 0% reading used to be dropped, leaving the
+        // topbar showing the previous (stale) value.
+        let cpu = sys.global_cpu_usage().round().max(0.0) as i64;
+        result["cpu"] = serde_json::json!(cpu);
     }
     // nvidia-smi for VRAM/GPU — per-GPU breakdown + WMI iGPU fallback (mirrors Electron main.js)
     {
@@ -2204,7 +2397,7 @@ pub fn get_system_metrics() -> serde_json::Value {
                     .and_then(|v| v.as_str())
                     .unwrap_or("GPU")
                     .to_string();
-                let total = wmi_dedicated_vram_mb(&name)
+                let total = cached_dedicated_vram_mb(&name)
                     .map(|mb| {
                         if mb >= 1024 {
                             format!("{} GB", (mb as f64 / 1024.0).round() as i64)
@@ -2243,6 +2436,51 @@ mod amd_sim_tests {
         let ps = "@echo off\r\nif \"%~1\"==\"--\" goto dispatch\r\nexit /b 1\r\n:dispatch\r\nif \"%~3\"==\"-Command\" goto powershell\r\nexit /b 1\r\n:powershell\r\nset \"Q=%~4\"\r\nif not \"%Q:Win32_VideoController=%\"==\"%Q%\" goto wmi\r\nif not \"%Q:HardwareInformation=%\"==\"%Q%\" goto reg\r\nexit /b 1\r\n:wmi\r\necho AMD Radeon AI PRO R9700^|0^|32.0.11029.1008\r\necho AMD Radeon Graphics^|0^|32.0.11029.1008\r\nexit /b 0\r\n:reg\r\nif defined WGP_SIM_NO_REG exit /b 1\r\necho AMD Radeon AI PRO R9700^|34359738368\r\nexit /b 0\r\n";
         std::fs::write(dir.join("powershell.cmd"), ps).unwrap();
     }
+    /// Driverless box: WMI reports only the Basic Display Adapter. Detection
+    /// must surface that name (vendor "unknown") — filtering it as "unknown
+    /// vendor" made the fatal preflight check unreachable.
+    #[test]
+    fn basic_display_adapter_is_detected() {
+        let _guard = SIM_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("wgp-sim-bd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("nvidia-smi.cmd"), "@echo off\r\nexit /b 1\r\n").unwrap();
+        let ps = "@echo off\r\nif \"%~1\"==\"--\" goto dispatch\r\nexit /b 1\r\n:dispatch\r\nif \"%~3\"==\"-Command\" goto powershell\r\nexit /b 1\r\n:powershell\r\nset \"Q=%~4\"\r\nif not \"%Q:Win32_VideoController=%\"==\"%Q%\" goto wmi\r\nexit /b 1\r\n:wmi\r\necho Microsoft Basic Display Adapter^|0^|10.0.19041.1\r\nexit /b 0\r\n";
+        std::fs::write(dir.join("powershell.cmd"), ps).unwrap();
+        let old_path = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", format!("{};{old_path}", dir.display()));
+        std::env::set_var(
+            "WGP_PROBE_NVIDIA_SMI",
+            dir.join("nvidia-smi.cmd").to_string_lossy().to_string(),
+        );
+        std::env::set_var(
+            "WGP_PROBE_POWERSHELL",
+            dir.join("powershell.cmd").to_string_lossy().to_string(),
+        );
+        let info = get_gpu_info_sync();
+        assert_eq!(info.get("vendor").and_then(|v| v.as_str()), Some("unknown"));
+        assert!(
+            info.get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_lowercase()
+                .contains("basic display"),
+            "got {info}"
+        );
+        // The plan stays CPU (nothing to accelerate), never a fabricated GPU.
+        assert_eq!(
+            build_install_plan(&info)
+                .get("profile")
+                .and_then(|v| v.as_str()),
+            Some("CPU")
+        );
+        std::env::remove_var("WGP_PROBE_NVIDIA_SMI");
+        std::env::remove_var("WGP_PROBE_POWERSHELL");
+        std::env::set_var("PATH", old_path);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn simulated_r9700_end_to_end() {
         let _guard = SIM_LOCK.lock().unwrap();

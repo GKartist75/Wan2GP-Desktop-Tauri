@@ -2,6 +2,77 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [Unreleased]
+
+## [0.10.20] — 2026-10-22
+
+- **The Finetune Manager is opt-in.** The companion plugin is no longer
+  installed automatically on fresh installs, after Repair or at startup: the
+  automatic install defaults to **off** (`companionPluginOptOut` defaults to
+  `true`), the *Manage → Plugins → Finetune Manager* checkbox arrives ticked,
+  and the plugin is installed only when you press **Install / repair** (or
+  untick the box). Existing installs keep their plugin, uninstalling still
+  turns the automatic install off, and nothing about the pack UI is
+  advertised when the plugin is absent.
+
+- **AMD ROCm install no longer guesses the device target.** GPU tiers now follow
+  the real architecture per name (RDNA 2/3/3.5/4 plus the APUs: 680M/660M/610M,
+  Rogue Ally Z1, Strix Point/Halo and Phoenix/Hawk Point 780M), the fallback
+  picks the same target upstream's table gives, and Settings → AMD ROCm carries a
+  **GPU device target** (leave empty to auto-detect via `clinfo`/the GPU name, or
+  pin e.g. `gfx1036,gfx1201`). When Windows reports only a generic adapter name
+  and no target/clinfo is available, the install preflight now fails with an
+  actionable message instead of installing a stack the GPU cannot run.
+
+- **Multi-GPU and driverless detection hardened.** nvidia-smi multi-GPU queries
+  resolve the largest card instead of mashing rows into one blob, the WMI
+  fallback prefers a discrete adapter over an iGPU, and a driverless box
+  surfaces the Microsoft Basic Display Adapter so the fatal preflight can refuse
+  the install.
+
+- **Console Logs server is token-gated and host-checked.** The opt-in log
+  viewer on `serverPort + 2` now requires a per-start token (the Logs page shows
+  the URL carrying it) and refuses `Host` headers that are neither localhost nor
+  an IP literal (DNS-rebinding defence).
+
+- **Finetune Manager uninstall is honoured.** Uninstalling the companion from
+  *Manage → Plugins → Finetune Manager* now turns off the automatic install, and
+  the companion row in the plugin list is locked to that section.
+
+- **Post-install profile chip reads the backend resolution.** The Install tab's
+  *Profile:* chip now renders the backend's resolved tier (RTX_50 / AMD_GFX1201 /
+  INTEL_XPU / CPU…) via one labeler instead of a divergent regex copy.
+
+- **Metrics and compute probes fixed.** The topbar CPU tile always publishes the
+  current reading (a real 0% was dropped, so the tile went stale), the WMI
+  registry VRAM lookup is memoized per display name, and the AMD compute probe
+  runs the real int8 GEMM (`qbytes_mm`) when optimum-quanto is present, failing
+  on the HIP signature instead of only the simulated broadcast.
+
+- **WanGP v18.21 parity (`9d25c601`) — guidance only.** The two upstream
+  commits since `dee66357` are kernel / model-internals work plus the version
+  bump, so the launcher itself needs nothing: `wgp.py` adds no CLI argument,
+  `setup_config.json` and the requirements files are untouched (GGUF `1.0.28`,
+  WGPKernels `1.3.0`, the Triton and torch pins still match), `settings_version`
+  stays `2.81` and the `int8_kernels` / `fp8_kernels` choices are unchanged. The
+  guide records what did change for users: **FlashVSR+ Turbo** is now the
+  FlashVSR extension's default model (BF16 or INT8 ConvRot transformer, cache
+  windows 1–3, 16 frames per step on memory profile 0), MiniMax **H3 PDD now
+  accepts base-model LoRAs**, the FlashVSR decoder labels were renamed, and
+  WanGP's Triton kernels are gated by compute capability (BF16 ≥ 8.0,
+  FP16/FP32 ≥ 7.5) instead of an allowlist. The model inventory stays at 276
+  (`defaults/` gained no file) and all 38 Guide-tab picks still resolve against
+  `9d25c601`.
+
+- **Upstream-docs audit closed three gaps.** All 25 files in upstream `docs/` were
+  re-read at `9d25c601` (byte-identical to `dee66357` — 18.21 changed no doc, only
+  the root README) and the guide's references were completed: the audio processor
+  inventory was missing `remove_vocals` (Remove Vocals, `audio_edit`, the
+  `audio_background_removal` handler), the guide never mentioned *Generation
+  Preview*'s two Tiny VAE modes and the decoder residency they cost, and its
+  upstream-docs list named 17 of 25 files. No launcher code touches any of these
+  names — the guide and the README table are the only mirrors.
+
 ## [0.10.19] — 2026-10-21
 
 - **Auto-Tune follows upstream's new VRAM coefficient.** Upstream `06106f69`

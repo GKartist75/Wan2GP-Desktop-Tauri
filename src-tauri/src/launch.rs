@@ -39,6 +39,73 @@ pub(crate) fn split_launch_args(s: &str) -> Vec<String> {
     }
     out
 }
+
+/// Flags current WanGP no longer defines. `wgp.py` parses with argparse, so a
+/// stale token makes it exit with "unrecognized arguments" before the server
+/// binds — and the launch looks like a hang. They are dropped on the way in
+/// and reported, so upgrades from older presets keep working.
+const REMOVED_LAUNCH_FLAGS: &[&str] = &["--teacache"];
+
+/// Split `tokens` into (kept, removed) for [`REMOVED_LAUNCH_FLAGS`]. A removed
+/// flag takes one following non-flag token with it (`--teacache 2.0`), so the
+/// value can't remain as a stray positional. `--flag=value` is removed whole.
+/// Pure + unit-tested.
+pub(crate) fn strip_removed_launch_flags(tokens: Vec<String>) -> (Vec<String>, Vec<String>) {
+    let mut kept = Vec::with_capacity(tokens.len());
+    let mut removed = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let t = &tokens[i];
+        let flag = t.split('=').next().unwrap_or(t);
+        if REMOVED_LAUNCH_FLAGS.contains(&flag) {
+            removed.push(t.clone());
+            if !t.contains('=') {
+                if let Some(next) = tokens.get(i + 1) {
+                    if !next.starts_with('-') {
+                        removed.push(next.clone());
+                        i += 1;
+                    }
+                }
+            }
+            i += 1;
+            continue;
+        }
+        kept.push(t.clone());
+        i += 1;
+    }
+    (kept, removed)
+}
+
+/// Drop removed flags from the persisted Extra Launch Args (best effort).
+/// The read-path filter below already protects the launch; this keeps the
+/// Manage field honest so the user can see and edit what actually runs.
+pub(crate) fn scrub_removed_launch_flags() {
+    let dc = load_config_value();
+    let raw = dc
+        .get("launchArgs")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if raw.trim().is_empty() {
+        return;
+    }
+    let (kept, removed) = strip_removed_launch_flags(split_launch_args(&raw));
+    if removed.is_empty() {
+        return;
+    }
+    let mut next = dc.clone();
+    next["launchArgs"] = serde_json::json!(kept.join(" "));
+    if let Ok(s) = serde_json::to_string_pretty(&next) {
+        let _ = atomic_write(&get_config_file(), &s);
+    }
+    push_log(
+        &format!(
+            "[!] Removed launch flag(s) this WanGP version no longer accepts: {}\n",
+            removed.join(" ")
+        ),
+        "launch",
+    );
+}
 /// Shared wgp.py base args (Slice `deepy-web`: common builder for the main
 /// server and the standalone Deepy Web process — no fork, verbatim upstream
 /// flags only). `--config` is intentionally omitted: children spawn with
@@ -462,7 +529,17 @@ pub async fn launch(
     }
     // Extra Launch Args from Manage tab (quote-aware split, appended last so they win).
     if let Some(extra) = cfg.get("launchArgs").and_then(|v| v.as_str()) {
-        let add = split_launch_args(extra);
+        let (add, removed) = strip_removed_launch_flags(split_launch_args(extra));
+        if !removed.is_empty() {
+            crate::base::push_log(
+                &format!(
+                    "[!] Ignored launch flag(s) this WanGP version no longer accepts: {}\n",
+                    removed.join(" ")
+                ),
+                "launch",
+            );
+            scrub_removed_launch_flags();
+        }
         if !add.is_empty() {
             args.extend(add);
         }
@@ -880,7 +957,13 @@ runpy.run_path(sys.argv[0], run_name='__main__')
                         emit(&format!("[i] GPU profile env: MIOPEN_FIND_MODE={v}\n"));
                     }
                 }
-                None => emit("[i] MIOpen disabled by user setting\n"),
+                None => {
+                    // A previous launch in this app session may have set it
+                    // process-wide; children inherit the parent env, so an
+                    // empty arm left MIOpen enabled despite the toggle.
+                    std::env::remove_var("MIOPEN_FIND_MODE");
+                    emit("[i] MIOpen disabled by user setting\n");
+                }
             }
             // Virtual-GPU HIP pin (strict conditions only): exactly one
             // discrete AMD GPU PLUS ignored virtual display adapter(s)
@@ -2490,6 +2573,35 @@ cmd,
             vec!["--config", "a b", "--verbose", "2"]
         );
         assert_eq!(split_launch_args(""), Vec::<String>::new());
+    }
+    #[test]
+    fn removed_launch_flags_are_dropped_with_their_value() {
+        // Stale preset from an older build: argparse would reject the token.
+        let (kept, removed) = strip_removed_launch_flags(split_launch_args(
+            "--compile --attention sage2 --profile 3 --teacache 2.0",
+        ));
+        assert_eq!(
+            kept,
+            vec!["--compile", "--attention", "sage2", "--profile", "3"]
+        );
+        assert_eq!(removed, vec!["--teacache", "2.0"]);
+        // `--flag=value` goes whole; a bare flag at the end can't eat the next arg.
+        let (kept, removed) =
+            strip_removed_launch_flags(split_launch_args("--teacache=1.5 --fp16"));
+        assert_eq!(kept, vec!["--fp16"]);
+        assert_eq!(removed, vec!["--teacache=1.5"]);
+        let (kept, _) = strip_removed_launch_flags(split_launch_args("--teacache"));
+        assert!(kept.is_empty());
+        // A value that looks like a flag is never swallowed.
+        let (kept, removed) =
+            strip_removed_launch_flags(split_launch_args("--teacache --profile 4"));
+        assert_eq!(kept, vec!["--profile", "4"]);
+        assert_eq!(removed, vec!["--teacache"]);
+        // Nothing else is touched.
+        let (kept, removed) =
+            strip_removed_launch_flags(split_launch_args("--attention sdpa --fp16"));
+        assert_eq!(kept, vec!["--attention", "sdpa", "--fp16"]);
+        assert!(removed.is_empty());
     }
     #[test]
     fn path_strip_removes_only_recorded_prepend() {
