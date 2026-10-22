@@ -2,6 +2,23 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [Unreleased]
+
+- **WanGP v18.21 parity (`9d25c601`) — guidance only.** The two upstream
+  commits since `dee66357` are kernel / model-internals work plus the version
+  bump, so the launcher itself needs nothing: `wgp.py` adds no CLI argument,
+  `setup_config.json` and the requirements files are untouched (GGUF `1.0.28`,
+  WGPKernels `1.3.0`, the Triton and torch pins still match), `settings_version`
+  stays `2.81` and the `int8_kernels` / `fp8_kernels` choices are unchanged. The
+  guide records what did change for users: **FlashVSR+ Turbo** is now the
+  FlashVSR extension's default model (BF16 or INT8 ConvRot transformer, cache
+  windows 1–3, 16 frames per step on memory profile 0), MiniMax **H3 PDD now
+  accepts base-model LoRAs**, the FlashVSR decoder labels were renamed, and
+  WanGP's Triton kernels are gated by compute capability (BF16 ≥ 8.0,
+  FP16/FP32 ≥ 7.5) instead of an allowlist. The model inventory stays at 276
+  (`defaults/` gained no file) and all 38 Guide-tab picks still resolve against
+  `9d25c601`.
+
 ## [0.10.19] — 2026-10-21
 
 - **Auto-Tune follows upstream's new VRAM coefficient.** Upstream `06106f69`

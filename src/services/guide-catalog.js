@@ -3,8 +3,8 @@
  *
  * Pure, side-effect-free data module (no Tauri, no Node, no DOM). Mirrors the
  * starters in docs/WAN2GP-GUIDE.md; every model_type must exist in WanGP's
- * defaults/*.json (verified 2026-10-21 against upstream v18.20 / `dee66357`:
- * 38/38 present).
+ * defaults/*.json (verified 2026-10-22 against upstream v18.21 / `9d25c601`:
+ * 38/38 present — 18.21 adds no defaults entry, so the picks are unchanged).
  *
  * Shape per goal: { id, label, picks: [{ model, why, frames, steps, guidance, tip }] }
  * Frames/steps/guidance are starters, not rules — the per-model form owns truth.
