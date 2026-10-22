@@ -111,8 +111,25 @@
     if (name === 'triton_status' || name === 'long_paths_status') return { ok: true, enabled: true }
     if (name === 'dlss5_classify') return { ok: true, tier: 'supported', found: true }
     if (name === 'log_server_status') return { ok: true, running: false, port: 7862, lan: false, samePc: null, phone: null, phoneUnavailable: true }
-    if (name === 'uv_cache_info') return { ok: true, sizeGb: 0 }
     if (name === 'deepy_web_status') return { ok: true, running: false, mode: 'disabled' }
+    // Disk cleanup panel: the real shapes (sizes are only present when the
+    // caller asked, mirroring cleanup_scan(withSizes)).
+    if (name === 'cleanup_scan') {
+      var sized = !!(args && args.withSizes)
+      var CLEAN = [
+        { key: 'gradio', label: 'Gradio temp', path: 'C:\\Users\\me\\AppData\\Local\\Temp\\gradio', exists: true, bytes: 558799128, files: 24, risky: false, warning: 'Uploads and previews Gradio copies while Wan2GP runs.' },
+        { key: 'uv', label: 'uv wheel cache', path: 'C:\\Wan2GP\\.uv-cache', exists: true, bytes: 9696516823, files: 61513, risky: false, warning: 'Wheels for your Python environment.' },
+        { key: 'wheels', label: 'Launcher wheel cache', path: 'C:\\Wan2GP\\wheel-cache', exists: true, bytes: 308121043, files: 3, risky: false, warning: 'Pinned kernel wheels.' },
+        { key: 'triton', label: 'Triton JIT cache', path: 'C:\\Wan2GP\\triton-cache', exists: true, bytes: 172229976, files: 3897, risky: false, warning: 'Compiled Triton kernels.' },
+        { key: 'pip', label: 'pip cache', path: 'C:\\Users\\me\\AppData\\Local\\pip\\cache', exists: true, bytes: 77375650680, files: 8072, risky: false, warning: "pip's download cache, shared by every Python project on this machine." },
+        { key: 'hf', label: 'HuggingFace hub cache', path: 'C:\\Users\\me\\.cache\\huggingface\\hub', exists: true, bytes: 71860245251, files: 134, risky: true, warning: 'Model weights fetched through huggingface_hub live ONLY here (Deepy LLM engines, Kandinsky, some VAE/ONNX files). Deleting them means downloading them again — tens of GB. Models in your Wan2GP model folder (ckpts) are NOT affected, and your HF login token is kept.' },
+      ]
+      return { ok: true, targets: sized ? CLEAN : CLEAN.map(function (t) { return Object.assign({}, t, { bytes: 0, files: 0 }) }) }
+    }
+    if (name === 'cleanup_clean') {
+      var keys = (args && args.keys) || []
+      return { ok: true, freedBytes: 558799128, removedFiles: 24, cleared: keys, errors: [], targets: [] }
+    }
     if (name === 'get_disk_space') return { ok: true, free: 512 * 1024 * 1024 * 1024, total: 1024 * 1024 * 1024 * 1024 }
     // v17 RAM/VRAM troubleshooting. Stubbed to a real RTX_30 answer so the
     // known-good panel can be driven in the browser; the OOM remedy returns

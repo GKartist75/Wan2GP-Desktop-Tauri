@@ -744,7 +744,7 @@ function openSettings() {
       updateXetStatus();
     } catch (e) {}
     try {
-      refreshUvCacheInfo();
+      refreshCleanupRows({ sizes: false });
     } catch (e) {}
     try {
       refreshElectronSection();

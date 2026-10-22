@@ -4,6 +4,23 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+## [0.10.21] — 2026-10-22
+
+- **Manage → System gains a disk cache cleanup panel.** One list, measured on
+  disk, of the folders the launcher and Wan2GP rebuild on demand — Gradio temp
+  (`%TEMP%\gradio`), the `uv` wheel cache, the launcher wheel cache, the Triton
+  JIT cache, pip's download cache and the HuggingFace hub cache. Tick what to
+  free, press **Clean selected**, and the folders stay while their contents go
+  (with a byte/file summary and per-item errors for anything locked). The
+  HuggingFace row is flagged in red and ticked off by default: weights fetched
+  through `huggingface_hub` live only in `hub/` and are re-downloaded, while
+  models in the Wan2GP model folder and the HF login token are untouched. The
+  old uv-only *Calculate size / Purge unused / Remove cache* trio is gone — it
+  was wired to a stub command that reported success without deleting anything,
+  and the `uv` row here really does empty `.uv-cache`. The backend refuses to
+  run while Wan2GP is up and re-checks every path against an allow-list plus a
+  root/ancestor guard before deleting.
+
 ## [0.10.20] — 2026-10-22
 
 - **The Finetune Manager is opt-in.** The companion plugin is no longer
