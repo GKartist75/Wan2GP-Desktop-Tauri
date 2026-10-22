@@ -6,6 +6,19 @@
 
 // ── Installer ──
 let selectedEnvType = "uv";
+// Human chip text for a backend profile key (RTX_40, AMD_GFX1201, INTEL_XPU,
+// CPU…). Pure so the post-install chip can be tested without the UI.
+function profileChipLabel(key) {
+  const k = String(key || "");
+  if (!k || k === "unknown") return "";
+  if (k.startsWith("AMD_")) return "AMD " + k.slice(4).toLowerCase();
+  if (k === "INTEL_XPU" || k === "INTEL_CPU") return "Intel (CPU torch)";
+  if (k === "CPU") return "CPU";
+  if (k === "MPS") return "Apple MPS";
+  if (k === "GTX_10") return "GTX 10/16";
+  if (k.startsWith("RTX_")) return "RTX " + k.slice(4);
+  return k.replace(/_/g, " ");
+}
 // Checklist verdict: when the install folder holds a repo without a working env
 // (repo_no_env / ours_broken_env), the choice lives in the #targetChoiceList
 // radios and the big Install button dispatches it (see startInstall).
@@ -902,19 +915,11 @@ async function doInstall(_installed, mode, opts) {
     );
     await window.w2gp.install(selectedEnvType);
     try {
-      const gpu = await window.w2gp.detectGpu();
-      const hw = await window.w2gp.detectHardware();
-      const name = (gpu.name || hw.gpu || "").toUpperCase();
-      const vendor = gpu.vendor || "";
-      let profile = "STANDARD";
-      if (vendor === "APPLE") profile = "MPS";
-      else if (name.match(/RTX 50|50\d0/)) profile = "RTX 50";
-      else if (name.match(/RTX 40|40\d0/)) profile = "RTX 40";
-      else if (name.match(/RTX 30|30\d0/)) profile = "RTX 30";
-      else if (name.match(/RTX 20|20\d0/)) profile = "RTX 20";
-      else if (name.includes("GTX") || name.includes("10")) profile = "GTX 10";
-      else if (vendor === "AMD") profile = "AMD";
-      $("installProfile").textContent = profile;
+      // The backend already resolved this GPU (kernel_profile_key) — the old
+      // regex copy here disagreed with it on Intel, AMD APUs and GTX 16.
+      const r = await window.w2gp.installPlan();
+      const key = (r && r.plan && r.plan.profile) || "";
+      $("installProfile").textContent = profileChipLabel(key) || "unknown";
       $("installProfileRow").style.display = "flex";
     } catch {}
     try {

@@ -13,7 +13,7 @@ async function tsRefreshLaunchArgs() {
   try {
     const cfg = await window.w2gp.configLoad();
     if ($("launchArgsInput")) $("launchArgsInput").value = cfg.launchArgs || "";
-    if ($("portInput")) $("portInput").value = cfg.serverPort || 7860;
+    if ($("portInput")) $("portInput").value = cfg.serverPort || 7861;
   } catch {}
 }
 $("tsUpstreamDocsLink")?.addEventListener("click", async (ev) => {

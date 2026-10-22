@@ -658,7 +658,7 @@ function openSettings() {
   }
   window.w2gp.configLoad().then((cfg) => {
     if ($("launchArgsInput")) $("launchArgsInput").value = cfg.launchArgs || "";
-    if ($("portInput")) $("portInput").value = cfg.serverPort || 7860;
+    if ($("portInput")) $("portInput").value = cfg.serverPort || 7861;
     if ($("githubTokenInput"))
       $("githubTokenInput").value = cfg.githubToken || "";
     if ($("hfTokenInput")) $("hfTokenInput").value = cfg.hfToken || "";
@@ -710,6 +710,8 @@ function openSettings() {
     const a = cfg.amdEnv || { miopenDisabled: false };
     if ($("amdMiopenDisabled"))
       $("amdMiopenDisabled").checked = a.miopenDisabled === true;
+    if ($("amdDeviceTarget"))
+      $("amdDeviceTarget").value = a.deviceTarget || "";
     // GPU device picker: fill the dropdown from the main process, keep current choice
     loadGpuDeviceOptions(cfg.gpuDevice || "auto");
     // Launcher GPU picker — auto | integrated | dedicated | disabled

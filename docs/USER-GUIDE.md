@@ -131,12 +131,14 @@ Upstream reference: `docs/AUTHENTICATION.md` in the Wan2GP repo (web
 login, `--public-url` reverse-proxy origins, certificates, MCP OAuth).
 All actions log `[Deepy]` lines to the Console.
 **C · Console logs** — read-only tail of the same Console as a web page on
-its own port (default server port + 2): keep generating on `:7860` in one
-tab while watching errors + completions in another, including from a phone
-on the same Wi-Fi. Off by default — flip *Logs page* on for This-PC only,
+its own port (default server port + 2 = `:7863` with the default `:7861` Wan2GP
+server): keep generating on the Wan2GP server port in one tab while watching
+errors + completions in another, including from a phone on the same Wi-Fi. Off by default — flip *Logs page* on for This-PC only,
 add *Phone-LAN* + Apply for LAN (Same-PC / Phone URLs with Copy + QR).
 Trusted home Wi-Fi / Tailscale only; never port-forward it to the internet
-(no auth — it shows log lines, but takes no commands).
+(token-gated now: the Console Logs page requires the token the launcher
+shows on that page, and the URL carries it — open the exact
+`http://<host>:<port>/?token=…` link).
 
 **Left info cards collapse** via the chevron (System, Paths, Kernels,
 Environment, Prompt enhancement, Deepy, Phone & remote access, DLSS 5, pip
@@ -314,7 +316,7 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **Agent API (MCP server)** — transport/host/port/version picker shows the exact launch command + client URL, with copy. stdio = local spawn; HTTP needs `--mcp-auth` + HTTPS off-localhost.
 - **Headless batch** — queue `.zip`/settings `.json` path + optional output dir + dry-run → runs `wgp.py --process` with console streaming; exit 0 = done, 1 = error.
 - **Extra Launch Args** — appended to `wgp.py` verbatim.
-- **Server Port** — default 7860.
+- **Server Port** — default 7861 (side-by-side with the retired Electron launcher's 7860).
 - **GPU Device** — `auto` or a pinned `cuda:N` for generation.
 - **Launcher GPU** — which GPU the launcher UI itself prefers.
 - **SageAttention wheel** — which Sage build to use: *Safe* prefers the launcher's
@@ -329,7 +331,10 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **AMD ROCm** (AMD only, applies on next launch) — *Disable MIOpen* leaves
   `MIOPEN_FIND_MODE` fully unset (the upstream guide's `cudnn.enabled = False`
   alternative). Try it if generation crashes with MIOpen/HIP errors while the
-  default `FAST` mode is set.
+  default `FAST` mode is set. **GPU device target** — optional, leave empty to
+  auto-detect via `clinfo`/the GPU name, or set e.g. `gfx1100`. The launcher now
+  refuses to install an AMD stack whose ROCm device target cannot be resolved
+  (some APUs report only "AMD Radeon(TM) Graphics") instead of guessing.
 - **Bind Address** — `localhost` (matches Gradio's self-check) vs strict `127.0.0.1` for proxy/VPN setups.
 
 ## Manage → System
@@ -500,15 +505,17 @@ for a portable archive).
 The launcher contains no model-pack manager: no catalog, no registry, no search,
 no download code. Pack recipes, the community registry, CivitAI search, local
 imports/exports and missing-file downloads are owned entirely by the
-**Finetune Manager** plugin, which the launcher installs and enables by default
-from a pinned, known-good release.
+**Finetune Manager** plugin, which the launcher can install from a pinned,
+known-good release. It is **opt-in**: it is not installed automatically.
 
 - **Manage -> Plugins -> Finetune Manager (recommended)** shows whether the
-  companion is installed, offers **Install / repair**, and has an opt-out for
-  automatic installs.
+  companion is installed, offers **Install / repair**, **Uninstall**, and a
+  toggle for the automatic install (off by default).
 - On a fresh install, after Repair, and on startup for existing installs, the
-  launcher ensures the companion is present. It never defaults to `master`.
-- If the plugin is missing or you opt out, the launcher simply has no pack UI:
+  launcher ensures the companion is present — but only when you enabled that
+  behaviour. It never defaults to `master`.
+- If the plugin is missing or you never enabled it, the launcher simply has no
+  pack UI:
   nothing is installed silently and there is no hidden tab or fallback.
 - Open Wan2GP after installing and use the Finetune Manager tab for recipes,
   registry, CivitAI and file downloads. The plugin resolves assets with Wan2GP's

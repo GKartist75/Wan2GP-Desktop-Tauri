@@ -92,6 +92,7 @@ C:\Wan2GP-Models\               ← models library
 
 | Version | Headline |
 | --- | --- |
+| [**v0.10.20**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.20) | **The Finetune Manager is opt-in — the launcher stops installing a companion plugin you did not ask for.** On fresh installs, after Repair and at startup the pinned Finetune Manager is no longer seeded automatically: the *Manage → Plugins* checkbox arrives ticked, **Install / repair** still does it on demand, and existing installs keep theirs. **AMD ROCm no longer guesses the device target** — tiers follow the real architecture per name (RDNA 2/3/3.5/4 plus 680M/660M/610M, Rogue Ally Z1, Strix Point/Halo, Phoenix/Hawk Point 780M) and Settings → AMD ROCm gained a **GPU device target** (auto or a pin such as `gfx1036,gfx1201`), with an actionable refusal when Windows reports only a generic adapter and nothing else can tell. **Multi-GPU and driverless boxes are detected honestly** (largest card wins, discrete beats iGPU, a Microsoft Basic Display Adapter surfaces so the preflight can refuse), the **console log server** is token-gated and host-checked against DNS rebinding, the Install tab's *Profile:* chip shows the backend's own resolved tier, and the topbar CPU tile no longer goes stale on a real 0% while the AMD compute probe runs the real int8 GEMM. WanGP **v18.21** parity is guidance-only (FlashVSR+ Turbo default, H3 PDD base-model LoRAs, compute-capability kernel gating). |
 | [**v0.10.19**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.19) | **The Pack tab is gone — model-pack management now belongs to the Finetune Manager plugin.** The launcher installs that plugin from a pinned release (repair or opt out under Manage → Plugins), and the 6.9k-line pack backend, its pinned catalog, the verify/refresh scripts and the pack test suite are deleted; files you already downloaded stay visible in the Library. Auto-Tune also tracks WanGP v18.20, and the Performance panel stops writing settings that did nothing. `vram_safety_coefficient` follows upstream's new **0.85** default (0.70 under 12 GB, 0.60 failsafe) instead of the retired 0.80; **Manual VRAM Preload** gains the megabytes it was missing — the mode was written but the amount had no control, so it preloaded 0 MB; **Language Models CPU Compute** (`llm_cpu_compute`, Auto / On / Off) is now settable, so Deepy and the prompt enhancer can use the CPU while their layers stream from RAM; and **P0** becomes Auto-Tune's preferred profile under 32 GB of RAM, named above the matrix. Bundled with the v18.20 parity work: GGUF 1.0.28, WGPKernels 1.3.0 for RTX 20XX+, FastH3 Omni and Fibo 2.0 in the Guide, and a Delete button on every Library model row |
 | [**v0.10.18**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.18) | **Pack/CivitAI gets the details right, custom resolutions are editable, and DLSS 5 now follows DeepBeepMeep/Wan2GP.** CivitAI LoRAs install as LoRAs, public releases need no token, installs are recorded from the real files on disk, and only weight files are fetched (HIGH/LOW halves become the two Wan 2.2 phases). Finetune JSON now matches upstream's `FINETUNES.md` (`model.infos`, `loras_multipliers`, reusable `URLs`/`URLs2`), **Manage → General** gains a validated `resolutions.json` editor, the Library labels every checkpoint/finetune as DeepBeepMeep / Pack / Yours and fixes the checkpoint table's column widths, and the Pack tab puts the in-development disclaimer and catalogue first. **DLSS 5** verifies files immediately after install (green only when the SHA matches), treats a failed installer exit as a failure even over an old complete install, mirrors current upstream's workstation GPU tier, and *Compare with upstream* now compares your checkout with `deepbeepmeep/Wan2GP` main — component release feeds are no longer update sources |
 | [**v0.10.17**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.17) | **CivitAI is now an opt-in master switch, off by default.** While off, nothing contacts `civitai.red`: search, browse, inspect, examples, token checks and downloads all refuse locally, and both source pickers fall back to HuggingFace. Turning it on restores CivitAI; the 18+ gate stays independent. CivitAI search/browse use the API's own repeated `types=` spelling again (no more HTTP 400 on Trending), and download counts separate pending bytes from files already on disk, with the free-space check using the real LoRA/checkpoint folders |
@@ -135,6 +136,9 @@ C:\Wan2GP-Models\               ← models library
   </tr>
   <tr>
     <td colspan="2"><a href="screenshots/dlss5-checklist.png"><img src="screenshots/dlss5-checklist.png" alt="DLSS5 installer" height="320"></a><br><sub>DLSS5 installer — live per-component checklist with SHA-256 verification</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><a href="screenshots/custom-resolutions.png"><img src="screenshots/custom-resolutions.png" alt="Custom resolutions" height="320"></a><br><sub>Custom resolutions — validated <code>resolutions.json</code> editor (Manage → General)</sub></td>
   </tr>
 </table>
 
@@ -390,8 +394,8 @@ Backend lives in `src-tauri/src/lib.rs` (`#[tauri::command]` handlers); frontend
 ### Tests
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml   # 383 backend tests (3 ignored)
-npm test                                          # 230 frontend tests
+cargo test --manifest-path src-tauri/Cargo.toml   # 358 backend tests (1 ignored)
+npm test                                          # 166 frontend tests
 ```
 
 Both suites are hermetic — the backend one redirects `get_repo_dir()` at a

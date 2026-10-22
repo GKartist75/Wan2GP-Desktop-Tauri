@@ -1307,38 +1307,44 @@ pub(crate) fn amd_therock_torch_cmds(profile: &str, gpu_name: &str) -> Option<(S
 }
 
 /// Conventional single gfx target per install profile / GPU name, used when
-/// `clinfo` is unavailable. Pure + unit-tested (the live path prefers
-/// [`amd_device_extras`] and setup.py re-probes via clinfo at install time).
+/// `clinfo` is unavailable (the live path prefers [`amd_device_extras`] and
+/// setup.py re-probes via clinfo at install time). Targets follow upstream
+/// docs/AMD-INSTALLATION.md, APUs included: the old table collapsed every
+/// 680M/660M/610M and Strix Halo/Point part onto gfx1100, which installs a
+/// wheel the iGPU cannot run. Pure + unit-tested.
 pub(crate) fn amd_fallback_target(profile: &str, gpu_name: &str) -> &'static str {
     let g = gpu_name.to_uppercase();
-    if g.contains("GFX103")
-        || g.contains("RX 6")
-        || [
-            "6300", "6400", "6450", "6500", "6600", "6650", "6700", "6750", "6800", "6850", "6900",
-            "6950",
-        ]
+    // RDNA 4 first: no legacy name carries 9060/9070/R9700/120x.
+    if g.contains("9060") || g.contains("1200") {
+        return "gfx1200"; // Navi 44
+    }
+    if g.contains("9070") || g.contains("9700") || g.contains("1201") {
+        return "gfx1201"; // Navi 48
+    }
+    // RDNA 3.5 APUs: Strix Halo (8060S/8050S), Strix Point (890M/880M),
+    // Ryzen AI 7 350 (860M), 840M/820M.
+    if ["8060S", "8050S", "STRIX", "HALO", "AI MAX", "1151"]
         .iter()
         .any(|x| g.contains(x))
     {
-        return "gfx1030";
-    }
-    if profile == "AMD_GFX1200" || g.contains("9060") || g.contains("1200") {
-        // RDNA 4 Navi 44 (RX 9060 / 9060 XT) — upstream gfx1200 row, NOT
-        // gfx1201 (9070/R9700). Mixing these installs the wrong wheels.
-        return "gfx1200";
-    }
-    if profile == "AMD_GFX1201" || g.contains("9070") || g.contains("9700") || g.contains("1201") {
-        return "gfx1201";
-    }
-    // Strix Point 890M / Phoenix narrows to gfx1150 even when the
-    // profile is the broader AMD_GFX1151.
-    if g.contains("1150") || g.contains("890M") || g.contains("PHOENIX") {
-        return "gfx1150";
-    }
-    if profile == "AMD_GFX1151" || g.contains("1151") {
         return "gfx1151";
     }
-    // RDNA 3 desktop by card number (names carry no gfx target).
+    if ["890M", "880M", "1150"].iter().any(|x| g.contains(x)) {
+        return "gfx1150";
+    }
+    if ["860M", "1152"].iter().any(|x| g.contains(x)) {
+        return "gfx1152";
+    }
+    if ["840M", "820M", "1153"].iter().any(|x| g.contains(x)) {
+        return "gfx1153";
+    }
+    // RDNA 3: APUs (gfx1103, incl. the ROG Ally's Z1) before dGPUs.
+    if ["780M", "760M", "740M", "Z1", "1103"]
+        .iter()
+        .any(|x| g.contains(x))
+    {
+        return "gfx1103";
+    }
     if g.contains("7900") {
         return "gfx1100";
     }
@@ -1348,33 +1354,91 @@ pub(crate) fn amd_fallback_target(profile: &str, gpu_name: &str) -> &'static str
     if g.contains("7600") {
         return "gfx1102";
     }
-    if g.contains("780M") || g.contains("760M") || g.contains("1103") {
-        return "gfx1103";
+    // RDNA 2 APUs, then dGPUs by SKU (upstream publishes per-SKU targets).
+    if g.contains("680M") || g.contains("660M") {
+        return "gfx1035";
     }
-    if profile == "AMD_GFX110X" {
-        return "gfx1100";
+    if g.contains("610M") {
+        return "gfx1037";
     }
-    if profile == "AMD_GFX103X" {
+    if g.contains("6750") || g.contains("6700") {
+        return "gfx1031";
+    }
+    if g.contains("6650") || g.contains("6600") {
+        return "gfx1032";
+    }
+    if g.contains("6500") || g.contains("6400") || g.contains("W6200") {
+        return "gfx1034";
+    }
+    if g.contains("6950") || g.contains("6900") || g.contains("6800") {
         return "gfx1030";
     }
-    // Last resort: installer default target (setup.py re-probes
-    // via clinfo at install time and overrides per-GPU anyway).
-    // NOTE: this fallback is only used when clinfo is unavailable; with
-    // clinfo present the live probe wins and this value is never used.
-    "gfx1201"
+    // No model token (Windows reports a generic adapter name): follow the
+    // profile's family. The preflight refuses the generic case when clinfo is
+    // missing, so this only runs for names the tables above missed.
+    match profile {
+        "AMD_GFX103X" => "gfx1030",
+        "AMD_GFX1151" => "gfx1151",
+        "AMD_GFX1200" => "gfx1200",
+        "AMD_GFX1201" => "gfx1201",
+        _ => "gfx1100",
+    }
 }
 
 /// `device-gfx...` extras from the AMD driver's `clinfo`
 /// (`"device-gfx1201"` or comma-joined `"device-gfx1036,device-gfx1201"`
 /// on multi-GPU boxes), mirroring upstream setup.py `get_amd_gpus()`.
-/// None when clinfo is missing or reports no GPU target.
+/// The explicit Settings → AMD ROCm target wins: Windows reports some APUs
+/// only as "AMD Radeon(TM) Graphics", and clinfo may be absent, which left the
+/// installer guessing (gfx1100) on a gfx1035/gfx1151 iGPU.
+/// None when nothing can be resolved.
 pub(crate) fn amd_device_extras() -> Option<String> {
+    let cfg = load_config_value();
+    if let Some(raw) = cfg
+        .get("amdEnv")
+        .and_then(|v| v.get("deviceTarget"))
+        .and_then(|v| v.as_str())
+    {
+        if let Some(extras) = amd_extras_from_targets(raw) {
+            return Some(extras);
+        }
+    }
     let out = silent_command("clinfo").output().ok()?;
     if !out.status.success() {
         return None;
     }
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     amd_device_extras_for_targets(&text)
+}
+
+/// Normalise a user-typed target list ("gfx1100", "device-gfx1100",
+/// "gfx1100, gfx1036") into `device-gfx…` extras. Empty/invalid → None.
+/// Only `gfx` + alphanumerics is accepted, so the value can never smuggle an
+/// argv token into the pip command. Pure + unit-tested.
+pub(crate) fn amd_extras_from_targets(raw: &str) -> Option<String> {
+    let mut targets: Vec<String> = Vec::new();
+    for part in raw.split(|c: char| c == ',' || c.is_whitespace()) {
+        let t = part.trim().trim_start_matches("device-").to_lowercase();
+        if t.len() < 4
+            || !t.starts_with("gfx")
+            || !t[3..].chars().all(|c| c.is_ascii_alphanumeric())
+        {
+            continue;
+        }
+        if !targets.contains(&t) {
+            targets.push(t);
+        }
+    }
+    if targets.is_empty() {
+        return None;
+    }
+    Some(
+        targets
+            .into_iter()
+            .map(|t| format!("device-{t}"))
+            .collect::<Vec<_>>()
+            .join(","),
+    )
 }
 
 /// Pure core of [`amd_device_extras`]: parse clinfo text into the
@@ -1841,6 +1905,16 @@ pub(crate) fn run_preflight_checks(
                 });
             }
         }
+    }
+    // 3c. AMD with a generic adapter name and no way to resolve the gfx
+    // target: guessing installs wheels the GPU cannot run (0.10.19 fix).
+    if vendor == "AMD" && crate::hw::amd_name_is_generic(name) && amd_device_extras().is_none() {
+        fatal = true;
+        checks.push(PreflightCheck {
+            id: "amd-target",
+            level: "fail",
+            msg: format!("Windows reports this AMD GPU only as \"{name}\" and clinfo is not on PATH, so the ROCm device target is unknown. Set it in Settings → AMD ROCm → GPU target (e.g. gfx1100; see docs/AMD-INSTALLATION.md) or make `clinfo` available, then retry."),
+        });
     }
     // 4. unreadable VRAM mistiers the quality profile.
     if vendor == "AMD" && plan.get("vramGb").and_then(|v| v.as_f64()).unwrap_or(0.0) < 2048.0 {
@@ -3053,7 +3127,11 @@ pub async fn install(
                             vec!["-m".into(), "pip".into(), "install".into()],
                         )
                     };
-                    args.extend(staging.split_whitespace().map(str::to_string));
+                    // The staging recipe is a shell command line (upstream's
+                    // setup_config stores it quoted for setup.py). Spawned
+                    // argv must not carry the shell quotes: pip rejects
+                    // `"torch[device-gfx…]"` as an invalid requirement.
+                    args.extend(crate::launch::split_launch_args(staging));
                     match silent_command(&prog)
                         .args(&args)
                         .current_dir(&repo)
@@ -9420,15 +9498,75 @@ mod amd_therock_tests {
             amd_fallback_target("AMD_GFX1151", "AMD Radeon 890M"),
             "gfx1150"
         );
+        // Phoenix/Hawk Point 780M is RDNA 3 (gfx1103), not Strix Point
+        // (gfx1150) — the old table mis-tiered every 780M laptop.
         assert_eq!(
-            amd_fallback_target("AMD_GFX1151", "Phoenix Radeon 780M"),
+            amd_fallback_target("AMD_GFX1151", "AMD Radeon 780M"),
+            "gfx1103"
+        );
+        // RDNA 3.5 leftovers: 880M is gfx1150, 860M gfx1152, 820M gfx1153.
+        assert_eq!(
+            amd_fallback_target("AMD_GFX1151", "AMD Radeon 880M"),
             "gfx1150"
         );
-        // RDNA 2 discrete.
+        assert_eq!(
+            amd_fallback_target("AMD_GFX1151", "AMD Radeon 860M"),
+            "gfx1152"
+        );
+        assert_eq!(
+            amd_fallback_target("AMD_GFX1151", "AMD Radeon 820M"),
+            "gfx1153"
+        );
+        // ROG Ally: Z1/Z1 Extreme are gfx1103, NOT Strix Point.
+        assert_eq!(
+            amd_fallback_target("AMD_GFX110X", "AMD Radeon Graphics (Z1 Extreme)"),
+            "gfx1103"
+        );
+        // RDNA 2 discrete by SKU + APUs.
         assert_eq!(
             amd_fallback_target("AMD_GFX103X", "AMD Radeon RX 6800 XT"),
             "gfx1030"
         );
+        assert_eq!(
+            amd_fallback_target("AMD_GFX103X", "AMD Radeon RX 6700 XT"),
+            "gfx1031"
+        );
+        assert_eq!(
+            amd_fallback_target("AMD_GFX103X", "AMD Radeon RX 6600"),
+            "gfx1032"
+        );
+        assert_eq!(
+            amd_fallback_target("AMD_GFX103X", "AMD Radeon RX 6500 XT"),
+            "gfx1034"
+        );
+        assert_eq!(
+            amd_fallback_target("AMD_GFX103X", "AMD Radeon 680M"),
+            "gfx1035"
+        );
+        assert_eq!(
+            amd_fallback_target("AMD_GFX103X", "AMD Radeon 610M"),
+            "gfx1037"
+        );
+        // Generic adapter name with no clinfo: profile decides.
+        assert_eq!(
+            amd_fallback_target("AMD_GFX103X", "AMD Radeon(TM) Graphics"),
+            "gfx1030"
+        );
+    }
+    #[test]
+    fn device_target_override_normalises() {
+        use super::amd_extras_from_targets as n;
+        assert_eq!(n("gfx1100").as_deref(), Some("device-gfx1100"));
+        assert_eq!(n(" device-gfx1103 ").as_deref(), Some("device-gfx1103"));
+        assert_eq!(
+            n("gfx1036, gfx1201,gfx1036").as_deref(),
+            Some("device-gfx1036,device-gfx1201")
+        );
+        assert_eq!(n(""), None);
+        assert_eq!(n("   "), None);
+        // Anything that is not a gfx target must never reach argv.
+        assert_eq!(n("--index-url=http://evil"), None);
+        assert_eq!(n("device-"), None);
     }
     #[test]
     fn clinfo_targets_parse() {
@@ -9466,6 +9604,17 @@ mod amd_therock_tests {
             check_primary(&p);
             assert!(f.contains("nightly.repo.amd.com/rocm/whl-next/"), "got {f}");
             assert!(f.contains("--pre"), "got {f}");
+            // The re-seat spawn uses argv, not a shell: the recipe's shell
+            // quotes must be gone or pip sees `"torch[device-gfx…]"`.
+            let argv = crate::launch::split_launch_args(&f);
+            assert!(
+                argv.iter().all(|a| !a.contains('"')),
+                "staging argv keeps shell quotes: {argv:?}"
+            );
+            assert!(
+                argv.iter().any(|a| a.starts_with("torch[")),
+                "torch requirement missing: {argv:?}"
+            );
         }
         assert!(amd_therock_torch_cmds("RTX_50", "NVIDIA GeForce RTX 5090").is_none());
     }

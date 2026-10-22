@@ -142,7 +142,11 @@ function renderPlugins() {
     if (p.system || p.locked) {
       cb.checked = true;
       cb.disabled = true;
-      if (p.locked)
+      if (p.companion)
+        label.title =
+          (p.description ? p.description + " — " : "") +
+          "Finetune Manager is the launcher's pinned companion — install, repair and remove it in the Finetune Manager section above.";
+      else if (p.locked)
         label.title =
           (p.description ? p.description + " — " : "") +
           "Default plugin, always enabled.";
@@ -272,6 +276,7 @@ function renderPlugins() {
       row.appendChild(up);
       // 🗑 uninstall (not system/bundled)
       if (
+        !p.companion &&
         ![
           "downloads",
           "media_flow",
@@ -309,6 +314,21 @@ function renderPlugins() {
         });
         row.appendChild(del);
       }
+    }
+    if (p.companion) {
+      const lock = document.createElement("button");
+      lock.className = "btn btn-ghost small";
+      lock.textContent = "🔒";
+      lock.title =
+        "Managed companion - uninstall it in the Finetune Manager section above (stops the automatic reinstall too)";
+      lock.addEventListener("click", () => {
+        $("companionPluginSection")?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+        showToast("Manage the Finetune Manager in its own section above");
+      });
+      row.appendChild(lock);
     }
     list.appendChild(row);
   }
@@ -493,6 +513,42 @@ $("companionPluginInstallBtn")?.addEventListener("click", async () => {
   } finally {
     btn.disabled = false;
     btn.textContent = orig;
+    refreshCompanionPlugin();
+    refreshPlugins();
+  }
+});
+$("companionPluginUninstallBtn")?.addEventListener("click", async () => {
+  const btn = $("companionPluginUninstallBtn");
+  let id = "Wan2GP-finetune-manager";
+  try {
+    const st = await window.w2gp.companionPluginStatus();
+    if (st && st.id) id = st.id;
+  } catch (e) {
+    /* keep the default id */
+  }
+  const choice = await window.w2gp.confirmDialog({
+    title: "Uninstall the Finetune Manager?",
+    message:
+      "Remove the plugin folder and turn off its automatic install. Pack recipes, the registry and CivitAI stay unavailable until you install it again.",
+  });
+  if (choice !== "ok") return;
+  btn.disabled = true;
+  try {
+    const u = await window.w2gp.pluginUninstall(id);
+    if (u && u.ok) {
+      showToast(
+        u.pending
+          ? "⏳ " + (u.hint || "Locked — deleted on next start")
+          : "✓ Finetune Manager uninstalled - automatic install is off",
+      );
+      appendLog("[i] Finetune Manager uninstalled; automatic install disabled.");
+    } else {
+      showToast("✗ " + ((u && u.error) || "uninstall failed"));
+    }
+  } catch (e) {
+    showToast("✗ " + ((e && e.message) || e));
+  } finally {
+    btn.disabled = false;
     refreshCompanionPlugin();
     refreshPlugins();
   }
