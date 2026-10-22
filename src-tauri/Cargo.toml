@@ -1,6 +1,6 @@
 [package]
 name = "wan2gp-desktop-launcher-tauri"
-version = "0.10.19"
+version = "0.10.20"
 description = "Windows desktop launcher for Wan2GP"
 authors = ["GKartist75"]
 license = "MIT"
