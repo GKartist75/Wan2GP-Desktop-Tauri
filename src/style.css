@@ -2575,6 +2575,65 @@ table.args-table.lib-table.compact td:nth-child(5) {
  font-family: "Geist Mono", monospace;
  font-size: 0.625rem;
 }
+/* Manage → System → disk cache cleanup. The panel is a narrow side drawer, so
+   every row must fit ~420px: the name/size line wraps, the path truncates
+   (rtl keeps the tail of a long Windows path visible). */
+.cleanup-row {
+ display: flex;
+ align-items: flex-start;
+ gap: 8px;
+ cursor: pointer;
+}
+.cleanup-row.is-gone {
+ cursor: default;
+ opacity: 0.55;
+}
+.cleanup-row input[type="checkbox"] {
+ flex: 0 0 auto;
+ margin-top: 3px;
+ accent-color: var(--accent);
+}
+.cleanup-body {
+ flex: 1;
+ min-width: 0;
+}
+.cleanup-head {
+ display: flex;
+ flex-wrap: wrap;
+ align-items: baseline;
+ gap: 6px;
+}
+.cleanup-name {
+ font-size: 0.8125rem;
+ font-weight: 600;
+}
+.cleanup-size {
+ font-size: 0.6875rem;
+ color: var(--text-tertiary);
+ white-space: nowrap;
+}
+.cleanup-risk {
+ font-size: 0.6875rem;
+ font-weight: 600;
+ color: var(--signal-red);
+}
+.cleanup-path {
+ display: block;
+ font-size: 0.6875rem;
+ color: var(--text-tertiary);
+ white-space: nowrap;
+ overflow: hidden;
+ text-overflow: ellipsis;
+ direction: rtl;
+ text-align: left;
+}
+.cleanup-warning {
+ display: block;
+ margin-top: 2px;
+ font-size: 0.6875rem;
+ line-height: 1.45;
+ color: var(--signal-red);
+}
 .launch-args-help {
  margin-top: 10px;
  font-size: 0.6875rem;

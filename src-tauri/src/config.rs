@@ -932,41 +932,6 @@ pub fn validate_install() -> serde_json::Value {
     serde_json::json!({"ok": errors.is_empty(), "errors": errors})
 }
 #[tauri::command]
-pub fn uv_cache_info() -> serde_json::Value {
-    let p = get_repo_dir().join(".uv-cache");
-    serde_json::json!({"exists": p.exists(), "sizeBytes": null, "cacheDir": p.to_string_lossy().to_string()})
-}
-#[tauri::command]
-pub async fn uv_cache_size() -> serde_json::Value {
-    // ponytail: async walk so Manage → Calculate size doesn't freeze UI (Electron 63b0f90)
-    let p = get_repo_dir().join(".uv-cache");
-    if !p.exists() {
-        return serde_json::json!({"exists": false, "sizeBytes": 0, "cacheDir": p.to_string_lossy().to_string()});
-    }
-    let p_clone = p.clone();
-    let size = tauri::async_runtime::spawn_blocking(move || {
-        let mut size: u64 = 0;
-        fn walk(p: &Path, acc: &mut u64) {
-            if let Ok(rd) = std::fs::read_dir(p) {
-                for e in rd.flatten() {
-                    if let Ok(m) = e.metadata() {
-                        if m.is_dir() {
-                            walk(&e.path(), acc);
-                        } else {
-                            *acc += m.len();
-                        }
-                    }
-                }
-            }
-        }
-        walk(&p_clone, &mut size);
-        size
-    })
-    .await
-    .unwrap_or(0);
-    serde_json::json!({"exists": true, "sizeBytes": size, "cacheDir": p.to_string_lossy().to_string()})
-}
-#[tauri::command]
 pub fn manage_list() -> serde_json::Value {
     let f = get_envs_file();
     if !f.exists() {
@@ -1181,12 +1146,6 @@ pub async fn uninstall_env(
     log(&format!("[{name}] uninstalled\n"));
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
-#[tauri::command]
-pub fn uv_cache_clean(action: Option<String>) -> serde_json::Value {
-    let _ = action;
-    serde_json::json!({"success": true})
-}
-
 #[cfg(test)]
 mod library_tests {
     use super::{

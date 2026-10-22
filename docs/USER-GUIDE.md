@@ -380,7 +380,17 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   and 2.2.0 already contains the SageAttention2++ kernels as its default `sageattn`
   path (0.19 ms/iter proven on RTX 3080, 2.5× the explicit fp16 kernel), so non-Blackwell
   cards already run the fastest available attention with nothing to configure.
-- **uv Wheel Cache** — cache location / cleanup.
+- **🧹 Disk cache cleanup** — one list of the folders the launcher and Wan2GP
+  rebuild on demand, measured on disk: Gradio temp (`%TEMP%\gradio` — the
+  uploads and previews Gradio copies; a desktop page still showing one stops
+  until it reloads), the `uv` wheel cache, the launcher wheel cache, the Triton
+  JIT cache, pip's download cache and the HuggingFace hub cache. Tick what to
+  free and press **Clean selected**: the folders stay, only their contents go,
+  and Wan2GP must be stopped first. **The HuggingFace hub cache is not a free
+  cache** — weights fetched through `huggingface_hub` (Deepy engines,
+  Kandinsky, some VAE/ONNX files) live only there and are re-downloaded (tens
+  of GB). Models in your model folder (`ckpts`) and your HF login token are
+  untouched, and the row warns in red before anything is deleted.
 
 
 ### GPU kernel wheels — what gets installed per GPU

@@ -1533,7 +1533,7 @@ async function silentSettingsRepair() {
   } catch {}
 }
 
-// ── uv Wheel Cache (Manage → General) ──
+// ── Disk cache cleanup (Manage → System) — rows and actions live in cleanup-tab.js ──
 function fmtBytes(n) {
   if (!n && n !== 0) return "—";
   if (!n) return "0 B";
@@ -1541,81 +1541,6 @@ function fmtBytes(n) {
   const i = Math.floor(Math.log(n) / Math.log(1024));
   return (n / 1024 ** i).toFixed(i ? 1 : 0) + " " + u[i];
 }
-// Cheap: only reports presence on Manage-panel open (no directory walk).
-async function refreshUvCacheInfo() {
-  const statusEl = $("uvCacheStatus");
-  if (!statusEl) return;
-  try {
-    const info = await window.w2gp.uvCacheInfo();
-    if (info && info.exists) {
-      statusEl.textContent = `Cache present at ${info.cacheDir} — size on demand.`;
-    } else {
-      statusEl.textContent =
-        "No cache folder present (fresh install or already removed).";
-    }
-  } catch {
-    statusEl.textContent = "Could not read cache info.";
-  }
-}
-// On-demand: computes the byte count only when the user asks.
-async function showUvCacheSize() {
-  const statusEl = $("uvCacheStatus");
-  if (!statusEl) return;
-  statusEl.textContent = "Calculating size…";
-  try {
-    const info = await window.w2gp.uvCacheSize();
-    if (info && info.exists) {
-      statusEl.textContent = `Cache size: ${fmtBytes(info.sizeBytes)} at ${info.cacheDir}`;
-    } else {
-      statusEl.textContent = "No cache folder present.";
-    }
-  } catch {
-    statusEl.textContent = "Could not read cache size.";
-  }
-}
-$("uvCacheSizeBtn")?.addEventListener("click", showUvCacheSize);
-$("uvCachePurgeBtn")?.addEventListener("click", async function () {
-  this.disabled = true;
-  const resEl = $("uvCacheResult");
-  if (resEl) resEl.textContent = "Purging unused wheels…";
-  try {
-    const r = await window.w2gp.uvCacheClean("prune");
-    if (resEl)
-      resEl.textContent =
-        r && r.success
-          ? "Purge done — see log for details."
-          : "Purge skipped — " + ((r && r.error) || "unknown error");
-  } catch (e) {
-    if (resEl) resEl.textContent = "Error: " + e;
-  }
-  this.disabled = false;
-  refreshUvCacheInfo();
-});
-$("uvCacheRemoveBtn")?.addEventListener("click", async function () {
-  if (
-    !(await askConfirm(
-      "Remove the entire uv wheel cache? Next Wan2GP update will re-download everything (one-time).",
-    ))
-  )
-    return;
-  this.disabled = true;
-  const resEl = $("uvCacheResult");
-  if (resEl) resEl.textContent = "Removing cache…";
-  try {
-    const r = await window.w2gp.uvCacheClean("remove");
-    if (resEl)
-      resEl.textContent =
-        r && r.success
-          ? r.removed
-            ? "Cache removed."
-            : "No cache to remove."
-          : "Remove failed — " + ((r && r.error) || "unknown error");
-  } catch (e) {
-    if (resEl) resEl.textContent = "Error: " + e;
-  }
-  this.disabled = false;
-  refreshUvCacheInfo();
-});
 
 // ── Repair Settings (Manage → General) — fixes "Value: N is not in the list of choices" ──
 

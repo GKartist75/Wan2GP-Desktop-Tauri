@@ -1,5 +1,6 @@
 mod amd;
 mod base;
+mod cleanup;
 mod config;
 mod deepy_web;
 mod electron;
@@ -199,8 +200,6 @@ pub fn run() {
             config::detect_model_folders,
             config::install_plan,
             config::validate_install,
-            config::uv_cache_info,
-            config::uv_cache_size,
             config::manage_list,
             config::library_loras,
             config::library_models,
@@ -320,7 +319,8 @@ pub fn run() {
             system::create_browser_view,
             system::destroy_browser_view,
             system::get_log_history,
-            config::uv_cache_clean,
+            cleanup::cleanup_scan,
+            cleanup::cleanup_clean,
             system::webview_memory,
             system::bv_sync_bounds,
             system::save_staged_download,

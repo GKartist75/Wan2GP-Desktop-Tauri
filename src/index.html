@@ -603,15 +603,14 @@
           </div>
         </div>
         <div class="settings-section">
-          <h3>uv Wheel Cache</h3>
-          <p class="token-hint">Wan2GP installs into a Python venv on the same drive as your install. <code>uv</code> keeps a wheel cache here (<code>.uv-cache</code>) so future updates are fast — it can grow to several GB. Free the space if you don't need to keep it.</p>
-          <p class="token-hint" id="uvCacheStatus" style="margin-top:8px">Checking cache…</p>
-          <div style="margin-top:10px;display:flex;gap:8px">
-            <button class="btn btn-ghost small" id="uvCacheSizeBtn" title="Calculate the uv wheel-cache size">Calculate size</button>
-            <button class="btn btn-ghost small" id="uvCachePurgeBtn" title="Remove cached wheels that are no longer needed">Purge unused</button>
-            <button class="btn btn-ghost small" id="uvCacheRemoveBtn" style="color:var(--signal-red);border-color:var(--signal-red)" title="Delete the whole uv wheel cache to free disk space">Remove cache</button>
+          <h3>🧹 Disk cache cleanup</h3>
+          <p class="token-hint">Folders the launcher and Wan2GP rebuild on demand — measured from disk. Tick what to free and delete it. Your models, LoRAs, outputs and settings are never in this list.</p>
+          <div id="cleanupRows" style="margin-top:8px;display:grid;gap:8px"><span class="token-hint">Checking folders…</span></div>
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-primary small" id="cleanupRunBtn" title="Delete the ticked folders">Clean selected</button>
+            <button class="btn btn-ghost small" id="cleanupRefreshBtn" title="Re-measure every folder">↻ Refresh sizes</button>
           </div>
-          <p class="token-hint" id="uvCacheResult" style="margin-top:8px"></p>
+          <p class="token-hint" id="cleanupStatus" style="margin-top:8px"></p>
         </div>
         <div class="settings-section">
           <h3 style="color:var(--signal-red)">Uninstall Wan2GP</h3>
@@ -2250,6 +2249,7 @@
   <script src="migration-tab.js" defer></script>
   <script src="dlss5-tab.js" defer></script>
   <script src="settings-tab.js" defer></script>
+  <script src="cleanup-tab.js" defer></script>
   <script src="troubleshoot-tab.js" defer></script>
   <script src="term-tab.js" defer></script>
   <script src="metrics-tab.js" defer></script>
