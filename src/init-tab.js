@@ -206,6 +206,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
       } catch {}
       show("installer");
+      refreshPrereqTools().catch(() => null);
       if (!(installed && installed.missingPrevious))
         $("installSubtitle").textContent =
           "Select environment type, then click Install";

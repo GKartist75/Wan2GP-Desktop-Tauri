@@ -2,7 +2,48 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
-## [Unreleased]
+## [0.10.22] — 2026-10-23
+
+- **Prerequisites panel on the installer screen.** Git, uv, Python and Conda
+  are listed with a live status dot, the detected version/path, and per-tool
+  **Install** / **Reinstall**, **Check** and **Version** buttons plus **Check
+  all**. The panel is a read-only report (`prerequisite_report`) until a button
+  is pressed; Reinstall asks for confirmation, wipes the launcher-owned uv copy
+  for a clean install, and forces the winget/installer path for the others.
+
+- **Prerequisite installs now work on bare machines and never loop.** The
+  missing-tool gate and the installer card share one readiness probe, so a
+  python.org install that keeps `py.exe` off `PATH` is detected instead of
+  re-showing the same card forever; the card gains **Recheck** and the backend
+  re-probes for a few seconds after an install (no launcher restart).
+
+- **venv installs follow the GPU profile's Python.** GTX 10 (`3.10`) and AMD
+  (`3.12`) venvs used to fail because the launcher hardcoded `py -3.11` in the
+  gate, the shim, and the Python installer; the profile minor is now used
+  everywhere (upstream builds the venv with `py -<minor>`). The shim strips the
+  profile selector and delegates to the uv-provisioned interpreter, and setup.py
+  itself is driven by a runnable interpreter instead of a bare `python` alias
+  that may only be the Microsoft Store stub.
+
+- **One-click Python matches the hardware.** The prerequisite installs
+  `Python.Python.3.10/3.11/3.12` and the pinned official fallback for that same
+  minor (new SHA-256 pins for 3.10.11 and 3.12.10), instead of always 3.11.
+
+- **Conda installs are detected and spawnable.** System-wide
+  `C:\ProgramData\Anaconda3` / `Miniconda3` and other roots are found (no second
+  3 GB install), `condabin\conda.bat` is resolved to `Scripts\conda.exe` (a .bat
+  is not a process image — this was the "setup.py failed to start" path), and a
+  fresh conda env can be driven by conda's own base Python when no system Python
+  is on `PATH`.
+
+- **Preflight is check-only again.** The "Python preflight" on the first-run
+  splash and the diagnostics bundle no longer download/install uv behind the
+  user's back; it reads an existing owned/copy/PATH uv and reports what it sees.
+
+- **uv is installed once.** A launcher-owned standalone install is preferred,
+  an existing PATH uv is copied (not re-downloaded), and the copy is marked so
+  later actions stop retrying the network installer. The uv card no longer says
+  "via PowerShell" when winget runs first.
 
 ## [0.10.21] — 2026-10-22
 

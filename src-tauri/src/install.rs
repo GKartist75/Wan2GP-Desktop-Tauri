@@ -191,12 +191,16 @@ const UV_EXE: &str = "uv.exe";
 const UV_EXE: &str = "uv";
 /// Marker proving the tools copy came from the installer (self-updatable).
 const UV_MARKER: &str = ".launcher-uv";
+/// Marker for a plain copy (stable, but NOT self-updatable). Without it every
+/// uv_command() re-ran the network installer before falling back to the copy
+/// that was already sitting there — the offline box stalled once per action.
+const UV_COPY_MARKER: &str = ".launcher-uv-copy";
 
-fn owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
+/// A tools-dir uv carrying `marker` that still runs. Dead files are worse
+/// than a PATH fallback, so the version probe is part of the check.
+fn marker_uv_in(data_dir: &std::path::Path, marker: &str) -> Option<String> {
     let p = data_dir.join(".tools").join(UV_EXE);
-    // Receipted install (marker) that exists AND runs — anything else (plain
-    // copy, dead file) is worse than PATH fallback.
-    if !data_dir.join(".tools").join(UV_MARKER).is_file() {
+    if !data_dir.join(".tools").join(marker).is_file() {
         return None;
     }
     silent_command(&p)
@@ -206,8 +210,18 @@ fn owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
         .filter(|o| o.status.success())
         .map(|_| p.to_string_lossy().to_string())
 }
+
+fn owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
+    marker_uv_in(data_dir, UV_MARKER)
+}
 fn owned_uv() -> Option<String> {
     owned_uv_in(&get_data_dir())
+}
+fn copied_uv_in(data_dir: &std::path::Path) -> Option<String> {
+    marker_uv_in(data_dir, UV_COPY_MARKER)
+}
+fn copied_uv() -> Option<String> {
+    copied_uv_in(&get_data_dir())
 }
 
 /// Locate a working uv on PATH (absolute file, not just `where` success).
@@ -300,12 +314,16 @@ fn installer_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
 }
 
 /// Offline last resort: copy a working PATH uv (+ siblings) into our tools
-/// dir. Works, but carries NO install receipt (self-update refuses) and NO
-/// marker — a later online run replaces it with a proper install.
+/// dir. Works, but carries NO install receipt (self-update refuses); the
+/// copy marker records "this is a stable runnable copy" so later calls don't
+/// re-run the network installer every time.
 /// Best-effort — None when nothing usable is around.
 fn copy_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
-    if owned_uv_in(data_dir).is_some() {
-        return owned_uv_in(data_dir);
+    if let Some(owned) = owned_uv_in(data_dir) {
+        return Some(owned);
+    }
+    if let Some(copy) = copied_uv_in(data_dir) {
+        return Some(copy);
     }
     let src = path_uv_exe()?;
     // Must actually run before we adopt it (Store shims, dead links).
@@ -328,15 +346,17 @@ fn copy_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
             }
         }
     }
-    crate::base::push_log("[*] uv copied into launcher tools (no install receipt — self-update unavailable until a proper install).", "setup");
-    // Runs-check only (marker deliberately absent).
+    // Runs-check, then mark the copy as stable (self-update stays unapplicable).
     let p = dir.join(UV_EXE);
-    silent_command(&p)
+    let ver = silent_command(&p)
         .arg("--version")
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|_| p.to_string_lossy().to_string())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())?;
+    std::fs::write(dir.join(UV_COPY_MARKER), &ver).ok()?;
+    crate::base::push_log(&format!("[*] uv copied into launcher tools ({ver}) — no install receipt, self-update unavailable until a proper install."), "setup");
+    Some(p.to_string_lossy().to_string())
 }
 
 /// Ensure a launcher-owned uv: receipted install already present → use it;
@@ -350,20 +370,52 @@ fn ensure_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
     }
     copy_owned_uv_in(data_dir)
 }
+
+/// Delete the launcher-owned uv binaries + markers so a Reinstall starts
+/// from a clean tools dir (returns true if anything was actually removed).
+fn remove_owned_uv_in(data_dir: &std::path::Path) -> bool {
+    let dir = data_dir.join(".tools");
+    #[cfg(windows)]
+    let names = [UV_EXE, "uvx.exe", "uvw.exe", UV_MARKER, UV_COPY_MARKER];
+    #[cfg(not(windows))]
+    let names = [UV_EXE, "uvx", UV_MARKER, UV_COPY_MARKER];
+    let mut removed = false;
+    for name in names {
+        if std::fs::remove_file(dir.join(name)).is_ok() {
+            removed = true;
+        }
+    }
+    removed
+}
 fn ensure_owned_uv() -> Option<String> {
     ensure_owned_uv_in(&get_data_dir())
 }
 
-/// uv command to invoke: owned copy first, snapshot-then-owned, PATH fallback.
-/// Never fails — bare "uv" lets the caller surface the real spawn error.
+/// uv command to invoke: owned install, stable copy, then installer, then
+/// PATH fallback. Never fails — bare "uv" lets the caller surface the real
+/// spawn error.
 fn uv_command() -> String {
     if let Some(owned) = owned_uv() {
         return owned;
+    }
+    if let Some(copy) = copied_uv() {
+        return copy;
     }
     if let Some(snap) = ensure_owned_uv() {
         return snap;
     }
     "uv".into()
+}
+
+/// Read-only uv resolution for preflight/diagnostics: receipted install,
+/// stable copy, known location, or PATH. NEVER runs the installer — the
+/// "check-only" preflight used to download uv (~30 MB, PowerShell) on the
+/// first-run splash and on Copy diagnostics.
+fn existing_uv() -> Option<String> {
+    owned_uv()
+        .or_else(copied_uv)
+        .or_else(|| known_tool_path("uv"))
+        .or_else(|| path_uv_exe().map(|p| p.to_string_lossy().to_string()))
 }
 
 /// Self-update applies only to a receipted standalone install (`.launcher-uv`
@@ -428,20 +480,47 @@ fn tool_candidates(tool: &str, home: &str) -> Vec<std::path::PathBuf> {
             p("C:\\Program Files (x86)\\Git\\bin\\git.exe".into()),
         ],
         // Scripts\conda.exe first: directly executable (condabin\conda.bat
-        // is not a valid process image).
+        // is not a valid process image). ProgramData covers machine-wide
+        // installs, which stock Miniconda/Anaconda offer and which used to be
+        // invisible (a second 3 GB copy got installed instead).
         "conda" => vec![
             p(format!("{home}\\Miniconda3\\Scripts\\conda.exe")),
             p(format!("{home}\\Anaconda3\\Scripts\\conda.exe")),
             p(format!("{home}\\miniconda3\\Scripts\\conda.exe")),
+            p("C:\\ProgramData\\Anaconda3\\Scripts\\conda.exe".into()),
+            p("C:\\ProgramData\\Miniconda3\\Scripts\\conda.exe".into()),
+            p("C:\\ProgramData\\miniconda3\\Scripts\\conda.exe".into()),
+            p("C:\\Anaconda3\\Scripts\\conda.exe".into()),
+            p("C:\\Miniconda3\\Scripts\\conda.exe".into()),
         ],
-        // py launcher (system-placed, survives reinstalls).
-        "py" => vec![p("C:\\Windows\\py.exe".into())],
+        // py launcher (system-placed; python.org and the new PyManager keep
+        // different copies — C:\Windows\py.exe is absent on the latter).
+        "py" => vec![
+            p("C:\\Windows\\py.exe".into()),
+            p(format!(
+                "{home}\\AppData\\Local\\Programs\\Python\\Launcher\\py.exe"
+            )),
+            p("C:\\Program Files\\PyManager\\py.exe".into()),
+        ],
         "python" => vec![
             p(format!(
                 "{home}\\AppData\\Local\\Programs\\Python\\Python311\\python.exe"
             )),
+            p(format!(
+                "{home}\\AppData\\Local\\Programs\\Python\\Python310\\python.exe"
+            )),
+            p(format!(
+                "{home}\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
+            )),
+            p(format!(
+                "{home}\\AppData\\Local\\Programs\\Python\\Python313\\python.exe"
+            )),
             p("C:\\Python311\\python.exe".into()),
+            p("C:\\Python310\\python.exe".into()),
+            p("C:\\Python312\\python.exe".into()),
             p("C:\\Program Files\\Python311\\python.exe".into()),
+            p("C:\\Program Files\\Python310\\python.exe".into()),
+            p("C:\\Program Files\\Python312\\python.exe".into()),
         ],
         // Astral-script and cargo defaults: on PATH for new processes but
         // invisible to a running launcher until a registry refresh — the
@@ -482,17 +561,298 @@ fn known_tool_path(tool: &str) -> Option<String> {
         .map(|p| p.to_string_lossy().to_string())
 }
 
+/// `py` selector for a pin: "3.11.14" -> "3.11" (upstream's `py_ver_short`).
+/// Malformed input falls back to 3.11 (the RTX/CPU default), never to a
+/// valid-looking wrong minor.
+pub(crate) fn py_minor(version: &str) -> String {
+    let mut parts = version.trim().split('.');
+    let major = parts.next().unwrap_or("");
+    let minor = parts.next().unwrap_or("");
+    if !major.is_empty()
+        && !minor.is_empty()
+        && major.chars().all(|c| c.is_ascii_digit())
+        && minor.chars().all(|c| c.is_ascii_digit())
+    {
+        format!("{major}.{minor}")
+    } else {
+        "3.11".into()
+    }
+}
+
+/// Batch shim for venv installs without a usable `py` launcher. setup.py
+/// asks for the profile's minor (`py -3.10` / `-3.11` / `-3.12`); the shim
+/// drops exactly that selector and delegates to the pinned uv-managed
+/// Python. Pure so every profile minor can be tested.
+pub(crate) fn py_shim_script(uvpy: &str, minor: &str) -> String {
+    format!("@echo off\r\nsetlocal enabledelayedexpansion\r\nset \"args=%*\"\r\nset \"args=!args:-{minor} =!\"\r\nif \"!args!\"==\"%*\" set \"args=!args:-{minor}=!\"\r\n\"{uvpy}\" !args!\r\nexit /b %errorlevel%\r\n")
+}
+
+/// Execute the generated shim the way setup.py will (`py -3.X ...` through
+/// a shell) — a content check cannot prove the selector was stripped.
+#[cfg(windows)]
+fn py_shim_works(shim: &Path, minor: &str) -> bool {
+    let sel = format!("-{minor}");
+    silent_command("cmd")
+        .args(["/C", "call"])
+        .arg(shim)
+        .args([sel.as_str(), "-c", "import sys"])
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// Does `<prog> [extra] -c "import sys"` succeed? Used for readiness and for
+/// the conda/venv setup driver — presence alone (Store stub, PyManager with
+/// no interpreters) is not usability.
+fn runs_python_args(prog: &str, extra: &[&str]) -> bool {
+    silent_command(prog)
+        .args(extra)
+        .arg("-c")
+        .arg("import sys")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+fn runs_python(prog: &str) -> bool {
+    runs_python_args(prog, &[])
+}
+
+/// Usable Python entry point: an absolute candidate must run; a bare name
+/// must resolve to a non-Store PATH hit AND run (spawning the Store alias
+/// would open the Store instead of erroring).
+fn python_usable(prog: &str) -> bool {
+    if Path::new(prog).is_absolute() {
+        return runs_python(prog);
+    }
+    #[cfg(windows)]
+    {
+        tool_usable(prog) && runs_python(prog)
+    }
+    #[cfg(not(windows))]
+    {
+        runs_python(prog)
+    }
+}
+
+/// `where <exe>` hits, in PATH order (Windows only).
+#[cfg(windows)]
+fn where_hits(exe: &str) -> Vec<PathBuf> {
+    silent_command("where")
+        .arg(exe)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(|l| PathBuf::from(l.trim()))
+                .filter(|p| !p.as_os_str().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Map a `where conda` hit (`condabin\conda.bat`, `Scripts\conda.bat`, or
+/// `Scripts\conda.exe`) to the directly-spawnable `Scripts\conda.exe`.
+/// CreateProcess cannot run .bat; handing it one was the "setup.py failed to
+/// start" path. Pure + unit-tested.
+#[cfg(windows)]
+pub(crate) fn conda_exe_from_hit(hit: &Path) -> Option<PathBuf> {
+    let name = hit.file_name()?.to_string_lossy().to_ascii_lowercase();
+    if name == "conda.exe" {
+        return Some(hit.to_path_buf());
+    }
+    if name != "conda.bat" && name != "conda.cmd" {
+        return None;
+    }
+    let dir = hit.parent()?;
+    let dir_name = dir.file_name()?.to_string_lossy();
+    if !dir_name.eq_ignore_ascii_case("Scripts") && !dir_name.eq_ignore_ascii_case("condabin") {
+        return None;
+    }
+    let root = dir.parent()?;
+    Some(root.join("Scripts").join("conda.exe"))
+}
+
+/// Active conda executable: PATH order first (that is the install the user
+/// actually activates), then known stock locations. None when no runnable
+/// install exists.
+#[cfg(windows)]
+fn conda_exe_path() -> Option<String> {
+    for hit in where_hits("conda") {
+        if let Some(c) = conda_exe_from_hit(&hit) {
+            if c.is_file() {
+                return Some(c.to_string_lossy().to_string());
+            }
+        }
+        if hit.is_file()
+            && hit
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+        {
+            return Some(hit.to_string_lossy().to_string());
+        }
+    }
+    known_tool_path("conda")
+}
+
+/// Base interpreter of the detected conda install (`<root>\python.exe`) —
+/// can drive setup.py when no system Python is on PATH.
+#[cfg(windows)]
+fn conda_base_python() -> Option<String> {
+    let exe = PathBuf::from(conda_exe_path()?);
+    let root = exe.parent()?.parent()?;
+    [
+        root.join("python.exe"),
+        root.join("Scripts").join("python.exe"),
+    ]
+    .into_iter()
+    .find(|p| p.is_file())
+    .map(|p| p.to_string_lossy().to_string())
+}
+
+/// Official one-click installer for the profile's Python minor. Versions are
+/// the newest py.org binary installers for the line (3.10 and 3.12 have no
+/// later binaries; 3.11.14 is source-only) — the exact pin still comes from
+/// uv, so a neighbouring patch is a valid `py -3.X` source. SHAs were hashed
+/// from python.org over TLS.
+#[derive(Debug, PartialEq)]
+pub(crate) struct PythonInstallerPlan {
+    pub winget_id: &'static str,
+    pub version: &'static str,
+    pub sha256: &'static str,
+}
+
+pub(crate) fn python_install_plan(wanted: &str) -> PythonInstallerPlan {
+    match py_minor(wanted).as_str() {
+        "3.10" => PythonInstallerPlan {
+            winget_id: "Python.Python.3.10",
+            version: "3.10.11",
+            sha256: "d8dede5005564b408ba50317108b765ed9c3c510342a598f9fd42681cbe0648b",
+        },
+        "3.12" => PythonInstallerPlan {
+            winget_id: "Python.Python.3.12",
+            version: "3.12.10",
+            sha256: "67b5635e80ea51072b87941312d00ec8927c4db9ba18938f7ad2d27b328b95fb",
+        },
+        _ => PythonInstallerPlan {
+            winget_id: "Python.Python.3.11",
+            version: "3.11.9",
+            sha256: "5ee42c4eee1e6b4464bb23722f90b45303f79442df63083f05322f1785f5fdde",
+        },
+    }
+}
+
+/// One readiness verdict for both the UI gate (`check_command`) and the
+/// installer card. Windows used `tool_found` for the gate but `probe_tool`
+/// for the installer — a python.org install that keeps `py.exe` off PATH read
+/// "missing" to the card's own success check, which then reported ready and
+/// looped on the same missing-tool card forever.
+pub(crate) fn tool_ready(tool: &str) -> bool {
+    #[cfg(windows)]
+    {
+        probe_tool(tool)
+    }
+    #[cfg(not(windows))]
+    {
+        tool_found(tool)
+    }
+}
+
 /// Absolute path to invoke: known location first, owned-copy logic for uv,
 /// bare name fallback (caller surfaces the real spawn error).
 pub(crate) fn tool_path(tool: &str) -> String {
     if tool == "uv" {
         return uv_command();
     }
+    #[cfg(windows)]
+    if tool == "conda" {
+        if let Some(p) = conda_exe_path() {
+            return p;
+        }
+    }
     known_tool_path(tool).unwrap_or_else(|| tool.to_string())
+}
+
+/// Real file behind a tool for display, or None when only a bare PATH name
+/// is known. READ-ONLY: unlike `tool_path("uv")` it must never provision uv,
+/// so the prerequisites panel can refresh on screen open.
+pub(crate) fn resolved_tool_path(tool: &str) -> Option<String> {
+    if tool == "uv" {
+        return existing_uv();
+    }
+    #[cfg(windows)]
+    if tool == "conda" {
+        if let Some(p) = conda_exe_path() {
+            return Some(p);
+        }
+    }
+    if let Some(p) = known_tool_path(tool) {
+        return Some(p);
+    }
+    #[cfg(windows)]
+    {
+        where_hits(tool)
+            .into_iter()
+            .find(|p| !p.to_string_lossy().to_lowercase().contains("windowsapps"))
+            .map(|p| p.to_string_lossy().to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        silent_command("which")
+            .arg(tool)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .next()
+                    .map(|l| l.trim().to_string())
+            })
+            .filter(|s| !s.is_empty())
+    }
+}
+
+/// First non-empty line of probe stdout (CRLF-tolerant).
+fn version_line(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(str::to_string)
+}
+
+/// First non-empty line of a successful probe (installer/version output).
+fn first_line(o: std::process::Output) -> Option<String> {
+    if !o.status.success() {
+        return None;
+    }
+    version_line(&String::from_utf8_lossy(&o.stdout))
+}
+
+/// Installed version string for the panel ("git version 2.51.0", "uv 0.9.2",
+/// "3.11.14", "conda 25.5.1"). None when missing or the probe fails.
+pub(crate) fn tool_version(tool: &str) -> Option<String> {
+    if tool == "python" {
+        // Prefer the real `python`, but accept the py launcher when that is
+        // the only runnable entry point (python.org keeps py.exe off PATH).
+        let prog = match resolved_tool_path("python") {
+            Some(p) if python_usable(&p) => p,
+            _ => resolved_tool_path("py")?,
+        };
+        let out = silent_command(&prog)
+            .args(["-c", "import sys; print(sys.version.split()[0])"])
+            .output()
+            .ok()?;
+        return first_line(out);
+    }
+    let prog = resolved_tool_path(tool)?;
+    let out = silent_command(&prog).arg("--version").output().ok()?;
+    first_line(out)
 }
 
 /// Probe for gates: absolute hit OR runnable on PATH (Store-shim filtered).
 /// Cross-platform (tool_usable is Windows-only; elsewhere `which`).
+#[cfg_attr(windows, allow(dead_code))] // Windows readiness uses probe_tool
 pub(crate) fn tool_found(tool: &str) -> bool {
     if known_tool_path(tool).is_some() {
         return true;
@@ -731,6 +1091,8 @@ async fn ensure_uv_python(
 /// so "I installed 3.11 manually" turns into "found 3.11.9 at P — need
 /// exactly 3.11.14" instead of a bare "not found".
 fn diagnose_python_fail(wanted: &str) -> String {
+    let minor = py_minor(wanted);
+    let minor_sel = format!("-{minor}");
     fn ver_of(prog: &str, args: &[&str]) -> Option<String> {
         silent_command(prog)
             .args(args)
@@ -787,12 +1149,14 @@ fn diagnose_python_fail(wanted: &str) -> String {
         .unwrap_or_default();
     cands.extend(path_hits);
     #[cfg(windows)]
+    let tag = minor.replace('.', "");
+    #[cfg(windows)]
     for fixed in [
         std::env::var("LOCALAPPDATA")
             .ok()
-            .map(|a| format!("{a}\\Programs\\Python\\Python311\\python.exe")),
-        Some("C:\\Python311\\python.exe".into()),
-        Some("C:\\Program Files\\Python311\\python.exe".into()),
+            .map(|a| format!("{a}\\Programs\\Python\\Python{tag}\\python.exe")),
+        Some(format!("C:\\Python{tag}\\python.exe")),
+        Some(format!("C:\\Program Files\\Python{tag}\\python.exe")),
     ]
     .into_iter()
     .flatten()
@@ -802,9 +1166,12 @@ fn diagnose_python_fail(wanted: &str) -> String {
         }
     }
     #[cfg(not(windows))]
-    for fixed in ["/usr/bin/python3.11", "/usr/local/bin/python3.11"] {
-        if !cands.contains(&fixed.to_string()) {
-            cands.push(fixed.into());
+    for fixed in [
+        format!("/usr/bin/python{minor}"),
+        format!("/usr/local/bin/python{minor}"),
+    ] {
+        if !cands.contains(&fixed) {
+            cands.push(fixed);
         }
     }
     let mut lines: Vec<String> = Vec::new();
@@ -814,21 +1181,21 @@ fn diagnose_python_fail(wanted: &str) -> String {
             None => lines.push(format!("  {c} (not runnable)")),
         }
     }
-    if let Some(v) = ver_of("py", &["-3.11"]) {
-        lines.push(format!("  found Python {v} via py launcher (-3.11)"));
+    if let Some(v) = ver_of(&tool_path("py"), &[minor_sel.as_str()]) {
+        lines.push(format!("  found Python {v} via py launcher ({minor_sel})"));
     }
     let found_txt = if lines.is_empty() {
-        "  (no Python 3.11 found on PATH, in registry spots, or via py launcher)".into()
+        format!("  (no Python {minor} found on PATH, in registry spots, or via py launcher)")
     } else {
         lines.join("\n")
     };
     format!("uv could not provision Python {wanted}, and no usable copy was found.\n\
         What we found:\n{found_txt}\n\
-        setup.py needs EXACTLY {wanted} (a neighbouring patch like 3.11.9 does not count).\n\
+        setup.py needs EXACTLY {wanted} (a neighbouring patch does not count).\n\
         Fix options:\n\
         1. Repair uv itself — a corrupt uv can't be updated, only reinstalled (the installer already tried automatically; do it manually):\n           powershell -ExecutionPolicy ByPass -c 'irm https://astral.sh/uv/install.ps1 | iex'\n           (macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh)\n           then 'uv self update' + 'uv python install {wanted}' — needs network to python-build-standalone (check proxy/VPN/antivirus; uv downloads live under %APPDATA%\\uv).\n\
         2. Install exactly Python {wanted} from https://www.python.org/downloads/ — tick \u{201c}Add python.exe to PATH\u{201d} during setup, then retry.\n\
-        3. Already installed 3.11 manually? It must be exactly {wanted} (see versions above), reachable via PATH or 'py -3.11', and NOT the Microsoft Store stub (Settings → Apps → Advanced app settings → App execution aliases → turn Python off), then retry.")
+        3. Already installed Python {minor} manually? It must be exactly {wanted} (see versions above), reachable via PATH or 'py {minor_sel}', and NOT the Microsoft Store stub (Settings → Apps → Advanced app settings → App execution aliases → turn Python off), then retry.")
 }
 
 /// Check-only preflight for the installer checklist UI (no downloads).
@@ -846,7 +1213,10 @@ pub async fn python_preflight() -> Result<serde_json::Value, String> {
 
 fn python_preflight_blocking() -> serde_json::Value {
     let wanted = pinned_python_wanted();
-    let uv_bin = uv_command();
+    // Read-only: preflight runs on the first-run splash and on "Copy
+    // diagnostics". uv_command() ensures an owned uv and would download/run
+    // the installer (~30 MB, PowerShell) right there.
+    let uv_bin = existing_uv().unwrap_or_else(|| "uv".into());
     let uv_ver = silent_command(uv_bin.as_str())
         .arg("--version")
         .output()
@@ -908,7 +1278,8 @@ fn python_preflight_blocking() -> serde_json::Value {
     };
     let cramped_c = uv_data_free_gb.is_some_and(|gb| gb < 2.0);
     let mut hint = if uv_ver.is_none() {
-        "uv not found — install it (Manage → prerequisite) and retry".to_string()
+        "uv not found — it is installed automatically when you press Install (Installer tab)"
+            .to_string()
     } else if downloads_blocked {
         "UV_PYTHON_DOWNLOADS=never is set — the launcher overrides it during install".to_string()
     } else if path.is_none() {
@@ -2394,25 +2765,33 @@ pub async fn install(
             return Err(e);
         }
     }
-    // venv mode on Windows needs `py -3.11` (Electron parity: isolated shim
-    // instead of a global Python install). Without a launcher, setup.py dies
-    // looking for it even when a perfect uv-managed copy exists.
+    // venv mode on Windows needs `py -<profile minor>` (upstream builds the
+    // env with `py -3.10/-3.11/-3.12` from setup_config; GTX 10 uses 3.10,
+    // AMD 3.12, RTX/CPU 3.11 — hardcoding 3.11 broke two of the three).
+    // Isolated shim instead of a global Python install: without a launcher,
+    // setup.py dies looking for it even when a perfect uv-managed copy exists.
     #[cfg(windows)]
     let mut saved_path: Option<String> = None;
+    // Provisioned exact interpreter for the venv driver (Windows only writes
+    // it; the read below is shared so non-Windows compiles too).
+    #[allow(unused_mut)]
+    let mut venv_py: Option<String> = None;
     #[cfg(windows)]
     if env == "venv" {
+        let wanted = pinned_python_wanted();
+        let minor = py_minor(&wanted);
+        let sel = format!("-{minor}");
         let shim_ok = silent_command(tool_path("py").as_str())
-            .args(["-3.11", "-c", "import sys"])
+            .args([sel.as_str(), "-c", "import sys"])
             .output()
             .is_ok_and(|o| o.status.success());
         if !shim_ok {
-            let wanted = pinned_python_wanted();
             match ensure_uv_python(&app, &emit, &wanted).await {
                 Ok(uvpy) => {
                     let shim_dir = get_data_dir().join(".py-shim");
                     let _ = std::fs::create_dir_all(&shim_dir);
-                    // Batch shim: strips the -3.11 selector, delegates the rest.
-                    let shim = format!("@echo off\r\nsetlocal enabledelayedexpansion\r\nset \"args=%*\"\r\nset \"args=!args:-3.11 =!\"\r\nif \"!args!\"==\"%*\" set \"args=!args:-3.11=!\"\r\n\"{uvpy}\" !args!\r\nexit /b %errorlevel%\r\n");
+                    // Batch shim: strips the profile selector, delegates the rest.
+                    let shim = py_shim_script(&uvpy, &minor);
                     let _ = std::fs::write(shim_dir.join("py.cmd"), &shim);
                     let _ = std::fs::write(shim_dir.join("py.bat"), &shim);
                     let old = std::env::var("PATH").unwrap_or_default();
@@ -2421,14 +2800,15 @@ pub async fn install(
                         std::env::set_var("PATH", format!("{add};{old}"));
                     }
                     saved_path = Some(old);
-                    if silent_command(tool_path("py").as_str())
-                        .args(["-3.11", "-c", "import sys"])
-                        .output()
-                        .is_ok_and(|o| o.status.success())
-                    {
-                        emit("[*] py launcher shim ready (isolated Python, no global install)\n");
+                    venv_py = Some(uvpy.clone());
+                    if py_shim_works(&shim_dir.join("py.bat"), &minor) {
+                        emit(&format!(
+                            "[*] py launcher shim ready for `py {sel}` (isolated Python, no global install)\n"
+                        ));
                     } else {
-                        emit("[!] py shim created but `py -3.11` still not found — venv setup may fail; install Python 3.11 (Download button) or use the uv env type.\n");
+                        emit(&format!(
+                            "[!] py shim created but `py {sel}` still does not run — using the provisioned Python {wanted} directly; if venv setup fails, install Python {minor} (Download button) or use the uv env type.\n"
+                        ));
                     }
                 }
                 Err(e) => {
@@ -2652,12 +3032,20 @@ pub async fn install(
                         }
                     }
                 }
-                let syspy = tool_path("python");
-                let runs = silent_command(syspy.as_str())
-                    .arg("-c")
-                    .arg("import sys")
-                    .output()
-                    .is_ok_and(|o| o.status.success());
+                let mut syspy = tool_path("python");
+                let mut runs = python_usable(&syspy);
+                // No system Python? The detected conda install has its own
+                // base interpreter — use it instead of demanding a separate
+                // python.org install before a conda env even exists.
+                #[cfg(windows)]
+                if !runs {
+                    if let Some(base) = conda_base_python() {
+                        if runs_python(&base) {
+                            syspy = base;
+                            runs = true;
+                        }
+                    }
+                }
                 if !runs {
                     // Restore the process env before bailing: the conda PATH
                     // prepend above and the WAN2GP_TAURI_* vars must not leak
@@ -2667,7 +3055,7 @@ pub async fn install(
                     }
                     clear_setup_child_env();
                     mutating_done();
-                    return Err("conda env is missing and no system Python can drive setup.py (it creates env_conda itself in step 1/3). Install Python 3.11 via the Download button, or pick the uv env type (it self-provisions).".into());
+                    return Err("conda env is missing and no runnable Python can drive setup.py (it creates env_conda itself in step 1/3). Install Python via the Download button, or pick the uv env type (it self-provisions).".into());
                 }
                 (
                     syspy,
@@ -2694,43 +3082,48 @@ pub async fn install(
                     "bin/python3"
                 })
             };
-            // Missing env interpreter + uv env → run setup.py via `uv run`
-            // (uv provisions Python itself). uv_command() is a path or bare
-            // "uv" fallback — track the branch explicitly, not by string.
-            let (py_bin, via_uv_run) = if p.exists() {
-                (p.to_string_lossy().to_string(), false)
+            // Prefix before "setup.py": interpreter (plus wrapper args for
+            // uv run / the py launcher). uv provisions Python itself; venv
+            // must run setup.py under a real interpreter, then setup.py
+            // creates the env with `py -<profile minor>`.
+            let (py_bin, lead): (String, Vec<String>) = if p.exists() {
+                (p.to_string_lossy().to_string(), vec![])
             } else if env == "uv" {
-                (uv_command(), true)
-            } else {
-                ("python".into(), false)
-            };
-            if via_uv_run {
                 (
-                    py_bin,
+                    uv_command(),
                     vec![
                         "run".into(),
                         "--with".into(),
                         "setuptools".into(),
                         "python".into(),
-                        "setup.py".into(),
-                        "install".into(),
-                        "--env".into(),
-                        env.clone(),
-                        "--auto".into(),
                     ],
                 )
+            } else if env == "venv" {
+                let syspy = tool_path("python");
+                if let Some(provisioned) = venv_py.clone() {
+                    (provisioned, vec![])
+                } else if python_usable(&syspy) {
+                    (syspy, vec![])
+                } else {
+                    // python.org may expose only py.exe; the Store stub is
+                    // already excluded by runs_python.
+                    (
+                        tool_path("py"),
+                        vec![format!("-{}", py_minor(&pinned_python_wanted()))],
+                    )
+                }
             } else {
-                (
-                    py_bin,
-                    vec![
-                        "setup.py".into(),
-                        "install".into(),
-                        "--env".into(),
-                        env.clone(),
-                        "--auto".into(),
-                    ],
-                )
-            }
+                ("python".into(), vec![])
+            };
+            let mut args = lead;
+            args.extend([
+                "setup.py".into(),
+                "install".into(),
+                "--env".into(),
+                env.clone(),
+                "--auto".into(),
+            ]);
+            (py_bin, args)
         };
         // Hook mode (issue #15): the verdict travels via WAN2GP_TAURI_*
         // env, not argv — run the hook module instead of setup.py, keeping
@@ -6970,10 +7363,37 @@ fn refresh_path_from_registry() {
     std::env::set_var("PATH", merged);
 }
 
+/// Read-only snapshot for the installer's Prerequisites panel: presence,
+/// resolved path and version for each tool. Never provisions anything (the
+/// uv resolution goes through `existing_uv`, not `uv_command`).
+#[tauri::command]
+pub async fn prerequisite_report() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let tools = ["git", "uv", "python", "conda"]
+            .iter()
+            .map(|tool| {
+                let ready = tool_ready(tool);
+                serde_json::json!({
+                    "tool": tool,
+                    "ready": ready,
+                    "path": if ready { resolved_tool_path(tool) } else { None },
+                    "version": if ready { tool_version(tool) } else { None },
+                    "managed": *tool == "uv"
+                        && (owned_uv().is_some() || copied_uv().is_some()),
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({ "tools": tools })
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn install_prerequisite(
     app: tauri::AppHandle,
     tool: String,
+    force: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     if !["git", "uv", "python", "conda"].contains(&tool.as_str()) {
         return Err(format!("unknown tool {tool}"));
@@ -6981,7 +7401,7 @@ pub async fn install_prerequisite(
     #[cfg(not(windows))]
     return Err(format!("{tool} must be installed with your system package manager (one-click install is Windows-only). git: `sudo apt install git` / `brew install git`; python: `brew install python@3.11`; uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`; conda: Miniconda installer from repo.anaconda.com."));
     #[cfg(windows)]
-    return install_prerequisite_windows(app, tool).await;
+    return install_prerequisite_windows(app, tool, force.unwrap_or(false)).await;
 }
 
 /// Stream a child process to the installer console, return exit-ok.
@@ -7019,6 +7439,8 @@ async fn run_live(app: &tauri::AppHandle, prog: &str, args: Vec<String>) -> bool
 
 /// Is the tool usable right now? PATH probes plus well-known locations
 /// (conda and python.org installs don't always land on PATH immediately).
+/// Presence is not enough for python/conda: a Store stub, a PyManager with
+/// no interpreters, or a `.bat`-only conda cannot run a process.
 #[cfg(windows)]
 fn probe_tool(tool: &str) -> bool {
     let on_path = |exe: &str| {
@@ -7034,22 +7456,17 @@ fn probe_tool(tool: &str) -> bool {
         "uv" => {
             on_path("uv")
                 || owned_uv().is_some()
+                || copied_uv().is_some()
                 || exists(format!("{home}\\.local\\bin\\uv.exe"))
                 || exists(format!("{home}\\.cargo\\bin\\uv.exe"))
         }
         "python" => {
-            tool_usable("python")
-                || tool_usable("py")
-                || known_tool_path("python").is_some()
-                || known_tool_path("py").is_some()
+            python_usable("python")
+                || known_tool_path("python").is_some_and(|p| python_usable(&p))
+                || python_usable("py")
+                || known_tool_path("py").is_some_and(|p| python_usable(&p))
         }
-        "conda" => {
-            on_path("conda")
-                || known_tool_path("conda").is_some()
-                || exists(format!("{home}\\Miniconda3\\condabin\\conda.bat"))
-                || exists(format!("{home}\\Miniconda3\\Scripts\\conda.exe"))
-                || exists(format!("{home}\\Anaconda3\\condabin\\conda.bat"))
-        }
+        "conda" => conda_exe_path().is_some(),
         _ => false,
     }
 }
@@ -7232,23 +7649,27 @@ async fn official_fallback(app: &tauri::AppHandle, tool: &str) -> bool {
             .await
         }
         "python" => {
-            // python.org publishes NO binary installer for 3.11.14 (source-only
-            // security release — the old 3.11.14 URL 404s). 3.11.9 is the newest
-            // 3.11 with an official amd64 installer: good enough as a `py -3.11`
-            // source, while the exact 3.11.14 pin still comes via uv
-            // (python-build-standalone) — unaffected by this fallback. SHA
-            // pinned (hashed from python.org over TLS).
-            let url = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe";
-            let dest = format!("{tmp}\\python-3.11.9-amd64.exe");
-            const SHA: &str = "5ee42c4eee1e6b4464bb23722f90b45303f79442df63083f05322f1785f5fdde";
-            emit("[*] Downloading Python 3.11 (~25 MB)…\n".into());
-            if !run_live(app, "powershell", download(url, &dest)).await {
+            // python.org publishes no binary installer for 3.11.14 (source-only)
+            // or for 3.10.9 / 3.12.10's later siblings; use the newest binary
+            // for the profile's minor. It is a valid `py -3.X` source, while
+            // the exact pin still comes via uv (python-build-standalone) —
+            // unaffected by this fallback. SHA pinned (hashed from python.org
+            // over TLS).
+            let plan = python_install_plan(&pinned_python_wanted());
+            let ver = plan.version;
+            let url = format!("https://www.python.org/ftp/python/{ver}/python-{ver}-amd64.exe");
+            let dest = format!("{tmp}\\python-{ver}-amd64.exe");
+            emit(format!(
+                "[*] Downloading Python {} (~25 MB)…\n",
+                py_minor(&pinned_python_wanted())
+            ));
+            if !run_live(app, "powershell", download(&url, &dest)).await {
                 return false;
             }
             if !verify_sha256(
                 &dest,
-                SHA,
-                "the launcher's pin for python.org's 3.11.9 installer",
+                plan.sha256,
+                &format!("the launcher's pin for python.org's {ver} installer"),
                 &emit,
             ) {
                 return false;
@@ -7294,10 +7715,31 @@ async fn official_fallback(app: &tauri::AppHandle, tool: &str) -> bool {
     }
 }
 
+/// Re-probe with short delays after a successful installer: PATH/registry
+/// updates and installer finalization are not instantaneous. Replaces the
+/// "restart the launcher" dead end (and the card's repeat-loop).
+#[cfg(windows)]
+async fn settle_probe(tool: &str) -> bool {
+    for i in 0..4 {
+        refresh_path_from_registry();
+        if probe_tool(tool) {
+            return true;
+        }
+        if i < 3 {
+            let _ = tauri::async_runtime::spawn_blocking(|| {
+                std::thread::sleep(std::time::Duration::from_millis(700))
+            })
+            .await;
+        }
+    }
+    false
+}
+
 #[cfg(windows)]
 async fn install_prerequisite_windows(
     app: tauri::AppHandle,
     tool: String,
+    force: bool,
 ) -> Result<serde_json::Value, String> {
     let emit = |msg: &str| {
         crate::base::push_log(msg, "setup");
@@ -7308,35 +7750,69 @@ async fn install_prerequisite_windows(
     // PATH is exactly the "not found here, already installed there"
     // complaint. Cheap (two reg queries) on a button press, never hot-loop.
     refresh_path_from_registry();
+    // uv is special: use ONE launcher-owned copy. The old flow installed it
+    // via winget and then downloaded the standalone installer a second time
+    // to "adopt" it. Adopt an existing PATH uv by copying (no download);
+    // otherwise run the official installer once into .tools.
+    if tool == "uv" {
+        if force {
+            // Reinstall means a clean launcher-owned copy: drop the old
+            // binaries/markers so the adopt-copy shortcut can't just reuse
+            // the file we are replacing.
+            if remove_owned_uv_in(&get_data_dir()) {
+                emit("[*] Removed the launcher-owned uv copy for a clean reinstall.\n");
+            }
+        } else {
+            if let Some(installed) = owned_uv().or_else(copied_uv) {
+                emit(&format!("[*] uv is already installed: {installed}\n"));
+                return Ok(serde_json::json!({"ok": true, "success": true, "ready": true}));
+            }
+            // A PATH uv (winget, astral script, cargo) is adopted by copying — no
+            // second download. Only a copy that actually runs counts.
+            if existing_uv().is_some() {
+                if let Some(c) = copy_owned_uv_in(&get_data_dir()) {
+                    emit(&format!("[*] uv adopted: {c}\n"));
+                    return Ok(serde_json::json!({"ok": true, "success": true, "ready": true}));
+                }
+            }
+        }
+        emit("[*] Installing uv into the launcher tools dir (official installer)…\n");
+        if let Some(owned) = installer_owned_uv_in(&get_data_dir()) {
+            emit(&format!("[✓] uv installed: {owned}\n"));
+            return Ok(serde_json::json!({"ok": true, "success": true, "ready": true}));
+        }
+        emit("[!] Launcher-owned uv install failed — falling back to winget…\n");
+    }
     // Already there (installed manually meanwhile)? Skip the download.
-    if probe_tool(&tool) {
+    if !force && probe_tool(&tool) {
         emit(&format!("[*] {tool} is already installed.\n"));
         return Ok(serde_json::json!({"ok": true, "success": true, "ready": true}));
     }
     emit(&format!(
-        "[*] Installing {tool} via winget (silent, a few minutes)…\n"
+        "[*] {} {tool} via winget (silent, a few minutes)…\n",
+        if force { "Reinstalling" } else { "Installing" }
     ));
+    let py_plan = python_install_plan(&pinned_python_wanted());
     let winget_id = match tool.as_str() {
         "git" => "Git.Git",
         "uv" => "astral-sh.uv",
-        "python" => "Python.Python.3.11",
+        "python" => py_plan.winget_id,
         "conda" => "Anaconda.Miniconda3",
         _ => return Err(format!("unknown tool {tool}")),
     };
-    let mut ok = run_live(
-        &app,
-        "winget",
-        vec![
-            "install".into(),
-            "--id".into(),
-            winget_id.into(),
-            "-e".into(),
-            "--accept-package-agreements".into(),
-            "--accept-source-agreements".into(),
-            "--silent".into(),
-        ],
-    )
-    .await;
+    let mut args = vec![
+        "install".to_string(),
+        "--id".to_string(),
+        winget_id.to_string(),
+        "-e".to_string(),
+        "--accept-package-agreements".to_string(),
+        "--accept-source-agreements".to_string(),
+        "--silent".to_string(),
+    ];
+    if force {
+        args.push("--force".to_string());
+    }
+    let mut ok = run_live(&app, "winget", args).await;
     if !ok {
         emit(&format!(
             "[!] winget failed or is missing — falling back to the official {tool} installer…\n"
@@ -7348,16 +7824,20 @@ async fn install_prerequisite_windows(
     }
     // Pick up the new PATH without a restart when possible.
     refresh_path_from_registry();
-    // winget's Python.Python.3.11 is latest 3.11.x, but setup.py demands the
-    // exact pin (pinned_python_wanted, e.g. 3.11.14). No usable python at all
-    // → take the (pinned 3.11.9) official installer; a real-but-neighbouring
-    // patch → keep it (uv provisions the exact pin automatically at install
-    // time) instead of pointlessly stacking a second interpreter.
+    // winget installs the latest patch for the profile's minor, but setup.py
+    // demands the exact pin (e.g. 3.11.14). No usable python at all → take
+    // the official installer for the same minor; a real-but-neighbouring
+    // patch → keep it (uv provisions the exact pin at install time) instead
+    // of pointlessly stacking a second interpreter.
     if tool == "python" {
         let wanted = pinned_python_wanted();
-        if !python_matches_pin("python", &[], &wanted)
-            && !python_matches_pin("py", &["-3.11"], &wanted)
-        {
+        let sel = format!("-{}", py_minor(&wanted));
+        let sys_py = tool_path("python");
+        let py_launcher = tool_path("py");
+        let exact_python = python_usable(&sys_py) && python_matches_pin(&sys_py, &[], &wanted);
+        let exact_launcher = python_usable(&py_launcher)
+            && python_matches_pin(&py_launcher, &[sel.as_str()], &wanted);
+        if !exact_python && !exact_launcher {
             if probe_tool(&tool) {
                 emit(&format!("[*] winget's Python isn't exactly {wanted} — keeping it; the installer provisions exactly {wanted} via uv automatically.\n"));
             } else {
@@ -7370,19 +7850,19 @@ async fn install_prerequisite_windows(
             }
         }
     }
-    if probe_tool(&tool) {
+    if settle_probe(&tool).await {
         // uv is ours now: adopt the installed copy into the launcher tools
-        // dir so later runs (incl. self-update) never touch a foreign binary.
-        if tool == "uv" {
-            if let Some(owned) = ensure_owned_uv() {
-                emit(&format!("[*] uv adopted: {owned}\n"));
+        // dir. Copying (not downloading again) keeps the one-install flow.
+        if tool == "uv" && owned_uv().is_none() && copied_uv().is_none() {
+            if let Some(copied) = copy_owned_uv_in(&get_data_dir()) {
+                emit(&format!("[*] uv adopted: {copied}\n"));
             }
         }
         emit(&format!("[✓] {tool} installed and on PATH — continuing…\n"));
         return Ok(serde_json::json!({"ok": true, "success": true, "ready": true}));
     }
     emit(&format!(
-        "[✓] {tool} installed — restart the launcher so PATH picks it up.\n"
+        "[✓] {tool} installed — PATH not visible yet; press Recheck in the card (no restart needed).\n"
     ));
     Ok(serde_json::json!({"ok": true, "success": true, "ready": false}))
 }
@@ -10119,8 +10599,8 @@ mod long_paths_tests {
 #[cfg(test)]
 mod owned_uv_tests {
     use super::{
-        copy_owned_uv_in, norm_path, owned_uv_in, path_uv_exe, uv_self_update_applicable, UV_EXE,
-        UV_MARKER,
+        copied_uv_in, copy_owned_uv_in, norm_path, owned_uv_in, path_uv_exe,
+        uv_self_update_applicable, UV_EXE, UV_MARKER,
     };
     fn tmp_data(tag: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("wgp-owned-uv-{tag}-{}", std::process::id()));
@@ -10183,6 +10663,18 @@ mod owned_uv_tests {
         let _ = std::fs::remove_dir_all(&data);
     }
     #[test]
+    fn marker_without_a_runnable_binary_is_not_owned() {
+        // A stale marker next to a corrupted/dead uv.exe must send the
+        // caller down the repair path instead of trusting the file name.
+        let data = tmp_data("deadmarker");
+        let tools = data.join(".tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(tools.join(UV_EXE), b"corrupted").unwrap();
+        std::fs::write(tools.join(UV_MARKER), "uv 0.0.0").unwrap();
+        assert!(owned_uv_in(&data).is_none());
+        let _ = std::fs::remove_dir_all(&data);
+    }
+    #[test]
     fn receiptless_copy_is_not_owned_but_runnable() {
         // Live 0.5.3 state: snapshot copy without marker — must NOT count
         // as owned (self-update refuses it), but the copy fallback sees it.
@@ -10195,6 +10687,16 @@ mod owned_uv_tests {
         std::fs::copy(&real, tools.join(UV_EXE)).unwrap();
         assert!(owned_uv_in(&data).is_none());
         assert!(copy_owned_uv_in(&data).is_some());
+        assert!(copied_uv_in(&data).is_some(), "copy must be marked stable");
+        assert!(
+            owned_uv_in(&data).is_none(),
+            "a plain copy must never gain a self-update receipt"
+        );
+        assert_eq!(
+            copy_owned_uv_in(&data),
+            copied_uv_in(&data),
+            "second call must reuse the stable copy"
+        );
         let _ = std::fs::remove_dir_all(&data);
     }
     #[test]
@@ -10249,8 +10751,29 @@ mod tool_path_tests {
             .any(|p| p.extension().is_some_and(|e| e == "bat")));
         assert_eq!(
             tool_candidates("py", home),
-            vec![PathBuf::from("C:\\Windows\\py.exe")]
+            vec![
+                PathBuf::from("C:\\Windows\\py.exe"),
+                PathBuf::from("C:\\Users\\t\\AppData\\Local\\Programs\\Python\\Launcher\\py.exe"),
+                PathBuf::from("C:\\Program Files\\PyManager\\py.exe"),
+            ]
         );
+        assert!(tool_candidates("conda", home)
+            .iter()
+            .any(|p| p.to_string_lossy() == "C:\\ProgramData\\Miniconda3\\Scripts\\conda.exe"));
+        // Profile minors must not shadow each other: 3.11 stays first so a
+        // box with several interpreters keeps the RTX/CPU default unless the
+        // profile pin says otherwise (the installer provisions the exact pin).
+        let python = tool_candidates("python", home);
+        let pos = |needle: &str| {
+            python
+                .iter()
+                .position(|p| p.to_string_lossy().ends_with(needle))
+                .unwrap_or_else(|| panic!("missing {needle}"))
+        };
+        assert!(pos("Python311\\python.exe") < pos("Python313\\python.exe"));
+        assert!(python
+            .iter()
+            .any(|p| p.to_string_lossy() == "C:\\Program Files\\Python312\\python.exe"));
         assert!(tool_candidates("nope", home).is_empty());
     }
     #[test]
@@ -10291,5 +10814,199 @@ mod tool_path_tests {
             }
         }
         let _ = known_tool_path("definitely-not-a-tool");
+    }
+}
+
+#[cfg(test)]
+mod prereq_tests {
+    use super::{conda_exe_from_hit, py_minor, py_shim_script, python_install_plan};
+    #[cfg(windows)]
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn py_minor_follows_the_pin() {
+        assert_eq!(py_minor("3.10.9"), "3.10");
+        assert_eq!(py_minor("3.11.14"), "3.11");
+        assert_eq!(py_minor("3.12.10"), "3.12");
+        assert_eq!(py_minor(" 3.13.0 "), "3.13");
+        // Malformed falls back to the RTX/CPU default, never a bogus minor.
+        assert_eq!(py_minor(""), "3.11");
+        assert_eq!(py_minor("3"), "3.11");
+        assert_eq!(py_minor("x.y"), "3.11");
+    }
+
+    #[test]
+    fn one_click_python_matches_the_profile_minor() {
+        let p = python_install_plan("3.10.9");
+        assert_eq!((p.winget_id, p.version), ("Python.Python.3.10", "3.10.11"));
+        let p = python_install_plan("3.12.10");
+        assert_eq!((p.winget_id, p.version), ("Python.Python.3.12", "3.12.10"));
+        let p = python_install_plan("3.11.14");
+        assert_eq!((p.winget_id, p.version), ("Python.Python.3.11", "3.11.9"));
+        for v in ["3.10.9", "3.11.14", "3.12.10"] {
+            let p = python_install_plan(v);
+            assert_eq!(p.sha256.len(), 64, "bad SHA for {v}");
+            assert!(p.sha256.chars().all(|c| c.is_ascii_hexdigit()));
+        }
+    }
+
+    #[test]
+    fn version_probe_keeps_only_the_first_real_line() {
+        assert_eq!(
+            super::version_line("git version 2.51.0.windows.1\r\n"),
+            Some("git version 2.51.0.windows.1".to_string())
+        );
+        assert_eq!(
+            super::version_line("\r\n  uv 0.9.2  \r\n"),
+            Some("uv 0.9.2".to_string())
+        );
+        assert_eq!(super::version_line("   \r\n\r\n"), None);
+        assert_eq!(super::version_line(""), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reinstall_removes_every_launcher_owned_uv_file() {
+        let data = std::env::temp_dir().join(format!("wgp-uv-remove-{}", std::process::id()));
+        let tools = data.join(".tools");
+        let _ = std::fs::remove_dir_all(&data);
+        std::fs::create_dir_all(&tools).unwrap();
+        for n in [
+            "uv.exe",
+            "uvx.exe",
+            "uvw.exe",
+            ".launcher-uv",
+            ".launcher-uv-copy",
+        ] {
+            std::fs::write(tools.join(n), b"x").unwrap();
+        }
+        assert!(super::remove_owned_uv_in(&data));
+        for n in [
+            "uv.exe",
+            "uvx.exe",
+            "uvw.exe",
+            ".launcher-uv",
+            ".launcher-uv-copy",
+        ] {
+            assert!(!tools.join(n).exists(), "{n} survived a reinstall wipe");
+        }
+        assert!(
+            !super::remove_owned_uv_in(&data),
+            "second wipe must report nothing removed"
+        );
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn shim_strips_the_profile_selector_not_a_hardcoded_one() {
+        for (minor, other) in [("3.10", "-3.11"), ("3.11", "-3.12"), ("3.12", "-3.10")] {
+            let s = py_shim_script("C:\\WPy\\python.exe", minor);
+            assert!(s.contains(&format!("-{minor} =")), "{s}");
+            assert!(!s.contains(other), "hardcoded selector leaked: {s}");
+        }
+    }
+
+    #[test]
+    fn shim_quotes_the_delegate_path() {
+        let s = py_shim_script("C:\\Program Files\\uv\\python.exe", "3.11");
+        assert!(
+            s.contains("\"C:\\Program Files\\uv\\python.exe\""),
+            "unquoted delegate path breaks on spaces: {s}"
+        );
+    }
+
+    /// The real install-path helper, not just the script text: a provisioned
+    /// interpreter + generated py.bat must make `cmd /C call py.bat -3.X -c
+    /// "import sys"` succeed. Skips when the box has no runnable Python.
+    #[cfg(windows)]
+    #[test]
+    fn shim_works_runs_a_real_interpreter_when_available() {
+        let Some(py) = super::known_tool_path("python") else {
+            return;
+        };
+        if !super::runs_python(&py) {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("wgp-py-shim-works-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let shim = dir.join("py.bat");
+        std::fs::write(&shim, py_shim_script(&py, "3.11")).unwrap();
+        assert!(
+            super::py_shim_works(&shim, "3.11"),
+            "generated shim could not run the provisioned interpreter ({py})"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unusable_python_paths_are_rejected() {
+        // Absolute candidate present as a string but not runnable (missing
+        // file / dead exe) must never be adopted as "python is installed".
+        assert!(!super::python_usable(
+            "C:\\__wgp_definitely_missing__\\python.exe"
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shim_delegates_every_arg_except_the_selector() {
+        let dir = std::env::temp_dir().join(format!("wgp-py-shim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("delegate.bat"), "@echo off\r\necho %*\r\n").unwrap();
+        let script = py_shim_script(&dir.join("delegate.bat").to_string_lossy(), "3.12");
+        let shim = dir.join("py.bat");
+        std::fs::write(&shim, script).unwrap();
+        let out = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("call")
+            .arg(&shim)
+            .args(["-3.12", "-c", "print(42)"])
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        assert!(
+            out.status.success(),
+            "shim failed: {stdout} {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(!stdout.contains("-3.12"), "selector leaked: {stdout:?}");
+        assert!(
+            stdout.contains("-c") && stdout.contains("print(42)"),
+            "args lost: {stdout:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn conda_bat_hits_resolve_to_a_spawnable_exe() {
+        assert_eq!(
+            conda_exe_from_hit(Path::new(
+                "C:\\ProgramData\\Miniconda3\\condabin\\conda.bat"
+            )),
+            Some(PathBuf::from(
+                "C:\\ProgramData\\Miniconda3\\Scripts\\conda.exe"
+            ))
+        );
+        assert_eq!(
+            conda_exe_from_hit(Path::new("C:\\Users\\t\\miniconda3\\Scripts\\conda.bat")),
+            Some(PathBuf::from(
+                "C:\\Users\\t\\miniconda3\\Scripts\\conda.exe"
+            ))
+        );
+        assert_eq!(
+            conda_exe_from_hit(Path::new("C:\\x\\Scripts\\conda.exe")),
+            Some(PathBuf::from("C:\\x\\Scripts\\conda.exe"))
+        );
+        // Extensions are case-insensitive on Windows (CONDA.BAT happens).
+        assert_eq!(
+            conda_exe_from_hit(Path::new("C:\\x\\Scripts\\CONDA.BAT")),
+            Some(PathBuf::from("C:\\x\\Scripts\\conda.exe"))
+        );
+        // Not a conda launcher / not a scripts dir: no invention.
+        assert_eq!(conda_exe_from_hit(Path::new("C:\\x\\bin\\conda")), None);
+        assert_eq!(conda_exe_from_hit(Path::new("C:\\x\\conda.bat")), None);
     }
 }

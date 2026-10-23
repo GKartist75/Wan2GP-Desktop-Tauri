@@ -1883,6 +1883,7 @@
           <div class="prereq-text" id="prereqText"></div>
           <div class="prereq-actions">
             <button class="btn btn-primary small" id="prereqDownloadBtn" title="Download and install the missing tool">Download &amp; Install</button>
+            <button class="btn btn-ghost small" id="prereqRecheckBtn" title="Check again without restarting the launcher">Recheck</button>
             <button class="btn btn-ghost small" id="prereqManualBtn" title="Show manual install instructions">How to install manually</button>
           </div>
         </div>
@@ -1892,10 +1893,19 @@
       <div class="env-type-select" id="envTypeSelect">
         <label class="env-type-label">Environment:</label>
         <div class="env-type-options">
-          <button class="env-type-btn" data-env="venv" title="Standard Python venv with bundled Python">venv <span class="env-type-desc">(bundled with Python)</span></button>
-          <button class="env-type-btn selected" data-env="uv" title="Faster installs via uv (requires install)">uv <span class="env-type-desc">(faster, requires install)</span></button>
+          <button class="env-type-btn" data-env="venv" title="Standard Python venv (uses the GPU profile's Python version; provisions it when missing)">venv <span class="env-type-desc">(profile Python)</span></button>
+          <button class="env-type-btn selected" data-env="uv" title="Faster installs via uv (the launcher installs uv automatically when it is missing)">uv <span class="env-type-desc">(faster, auto-installed)</span></button>
           <button class="env-type-btn" data-env="conda" title="Use an Anaconda/Miniconda environment">conda <span class="env-type-desc">(Anaconda/Miniconda)</span></button>
         </div>
+      </div>
+
+      <!-- Prerequisites: install / reinstall / check / show version per tool -->
+      <div class="prereq-tools" id="prereqTools">
+        <div class="pt-head">
+          <span class="pt-title">Prerequisites</span>
+          <button class="btn btn-ghost small" id="prereqToolsRefresh" title="Re-check every tool without restarting the launcher">Check all</button>
+        </div>
+        <div class="pt-rows" id="prereqToolsRows"></div>
       </div>
 
       <!-- Install Paths -->

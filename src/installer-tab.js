@@ -6,6 +6,18 @@
 
 // ── Installer ──
 let selectedEnvType = "uv";
+// One readiness probe for the prerequisite gates and the card's Recheck.
+// check_command returns {cmd, found}; an object is always truthy, so compare
+// .found (a missing tool otherwise sailed through and failed mid-setup).
+async function commandReady(c) {
+  try {
+    const r = await window.w2gp.checkCommand(c);
+    return !!(r && r.found);
+  } catch {
+    return false;
+  }
+}
+
 // Human chip text for a backend profile key (RTX_40, AMD_GFX1201, INTEL_XPU,
 // CPU…). Pure so the post-install chip can be tested without the UI.
 function profileChipLabel(key) {
@@ -310,6 +322,26 @@ async function startInstall() {
     $("prereqHelp").classList.remove("hidden");
     $("prereqTitle").textContent = title;
     $("prereqText").textContent = text;
+    const recheckBtn = $("prereqRecheckBtn");
+    if (recheckBtn) {
+      recheckBtn.onclick = async function () {
+        this.disabled = true;
+        this.textContent = "Checking...";
+        const ok = await commandReady(tool);
+        this.disabled = false;
+        this.textContent = "Recheck";
+        if (ok) {
+          $("prereqHelp").classList.add("hidden");
+          showToast("✓ " + tool + " detected — continuing…");
+          startInstall();
+        } else {
+          showToast(
+            tool +
+              " still not detected. Check the install output above, or use the manual instructions.",
+          );
+        }
+      };
+    }
     $("prereqDownloadBtn").onclick = async function () {
       this.disabled = true;
       this.textContent = "Installing...";
@@ -329,7 +361,11 @@ async function startInstall() {
           showToast("✓ " + tool + " installed — continuing…");
           startInstall();
         } else
-          showToast("✓ " + tool + " installed. Please restart the launcher.");
+          showToast(
+            "✓ " +
+              tool +
+              " installed. Press Recheck (no restart needed) — or restart the launcher if it still is not detected.",
+          );
       } else showToast("✗ Install failed: " + (r?.error || "unknown"));
     };
     $("prereqManualBtn").onclick = () => {
@@ -342,18 +378,7 @@ async function startInstall() {
       .forEach((b) => (b.disabled = false));
   }
 
-  // Check prerequisites (check_command returns {cmd, found} — an object is
-  // always truthy, so compare .found; previously a missing tool sailed through
-  // and failed 10 minutes into setup.py instead of showing the help card).
-  const hasCmd = async (c) => {
-    try {
-      const r = await window.w2gp.checkCommand(c);
-      return !!(r && r.found);
-    } catch {
-      return false;
-    }
-  };
-  var hasGit = await hasCmd("git");
+  var hasGit = await commandReady("git");
   if (!hasGit) {
     appendLog("[!] Git not found — showing install help");
     showPrereqHelp(
@@ -366,12 +391,12 @@ async function startInstall() {
     return;
   }
   if (selectedEnvType === "venv") {
-    var hasPy = await hasCmd("python");
+    var hasPy = await commandReady("python");
     if (!hasPy) {
       appendLog("[!] Python not found — showing install help");
       showPrereqHelp(
         "Python not found",
-        "Python 3.10 or 3.11 is required for venv installs. Click Download to install Python 3.11 silently, or select uv/conda above.",
+        "Python 3.10–3.12 is required for venv installs (the installer picks the version this GPU profile needs). Click Download to install it silently, or select uv/conda above.",
         "https://www.python.org/downloads/",
         "python",
       );
@@ -380,12 +405,12 @@ async function startInstall() {
     }
   }
   if (selectedEnvType === "uv") {
-    var hasUv = await hasCmd("uv");
+    var hasUv = await commandReady("uv");
     if (!hasUv) {
       appendLog("[!] uv not found — showing install help");
       showPrereqHelp(
         "uv not found",
-        "uv is required for uv installs. Click Download to install it via PowerShell, or select venv/conda above.",
+        "uv is required for uv installs. Click Download to install the launcher's own standalone copy, or select venv/conda above.",
         "https://docs.astral.sh/uv/#installation",
         "uv",
       );
@@ -394,12 +419,12 @@ async function startInstall() {
     }
   }
   if (selectedEnvType === "conda") {
-    var hasConda = await hasCmd("conda");
+    var hasConda = await commandReady("conda");
     if (!hasConda) {
       appendLog("[!] Conda not found — showing install help");
       showPrereqHelp(
         "Conda not found",
-        "Miniconda is required for conda installs. Click Download to install it silently, or select venv/uv above.",
+        "Miniconda is required for conda installs. Click Download to install it silently (existing system-wide installs are detected), or select venv/uv above.",
         "https://docs.anaconda.com/miniconda/",
         "conda",
       );
@@ -1345,12 +1370,157 @@ async function usePinokioModels(t) {
   $("browseAppDataPath")?.click();
 }
 
+// ── Prerequisites panel: install / reinstall / check / show version ──
+const PREREQ_TOOLS = [
+  { tool: "git", label: "Git" },
+  { tool: "uv", label: "uv" },
+  { tool: "python", label: "Python" },
+  { tool: "conda", label: "Conda" },
+];
+let _prereqReport = {};
+let _prereqInstalling = false;
+
+function prereqRow(spec) {
+  const row = document.createElement("div");
+  row.className = "pt-row";
+  row.dataset.tool = spec.tool;
+  const dot = document.createElement("span");
+  dot.className = "pt-dot";
+  const name = document.createElement("span");
+  name.className = "pt-name";
+  name.textContent = spec.label;
+  const status = document.createElement("span");
+  status.className = "pt-status";
+  status.textContent = "checking…";
+  const actions = document.createElement("span");
+  actions.className = "pt-actions";
+  const mk = (act, text) => {
+    const b = document.createElement("button");
+    b.className = "btn btn-ghost small";
+    b.dataset.act = act;
+    b.textContent = text;
+    actions.append(b);
+    return b;
+  };
+  const install = mk("install", "Install");
+  mk("check", "Check");
+  mk("version", "Version");
+  row.append(dot, name, status, actions);
+  row.querySelector('[data-act="check"]').onclick = () => refreshPrereqTools();
+  row.querySelector('[data-act="version"]').onclick = () => {
+    const r = _prereqReport[spec.tool];
+    if (!r || !r.ready) {
+      showToast(spec.label + " is not installed — press Install");
+      return;
+    }
+    const line =
+      spec.label +
+      " " +
+      (r.version || "(version unknown)") +
+      (r.path ? " — " + r.path : "");
+    appendLog("[i] " + line);
+    showToast(line, null, null, 8000);
+  };
+  install.onclick = () => prereqInstall(spec, install);
+  return row;
+}
+
+async function refreshPrereqTools() {
+  const box = $("prereqToolsRows");
+  if (!box) return;
+  if (!box.children.length)
+    for (const spec of PREREQ_TOOLS) box.append(prereqRow(spec));
+  const btn = $("prereqToolsRefresh");
+  if (btn) btn.disabled = true;
+  let report = null;
+  try {
+    report = await window.w2gp.prerequisiteReport();
+  } catch (e) {
+    appendLog("[!] Prerequisite check failed: " + errText(e));
+  }
+  if (btn) btn.disabled = false;
+  _prereqReport = {};
+  for (const t of (report && report.tools) || []) _prereqReport[t.tool] = t;
+  for (const spec of PREREQ_TOOLS) {
+    const row = box.querySelector('.pt-row[data-tool="' + spec.tool + '"]');
+    if (!row) continue;
+    const t = _prereqReport[spec.tool] || { ready: false };
+    row.querySelector(".pt-dot").className =
+      "pt-dot " + (t.ready ? "ok" : "missing");
+    const status = row.querySelector(".pt-status");
+    status.className = "pt-status" + (t.ready ? "" : " missing");
+    status.textContent = t.ready ? t.version || "installed" : "not found";
+    status.title = t.path || "";
+    const inst = row.querySelector('[data-act="install"]');
+    inst.textContent = t.ready ? "Reinstall" : "Install";
+    inst.dataset.force = t.ready ? "1" : "";
+    inst.title = t.ready
+      ? "Download and replace the current " + spec.label + " install"
+      : "Install " + spec.label + " now";
+  }
+}
+
+async function prereqInstall(spec, btn) {
+  if (_prereqInstalling) return; // one installer at a time (winget is global)
+  const force = btn.dataset.force === "1";
+  if (force) {
+    const ok = await askConfirm(
+      "Reinstall " +
+        spec.label +
+        "?\nThis re-downloads the installer and replaces the current copy.",
+      "Reinstall " + spec.label,
+    );
+    if (!ok) return;
+  }
+  _prereqInstalling = true;
+  const installBtns = () =>
+    document.querySelectorAll(
+      '#prereqToolsRows [data-act="install"]',
+    );
+  installBtns().forEach((b) => (b.disabled = true));
+  const old = btn.textContent;
+  btn.textContent = force ? "Reinstalling…" : "Installing…";
+  appendLog(
+    "[*] " + (force ? "Reinstalling " : "Installing ") + spec.label + "…",
+  );
+  let r;
+  try {
+    r = await window.w2gp.installPrerequisite(spec.tool, force);
+  } catch (e) {
+    r = { error: errText(e) };
+  }
+  btn.disabled = false;
+  btn.textContent = old;
+  _prereqInstalling = false;
+  installBtns().forEach((b) => (b.disabled = false));
+  if (r && r.success) {
+    appendLog("[✓] " + spec.label + (force ? " reinstalled." : " installed."));
+    showToast(
+      "✓ " + spec.label + (r.ready ? " ready." : " installed — press Check."),
+    );
+    refreshTargetVerdict().catch(() => null);
+  } else {
+    showToast(
+      "✗ " +
+        spec.label +
+        ": " +
+        ((r && (r.error || r.message)) || "install failed — see console"),
+    );
+  }
+  refreshPrereqTools();
+}
+
+if ($("prereqToolsRefresh")) {
+  $("prereqToolsRefresh").onclick = () => refreshPrereqTools();
+}
+
 // (Re)open the installer screen in a fresh state — used by Manage → Run Setup
 // again and after uninstall. Never lands on the dashboard without an install.
 async function openInstallerFresh(subtitle) {
   resetTasks();
   installProgressReset();
   show("installer");
+  refreshPrereqTools().catch(() => null);
   $("installSubtitle").textContent =
     subtitle || "Select environment type, then click Install";
   const sb = $("installStartBtn");
