@@ -63,6 +63,21 @@
     // repo and an env — see app.js:2149. Without this the harness looks like a
     // broken app: the LLM cards never render because nothing ever asks.
     if (name === 'check_installed') return { ok: true, repo: true, env: true }
+    // Prerequisite gate + panel: mixed state so Install vs Reinstall labels,
+    // versions and the missing copy all render in the harness.
+    if (name === 'check_command')
+      return { ok: true, cmd: args && args.cmd, found: true }
+    if (name === 'prerequisite_report')
+      return {
+        tools: [
+          { tool: 'git', ready: true, path: 'C:\\Program Files\\Git\\cmd\\git.exe', version: 'git version 2.51.0.windows.1' },
+          { tool: 'uv', ready: true, path: 'C:\\Wan2GP\\.tools\\uv.exe', version: 'uv 0.9.2', managed: true },
+          { tool: 'python', ready: false, path: null, version: null },
+          { tool: 'conda', ready: false, path: null, version: null },
+        ],
+      }
+    if (name === 'install_prerequisite')
+      return { ok: true, success: true, ready: true }
     if (name === 'get_status' || name === 'status') return STATUS
     // memory_profile_apply returns success/applied, NOT just ok — the callers
     // branch on r.success, so a stub without it makes every save look failed.

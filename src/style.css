@@ -2218,6 +2218,78 @@ body.ft-resizing .dash-term-resize {
  font-size: 0.65rem;
 }
 
+/* ── Prerequisites panel (install / reinstall / check / version) ── */
+.prereq-tools {
+ padding: 10px 14px 4px;
+ margin-bottom: 12px;
+ background: var(--surface);
+ border: 1px solid var(--border);
+ border-radius: var(--radius-sm);
+}
+.pt-head {
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ margin-bottom: 4px;
+}
+.pt-title {
+ font-size: 0.7rem;
+ font-weight: 600;
+ letter-spacing: 0.04em;
+ text-transform: uppercase;
+ color: var(--text-secondary);
+}
+.pt-rows {
+ display: flex;
+ flex-direction: column;
+}
+.pt-row {
+ display: grid;
+ grid-template-columns: 10px 58px minmax(0, 1fr) auto;
+ gap: 10px;
+ align-items: center;
+ padding: 5px 0;
+ border-top: 1px solid var(--border);
+}
+.pt-row:first-child {
+ border-top: 0;
+}
+.pt-dot {
+ width: 7px;
+ height: 7px;
+ border-radius: 50%;
+ background: var(--text-tertiary);
+}
+.pt-dot.ok {
+ background: var(--signal-green);
+}
+.pt-dot.missing {
+ background: var(--signal-red);
+}
+.pt-name {
+ font-size: 0.72rem;
+ font-weight: 600;
+ color: var(--text-primary);
+}
+.pt-status {
+ font-size: 0.68rem;
+ color: var(--text-secondary);
+ overflow: hidden;
+ text-overflow: ellipsis;
+ white-space: nowrap;
+}
+.pt-status.missing {
+ color: var(--text-tertiary);
+}
+.pt-actions {
+ display: flex;
+ gap: 4px;
+}
+.pt-actions .btn {
+ font-size: 0.62rem;
+ padding: 2px 8px;
+}
+
 .reinstall-choice {
  margin: 12px 0 16px 0;
  padding: 16px;

@@ -183,7 +183,9 @@ if (!window.__TAURI__) {
         cleanupScan: (withSizes) => call("cleanup_scan", { withSizes }),
         cleanupClean: (keys) => call("cleanup_clean", { keys }),
         checkCommand: (cmd) => call("check_command", { cmd }),
-        installPrerequisite: (tool) => call("install_prerequisite", { tool }),
+        installPrerequisite: (tool, force) =>
+            call("install_prerequisite", { tool, force: !!force }),
+        prerequisiteReport: () => call("prerequisite_report"),
         getInstallPaths: () => call("get_install_paths"),
         getDiskSpace: (path) => call("get_disk_space", { path }),
         openFolder: (p) => call("open_folder", { path: p }),

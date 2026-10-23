@@ -232,12 +232,23 @@ flowchart TD
 ```
 
 1. **Prerequisites card** (only if something is missing) — Git / Python / uv /
-   Miniconda. *Download & Install* fetches it silently, *How to install manually*
-   opens the vendor page. Fresh tools work immediately — no launcher restart.
-2. **Environment** — pick `uv` (fast, recommended), `venv` (bundled with Python)
-   or `conda` (needs Miniconda — one-click install; its terms are accepted
-   automatically during setup). All three end up identical: same pinned Python,
-   same torch stack, same smoke test.
+   Miniconda. *Download & Install* fetches it silently, *Recheck* re-probes
+   without a restart, *How to install manually* opens the vendor page. Python
+   is installed in the version the GPU profile needs (3.10 / 3.11 / 3.12), and
+   an existing system-wide Miniconda/Anaconda is detected even when it is not
+   first on `PATH`.
+   Under the environment picker, the **Prerequisites** panel lists Git, uv,
+   Python and Conda with a status dot, the detected version/path and
+   **Install** (or **Reinstall**), **Check** and **Version** buttons. Rendering
+   the panel is read-only; **Check all** re-probes every tool, **Version** shows
+   the full version + resolved path, and **Reinstall** asks for confirmation
+   before replacing the current copy (uv is wiped from the launcher tools dir
+   and installed fresh; other tools reinstall through winget/their installer).
+2. **Environment** — pick `uv` (fast, recommended), `venv` (standard Python;
+   uses the profile's Python version and provisions it when missing) or `conda`
+   (needs Miniconda — one-click install; its terms are accepted automatically
+   during setup). All three use the same Python minor and torch stack, and end
+   with the same smoke test.
 3. **Install location + model folders** — repo/env/settings folder plus
    Checkpoints, LoRAs and Output folders, each with Browse / reset-to-default.
    Bare drive roots auto-resolve to `<root>\Wan2GP`.
@@ -399,7 +410,7 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 
 | Wheel | NVIDIA (RTX 20–50) | AMD (RDNA 2–4) | What it does |
 | --- | --- | --- | --- |
-| **Python** | `3.11.14` | `3.12.10` | venv interpreter |
+| **Python** | `3.11.14` (GTX 10: `3.10.9`) | `3.12.10` | env interpreter; `venv` uses the same minor (the exact pin is provisioned by `uv`) |
 | **PyTorch** | `2.10.0` + CUDA 13.x | `2.13.0` + ROCm 10 | tensor + GPU runtime |
 | **Triton** | `3.2.x` (RTX 20) / `3.7` pinned `>=3.7.0.post26,<=3.7.1.post27` (RTX 30–50, recommended — prebuilt helper) / `3.6.x` legacy | `>=3.7.0.post26,<=3.7.1.post27` (prebuilt HIP helper, experimental) | JIT for custom CUDA/attention kernels |
 | **SageAttention** | `1.0.6` (RTX 20) / `2.2.0` post6 (RTX 30–50) | `1.0.6`, SDPA default | fused attention — the big speed-up |

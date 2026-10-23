@@ -270,6 +270,7 @@ pub fn run() {
             system::save_downloaded_file,
             system::write_wgp_config,
             install::install_prerequisite,
+            install::prerequisite_report,
             updates::get_wangp_upstream_info,
             updates::wangp_contains_commit,
             updates::get_wangp_version,
