@@ -224,9 +224,17 @@ $releaseExists = ($LASTEXITCODE -eq 0)
 $ErrorActionPreference = $prevEA
 if ($releaseExists) { throw "Release $tag already exists - refusing to replace it" }
 
-# ponytail: gh drops an empty --notes value ("flag needs an argument"), so only pass it when set.
+# gh drops an empty --notes value ("flag needs an argument"), so only pass it
+# when set. Notes go through a FILE, never through the native argv: Windows
+# PowerShell 5.1 escapes embedded double quotes wrong for CreateProcess, so a
+# notes string containing "..." arrived split into extra arguments and gh
+# tried to open them as assets ("CreateFile installed." at v0.10.22).
 $notesArgs = @()
-if ($Notes -and $Notes.Trim()) { $notesArgs = @("--notes", $Notes) } else { $notesArgs = @("--generate-notes") }
+if ($Notes -and $Notes.Trim()) {
+  $notesPath = Join-Path ([System.IO.Path]::GetTempPath()) "wan2gp-release-notes-$Version.md"
+  [System.IO.File]::WriteAllText($notesPath, $Notes, (New-Object System.Text.UTF8Encoding($false)))
+  $notesArgs = @("--notes-file", $notesPath)
+} else { $notesArgs = @("--generate-notes") }
 $prevEA = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 gh release create $tag $setup.FullName ($setup.FullName + ".sig") $msi.FullName $latestPath `
