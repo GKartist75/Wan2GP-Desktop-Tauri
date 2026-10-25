@@ -819,6 +819,16 @@ runpy.run_path(sys.argv[0], run_name='__main__')
         std::env::set_var("HF_TOKEN", &hf_token);
         std::env::set_var("HUGGINGFACE_HUB_TOKEN", &hf_token);
     }
+    if let Some(k) = launch_cfg.get("civitaiApiKey").and_then(|v| v.as_str()) {
+        if !k.is_empty() {
+            std::env::set_var("CIVITAI_API_KEY", k);
+        }
+    }
+    if let Some(k) = launch_cfg.get("civitaiRedApiKey").and_then(|v| v.as_str()) {
+        if !k.is_empty() {
+            std::env::set_var("CIVITAI_RED_API_KEY", k);
+        }
+    }
     if !claude_key.is_empty() {
         std::env::set_var("ANTHROPIC_API_KEY", &claude_key);
     }

@@ -107,6 +107,16 @@ async function loadModelPaths() {
   $("dashLoraPath").title = paths?.loras || "";
   $("dashOutputPath").textContent = breakPath(paths?.output) || "(default)";
   $("dashOutputPath").title = paths?.output || "";
+  const imgEl = $("dashImagePath");
+  if (imgEl) {
+    imgEl.textContent = breakPath(paths?.imageOutput) || "(default)";
+    imgEl.title = paths?.imageOutput || "";
+  }
+  const meshEl = $("dashMeshPath");
+  if (meshEl) {
+    meshEl.textContent = breakPath(paths?.meshOutput) || "(default)";
+    meshEl.title = paths?.meshOutput || "";
+  }
 }
 
 // When changing a model folder via the pencil, ask whether to physically MOVE
@@ -124,7 +134,7 @@ async function changeModelFolder(type, key, _cfgKey, singular) {
     .getModelPaths()
     .then(
       (p) =>
-        ({ ckpts: p?.checkpoints, loras: p?.loras, output: p?.output })[type],
+        ({ ckpts: p?.checkpoints, loras: p?.loras, output: p?.output, image: p?.imageOutput, mesh: p?.meshOutput })[type],
     );
   if (cur && cur.toLowerCase() === dir.toLowerCase()) {
     window.w2gp.openFolder(dir);
@@ -160,6 +170,8 @@ async function changeModelFolder(type, key, _cfgKey, singular) {
   const cfg = await window.w2gp.configLoad();
   if (type === "ckpts") cfg.modelCkptsPath = dir;
   else if (type === "loras") cfg.modelLorasPath = dir;
+  else if (type === "image") cfg.modelImageOutputPath = dir;
+  else if (type === "mesh") cfg.modelMeshOutputPath = dir;
   else cfg.modelOutputPath = dir;
   await window.w2gp.configSave(cfg);
   await loadModelPaths();
@@ -174,6 +186,12 @@ $("dashBrowseLora").addEventListener("click", () =>
 );
 $("dashBrowseOutput").addEventListener("click", () =>
   changeModelFolder("output", "savePath", "output", "Output"),
+);
+$("dashBrowseImage").addEventListener("click", () =>
+  changeModelFolder("image", "imageSavePath", "image", "Image output"),
+);
+$("dashBrowseMesh").addEventListener("click", () =>
+  changeModelFolder("mesh", "meshSavePath", "mesh", "3D output"),
 );
 
 $("desktopRepoLink").addEventListener("click", (e) => {
@@ -319,6 +337,16 @@ $("openOutputBtn")?.addEventListener("click", () =>
   window.w2gp
     .getModelPaths()
     .then((p) => p?.output && window.w2gp.openFolder(p.output)),
+);
+$("openImageBtn")?.addEventListener("click", () =>
+  window.w2gp
+    .getModelPaths()
+    .then((p) => p?.imageOutput && window.w2gp.openFolder(p.imageOutput)),
+);
+$("openMeshBtn")?.addEventListener("click", () =>
+  window.w2gp
+    .getModelPaths()
+    .then((p) => p?.meshOutput && window.w2gp.openFolder(p.meshOutput)),
 );
 
 $("moveToPreferredBtn")?.addEventListener("click", () => openMigrationModal());

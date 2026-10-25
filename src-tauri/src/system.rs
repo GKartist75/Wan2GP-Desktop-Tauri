@@ -254,6 +254,7 @@ pub fn repair_settings() -> serde_json::Value {
                     ("save_path", &out_def),
                     ("image_save_path", &out_def),
                     ("audio_save_path", &out_def),
+                    ("mesh_save_path", &out_def),
                 ] {
                     if let Some(s) = map.get(key).and_then(|v| v.as_str()) {
                         if is_nested(s) {
@@ -770,6 +771,10 @@ pub fn write_wgp_config(cfg: serde_json::Value) -> Result<serde_json::Value, Str
         "lora_dir",
         "save_path",
         "savePath",
+        "image_save_path",
+        "imageSavePath",
+        "mesh_save_path",
+        "meshSavePath",
     ] {
         if let Some(v) = cfg
             .get(key)
@@ -800,7 +805,12 @@ pub fn write_wgp_config(cfg: serde_json::Value) -> Result<serde_json::Value, Str
     if let Some(obj) = cfg.as_object() {
         for (k, v) in obj {
             // ponytail: don't write camelCase directly — only canonical snake_case
-            if k == "checkpointsPaths" || k == "lorasRoot" || k == "savePath" {
+            if k == "checkpointsPaths"
+                || k == "lorasRoot"
+                || k == "savePath"
+                || k == "imageSavePath"
+                || k == "meshSavePath"
+            {
                 continue;
             }
             cur[k] = v.clone();
@@ -825,6 +835,13 @@ pub fn write_wgp_config(cfg: serde_json::Value) -> Result<serde_json::Value, Str
         cur["save_path"] = v.clone();
         cur["image_save_path"] = v.clone();
         cur["audio_save_path"] = v.clone();
+        cur["mesh_save_path"] = v.clone();
+    }
+    if let Some(v) = cfg.get("imageSavePath") {
+        cur["image_save_path"] = v.clone();
+    }
+    if let Some(v) = cfg.get("meshSavePath") {
+        cur["mesh_save_path"] = v.clone();
     }
     // clean legacy camel/ckpt_dir leftovers from earlier builds
     if let Some(m) = cur.as_object_mut() {

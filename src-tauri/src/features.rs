@@ -599,6 +599,7 @@ pub fn auto_tune_detect_blocking() -> serde_json::Value {
         "gpu_uuid": gpu.get("uuid").cloned().unwrap_or(serde_json::Value::Null),
         "gpu_pick": gpu.get("pick").cloned().unwrap_or(serde_json::Value::Null),
         "gpu_pin_note": gpu.get("pinNote").cloned().unwrap_or(serde_json::Value::Null),
+        "kv_cache_quantization": "auto",
         "driver": gpu.get("driverVersion").cloned().unwrap_or(serde_json::Value::Null)
     })
 }
@@ -640,7 +641,7 @@ pub fn auto_tune_recommend(
     if !failsafe && cuda_off && !amd_usable {
         return serde_json::json!({
             "video_profile": 4.5, "image_profile": 4.5, "audio_profile": 4.5,
-            "vram_safety_coefficient": 0.70, "vae_config": 0, "transformer_quantization": "int8", "text_encoder_quantization": "int8", "int8_kernels": "auto", "fp8_kernels": "auto", "kernel_precision": "fast",
+            "vram_safety_coefficient": 0.70, "vae_config": 0, "transformer_quantization": "int8", "text_encoder_quantization": "int8", "int8_kernels": "auto", "fp8_kernels": "auto", "kernel_precision": "fast", "kv_cache_quantization": "auto",
             "_recommendation_label": "Auto-tune unavailable on this hardware",
             "_recommendation_reason": "No CUDA-capable GPU detected. Conservative profile applied — generation may be limited.",
             "packages": ["torch","triton","sageattention"],
@@ -804,7 +805,7 @@ pub fn auto_tune_recommend(
     }
     let mut out = serde_json::json!({
         "video_profile": profile, "image_profile": profile, "audio_profile": audio,
-        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8", "text_encoder_quantization": if ram_tier == "high" { "bf16" } else { "int8" }, "int8_kernels": "auto", "fp8_kernels": "auto", "kernel_precision": "fast",
+        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8", "text_encoder_quantization": if ram_tier == "high" { "bf16" } else { "int8" }, "int8_kernels": "auto", "fp8_kernels": "auto", "kernel_precision": "fast", "kv_cache_quantization": if vram_tier == "tight" { "q4" } else { "auto" },
         "_recommendation_label": label,
         "_recommendation_reason": "Auto-tuned for your hardware",
         "packages": ["torch","triton","sageattention"],

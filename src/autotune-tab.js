@@ -454,6 +454,7 @@ function memProfileFromRecommendation(rec) {
       perc_reserved_mem_max: rec.perc_reserved_mem_max,
       // v18: recommended only on RTX 50 (Blackwell); path stays manual.
       compute_cache: rec.compute_cache,
+      deepy_kv_cache_quantization: rec.kv_cache_quantization || "auto",
     },
     { mode: "recommend" },
   );
