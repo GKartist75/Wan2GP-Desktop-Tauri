@@ -277,24 +277,25 @@
             <h3>GPU Device</h3>
             <div class="token-field">
               <select id="gpuDeviceSelect" class="input" style="max-width:360px">
-                <option value="auto">Auto (let Wan2GP pick)</option>
+                <option value="auto">Auto — the card with the most VRAM</option>
+                <option value="all">All GPUs visible (multi-GPU / advanced)</option>
               </select>
               <button class="btn btn-primary small" id="gpuDeviceSaveBtn" title="Save which GPU runs generation (applies on next launch)">Save</button>
             </div>
-            <p class="token-hint">On machines with multiple GPUs (integrated + dedicated, or dual NVIDIA), choose which one runs generation. Passed as <code>--gpu cuda:N</code> on launch. Changes apply on next launch.</p>
+            <p class="token-hint">On multi-GPU machines the launcher pins generation to <strong>one</strong> card with <code>--gpu cuda:N</code> (N is the card's nvidia-smi index, kept stable with <code>CUDA_DEVICE_ORDER=PCI_BUS_ID</code>) — the same switch as choosing a device inside Wan2GP, so Wan2GP's device-0 paths and its device loops cannot disagree, and it cannot land on an integrated/display device. That mismatch is the usual cause of an out-of-memory error while VRAM reads free. Auto picks the card with the most VRAM. <em>All GPUs visible</em> passes no flag, for advanced multi-GPU setups upstream does not officially support.</p>
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>Launcher GPU</h3>
             <div class="token-field">
               <select id="launcherGpuSelect" class="input" style="max-width:360px">
                 <option value="auto">Auto (OS decides)</option>
-                <option value="integrated">Integrated — power saving (frees VRAM)</option>
+                <option value="integrated">Integrated — power saving (SwiftShader, frees VRAM)</option>
                 <option value="dedicated">Dedicated — high performance</option>
                 <option value="disabled">Disabled — SwiftShader (max VRAM saved)</option>
               </select>
               <button class="btn btn-primary small" id="launcherGpuSaveBtn" title="Save which GPU runs the launcher window (needs restart)">Save</button>
             </div>
-            <p class="token-hint">Which GPU runs the launcher window itself (not generation). Integrated frees 1–5 GB VRAM for generation; Disabled uses SwiftShader. Requires restart.</p>
+            <p class="token-hint">Which GPU runs the launcher window itself (not generation). Integrated and Disabled both run the UI through SwiftShader (--disable-gpu) to free 1–5 GB VRAM for generation — --force_low_power_gpu no longer works on WebView2 v145+, so Integrated now uses the reliable path. Dedicated keeps --force_high_performance_gpu. Requires restart.</p>
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>Desktop Embed (experimental)</h3>
@@ -581,6 +582,7 @@
               <span class="token-hint" style="font-weight:600">Out of memory</span>
               <button class="btn btn-ghost small" id="tsHeadSplitBtn" title="Attention Head Split: Medium. Upstream measures ~2 GB less VRAM for up to ~3% slower steps on MiniMax H3 at 1920x1088 / 362 frames (~4 GB with H3 + Sol, ~2.5 GB with VDN). Quality is the same, but the result is not identical to Off: details, and sometimes the motion, can differ. Applies to the next generation.">Attention Head Split → Medium</button>
               <button class="btn btn-ghost small" id="tsLowerRamBtn" title="Lower Reserved RAM for Pinning to 25% and keep Smart Memory Pinning On — upstream's fix for a PC short of RAM.">Lower Reserved RAM</button>
+              <button class="btn btn-ghost small" id="tsPinGpuBtn" title="Pin generation to one GPU. With several GPUs visible, WanGP's device-0 code paths and its device_count() loops can disagree, which shows up as a bare CUDA out of memory while VRAM reads free. Picks the card with the most VRAM; it is remembered as the GPU Device in Settings.">Pin to one GPU</button>
               <button class="btn btn-ghost small" id="tsFailsafeP5Btn" title="Switch every profile to P5 (fail safe). The same action as Failsafe above.">Drop to P5</button>
             </div>
             <span class="token-hint" id="tsOomStatus"></span>

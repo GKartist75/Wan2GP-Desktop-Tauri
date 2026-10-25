@@ -471,6 +471,46 @@ $("tsHeadSplitBtn")?.addEventListener("click", () =>
 $("tsLowerRamBtn")?.addEventListener("click", () =>
   tsApplyRemedy("lower_reserved_ram", "Reserved RAM → 25% with Smart Pinning on"),
 );
+// Multi-GPU OOM: pin generation to one card. With several GPUs visible,
+// WanGP's device-0 paths and its device_count() loops can disagree, which
+// surfaces as a bare CUDA out of memory while VRAM reads free.
+$("tsPinGpuBtn")?.addEventListener("click", async () => {
+  tsStatus("tsOomStatus", "Looking for GPUs…");
+  try {
+    const detected = (await window.w2gp.detectGpus()) || [];
+    if (detected.length < 2) {
+      tsStatus(
+        "tsOomStatus",
+        "Only one GPU detected — nothing to pin. Use the remedies beside this button.",
+      );
+      return;
+    }
+    const cfg = await window.w2gp.configLoad();
+    // Respect an explicit card the user already chose; only fall back to the
+    // biggest one when the picker is on Auto / All.
+    const saved = (cfg.gpuDevice || "auto").trim();
+    const chosen = saved.startsWith("uuid:")
+      ? detected.find((g) => g.uuid && saved === "uuid:" + g.uuid)
+      : null;
+    const best =
+      chosen ||
+      detected.slice().sort((a, b) => (b.vramMB || 0) - (a.vramMB || 0))[0];
+    cfg.gpuDevice = best.uuid ? "uuid:" + best.uuid : "cuda:" + best.index;
+    await window.w2gp.configSave(cfg);
+    const gb = best.vramMB ? " (" + Math.round(best.vramMB / 1024) + " GB)" : "";
+    tsStatus(
+      "tsOomStatus",
+      "✓ Generation pinned to " + best.name + gb + " — relaunch WanGP.",
+    );
+    appendLog("[✓] GPU pinned to " + best.name);
+    showToast("✓ Pinned to " + best.name);
+    document.dispatchEvent(
+      new CustomEvent("gpu-device-changed", { detail: { value: cfg.gpuDevice } }),
+    );
+  } catch (e) {
+    tsStatus("tsOomStatus", "✗ " + escHtml(errText(e)));
+  }
+});
 $("tsFailsafeP5Btn")?.addEventListener("click", async () => {
   this.disabled = true;
   tsStatus("tsOomStatus", "Applying failsafe…");

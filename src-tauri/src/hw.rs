@@ -3,22 +3,255 @@ use crate::base::*;
 use std::sync::{LazyLock, Mutex};
 
 // ── GPU helpers ──
-pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
+
+/// One NVIDIA card as `nvidia-smi` reports it. `index` is nvidia-smi's
+/// enumeration order (PCI order on Windows), `uuid` is the stable identity
+/// CUDA itself accepts in `CUDA_VISIBLE_DEVICES`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NvCard {
+    pub index: i32,
+    pub uuid: String,
+    pub name: String,
+    pub vram_mb: u64,
+    pub free_mb: u64,
+    pub driver: String,
+}
+
+const NV_CARD_ARGS: [&str; 2] = [
+    "--query-gpu=index,uuid,name,memory.total,memory.free,driver_version",
+    "--format=csv,noheader,nounits",
+];
+
+/// Probe nvidia-smi once for every card, plus the raw text so legacy output
+/// (3-field rows, or a test fake) can still fall through to `pick_smi_row`.
+fn probe_nv_cards() -> (Vec<NvCard>, String) {
     if let Ok(out) = probe_command("NVIDIA_SMI", "nvidia-smi")
+        .args(NV_CARD_ARGS)
+        .output()
+    {
+        if out.status.success() {
+            let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let cards = parse_nv_cards(&raw);
+            if !cards.is_empty() {
+                return (cards, raw);
+            }
+        }
+    }
+    // A driver too old for `uuid` (or a fake that only answers the classic
+    // query) must not turn a working NVIDIA box into "no GPU": ask for the
+    // 3-field form and let `pick_smi_row` describe it.
+    let raw = probe_command("NVIDIA_SMI", "nvidia-smi")
         .args([
             "--query-gpu=name,memory.total,driver_version",
             "--format=csv,noheader",
         ])
         .output()
-    {
-        if out.status.success() {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            // Multi-GPU boxes print one row per card; the old "split the whole
-            // blob on ','" read the second card's name into driverVersion.
-            if let Some((name, mb, driver)) = pick_smi_row(&s) {
-                return serde_json::json!({"vendor":"NVIDIA","name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":s});
-            }
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    (Vec::new(), raw)
+}
+
+/// Every NVIDIA card, one nvidia-smi probe. Empty on AMD/Intel/CPU boxes.
+pub(crate) fn nv_cards() -> Vec<NvCard> {
+    probe_nv_cards().0
+}
+
+/// Parse `index,uuid,name,memory.total,memory.free,driver_version` rows.
+/// Card names may contain commas, so the four trailing scalar fields are read
+/// from the right and everything between uuid and them is the name. Pure +
+/// unit-tested.
+pub(crate) fn parse_nv_cards(text: &str) -> Vec<NvCard> {
+    let mut cards = Vec::new();
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split(',').map(str::trim).collect();
+        if parts.len() < 6 {
+            continue;
         }
+        let Ok(index) = parts[0].parse::<i32>() else {
+            continue;
+        };
+        let uuid = parts[1].to_string();
+        let driver = parts[parts.len() - 1].to_string();
+        let free_mb = parts[parts.len() - 2].parse::<u64>().unwrap_or(0);
+        let vram_mb = parts[parts.len() - 3].parse::<u64>().unwrap_or(0);
+        let name = parts[2..parts.len() - 3].join(", ");
+        if name.is_empty() {
+            continue;
+        }
+        cards.push(NvCard {
+            index,
+            uuid,
+            name,
+            vram_mb,
+            free_mb,
+            driver,
+        });
+    }
+    cards.sort_by_key(|c| c.index);
+    cards
+}
+
+/// The card WanGP should run on when the user leaves the picker on Auto: the
+/// biggest VRAM, then the most free VRAM, then the lowest index so the answer
+/// is deterministic on identical cards. Pure + unit-tested.
+pub(crate) fn best_nv_card(cards: &[NvCard]) -> Option<&NvCard> {
+    cards.iter().max_by(|a, b| {
+        a.vram_mb
+            .cmp(&b.vram_mb)
+            .then(a.free_mb.cmp(&b.free_mb))
+            .then(b.index.cmp(&a.index))
+    })
+}
+
+/// Resolved GPU picker value.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GpuPin {
+    /// The physical card the pick resolved to, when nvidia-smi reports it.
+    pub card: Option<NvCard>,
+    /// Value for upstream's `--gpu` flag (`cuda:<nvidia-smi index>`). WanGP
+    /// turns it into `CUDA_VISIBLE_DEVICES` itself and, because the flag is
+    /// set, calls `torch.set_default_device(...)` after model load — the exact
+    /// configuration a manual device pick produces. `None` keeps every GPU
+    /// visible and lets WanGP fall back to its own defaults.
+    pub arg: Option<String>,
+    /// Human-readable warning when the saved pick could not be matched.
+    pub note: Option<String>,
+}
+
+/// Turn the saved GPU Device pick into an explicit `--gpu cuda:N`.
+///
+/// Values: `auto` (best card), `uuid:GPU-…` (stable id), `cuda:N` (legacy
+/// nvidia-smi index, still honoured), `all` (leave every GPU visible).
+/// The launcher also sets `CUDA_DEVICE_ORDER=PCI_BUS_ID`, so the ordinal it
+/// passes means the same card nvidia-smi (and the picker) showed.
+/// Pure + unit-tested.
+pub(crate) fn resolve_gpu_pick(pick: &str, cards: &[NvCard]) -> GpuPin {
+    let pick = pick.trim();
+    if pick.eq_ignore_ascii_case("all") || pick.eq_ignore_ascii_case("multi") {
+        return GpuPin::default();
+    }
+    let pin_for = |c: &NvCard| GpuPin {
+        arg: Some(format!("cuda:{}", c.index)),
+        card: Some(c.clone()),
+        note: None,
+    };
+    let auto = |cards: &[NvCard]| best_nv_card(cards).map(pin_for);
+    // A UUID card id, optionally prefixed (`uuid:`, `cuda:`, or bare).
+    let uuid_pick = pick
+        .strip_prefix("uuid:")
+        .or_else(|| pick.strip_prefix("cuda:"))
+        .filter(|s| s.starts_with("GPU-") || s.starts_with("MIG-"))
+        .map(|s| s.trim().to_string())
+        .or_else(|| {
+            (pick.starts_with("GPU-") || pick.starts_with("MIG-")).then(|| pick.to_string())
+        });
+    if let Some(uuid) = uuid_pick {
+        if uuid.is_empty() {
+            return auto(cards).unwrap_or_default();
+        }
+        if let Some(c) = cards.iter().find(|c| c.uuid.eq_ignore_ascii_case(&uuid)) {
+            return pin_for(c);
+        }
+        // A card the user removed must not pin a ghost and leave torch with
+        // zero devices: fall back to Auto and say so.
+        if !cards.is_empty() {
+            let mut p = auto(cards).unwrap_or_default();
+            p.note = Some(format!(
+                "saved GPU {uuid} is not installed — using {} instead",
+                p.card.as_ref().map(|c| c.name.as_str()).unwrap_or("Auto")
+            ));
+            return p;
+        }
+        // No nvidia-smi: there is no ordinal to pass, so leave WanGP alone.
+        return GpuPin {
+            card: None,
+            arg: None,
+            note: Some(format!(
+                "saved GPU {uuid} could not be verified (nvidia-smi is unavailable) — letting WanGP pick"
+            )),
+        };
+    }
+    if cards.is_empty() {
+        return GpuPin::default();
+    }
+    if pick.is_empty() || pick.eq_ignore_ascii_case("auto") {
+        return auto(cards).unwrap_or_default();
+    }
+    let ordinal = pick.strip_prefix("cuda:").unwrap_or(pick);
+    if let Ok(n) = ordinal.trim().parse::<i32>() {
+        if let Some(c) = cards.iter().find(|c| c.index == n) {
+            return pin_for(c);
+        }
+        // Same fail-safe: a stale ordinal (card removed, eGPU unplugged) must
+        // not hide every GPU.
+        let mut p = auto(cards).unwrap_or_default();
+        p.note = Some(format!(
+            "saved pick cuda:{n} is not installed — using {} instead",
+            p.card.as_ref().map(|c| c.name.as_str()).unwrap_or("Auto")
+        ));
+        return p;
+    }
+    let mut p = auto(cards).unwrap_or_default();
+    p.note = Some(format!(
+        "unrecognised GPU selection '{pick}' — falling back to Auto"
+    ));
+    p
+}
+
+static GPU_PICK_CACHE: LazyLock<Mutex<(Option<std::time::SystemTime>, String)>> =
+    LazyLock::new(|| Mutex::new((None, "auto".to_string())));
+
+/// The saved GPU Device pick (`auto` when unset). Cached on the launcher
+/// config file's mtime, so the 2s metrics tick never re-parses JSON and a
+/// Save is visible immediately.
+pub(crate) fn saved_gpu_pick() -> String {
+    let mtime = std::fs::metadata(crate::base::get_config_file())
+        .and_then(|m| m.modified())
+        .ok();
+    if let Ok(g) = GPU_PICK_CACHE.lock() {
+        if g.0 == mtime {
+            return g.1.clone();
+        }
+    }
+    let pick = crate::base::load_config_value()
+        .get("gpuDevice")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto")
+        .trim()
+        .to_string();
+    if let Ok(mut g) = GPU_PICK_CACHE.lock() {
+        *g = (mtime, pick.clone());
+    }
+    pick
+}
+
+pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
+    let (cards, raw) = probe_nv_cards();
+    if !cards.is_empty() {
+        let pick = saved_gpu_pick();
+        let pin = resolve_gpu_pick(&pick, &cards);
+        // An unresolved pick (card removed, stale uuid) describes the card
+        // that will actually run, never "none".
+        if let Some(card) = pin.card.as_ref().or_else(|| best_nv_card(&cards)) {
+            return serde_json::json!({
+                "vendor":"NVIDIA",
+                "name":card.name,
+                "vramMB":format!("{} MiB", card.vram_mb),
+                "driverVersion":card.driver,
+                "uuid":card.uuid,
+                "index":card.index,
+                "pick":pick,
+                "pinNote":pin.note,
+                "gpuArg":pin.arg,
+                "raw":raw,
+            });
+        }
+    }
+    // Legacy 3-field nvidia-smi output (old drivers, test fakes).
+    if let Some((name, mb, driver)) = pick_smi_row(&raw) {
+        return serde_json::json!({"vendor":"NVIDIA","name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":raw});
     }
     // No NVIDIA driver — WMI fallback for AMD/Intel (Electron queryGpuList parity).
     // Doc-leading: deepbeepmeep docs/AMD-INSTALLATION.md is the spec for AMD support.
@@ -145,6 +378,52 @@ pub(crate) fn is_virtual_display_adapter(name: &str) -> bool {
     ]
     .iter()
     .any(|t| l.contains(t))
+}
+
+/// AMD integrated graphics (APU): the iGPU sharing system memory. AMD names
+/// these "Radeon Graphics" / "Radeon 780M Graphics" / "Radeon(TM) Graphics",
+/// while discrete cards are "Radeon RX ...", "Radeon PRO ...", "Radeon VII",
+/// "Radeon Vega ..." (discrete). Used so an iGPU+dGPU box is not counted as
+/// two discrete cards. Pure + unit-tested.
+pub(crate) fn is_amd_apu(name: &str) -> bool {
+    let l = name.to_lowercase();
+    // Must look AMD-ish (callers already filter vendor == "AMD", but be safe).
+    if !(l.contains("amd") || l.contains("radeon")) {
+        return false;
+    }
+    // Discrete markers win: a card that says RX/PRO/VII/Vega is discrete.
+    if l.contains("rx")
+        || l.contains("pro")
+        || l.contains("vii")
+        || l.contains("vega")
+        || l.contains("instinct")
+    {
+        return false;
+    }
+    // APUs are generically named "Radeon Graphics" / "...M Graphics", or
+    // carry a model number ending in 'M' (780M, 680M, 610M, 740M, ...).
+    if l.contains("graphics") {
+        return true;
+    }
+    // APU model numbers end in 'M' (780M, 680M, 610M, 740M, ...): a run of
+    // digits immediately followed by 'm', with a non-alphanumeric before it.
+    let bytes = l.as_bytes();
+    for i in 1..bytes.len() {
+        if bytes[i] == b'm' {
+            let mut j = i;
+            while j > 0 && bytes[j - 1].is_ascii_digit() {
+                j -= 1;
+            }
+            if j < i {
+                let prev_ok = j == 0 || !bytes[j - 1].is_ascii_alphanumeric();
+                let next_ok = i + 1 >= bytes.len() || !bytes[i + 1].is_ascii_alphanumeric();
+                if prev_ok && next_ok {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Names of virtual display adapters currently visible (Windows WMI).
@@ -1223,7 +1502,90 @@ mod nvidia_profile_tests {
 }
 #[cfg(test)]
 mod gpu_pick_tests {
-    use super::{gpu_primary_class, pick_smi_row};
+    use super::{gpu_primary_class, parse_nv_cards, pick_smi_row, resolve_gpu_pick, NvCard};
+    fn cards() -> Vec<NvCard> {
+        vec![
+            NvCard {
+                index: 0,
+                uuid: "GPU-aaa".into(),
+                name: "NVIDIA GeForce RTX 4070".into(),
+                vram_mb: 8188,
+                free_mb: 7000,
+                driver: "566.03".into(),
+            },
+            NvCard {
+                index: 1,
+                uuid: "GPU-bbb".into(),
+                name: "NVIDIA GeForce RTX 4090".into(),
+                vram_mb: 24564,
+                free_mb: 900,
+                driver: "566.03".into(),
+            },
+        ]
+    }
+    #[test]
+    fn smi_card_rows_parse_and_sort() {
+        // Two cards, a comma inside one name, memory/free/driver right-aligned.
+        let text = "1, GPU-bbb, NVIDIA GeForce RTX 4090, 24564, 900, 566.03\n\
+                    0, GPU-aaa, NVIDIA RTX A5000, Ada, 24564, 100, 537.99";
+        let parsed = parse_nv_cards(text);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].index, 0, "rows sort by nvidia-smi index");
+        assert_eq!(parsed[0].uuid, "GPU-aaa");
+        assert_eq!(parsed[0].name, "NVIDIA RTX A5000, Ada");
+        assert_eq!(parsed[0].vram_mb, 24564);
+        assert_eq!(parsed[0].free_mb, 100);
+        assert_eq!(parsed[0].driver, "537.99");
+        assert_eq!(parsed[1].index, 1);
+        // Legacy 3-field output is not a card row (pick_smi_row owns that).
+        assert!(parse_nv_cards("NVIDIA GeForce RTX 3080, 10240 MiB, 546.01").is_empty());
+        assert!(parse_nv_cards("").is_empty());
+    }
+    #[test]
+    fn auto_pins_the_biggest_card_by_index() {
+        let pin = resolve_gpu_pick("auto", &cards());
+        assert_eq!(pin.arg.as_deref(), Some("cuda:1"));
+        assert_eq!(pin.card.as_ref().unwrap().vram_mb, 24564);
+        assert!(pin.note.is_none());
+    }
+    #[test]
+    fn legacy_smi_index_maps_to_the_same_physical_card() {
+        // The old picker stored "cuda:<nvidia-smi index>"; CUDA's default
+        // FASTEST_FIRST order can point that ordinal at another card, so the
+        // launcher resolves the index to the card and passes its index back.
+        let pin = resolve_gpu_pick("cuda:0", &cards());
+        assert_eq!(pin.arg.as_deref(), Some("cuda:0"));
+        assert_eq!(pin.card.as_ref().unwrap().name, "NVIDIA GeForce RTX 4070");
+        let pin = resolve_gpu_pick("uuid:GPU-bbb", &cards());
+        assert_eq!(pin.arg.as_deref(), Some("cuda:1"));
+    }
+    #[test]
+    fn all_and_stale_picks_are_explicit() {
+        // "all" leaves every GPU visible (advanced multi-GPU).
+        let pin = resolve_gpu_pick("all", &cards());
+        assert_eq!(pin.arg, None);
+        // A removed card falls back to the best card instead of hiding every
+        // GPU (torch would see zero devices), and the note names the ghost.
+        let pin = resolve_gpu_pick("cuda:9", &cards());
+        assert_eq!(pin.arg.as_deref(), Some("cuda:1"));
+        assert!(pin.note.unwrap().contains("cuda:9"));
+        let pin = resolve_gpu_pick("uuid:GPU-gone", &cards());
+        assert_eq!(pin.arg.as_deref(), Some("cuda:1"));
+        assert!(pin.note.unwrap().contains("GPU-gone"));
+        // No nvidia-smi: there is no ordinal to pass, so WanGP keeps its own
+        // default device instead of being handed a guess.
+        let pin = resolve_gpu_pick("uuid:GPU-gone", &[]);
+        assert_eq!(pin.arg, None);
+        assert!(pin.card.is_none());
+        // Garbage never silently picks device 0 of an unknown list.
+        let pin = resolve_gpu_pick("banana", &cards());
+        assert_eq!(pin.arg.as_deref(), Some("cuda:1"));
+        assert!(pin.note.unwrap().contains("banana"));
+        // No NVIDIA cards (AMD/CPU box): no CUDA arg at all.
+        let pin = resolve_gpu_pick("auto", &[]);
+        assert_eq!(pin.arg, None);
+        assert!(pin.card.is_none());
+    }
     #[test]
     fn smi_rows_pick_the_largest_card() {
         // Two cards: the old blob-split put the second name into
@@ -1267,7 +1629,32 @@ mod gpu_pick_tests {
 
 #[cfg(test)]
 mod virtual_adapter_tests {
-    use super::is_virtual_display_adapter;
+    use super::{is_amd_apu, is_virtual_display_adapter};
+    #[test]
+    fn amd_apu_vs_discrete() {
+        // APUs share system memory and are named "Radeon Graphics".
+        for n in [
+            "AMD Radeon Graphics",
+            "AMD Radeon 780M Graphics",
+            "AMD Radeon(TM) Graphics",
+            "AMD Radeon 680M",
+        ] {
+            assert!(is_amd_apu(n), "{n} should be an APU");
+        }
+        // Discrete cards must never be classified as APUs.
+        for n in [
+            "AMD Radeon RX 7900 XTX",
+            "AMD Radeon RX 9070 XT",
+            "AMD Radeon PRO W7900",
+            "AMD Radeon VII",
+            "AMD Radeon RX Vega 64",
+            "AMD Radeon Instinct MI300X",
+            "NVIDIA GeForce RTX 3080",
+            "Intel UHD Graphics 770",
+        ] {
+            assert!(!is_amd_apu(n), "{n} should not be an APU");
+        }
+    }
     #[test]
     fn virtual_names_detected() {
         // #2224 reporter names first.
@@ -1655,32 +2042,27 @@ pub(crate) fn build_install_plan(hw: &serde_json::Value) -> serde_json::Value {
 }
 #[tauri::command]
 pub fn detect_gpus() -> serde_json::Value {
-    let mut gpus = Vec::new();
-    if let Ok(out) = probe_command("NVIDIA_SMI", "nvidia-smi")
-        .args([
-            "--query-gpu=index,name,memory.total",
-            "--format=csv,noheader",
-        ])
-        .output()
-    {
-        if out.status.success() {
-            for line in String::from_utf8_lossy(&out.stdout).lines() {
-                let parts: Vec<&str> = line.split(',').map(str::trim).collect();
-                if parts.len() >= 3 {
-                    if let Ok(idx) = parts[0].parse::<i32>() {
-                        let vram = parts[2]
-                            .split_whitespace()
-                            .next()
-                            .and_then(|n| n.parse::<f64>().ok())
-                            .unwrap_or(0.0);
-                        gpus.push(serde_json::json!({"index": idx, "name": parts[1], "vramMB": vram, "vendor": "NVIDIA"}));
-                    }
-                }
-            }
-        }
-    }
-    if !gpus.is_empty() {
+    let (cards, raw) = probe_nv_cards();
+    if !cards.is_empty() {
+        let gpus: Vec<serde_json::Value> = cards
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "index": c.index,
+                    "uuid": c.uuid,
+                    "name": c.name,
+                    "vramMB": c.vram_mb as f64,
+                    "freeMB": c.free_mb as f64,
+                    "vendor": "NVIDIA",
+                })
+            })
+            .collect();
         return serde_json::Value::Array(gpus);
+    }
+    // Old driver without the uuid column: one entry from the classic query,
+    // never a bogus "Unknown" row that hides a working card.
+    if let Some((name, mb, _driver)) = pick_smi_row(&raw) {
+        return serde_json::json!([{"index": 0, "name": name, "vramMB": mb as f64, "vendor": "NVIDIA"}]);
     }
     // WMI fallback for AMD/Intel (Electron queryGpuList parity, dropped in port).
     if let Some((name, vendor, raw, _driver)) = wmi_gpu_fallback() {
@@ -1710,19 +2092,20 @@ pub fn detect_gpus() -> serde_json::Value {
 
 #[tauri::command]
 pub fn detect_hardware() -> serde_json::Value {
-    let gpus = detect_gpus();
-    let gpu_name = gpus
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|g| g.get("name"))
+    // Describe the card the launcher pins, not nvidia-smi's first row: on a
+    // two-GPU box the install overview used to size itself from the card
+    // generation never runs on.
+    let card = get_gpu_info_sync();
+    let gpu_name = card
+        .get("name")
         .and_then(|n| n.as_str())
         .unwrap_or("—")
         .to_string();
-    let vram = gpus
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|g| g.get("vramMB"))
-        .and_then(serde_json::Value::as_f64)
+    let vram = card
+        .get("vramMB")
+        .and_then(|v| v.as_str())
+        .and_then(|v| v.split_whitespace().next())
+        .and_then(|v| v.parse::<f64>().ok())
         .unwrap_or(0.0);
     let vram_str = if vram > 0.0 {
         format!("{} MB", vram as i64)
@@ -1884,14 +2267,15 @@ pub fn get_hardware_profile() -> serde_json::Value {
     // Full per-profile version matrix lives in
     // hardware_profile_detail_with_ram (pure + unit-tested); this command
     // only probes hardware and delegates.
-    let gpus = detect_gpus();
-    let vram_mb = gpus
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|g| g.get("vramMB"))
-        .and_then(serde_json::Value::as_f64)
-        .unwrap_or(0.0);
+    // Same card the launcher pins: a multi-GPU box must not describe (or size)
+    // the profile from a card generation will not run on.
     let gpu = get_gpu_info_sync();
+    let vram_mb = gpu
+        .get("vramMB")
+        .and_then(|v| v.as_str())
+        .and_then(|v| v.split_whitespace().next())
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.0);
     hardware_profile_detail_with_ram(
         gpu.get("vendor")
             .and_then(|v| v.as_str())
@@ -2268,71 +2652,111 @@ pub fn get_system_metrics() -> serde_json::Value {
     }
     // nvidia-smi for VRAM/GPU — per-GPU breakdown + WMI iGPU fallback (mirrors Electron main.js)
     {
-        let out = probe_command("NVIDIA_SMI", "nvidia-smi")
-            .args([
+        let run = |args: [&str; 2]| {
+            probe_command("NVIDIA_SMI", "nvidia-smi")
+                .args(args)
+                .output()
+        };
+        let six = run([
+            "--query-gpu=index,uuid,memory.free,memory.used,memory.total,utilization.gpu",
+            "--format=csv,noheader,nounits",
+        ]);
+        let good = |r: &std::io::Result<std::process::Output>| {
+            r.as_ref().is_ok_and(|o| {
+                o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty()
+            })
+        };
+        let out = if good(&six) {
+            six
+        } else {
+            // A driver that rejects `uuid` still gets a topbar from the classic
+            // 4-field query; the parser below accepts both shapes.
+            run([
                 "--query-gpu=memory.free,memory.used,memory.total,utilization.gpu",
                 "--format=csv,noheader,nounits",
             ])
-            .output();
+        };
         if let Ok(o) = out {
             if o.status.success() {
                 let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
                 if !s.is_empty() {
-                    let mut free = 0i64;
-                    let mut used = 0i64;
-                    let mut total = 0i64;
-                    let mut gpu = 0i64;
-                    let mut cnt = 0;
-                    let mut per_gpu: Vec<serde_json::Value> = Vec::new();
-                    for line in s.lines() {
-                        let p: Vec<&str> = line.split(',').map(str::trim).collect();
-                        if p.len() >= 4 {
-                            let f = p[0].parse::<i64>().unwrap_or(0);
-                            let u = p[1].parse::<i64>().unwrap_or(0);
-                            let t = p[2].parse::<i64>().unwrap_or(0);
-                            let g = p[3].parse::<i64>().unwrap_or(0);
-                            free += f;
-                            used += u;
-                            total += t;
-                            gpu += g;
-                            cnt += 1;
-                            let fmt_mb = |mb: i64| {
-                                if mb >= 1024 {
-                                    format!("{} GB", (mb as f64 / 1024.0).round() as i64)
-                                } else {
-                                    format!("{mb} MB")
-                                }
-                            };
-                            let vram_pct = if t > 0 {
-                                (u as f64 / t as f64 * 100.0).round() as i64
-                            } else {
-                                0
-                            };
-                            per_gpu.push(serde_json::json!({"free": f, "used": u, "total": t, "gpu": g, "vram": vram_pct, "vramFree": fmt_mb(f), "vramUsed": fmt_mb(u), "vramTotal": fmt_mb(t)}));
-                        }
-                    }
-                    let fmt = |mb: i64| {
+                    let fmt_mb = |mb: i64| {
                         if mb >= 1024 {
                             format!("{} GB", (mb as f64 / 1024.0).round() as i64)
                         } else {
                             format!("{mb} MB")
                         }
                     };
-                    result["vramFree"] = serde_json::Value::String(fmt(free));
-                    result["vramUsed"] = serde_json::Value::String(fmt(used));
-                    result["vramTotal"] = serde_json::Value::String(fmt(total));
-                    if total > 0 {
-                        result["vram"] =
-                            serde_json::json!((used as f64 / total as f64 * 100.0).round() as i64);
+                    let mut per_gpu: Vec<(i32, String, serde_json::Value)> = Vec::new();
+                    for (pos, line) in s.lines().enumerate() {
+                        let p: Vec<&str> = line.split(',').map(str::trim).collect();
+                        // 6 fields = index,uuid,…; 4 = the legacy form.
+                        let (idx, uuid, f, u, t, g) = if p.len() >= 6 {
+                            (
+                                p[0].parse::<i32>().unwrap_or(pos as i32),
+                                p[1].to_string(),
+                                p[2].parse::<i64>().unwrap_or(0),
+                                p[3].parse::<i64>().unwrap_or(0),
+                                p[4].parse::<i64>().unwrap_or(0),
+                                p[5].parse::<i64>().unwrap_or(0),
+                            )
+                        } else if p.len() >= 4 {
+                            (
+                                pos as i32,
+                                String::new(),
+                                p[0].parse::<i64>().unwrap_or(0),
+                                p[1].parse::<i64>().unwrap_or(0),
+                                p[2].parse::<i64>().unwrap_or(0),
+                                p[3].parse::<i64>().unwrap_or(0),
+                            )
+                        } else {
+                            continue;
+                        };
+                        let vram_pct = if t > 0 {
+                            (u as f64 / t as f64 * 100.0).round() as i64
+                        } else {
+                            0
+                        };
+                        per_gpu.push((
+                            idx,
+                            uuid,
+                            serde_json::json!({"smi": idx, "free": f, "used": u, "total": t, "gpu": g, "vram": vram_pct, "vramFree": fmt_mb(f), "vramUsed": fmt_mb(u), "vramTotal": fmt_mb(t)}),
+                        ));
                     }
-                    result["gpu"] = serde_json::json!(if cnt > 1 {
-                        (gpu as f64 / f64::from(cnt)).round() as i64
+                    // The topbar reports the card generation runs on, never a
+                    // sum: summing let a full 24 GB card read "40 GB free"
+                    // because an idle second device (or iGPU) was added in.
+                    let pick = saved_gpu_pick();
+                    let pick_uuid = pick.strip_prefix("uuid:").unwrap_or("");
+                    let pick_ord = pick
+                        .strip_prefix("cuda:")
+                        .and_then(|n| n.parse::<i32>().ok());
+                    let main = if pick.eq_ignore_ascii_case("all") {
+                        per_gpu.first()
+                    } else if !pick_uuid.is_empty() {
+                        per_gpu
+                            .iter()
+                            .find(|(_, u, _)| u.eq_ignore_ascii_case(pick_uuid))
+                    } else if let Some(n) = pick_ord {
+                        per_gpu.iter().find(|(i, _, _)| *i == n)
                     } else {
-                        gpu
+                        None
+                    }
+                    .or_else(|| {
+                        per_gpu
+                            .iter()
+                            .max_by_key(|(_, _, g)| g["total"].as_i64().unwrap_or(0))
                     });
+                    if let Some((_, _, m)) = main {
+                        result["vramFree"] = m["vramFree"].clone();
+                        result["vramUsed"] = m["vramUsed"].clone();
+                        result["vramTotal"] = m["vramTotal"].clone();
+                        result["vram"] = m["vram"].clone();
+                        result["gpu"] = m["gpu"].clone();
+                    }
                     // build gpus array for topbar
-                    let mut gpus_arr: Vec<serde_json::Value> = per_gpu.iter().enumerate().map(|(i,g)| {
-                    serde_json::json!({"index": i, "gpu": g["gpu"], "vram": g["vram"], "vramFree": g["vramFree"], "vramUsed": g["vramUsed"], "vramTotal": g["vramTotal"]})
+                    let mut gpus_arr: Vec<serde_json::Value> = per_gpu.iter().enumerate().map(|(i,(_,_,g))| {
+                    serde_json::json!({"index": i, "smi": g["smi"], "gpu": g["gpu"], "vram": g["vram"], "vramFree": g["vramFree"], "vramUsed": g["vramUsed"], "vramTotal": g["vramTotal"]})
                 }).collect();
                     // iGPU fallback: cached once, not every 2s (was 400ms powershell in hot loop).
                     // Name-keyed tiles are WMI primaries (AMD/Intel-only box) — never append a dupe.
@@ -2436,6 +2860,51 @@ mod amd_sim_tests {
         let ps = "@echo off\r\nif \"%~1\"==\"--\" goto dispatch\r\nexit /b 1\r\n:dispatch\r\nif \"%~3\"==\"-Command\" goto powershell\r\nexit /b 1\r\n:powershell\r\nset \"Q=%~4\"\r\nif not \"%Q:Win32_VideoController=%\"==\"%Q%\" goto wmi\r\nif not \"%Q:HardwareInformation=%\"==\"%Q%\" goto reg\r\nexit /b 1\r\n:wmi\r\necho AMD Radeon AI PRO R9700^|0^|32.0.11029.1008\r\necho AMD Radeon Graphics^|0^|32.0.11029.1008\r\nexit /b 0\r\n:reg\r\nif defined WGP_SIM_NO_REG exit /b 1\r\necho AMD Radeon AI PRO R9700^|34359738368\r\nexit /b 0\r\n";
         std::fs::write(dir.join("powershell.cmd"), ps).unwrap();
     }
+    #[test]
+    fn simulated_dual_nvidia_pins_the_picked_card() {
+        let _guard = SIM_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("wgp-sim-nv-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Two cards in nvidia-smi (PCI) order: index 0 is the small one.
+        std::fs::write(
+            dir.join("nvidia-smi.cmd"),
+            "@echo off\r\necho 0, GPU-00000000-0000-0000-0000-000000000001, NVIDIA GeForce RTX 4070, 8188, 7000, 566.03\r\necho 1, GPU-00000000-0000-0000-0000-000000000002, NVIDIA GeForce RTX 4090, 24564, 900, 566.03\r\nexit /b 0\r\n",
+        )
+        .unwrap();
+        let old = std::env::var("WGP_PROBE_NVIDIA_SMI").ok();
+        std::env::set_var(
+            "WGP_PROBE_NVIDIA_SMI",
+            dir.join("nvidia-smi.cmd").to_string_lossy().to_string(),
+        );
+        let gpus = detect_gpus();
+        let g = gpus.as_array().unwrap();
+        assert_eq!(g.len(), 2);
+        assert_eq!(g[0]["index"], serde_json::json!(0));
+        assert_eq!(
+            g[0]["uuid"],
+            serde_json::json!("GPU-00000000-0000-0000-0000-000000000001")
+        );
+        assert_eq!(g[0]["vramMB"], serde_json::json!(8188.0));
+        assert_eq!(g[1]["vramMB"], serde_json::json!(24564.0));
+        // Auto pins the biggest card (cuda:1 in nvidia-smi order).
+        let cards = nv_cards();
+        let pin = resolve_gpu_pick("auto", &cards);
+        assert_eq!(pin.arg.as_deref(), Some("cuda:1"));
+        assert_eq!(pin.card.as_ref().unwrap().vram_mb, 24564);
+        // A saved "cuda:0" means nvidia-smi card 0, even though CUDA's default
+        // FASTEST_FIRST ordering would have put that name on another ordinal.
+        let pin = resolve_gpu_pick("cuda:0", &cards);
+        assert_eq!(pin.arg.as_deref(), Some("cuda:0"));
+        assert_eq!(pin.card.as_ref().unwrap().name, "NVIDIA GeForce RTX 4070");
+        assert!(pin.note.is_none());
+        match old {
+            Some(v) => std::env::set_var("WGP_PROBE_NVIDIA_SMI", v),
+            None => std::env::remove_var("WGP_PROBE_NVIDIA_SMI"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Driverless box: WMI reports only the Basic Display Adapter. Detection
     /// must surface that name (vendor "unknown") — filtering it as "unknown
     /// vendor" made the fatal preflight check unreachable.

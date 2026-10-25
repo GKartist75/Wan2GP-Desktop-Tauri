@@ -114,38 +114,55 @@ $("portSaveBtn")?.addEventListener("click", async () => {
 async function loadGpuDeviceOptions(current) {
   const sel = $("gpuDeviceSelect");
   if (!sel) return;
+  // Rebuild the detected rows (keep the two fixed options) so a hot-plugged
+  // eGPU, or a card that went away, never leaves a stale entry behind.
+  while (sel.options.length > 2) sel.remove(2);
   try {
     const gpus = await window.w2gp.detectGpus();
-    // Keep "Auto" first, then one option per detected GPU
-    const existing = Array.from(sel.options).map((o) => o.value);
     gpus.forEach((g) => {
-      const v = "cuda:" + g.index;
-      if (!existing.includes(v)) {
-        const opt = document.createElement("option");
-        opt.value = v;
-        opt.textContent =
-          g.name +
-          " (" +
-          (g.vramMB ? g.vramMB + " MB" : "VRAM n/a") +
-          ") — " +
-          v;
-        sel.appendChild(opt);
-      }
+      // Saved by UUID (nvidia-smi indices reshuffle when a card is added,
+      // removed or re-slotted) and resolved to `--gpu cuda:N` at launch.
+      const v = g.uuid ? "uuid:" + g.uuid : "cuda:" + g.index;
+      if (Array.from(sel.options).some((o) => o.value === v)) return;
+      const opt = document.createElement("option");
+      opt.value = v;
+      const vram = g.vramMB ? Math.round(g.vramMB / 1024) + " GB" : "VRAM n/a";
+      opt.textContent = g.name + " (" + vram + ")";
+      sel.appendChild(opt);
     });
-    sel.value = current && /^cuda:\d+$/.test(current) ? current : "auto";
   } catch {
-    sel.value = "auto";
+    /* detection failed — the fixed options stay usable */
   }
+  const saved = current || "auto";
+  // A saved legacy "cuda:N" (or a card that is not installed right now) must
+  // still render, or the dropdown silently claims "Auto" while the config says
+  // otherwise.
+  if (!Array.from(sel.options).some((o) => o.value === saved)) {
+    const opt = document.createElement("option");
+    opt.value = saved;
+    opt.textContent = saved + " (saved — not detected right now)";
+    sel.appendChild(opt);
+  }
+  sel.value = saved;
 }
 $("gpuDeviceSaveBtn")?.addEventListener("click", async () => {
-  const val = $("gpuDeviceSelect")?.value || "auto";
+  const selEl = $("gpuDeviceSelect");
+  const val = selEl?.value || "auto";
   const cfg = await window.w2gp.configLoad();
   cfg.gpuDevice = val;
   await window.w2gp.configSave(cfg);
+  const label = selEl?.selectedOptions?.[0]?.textContent || val;
   showToast(
     val === "auto"
-      ? "GPU device set to Auto"
-      : "GPU device set to " + val + " (applies on next launch)",
+      ? "GPU device set to Auto — the card with the most VRAM (applies on next launch)"
+      : val === "all"
+        ? "All GPUs will stay visible (applies on next launch)"
+        : "GPU device set to " + label + " (applies on next launch)",
+  );
+  // Auto-Tune sizes profiles from the pinned card's VRAM; tell it to re-scan
+  // instead of leaving a recommendation made for the other GPU.
+  document.dispatchEvent(
+    new CustomEvent("gpu-device-changed", { detail: { value: val } }),
   );
 });
 $("launcherGpuSaveBtn")?.addEventListener("click", async () => {

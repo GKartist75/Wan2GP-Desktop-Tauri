@@ -1502,6 +1502,33 @@ $("autotuneFailsafeChk").addEventListener("change", async () => {
 
 
 
+// ── GPU Device changed → re-scan (no writes) ──
+// Video/image/audio profiles are sized from the pinned card's VRAM. Changing
+// the pin without re-scanning leaves a recommendation made for the other GPU.
+document.addEventListener("gpu-device-changed", async () => {
+  if (!_autotuneHardware) return;
+  const status = $("autotuneStatus");
+  try {
+    const hw = await window.w2gp.autoTuneDetect();
+    _autotuneHardware = hw;
+    const rec = await window.w2gp.autoTuneRecommend(hw, {
+      failsafe: $("autotuneFailsafeChk").checked,
+    });
+    _autotuneRecommendation = rec;
+    memProfileFromRecommendation(rec);
+    renderAutoTuneHardware(hw);
+    if (status) {
+      status.className = "";
+      status.style.background = "var(--bg-tertiary)";
+      status.textContent =
+        "GPU device changed — hardware re-scanned for the pinned card. Review the recommendation, then Apply.";
+    }
+  } catch (e) {
+    if (status) status.textContent =
+      "GPU device changed, but re-scanning failed: " + errText(e);
+  }
+});
+
 // ── Silent settings auto-scan (D1) — runs once at dashboard load ──
 async function silentSettingsRepair() {
   try {

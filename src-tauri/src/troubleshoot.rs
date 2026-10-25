@@ -627,8 +627,26 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
         prec = pick("kernel_precision"),
         comp = pick("compile"),
 );
+    // Which physical card the picker resolves to, and the exact flag WanGP
+    // receives. This is the first thing to check on a multi-GPU OOM report.
+    let gpu_pin_line = {
+        let pick = crate::hw::saved_gpu_pick();
+        let pin = crate::hw::resolve_gpu_pick(&pick, &crate::hw::nv_cards());
+        format!(
+            "\n**GPU pin** saved={pick} -> arg={arg} card={resolved} order={order} launcher CUDA_VISIBLE_DEVICES={visible}{note}",
+            arg = pin.arg.as_deref().unwrap_or("(none: WanGP default)"),
+            resolved = pin
+                .card
+                .as_ref()
+                .map(|c| format!("{} ({} MiB, uuid {})", c.name, c.vram_mb, c.uuid))
+                .unwrap_or_else(|| "none".into()),
+            order = std::env::var("CUDA_DEVICE_ORDER").unwrap_or("(unset)".into()),
+            visible = std::env::var("CUDA_VISIBLE_DEVICES").unwrap_or("(unset)".into()),
+            note = pin.note.map(|n| format!(" ({n})")).unwrap_or_default(),
+        )
+    };
     let md = format!(
-        "**Launcher** v{ver} ({os}/{arch})\n**GPU** {gpu} ({vendor}, {vram} MB VRAM)\n**Python** {py}\n**Torch** {torch} + CUDA {cuda_v} (cuda_available={cuda_ok}){amd}\n**Launch** port={port} server={server} share={share} gpu={gpudev} verbose={verbose} args=`{args}`\n**Profiles** video={vp} image={ip} audio={ap} quant={q}{v17}\n**Log tail**\n```\n{tail}\n```",
+        "**Launcher** v{ver} ({os}/{arch})\n**GPU** {gpu} ({vendor}, {vram} MB VRAM){gpu_pin_line}\n**Python** {py}\n**Torch** {torch} + CUDA {cuda_v} (cuda_available={cuda_ok}){amd}\n**Launch** port={port} server={server} share={share} gpu={gpudev} verbose={verbose} args=`{args}`\n**Profiles** video={vp} image={ip} audio={ap} quant={q}{v17}\n**Log tail**\n```\n{tail}\n```",
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
         gpu = gpu.get("name").and_then(|v| v.as_str()).unwrap_or("?"),

@@ -2,6 +2,41 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [Unreleased]
+
+- **GPU selection actually reaches Wan2GP.** The picker used to pass
+  `--gpu cuda:N` only for an explicit pick, so *Auto* launched with no flag at
+  all — the one path that skips upstream's `torch.set_default_device()`. Auto is
+  now a real decision (the card with the most VRAM), every NVIDIA launch pins
+  `--gpu cuda:<nvidia-smi index>`, and the launcher sets
+  `CUDA_DEVICE_ORDER=PCI_BUS_ID` so that index is not reordered to
+  `FASTEST_FIRST`. Cards are stored by UUID, so a re-slotted or added GPU does
+  not move the selection. *All GPUs visible* is the new no-flag escape hatch,
+  an Extra Launch Args `--gpu` pauses the picker, and a saved card that is gone
+  falls back to Auto with a warning instead of hiding every GPU.
+
+- FIX: GPU selection heuristic updated to prioritize available free VRAM over total VRAM in `best_nv_card`. This resolves `CUDA error: out of memory` on systems with multiple GPUs when using "Let Wan2GP decide" auto selection.
+- **Auto-Tune and the hardware profile follow the pinned card.** On a
+  multi-GPU box the profile tier, VRAM figures, install plan and the topbar's
+  VRAM tile described nvidia-smi's first card (or summed every card) instead of
+  the one generation runs on. All of them now resolve the same pick.
+
+- **Launcher GPU setting is no longer a no-op.** It wrote
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGS`, a variable that does not exist; the
+  documented `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` is set instead (appended,
+  never replacing existing flags), so *Integrated* / *Disabled* can really free
+  VRAM on the card generation uses. `--force_low_power_gpu` is broken on
+  WebView2 v145+, so *Integrated* now uses the reliable `--disable-gpu`
+  (SwiftShader) path. The troubleshoot bundle gained a **GPU pin** line and an
+  OOM remedy that pins generation to one card.
+
+- **AMD HIP pin no longer skips iGPU + dGPU boxes.** `wmi_all_gpus` counted
+  APUs as discrete cards, so a Radeon iGPU + dGPU reported two discrete
+  adapters and the pin was skipped. APUs are now detected by name/model number
+  and excluded from the count; the discrete card is pinned at its HIP index
+  (APUs enumerate first). A startup diagnostic line reports per-device VRAM,
+  the resolved UUID, and the live `CUDA_VISIBLE_DEVICES` / `CUDA_DEVICE_ORDER`.
+
 ## [0.10.22] — 2026-10-23
 
 - **Prerequisites panel on the installer screen.** Git, uv, Python and Conda

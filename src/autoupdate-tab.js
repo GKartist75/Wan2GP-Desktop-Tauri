@@ -260,6 +260,19 @@ function renderAutoTuneHardware(hw) {
   if (hw.supports_flash) brow.append(badge("#3A2D4E", "#C58AF8", "Flash"));
   if (hw.supports_sage) brow.append(badge("#2D3A3E", "#8AF8C5", "Sage"));
   if (hw.supports_triton) brow.append(badge("#4A3D2E", "#F8C58A", "Triton"));
+  // Multi-GPU: say which card these numbers came from. Profiles are sized
+  // from the pinned card, and users need to know the picker decides it.
+  if ((hw.gpu_count || 0) > 1) {
+    const note = document.createElement("p");
+    note.className = "token-hint";
+    note.style.margin = "6px 0 0";
+    note.textContent =
+      "Multi-GPU: these figures are for " +
+      hw.gpu_name +
+      ", the card generation is pinned to (GPU Device in Settings).";
+    el.append(wrap, brow, note);
+    return;
+  }
   el.append(wrap, brow);
 }
 
