@@ -328,8 +328,8 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **Headless batch** — queue `.zip`/settings `.json` path + optional output dir + dry-run → runs `wgp.py --process` with console streaming; exit 0 = done, 1 = error.
 - **Extra Launch Args** — appended to `wgp.py` verbatim.
 - **Server Port** — default 7861 (side-by-side with the retired Electron launcher's 7860).
-- **GPU Device** — `auto` or a pinned `cuda:N` for generation.
-- **Launcher GPU** — which GPU the launcher UI itself prefers.
+- **GPU Device** — which card runs generation. *Auto* picks the card with the most VRAM; *All GPUs visible* passes no flag (advanced multi-GPU); a detected card pins its UUID. At launch the pick becomes `--gpu cuda:N` (nvidia-smi index, with `CUDA_DEVICE_ORDER=PCI_BUS_ID`), the same switch as choosing a device inside Wan2GP. Auto-Tune and the hardware profile are sized from that card.
+- **Launcher GPU** — which GPU the launcher UI itself prefers. Integrated and Disabled now both use `--disable-gpu` (SwiftShader), since `--force_low_power_gpu` is broken on WebView2 v145+; Dedicated keeps `--force_high_performance_gpu`. Requires restart.
 - **SageAttention wheel** — which Sage build to use: *Safe* prefers the launcher's
   known-good build; *Upstream* installs `setup_config.json` exactly as published.
   They resolve to the same `post6` wheel today, so the choice only starts to

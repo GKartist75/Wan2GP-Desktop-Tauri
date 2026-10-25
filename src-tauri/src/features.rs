@@ -511,6 +511,10 @@ pub async fn auto_tune_detect() -> Result<serde_json::Value, String> {
 pub fn auto_tune_detect_blocking() -> serde_json::Value {
     // real hardware detect (auto-tune.js detect() lived here before the Rust port), sync via nvidia-smi
     let gpu = get_gpu_info_sync();
+    // Size the profile from the card generation will actually use: on a
+    // multi-GPU box the launcher pins one card (see launch.rs), and a profile
+    // chosen for the other card's VRAM is how a 16 GB answer OOMs an 8 GB run.
+    let nv_cards = crate::hw::nv_cards();
     let vendor = gpu
         .get("vendor")
         .and_then(|v| v.as_str())
@@ -591,6 +595,10 @@ pub fn auto_tune_detect_blocking() -> serde_json::Value {
         "vram_tier": vram_tier,
         "ram_tier": ram_tier,
         "vendor": vendor,
+        "gpu_count": nv_cards.len() as i64,
+        "gpu_uuid": gpu.get("uuid").cloned().unwrap_or(serde_json::Value::Null),
+        "gpu_pick": gpu.get("pick").cloned().unwrap_or(serde_json::Value::Null),
+        "gpu_pin_note": gpu.get("pinNote").cloned().unwrap_or(serde_json::Value::Null),
         "driver": gpu.get("driverVersion").cloned().unwrap_or(serde_json::Value::Null)
     })
 }

@@ -2,8 +2,8 @@
 use crate::base::*;
 use crate::{
     hw::{
-        get_gpu_info_sync, kernel_profile_key, probe_command, version_gt, wmi_all_gpus,
-        wmi_gpu_fallback, wmi_virtual_adapters,
+        get_gpu_info_sync, kernel_profile_key, nv_cards, resolve_gpu_pick, version_gt,
+        wmi_all_gpus, wmi_gpu_fallback, wmi_virtual_adapters, GpuPin,
     },
     status::{get_active_env, resolve_env_python},
 };
@@ -233,16 +233,29 @@ pub(crate) fn parse_rocm_sdk_root(out: &str) -> Option<PathBuf> {
         .filter(|p| p.is_dir())
 }
 /// Virtual-GPU HIP pin decision (issue #15 follow-up): exactly one
-/// discrete AMD GPU PLUS ignored virtual display adapter(s) (e.g. a Meta
-/// Virtual Monitor next to one discrete card) → pin HIP to device 0.
-/// Multi-AMD boxes (the right index would be a guess) and
-/// no-virtual-adapter boxes → None (do nothing). Pure + unit-tested.
-pub(crate) fn hip_pin_value(discrete_amd: usize, virtual_adapters: usize) -> Option<&'static str> {
-    if discrete_amd == 1 && virtual_adapters > 0 {
-        Some("0")
-    } else {
-        None
+/// discrete AMD GPU next to an iGPU (APU) or ignored virtual display
+/// adapter(s) → pin HIP to the discrete card's index so HIP can't land on
+/// the iGPU/virtual shim. APUs enumerate first in HIP order, so the
+/// discrete card sits at index = apu count. Multi-discrete boxes (the right
+/// index would be a guess) and single-card boxes (unambiguous) do nothing.
+/// Pure + unit-tested.
+pub(crate) fn hip_pin_value(
+    discrete_amd: usize,
+    apus: usize,
+    virtual_adapters: usize,
+) -> Option<String> {
+    if discrete_amd != 1 {
+        return None;
     }
+    if apus > 0 {
+        // Discrete card sits after the APU(s) in HIP order.
+        return Some(apus.to_string());
+    }
+    if virtual_adapters > 0 {
+        // Virtual shims are not HIP devices, so the discrete card is 0.
+        return Some("0".to_string());
+    }
+    None
 }
 /// MIOpen mode for AMD launch from the Manage-backed `amdEnv` config key
 /// (`amdEnv.miopenDisabled`, default false — bound in Manage → AMD ROCm).
@@ -494,7 +507,38 @@ pub async fn launch(
         .and_then(|v| v.as_str())
         .unwrap_or("auto")
         .to_string();
-    // build args — gpuDevice -> --gpu (mirrors Electron buildCommonLaunchArgs)
+    // ── GPU pin ──────────────────────────────────────────────────────────
+    // A saved pick becomes `--gpu cuda:<nvidia-smi index>` — the same switch a
+    // manual device choice inside WanGP produces. With the flag set, upstream
+    // points CUDA_VISIBLE_DEVICES at that card AND calls
+    // torch.set_default_device(), which is the path the launcher was missing;
+    // without it WanGP lets torch decide, and on a multi-GPU box its device-0
+    // code paths and its device_count() loops can disagree (a bare CUDA OOM
+    // while VRAM reads free). "auto" is a real decision (the biggest card),
+    // not "let WanGP decide".
+    let nv_cards_now = nv_cards();
+    let extra_gpu_arg = cfg
+        .get("launchArgs")
+        .and_then(|v| v.as_str())
+        .map(|raw| {
+            split_launch_args(raw)
+                .iter()
+                .any(|a| a == "--gpu" || a.starts_with("--gpu="))
+        })
+        .unwrap_or(false);
+    let pin: GpuPin = if extra_gpu_arg {
+        GpuPin {
+            arg: None,
+            card: None,
+            note: Some(
+                "Extra Launch Args contains --gpu — that flag wins and the GPU Device picker is paused for this launch"
+                    .to_string(),
+            ),
+        }
+    } else {
+        resolve_gpu_pick(&gpu_device, &nv_cards_now)
+    };
+    // build args — gpuDevice -> explicit pin (mirrors Electron buildCommonLaunchArgs)
     let server_name = cfg
         .get("serverName")
         .and_then(|v| v.as_str())
@@ -520,7 +564,17 @@ pub async fn launch(
     if share {
         args.push("--share".into());
     }
-    if gpu_device != "auto"
+    // Pin exactly like a manual device pick: `--gpu cuda:<nvidia-smi index>`.
+    if let Some(arg) = pin.arg.as_deref() {
+        if !args.iter().any(|a| a == "--gpu") {
+            args.push("--gpu".into());
+            args.push(arg.to_string());
+        }
+    }
+    // No nvidia-smi: fall back to a saved legacy ordinal, if any.
+    if !extra_gpu_arg
+        && nv_cards_now.is_empty()
+        && gpu_device != "auto"
         && gpu_device.starts_with("cuda:")
         && !args.contains(&"--gpu".to_string())
     {
@@ -559,37 +613,73 @@ pub async fn launch(
         let _ = app.emit("launch-log", msg.to_string());
     };
     emit(&format!("[*] Launching Wan2GP ({mode}) on :{port}…\n"));
+    // Prepare the child env. `--gpu` is upstream's own switch: it writes
+    // CUDA_VISIBLE_DEVICES itself (shared/default_device.py) and, because the
+    // flag is non-empty, wgp.py calls torch.set_default_device() after model
+    // load. A CUDA_VISIBLE_DEVICES inherited from the launcher's own env would
+    // renumber the ordinals under that flag, so clear it and let the flag own
+    // the choice.
+    {
+        if std::env::var("CUDA_VISIBLE_DEVICES").is_ok() {
+            std::env::remove_var("CUDA_VISIBLE_DEVICES");
+            emit("[i] Cleared an inherited CUDA_VISIBLE_DEVICES so --gpu ordinals match nvidia-smi\n");
+        }
+        if !nv_cards_now.is_empty() {
+            // Without this, CUDA orders devices FASTEST_FIRST and cuda:N is not
+            // the card nvidia-smi (and the picker) calls N.
+            std::env::set_var("CUDA_DEVICE_ORDER", "PCI_BUS_ID");
+        }
+        if let Some(note) = pin.note.as_deref() {
+            emit(&format!("[!] GPU: {note}\n"));
+        }
+        // Diagnostics: one line that turns the next OOM report into a
+        // five-second answer and proves the pin actually took effect.
+        let dev_list = if nv_cards_now.is_empty() {
+            "(no nvidia-smi)".to_string()
+        } else {
+            nv_cards_now
+                .iter()
+                .map(|c| {
+                    format!(
+                        "#{} {} ({} MiB total, {} free)",
+                        c.index, c.name, c.vram_mb, c.free_mb
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" | ")
+        };
+        emit(&format!(
+            "[i] GPU diagnostics — CUDA_VISIBLE_DEVICES={} CUDA_DEVICE_ORDER={} resolved_uuid={}{} | devices: {}\n",
+            std::env::var("CUDA_VISIBLE_DEVICES").unwrap_or("(unset)".into()),
+            std::env::var("CUDA_DEVICE_ORDER").unwrap_or("(unset)".into()),
+            pin.card.as_ref().map(|c| c.uuid.as_str()).unwrap_or("(none)"),
+            pin.arg.as_deref().map(|a| format!(" arg={a}")).unwrap_or_default(),
+            dev_list,
+        ));
+    }
     // GPU assignment log (mirrors Electron 9945990)
     {
         let hw = get_gpu_info_sync();
         let hw_name = hw.get("name").and_then(|v| v.as_str()).unwrap_or("?");
         let hw_vendor = hw.get("vendor").and_then(|v| v.as_str()).unwrap_or("?");
         let hw_vram = hw.get("vramMB").and_then(|v| v.as_str()).unwrap_or("0");
-        let gpu_count = probe_command("NVIDIA_SMI", "nvidia-smi")
-            .args(["--query-gpu=index", "--format=csv,noheader"])
-            .output()
-            .ok()
-            .and_then(|o| {
-                o.status
-                    .success()
-                    .then(|| {
-                        String::from_utf8_lossy(&o.stdout)
-                            .lines()
-                            .filter(|l| !l.trim().is_empty())
-                            .count()
-                    })
-                    .filter(|&c| c > 0)
-            })
-            .map(|c| format!("{c} NVIDIA"))
+        let gpu_count = if nv_cards_now.is_empty() {
             // AMD/Intel-only box: nvidia-smi absent — WMI name instead of "?".
-            .or_else(|| wmi_gpu_fallback().map(|(_, v, _, _)| format!("1 {v}")))
-            .unwrap_or("?".into());
-        let gen_label = if gpu_device == "auto" {
-            format!("auto ({hw_name} )")
+            wmi_gpu_fallback()
+                .map(|(_, v, _, _)| format!("1 {v}"))
+                .unwrap_or("?".into())
         } else {
-            gpu_device.clone()
+            format!("{} NVIDIA", nv_cards_now.len())
         };
-        emit(&format!("[*] GPU assignment — Launcher UI: {launcher_gpu} | Generation: {gen_label} | HW: {hw_name} ({hw_vendor}, {hw_vram}) | Detected: {gpu_count}\n"));
+        let gen_label = match pin.arg.as_deref() {
+            Some(arg) => match pin.card.as_ref() {
+                Some(c) => format!("{arg} ({})", c.name),
+                None => arg.to_string(),
+            },
+            None if extra_gpu_arg => "--gpu from Extra Launch Args".to_string(),
+            None => "WanGP default (all GPUs visible)".to_string(),
+        };
+        emit(&format!("[*] GPU assignment — Launcher UI: {launcher_gpu} | Generation: {gen_label} (saved: {gpu_device}) | HW: {hw_name} ({hw_vendor}, {hw_vram}) | Detected: {gpu_count}\n"));
     }
     emit(&format!("[*] Args: {}\n", args.join(" ")));
     // HF_TOKEN / config env (mirrors Electron launchCfg)
@@ -972,15 +1062,26 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             // virtual shim. Multi-AMD boxes (the index would be a guess)
             // and no-virtual-adapter boxes do nothing.
             {
-                let discrete = wmi_all_gpus()
-                    .iter()
+                let amd_adapters: Vec<_> = wmi_all_gpus()
+                    .into_iter()
                     .filter(|(_, v, _, _)| v == "AMD")
+                    .collect();
+                let discrete = amd_adapters
+                    .iter()
+                    .filter(|(name, _, _, _)| !crate::hw::is_amd_apu(name))
+                    .count();
+                let apus = amd_adapters
+                    .iter()
+                    .filter(|(name, _, _, _)| crate::hw::is_amd_apu(name))
                     .count();
                 let virtuals = wmi_virtual_adapters().len();
-                if let Some(v) = hip_pin_value(discrete, virtuals) {
+                if let Some(v) = hip_pin_value(discrete, apus, virtuals) {
                     if std::env::var("HIP_VISIBLE_DEVICES").is_err() {
-                        std::env::set_var("HIP_VISIBLE_DEVICES", v);
-                        emit("[i] GPU profile env: HIP_VISIBLE_DEVICES=0 (one AMD GPU + virtual display adapter — pinning HIP to the discrete card)\n");
+                        std::env::set_var("HIP_VISIBLE_DEVICES", &v);
+                        emit(&format!(
+                            "[i] GPU profile env: HIP_VISIBLE_DEVICES={v} (one discrete AMD GPU + {} APU / {} virtual adapter(s) — pinning HIP to the discrete card)\n",
+                            apus, virtuals
+                        ));
                     }
                 }
             }
@@ -2668,15 +2769,18 @@ cmd,
     }
     #[test]
     fn hip_pin_strict_conditions_only() {
-        // Reporter shape: one discrete AMD card + virtual monitor → pin.
-        assert_eq!(hip_pin_value(1, 1), Some("0"));
-        assert_eq!(hip_pin_value(1, 3), Some("0"));
-        // Multi-AMD (the right index would be a guess), no AMD card, and
-        // no-virtual-adapter boxes → do nothing.
-        assert_eq!(hip_pin_value(2, 1), None);
-        assert_eq!(hip_pin_value(0, 1), None);
-        assert_eq!(hip_pin_value(1, 0), None);
-        assert_eq!(hip_pin_value(0, 0), None);
+        // Reporter shape: one discrete AMD card + virtual monitor → pin to 0.
+        assert_eq!(hip_pin_value(1, 0, 1), Some("0".to_string()));
+        assert_eq!(hip_pin_value(1, 0, 3), Some("0".to_string()));
+        // iGPU (APU) + discrete: discrete sits after the APU in HIP order.
+        assert_eq!(hip_pin_value(1, 1, 0), Some("1".to_string()));
+        assert_eq!(hip_pin_value(1, 2, 0), Some("2".to_string()));
+        // Multi-discrete (guess), no discrete, single card (unambiguous) →
+        // do nothing.
+        assert_eq!(hip_pin_value(2, 1, 0), None);
+        assert_eq!(hip_pin_value(0, 1, 0), None);
+        assert_eq!(hip_pin_value(1, 0, 0), None);
+        assert_eq!(hip_pin_value(0, 0, 0), None);
     }
     #[test]
     fn miopen_disabled_unsets() {

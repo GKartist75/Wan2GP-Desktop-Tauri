@@ -56,19 +56,31 @@ pub fn run() {
                         })
                         .trim()
                         .to_string();
-                    match lg.as_str() {
-                        "disabled" => {
-                            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGS", "--disable-gpu")
+                    // Documented WebView2 variable (the previous
+                    // ..._BROWSER_ARGS spelling does not exist, so this whole
+                    // setting silently did nothing). Append, never replace:
+                    // the runtime may already carry flags.
+                    // --force_low_power_gpu is historically broken on WebView2
+                    // runtimes above v145, so "Integrated" can no longer move the
+                    // launcher UI onto the iGPU; --disable-gpu (SwiftShader) is
+                    // the only reliable way to keep the UI off the dedicated
+                    // card and free that VRAM for generation.
+                    let flag = match lg.as_str() {
+                        "disabled" | "integrated" => Some("--disable-gpu"),
+                        "dedicated" => Some("--force_high_performance_gpu"),
+                        _ => None,
+                    };
+                    if let Some(flag) = flag {
+                        const KEY: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
+                        let existing = std::env::var(KEY).unwrap_or_default();
+                        if !existing.split_whitespace().any(|a| a == flag) {
+                            let merged = if existing.trim().is_empty() {
+                                flag.to_string()
+                            } else {
+                                format!("{} {flag}", existing.trim())
+                            };
+                            std::env::set_var(KEY, merged);
                         }
-                        "integrated" => std::env::set_var(
-                            "WEBVIEW2_ADDITIONAL_BROWSER_ARGS",
-                            "--force_low_power_gpu",
-                        ),
-                        "dedicated" => std::env::set_var(
-                            "WEBVIEW2_ADDITIONAL_BROWSER_ARGS",
-                            "--force_high_performance_gpu",
-                        ),
-                        _ => {}
                     }
                     eprintln!(
                         "[launcher] GPU preference: {} — {}",
