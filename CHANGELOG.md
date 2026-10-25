@@ -2,6 +2,15 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.10.24] — 2026-10-25
+
+- **Shared Image and 3D output folders.** The launcher now manages `image_save_path` and `mesh_save_path` separately (Manage → General), alongside the existing Output folder, so WanGP's four output keys (`save_path`, `image_save_path`, `audio_save_path`, `mesh_save_path`) can each point where you want.
+- **Q4 KV cache setting.** New "Deepy KV Cache Quantization" dropdown (Auto / INT8 / Q4) in the Deepy tab, written as `deepy_kv_cache_quantization`. Auto-Tune recommends Q4 on tight VRAM (saves ~24% vs INT8).
+- **Civitai API keys.** New settings for Civitai (civitai.com) and Civitai.red API keys, passed as `CIVITAI_API_KEY` / `CIVITAI_RED_API_KEY` env vars.
+- **Open Deepy in browser.** One-click button next to Start Deepy Web that starts Deepy (if needed) and opens its URL in the system browser.
+- **Wheel pins bumped** to WGPKernels 1.4.2 and GGUF kernels 1.0.29 (SHA-256 verified).
+- **Deepy crash workaround note:** "PTQ1 decode inputs must share a CUDA device" is a WanGP-side GGUF kernel issue; try disabling CUDA graphs or using INT8 KV cache.
+
 ## [Unreleased]
 
 - **GPU selection actually reaches Wan2GP.** The picker used to pass

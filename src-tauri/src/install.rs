@@ -4225,8 +4225,8 @@ pub async fn restore_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,
     sync_kernels_inner(app, true).await
 }
 
-/// Experimental AMD HIP GGUF wheel (upstream gguf-v1.0.28, llama.cpp/HIP.md):
-/// `llamacpp_gguf_cuda-1.0.28+torch213rocm100py312` for RDNA4
+/// Experimental AMD HIP GGUF wheel (upstream gguf-v1.0.29, llama.cpp/HIP.md):
+/// `llamacpp_gguf_cuda-1.0.29+torch213rocm100py312` for RDNA4
 /// (gfx1200/gfx1201). Same package name as the CUDA wheel, so --force-reinstall
 /// swaps it; --no-deps preserves the installed torch. It installs into the
 /// ACTIVE AMD env — the launcher's own torch 2.13.0+rocm10.0.0 / py3.12 stack,
@@ -4236,7 +4236,7 @@ pub async fn restore_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,
 /// AMD-gated; non-RDNA4 AMD allowed with a warning (upstream targets
 /// gfx1200/gfx1201, validation pending). URL lives in hw.rs alongside the CUDA
 /// wheels (single source of truth).
-use crate::hw::GGUF_1028_WIN_PY312_HIP as HIP_GGUF_WHEEL_URL;
+use crate::hw::GGUF_1029_WIN_PY312_HIP as HIP_GGUF_WHEEL_URL;
 
 #[tauri::command]
 pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
@@ -4262,7 +4262,7 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
     if !["AMD_GFX1200", "AMD_GFX1201"].contains(&profile.as_str()) {
         emit_log(&format!("[!] {profile} is not the upstream RDNA4 target (gfx1200/gfx1201) — installing anyway, validation pending.\n"));
     }
-    emit_log("[*] Installing experimental HIP GGUF wheel 1.0.28+torch213rocm100py312 (uses this env's torch 2.13.0+rocm10.0.0; RDNA4 only; validation pending)…\n");
+    emit_log("[*] Installing experimental HIP GGUF wheel 1.0.29+torch213rocm100py312 (uses this env's torch 2.13.0+rocm10.0.0; RDNA4 only; validation pending)…\n");
     let repo = get_repo_dir();
     let env = get_active_env();
     let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
@@ -5017,7 +5017,7 @@ async fn sync_kernels_inner(
                         .and_then(|u| u.as_str())
                         .unwrap_or("")
                         .to_string()
-                // GGUF build split (upstream 5533384 + the 1.0.28 ROCm wheel):
+                // GGUF build split (upstream 5533384 + the 1.0.29 ROCm wheel):
                 // profiles list `gguf` (cu130/py311), but py310 envs need
                 // `gguf_cu128` and RDNA4 AMD envs need `gguf_rocm10`. Mirror
                 // setup.py's (torch_k, py_k) table off the LIVE env — it is the
@@ -6971,7 +6971,7 @@ mod override_wheels_tests {
             true,
         );
         let gguf = w.gguf.expect("stale gguf must swap");
-        assert!(gguf.contains("1.0.28"), "got {gguf}");
+        assert!(gguf.contains("1.0.29"), "got {gguf}");
         let sage = w.sage.expect("post4 must swap when safe");
         assert!(sage.contains("post6"), "got {sage}");
     }
@@ -7010,7 +7010,7 @@ mod override_wheels_tests {
     fn quiet_when_already_current_or_opted_out() {
         // Current GGUF + safe sage → nothing to do.
         let cur = cfg_with(
-            &GGUF_1014.replace("1.0.14", "1.0.28"),
+            &GGUF_1014.replace("1.0.14", "1.0.29"),
             "v220_cu13",
             super::SAGE_SAFE_WIN_URL,
         );
@@ -7023,7 +7023,7 @@ mod override_wheels_tests {
             super::SAGE_SAFE_WIN_URL,
         );
         let w27 = post_install_override_urls(&old27, "RTX_30", true);
-        assert!(w27.gguf.is_some(), "1.0.27 must swap to 1.0.28");
+        assert!(w27.gguf.is_some(), "1.0.27 must swap to 1.0.29");
         // User chose upstream sage → sage untouched, gguf still swaps.
         let w = post_install_override_urls(
             &cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4),
@@ -7060,7 +7060,7 @@ mod override_wheels_tests {
         let w = post_install_override_urls(&cfg, "RTX_30", true);
         let gguf = w.gguf.expect("stale gguf_cu128 must swap");
         assert!(
-            gguf.contains("1.0.28") && gguf.contains("torch271cu128py310"),
+            gguf.contains("1.0.29") && gguf.contains("torch271cu128py310"),
             "got {gguf}"
         );
     }

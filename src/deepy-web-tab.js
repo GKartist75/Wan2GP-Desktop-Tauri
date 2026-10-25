@@ -992,3 +992,27 @@ $("deepyWebTailnetCopy")?.addEventListener("click", () =>
   deepyWebCopy("tailnet"),
 );
 $("deepyWebTailnetQr")?.addEventListener("click", () => deepyWebQr("tailnet"));
+
+
+// "Open Deepy in browser" button: start Deepy Web if needed, then open
+// the Same-PC URL in the system browser.
+$("openDeepyBrowserBtn")?.addEventListener("click", async () => {
+  try {
+    if (!_deepyWeb || !_deepyWeb.running) {
+      await deepyWebStartFlow();
+    }
+    let url = null;
+    for (let i = 0; i < 20 && !url; i++) {
+      const s = await window.w2gp.deepyWebStatus(deepyWebPortArg()).catch(() => null);
+      url = s?.urls?.samePc || s?.urls?.external || null;
+      if (!url) await new Promise((r) => setTimeout(r, 250));
+    }
+    if (url) {
+      await window.w2gp.openExternal(url);
+    } else {
+      showToast("Deepy not ready yet — try again");
+    }
+  } catch (e) {
+    showToast("✗ " + errText(e));
+  }
+});

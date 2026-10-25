@@ -146,6 +146,9 @@ C:\Wan2GP-Models\               ← models library
   <tr>
     <td colspan="2"><a href="screenshots/launcher-overview.png"><img src="screenshots/launcher-overview.png" alt="Launcher overview" height="320"></a><br><sub>Launcher — main view</sub></td>
   </tr>
+  <tr>
+    <td colspan="2"><a href="screenshots/deepy-browser-open.png"><img src="screenshots/deepy-browser-open.png" alt="Open Deepy in browser" height="320"></a><br><sub>Deepy — Open in browser button next to Start Deepy Web</sub></td>
+  </tr>
 </table>
 
 ---
@@ -306,7 +309,7 @@ Two more cards on the same screen: **Prompt enhancement** (Enhance Prompt button
 One panel, three paths — **A** is everyday use, **B** and **C** are optional.
 
 - **A · Gradio server** — flip the LAN (`--listen`) toggle and Gradio `/` plus the phone-friendly `/deepy/` are reachable from any device on your Wi-Fi: same conversation, galleries, progress and queue. This-PC and Phone URLs with Open / Copy / QR.
-- **B · Deepy Web standalone** — a second process on its own port with its own conversation. Finish → stop → resume via saved sessions (it never live-syncs with A). Auth, LAN HTTPS, Tailscale, reverse-proxy origin and extra args all live here.
+- **B · Deepy Web standalone** — a second process on its own port with its own conversation. Finish → stop → resume via saved sessions (it never live-syncs with A). Auth, LAN HTTPS, Tailscale, reverse-proxy origin and extra args all live here. A one-click **Open Deepy in browser** button next to **Start Deepy Web** launches the process (if needed) and opens its URL in your system browser.
 - **C · Console logs** — a read-only tail of the same console as a web page on its own port, so you can watch errors from a phone without stopping the run. Trusted home Wi-Fi / Tailscale only — never port-forward it (no auth).
 
 Flipping LAN while running offers a restart in place. Topbar keeps a Deepy Web LED next to the Wan2GP LED. All actions log `[Deepy]` lines to the Console.

@@ -59,6 +59,24 @@
           <p class="token-hint">Optional — needed for gated models. Saved to <code>desktop-config.json</code> and passed as <code>HF_TOKEN</code> to Wan2GP on launch.</p>
         </div>
         <div class="settings-section">
+          <h3>Civitai API Key (civitai.com)</h3>
+          <div class="token-field">
+            <input type="password" id="civitaiApiKeyInput" class="input" placeholder="...">
+            <button class="btn btn-primary small" id="civitaiApiKeySaveBtn" title="Save Civitai API key">Save</button>
+            <button class="btn btn-ghost small" id="civitaiApiKeyClearBtn" title="Remove saved Civitai API key">Clear</button>
+          </div>
+          <p class="token-hint">Optional — for Deepy Prime LoRA downloads from civitai.com. Saved to <code>desktop-config.json</code> and passed as <code>CIVITAI_API_KEY</code>.</p>
+        </div>
+        <div class="settings-section">
+          <h3>Civitai API Key (civitai.red)</h3>
+          <div class="token-field">
+            <input type="password" id="civitaiRedApiKeyInput" class="input" placeholder="...">
+            <button class="btn btn-primary small" id="civitaiRedApiKeySaveBtn" title="Save Civitai.red API key">Save</button>
+            <button class="btn btn-ghost small" id="civitaiRedApiKeyClearBtn" title="Remove saved Civitai.red API key">Clear</button>
+          </div>
+          <p class="token-hint">Optional — for Deepy Prime LoRA downloads from civitai.red. Saved to <code>desktop-config.json</code> and passed as <code>CIVITAI_RED_API_KEY</code>.</p>
+        </div>
+        <div class="settings-section">
           <h3>Claude / Anthropic API Key</h3>
           <div class="token-field">
             <input type="password" id="claudeApiKeyInput" class="input" placeholder="sk-ant-...">
@@ -1216,6 +1234,8 @@
             <div class="spec-row spec-row-path"><span class="spec-label">Checkpoints</span><span class="spec-value path-val" id="dashCkptPath">—</span><button class="path-btn" id="openCkptBtn" title="Open folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></svg></button><button class="path-btn" id="dashBrowseCkpt" title="Change checkpoints folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button></div>
             <div class="spec-row spec-row-path"><span class="spec-label">LoRAs</span><span class="spec-value path-val" id="dashLoraPath">—</span><button class="path-btn" id="openLoraBtn" title="Open folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></svg></button><button class="path-btn" id="dashBrowseLora" title="Change LoRAs folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button></div>
             <div class="spec-row spec-row-path"><span class="spec-label">Output</span><span class="spec-value path-val" id="dashOutputPath">—</span><button class="path-btn" id="openOutputBtn" title="Open folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></svg></button><button class="path-btn" id="dashBrowseOutput" title="Change output folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button></div>
+            <div class="spec-row spec-row-path"><span class="spec-label">Image output</span><span class="spec-value path-val" id="dashImagePath">—</span><button class="path-btn" id="openImageBtn" title="Open folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></svg></button><button class="path-btn" id="dashBrowseImage" title="Change shared image output folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button></div>
+            <div class="spec-row spec-row-path"><span class="spec-label">3D output</span><span class="spec-value path-val" id="dashMeshPath">—</span><button class="path-btn" id="openMeshBtn" title="Open folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></svg></button><button class="path-btn" id="dashBrowseMesh" title="Change shared 3D output folder"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button></div>
             <p class="path-hint">↻ After changing a folder above, <strong>stop and restart Wan2GP</strong> (and the launcher) — the new path is written to <code>wgp_config.json</code> immediately, but Wan2GP only reads it at startup, so the change won't take effect until the next launch.</p>
           </div>
         </div>
@@ -1344,6 +1364,16 @@
               <select id="deepyQuantSelect" class="input" style="margin-top:4px;min-width:260px"></select>
               <p class="path-hint" id="deepyQuantHint" style="margin-top:6px"></p>
             </div>
+          </div>
+          <!-- Deepy KV Cache Quantization -->
+          <div id="deepyKvCacheWrap" style="margin-top:10px">
+            <div class="deepy-sub-label">Deepy KV Cache Quantization</div>
+            <select id="deepyKvCacheSelect" class="input" style="margin-top:4px;min-width:260px">
+              <option value="auto">Auto (default)</option>
+              <option value="int8">INT8</option>
+              <option value="q4">Q4 (needs GGUF kernels 1.0.29+)</option>
+            </select>
+            <p class="path-hint" style="margin-top:6px">Quantized KV cache for Deepy. Auto lets WanGP decide. Written as <code>deepy_kv_cache_quantization</code>.</p>
           </div>
           <div id="deepyPrimeOnly" style="display:none">
             <div class="deepy-cost-note">
@@ -1607,6 +1637,7 @@
               <div class="deepy-sub-label" style="margin-top:12px">4 · Start</div>
 <div class="deepy-actions" style="margin-top:6px">
                 <button class="btn btn-primary" id="deepyWebStartBtn" data-keep-visible>Start Deepy Web</button>
+                <button class="btn btn-primary small" id="openDeepyBrowserBtn" title="Open Deepy in your system browser" data-keep-visible>Open in browser</button>
                 <button class="btn btn-ghost" id="deepyWebStopBtn" data-keep-visible>Stop</button>
                 <button class="btn btn-ghost" id="deepyWebOutputsBtn" title="Open the shared Wan2GP outputs folder in Explorer">Outputs folder</button>
               </div>

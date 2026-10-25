@@ -128,6 +128,12 @@ pub fn get_model_paths() -> serde_json::Value {
                 } else if let Some(o) = v.get("save_path") {
                     out.insert("output".into(), o.clone());
                 }
+                if let Some(o) = v.get("image_save_path") {
+                    out.insert("imageOutput".into(), o.clone());
+                }
+                if let Some(o) = v.get("mesh_save_path") {
+                    out.insert("meshOutput".into(), o.clone());
+                }
                 if !out.is_empty() {
                     return serde_json::Value::Object(out);
                 }
@@ -160,6 +166,26 @@ pub fn get_model_paths() -> serde_json::Value {
         .filter(|s| !s.is_empty())
     {
         out.insert("output".into(), serde_json::Value::String(p.to_string()));
+    }
+    if let Some(p) = dc
+        .get("modelImageOutputPath")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        out.insert(
+            "imageOutput".into(),
+            serde_json::Value::String(p.to_string()),
+        );
+    }
+    if let Some(p) = dc
+        .get("modelMeshOutputPath")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        out.insert(
+            "meshOutput".into(),
+            serde_json::Value::String(p.to_string()),
+        );
     }
     if !out.is_empty() {
         return serde_json::Value::Object(out);

@@ -456,6 +456,20 @@ async function refreshDeepy() {
     btn.textContent = "Apply";
     // No pending changes left — park both buttons until the next edit.
     for (const b of [applyBtn, promptApplyBtn]) if (b) b.disabled = true;
+
+// Deepy KV Cache Quantization — written directly to wgp_config.json.
+const kvSel = $("deepyKvCacheSelect");
+if (kvSel) {
+  kvSel.addEventListener("change", async (e) => {
+    const v = e.target.value || "auto";
+    try {
+      await window.w2gp.writeWgpConfig({ deepy_kv_cache_quantization: v });
+      showToast("✓ Deepy KV cache quantization: " + v);
+    } catch (err) {
+      showToast("✗ " + (err?.message || err));
+    }
+  });
+}
     if (r && r.ok) {
       const s = document.createElement("span");
       s.style.color = "#4ADE80";

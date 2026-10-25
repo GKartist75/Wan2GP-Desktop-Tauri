@@ -54,6 +54,26 @@ $("hfTokenClearBtn")?.addEventListener("click", async () => {
   if ($("hfTokenInput")) $("hfTokenInput").value = "";
   showToast("HuggingFace token cleared");
 });
+
+function makeTokenHandlers(inputId, saveBtnId, clearBtnId, cfgKey, label) {
+  $(saveBtnId)?.addEventListener("click", async () => {
+    const token = $(inputId)?.value;
+    if (!token) return;
+    const cfg = await window.w2gp.configLoad();
+    cfg[cfgKey] = token;
+    await window.w2gp.configSave(cfg);
+    showToast(label + " saved");
+  });
+  $(clearBtnId)?.addEventListener("click", async () => {
+    const cfg = await window.w2gp.configLoad();
+    cfg[cfgKey] = null;
+    await window.w2gp.configSave(cfg);
+    if ($(inputId)) $(inputId).value = "";
+    showToast(label + " cleared");
+  });
+}
+makeTokenHandlers("civitaiApiKeyInput", "civitaiApiKeySaveBtn", "civitaiApiKeyClearBtn", "civitaiApiKey", "Civitai API key");
+makeTokenHandlers("civitaiRedApiKeyInput", "civitaiRedApiKeySaveBtn", "civitaiRedApiKeyClearBtn", "civitaiRedApiKey", "Civitai.red API key");
 $("claudeApiKeySaveBtn")?.addEventListener("click", async () => {
   const token = $("claudeApiKeyInput")?.value;
   if (!token) return;

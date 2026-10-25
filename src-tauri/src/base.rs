@@ -589,7 +589,7 @@ pub(crate) fn load_config_value() -> serde_json::Value {
         "themeAccent": "mono", "uiScale": 100, "termScale": 100,
         "serverPort": 7861, "serverName": "localhost", "defaultBrowser": "system", // ponytail: 7861 for side-by-side with Electron 7860
 
-        "termDockDefault": "bottom", "electronGpu": true, "launcherGpu": "auto", "gpuDevice": "auto", "sageSafe": true, "share": false,
+        "termDockDefault": "bottom", "electronGpu": true, "launcherGpu": "auto", "gpuDevice": "auto", "sageSafe": true, "share": false, "civitaiApiKey": "", "civitaiRedApiKey": "",
         "autoUpdateEnabled": true, "ggufEnv": { "enabled": true, "matmulMode": "auto", "shortBatch": "auto" }
     })
 }
