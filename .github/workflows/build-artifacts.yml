@@ -1,0 +1,96 @@
+name: Build Artifacts
+
+# Bundles for Linux and macOS without touching releases or signing keys.
+# Built for the "I only have a Windows box" case: dispatch it, download the
+# artifacts from the run. Produces AppImage + deb + dmg (+ the raw .app).
+#
+# Deliberately NOT the release workflow: no tag, no release, no updater
+# metadata, and `createUpdaterArtifacts` is forced off so no minisign key is
+# required. Publishing still goes through `.github/workflows/release.yml`.
+#
+# Dispatch needs this file on the default branch, so a one-file commit there is
+# enough to keep it available:
+#   gh workflow run build-artifacts.yml --ref <branch-with-the-source>
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Source ref to build (default: this dispatch ref)'
+        required: false
+
+concurrency:
+  group: build-artifacts-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+            artifact: linux-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+            artifact: macos-arm64
+    runs-on: ${{ matrix.os }}
+    env:
+      # appimagetool is itself an AppImage; runners have no guarantee of FUSE.
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libxdo-dev
+
+      - name: Bundle
+        run: |
+          npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} \
+            --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Collect bundles
+        shell: bash
+        run: |
+          mkdir -p dist
+          # Copy only real deliverables; the target dir also holds multi-GB
+          # debug artifacts and the appimagetool cache.
+          find src-tauri/target/${{ matrix.target }}/release/bundle -type f \
+            \( -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' -o -name '*.app.tar.gz' \) \
+            -exec cp {} dist/ \;
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wan2gp-${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
