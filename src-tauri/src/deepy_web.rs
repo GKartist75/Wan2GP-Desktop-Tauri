@@ -2181,7 +2181,10 @@ mod tests {
                 r"C:\Wan2GP-Models\ckpts",
             )
         } else {
-            (std::path::Path::new("/srv/Wan2GP"), "/srv/Wan2GP-Models/ckpts")
+            (
+                std::path::Path::new("/srv/Wan2GP"),
+                "/srv/Wan2GP-Models/ckpts",
+            )
         };
         // Gerard's real config: absolute ckpts root + "." entry (skipped).
         let cfg = serde_json::json!({"checkpoints_paths": [ckpts, "."]});
