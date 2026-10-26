@@ -1,19 +1,21 @@
 # Wan2GP Desktop Launcher — Tauri Edition
 
-> The easiest way to run **Wan2GP (WanGP)** — the open-source generative video/image/audio toolkit — on Windows. One installer. One click to launch. Zero Python/CUDA setup. Now with a **Rust + Tauri** shell: a fraction of the download, a fraction of the RAM.
+> The easiest way to run **Wan2GP (WanGP)** — the open-source generative video/image/audio toolkit — on **Windows, Linux and macOS**. One installer. One click to launch. Zero Python/CUDA setup. **Rust + Tauri** shell: a fraction of the download, a fraction of the RAM.
 
-[![Stars](https://img.shields.io/github/stars/GKartist75/Wan2GP-Desktop-Tauri?style=flat-square)](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/stargazers) &nbsp; [![Release](https://img.shields.io/github/v/release/GKartist75/Wan2GP-Desktop-Tauri?style=flat-square&label=release)](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases) &nbsp; [![Platform](https://img.shields.io/badge/platform-Windows-blue?style=flat-square)](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases) &nbsp; [![Tauri](https://img.shields.io/badge/shell-Tauri%202-orange?style=flat-square)](https://tauri.app/) &nbsp; [![Rust](https://img.shields.io/badge/backend-Rust-black?style=flat-square)](https://www.rust-lang.org/)
+[![Stars](https://img.shields.io/github/stars/GKartist75/Wan2GP-Desktop-Tauri?style=flat-square)](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/stargazers) &nbsp; [![Release](https://img.shields.io/github/v/release/GKartist75/Wan2GP-Desktop-Tauri?style=flat-square&label=release)](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases) &nbsp; [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue?style=flat-square)](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases) &nbsp; [![Tauri](https://img.shields.io/badge/shell-Tauri%202-orange?style=flat-square)](https://tauri.app/) &nbsp; [![Rust](https://img.shields.io/badge/backend-Rust-black?style=flat-square)](https://www.rust-lang.org/)
 
 <p align="center">
   <a href="https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/latest" style="display:inline-block;padding:14px 36px;background:#2ea043;color:#fff;border-radius:8px;font-size:1.1rem;font-weight:600;text-decoration:none">
-    ⬇ Download for Windows — Latest Release
+    ⬇ Download — Latest Release
   </a><br>
-  <code>Wan2GP-Desktop-Launcher_*_x64-setup.exe</code> · ≈ 3 MB · Windows 10 / 11<br>
+  <small><b>Windows 10/11</b> — <code>Wan2GP.Desktop.Launcher.Tauri_*_x64-setup.exe</code> · 4.3 MB · unsigned ("unknown publisher" is normal)</small><br>
+  <small><b>Linux x86_64</b> — <code>…_amd64.AppImage</code> (86 MB) · or <code>…_amd64.deb</code> (7 MB)</small><br>
+  <small><b>macOS Apple Silicon</b> — <code>…_aarch64.dmg</code> · 5.7 MB · unsigned (right-click → Open)</small><br>
   <small>Hardware needs scale with the model you pick — start at 6 GB VRAM, up to 24 GB+ for max quality.</small><br>
-  <small>⚠️ Unsigned installer — "unknown publisher" warning is normal for open-source without a code-signing cert.</small>
+  <small>⚠️ <b>Linux and macOS are new</b> — tested on real hardware here, but they need more testers: <a href="#linux--macos--testers-wanted">Testers wanted</a>.</small>
 </p>
 
-> **New here? What is Wan2GP?** [WanGP](https://github.com/deepbeepmeep/Wan2GP) by deepbeepmeep is the open-source app this launcher installs — video, image, audio and TTS generation in your browser, running on as little as **6 GB VRAM**. This repo is only the Windows launcher: one-click install, per-GPU kernels, Auto-Tune profiles, no Python/CUDA setup. Details: [What you get](#what-you-get).
+> **New here? What is Wan2GP?** [WanGP](https://github.com/deepbeepmeep/Wan2GP) by deepbeepmeep is the open-source app this launcher installs — video, image, audio and TTS generation in your browser, running on as little as **6 GB VRAM**. This repo is the launcher for it: one-click install, per-GPU kernels, Auto-Tune profiles, no Python/CUDA setup. Details: [What you get](#what-you-get).
 
 ## Contents
 
@@ -21,6 +23,8 @@
 
 - [Download & Install](#download--install)
 - [🔥 What's New](#-whats-new)
+- [Platform support](#platform-support)
+- [Linux & macOS — testers wanted](#linux--macos--testers-wanted)
 - [Screenshots](#screenshots)
 - [What you get](#what-you-get)
 - [Why Tauri?](#why-tauri)
@@ -42,12 +46,45 @@
 
 ## Download & Install
 
-1. Download the `*-setup.exe` (NSIS) or `*.msi` from **Releases** (button at top).
+Every file is on the [latest release](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/latest), with `SHA256SUMS.txt` beside them (`sha256sum -c SHA256SUMS.txt`, or `Get-FileHash` on Windows).
+
+### Windows 10/11
+
+1. Download `Wan2GP.Desktop.Launcher.Tauri_<version>_x64-setup.exe` (NSIS) or `…_x64_en-US.msi` (per-machine, for Intune/GPO).
 2. Run it — pick install + models folders (or accept `C:\Wan2GP` / `C:\Wan2GP-Models`). The screen detects your GPU and lists exactly what it will install — all paths are editable. The **Prerequisites** panel below lists Git / uv / Python / Conda with a status dot, the detected version and path, and **Install** / **Reinstall**, **Check** and **Version** buttons — nothing needs to be installed by hand.
 3. Click **Install** (~5–20 min: clone → env (`uv`/`venv`/`conda`, your pick) → PyTorch+CUDA → requirements → kernels → `wgp_config.json`). If the folder already holds a repo without a working env, tick your choice (repair env vs fresh repo) and press Install.
 4. Click **Launch** — **Desktop** (in-app) or **Browser**.
 
 No Python, no CUDA toolkit, no `pip`, no Node needed beforehand — the installer fetches what it needs. (WebView2 itself ships with Windows 10/11.)
+
+### Linux x86_64
+
+[AppImage](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.26/Wan2GP.Desktop.Launcher.Tauri_0.10.26_amd64.AppImage) (self-contained, self-updating) or [`.deb`](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.26/Wan2GP.Desktop.Launcher.Tauri_0.10.26_amd64.deb) (system-integrated, manual updates):
+
+```bash
+# AppImage — needs FUSE: sudo apt install libfuse2t64   (libfuse2 on 22.04)
+chmod +x Wan2GP.Desktop.Launcher.Tauri_*_amd64.AppImage
+./Wan2GP.Desktop.Launcher.Tauri_*_amd64.AppImage
+
+# or the .deb (declares libwebkit2gtk-4.1-0 + libgtk-3-0)
+sudo apt install ./Wan2GP.Desktop.Launcher.Tauri_*_amd64.deb
+wan2gp-desktop-launcher-tauri
+```
+
+| | Needs | Update lane |
+| --- | --- | --- |
+| AppImage (86 MB) | glibc ≥ 2.43 (Ubuntu 26.04+), FUSE, GTK 3 | in-app: *Check Desktop Updates* replaces the file |
+| `.deb` (7 MB) | distro WebKitGTK 4.1 (`libwebkit2gtk-4.1-0`), glibc 2.39+ (Ubuntu 24.04+) | manual: download the next `.deb` |
+
+**Why the AppImage needs glibc 2.43:** it bundles WebKitGTK, and WebKitGTK 2.44/2.48 (what the older CI images ship) *aborts* instead of falling back when a host has no usable EGL display (`Could not create default EGL display: EGL_BAD_PARAMETER` — seen on WSL2/WSLg and GPU-less VMs). 2.52 warns and falls back to software rendering, so the AppImage is built on Ubuntu 26.04. On 22.04/24.04 use the `.deb`. Details: [docs/PLATFORMS.md](docs/PLATFORMS.md).
+
+### macOS Apple Silicon
+
+1. Download the [`.dmg`](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.26/Wan2GP.Desktop.Launcher.Tauri_0.10.26_aarch64.dmg), open it, drag the app into *Applications*.
+2. First start: **right-click → Open** (the build is unsigned; macOS 11+).
+3. Updates are manual — there is no in-app updater without an Apple Developer ID.
+
+Intel Macs are not supported. No CUDA kernels, DLSS, Triton or MSVC toolchain on MPS/CPU.
 
 ### Launch buttons
 
@@ -92,6 +129,8 @@ C:\Wan2GP-Models\               ← models library
 
 | Version | Headline |
 | --- | --- |
+| [**v0.10.26**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.26) | **Linux and macOS joins Windows — one release, three platforms.** The release workflow now builds and signs the AppImage, `.deb`, NSIS/`.msi` and `.dmg` from the same tag, with `latest.json` and `SHA256SUMS.txt`. The Linux installer finally completes end-to-end: the AppImage no longer leaks its own `PYTHONHOME` / `LD_LIBRARY_PATH` / `PATH` into child processes, which made `uv` provision Python 3.11.14 and then watch the spawned interpreter abort (*uv could not provision Python 3.11.14*). Verified with the shipped AppImage: `uv install → uv python install 3.11.14 → verify → venv → uv pip install`, under the exact child environment the launcher spawns. The shipped AppImage is built on Ubuntu 26.04 (glibc ≥ 2.43): WebKitGTK 2.48 from the older runner images aborts without an EGL display; on 22.04/24.04 use the `.deb`. **Linux and macOS need testers** — [details](#linux--macos--testers-wanted). |
+| [**v0.10.25**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.25) | **Docs-only release.** README gains the Deepy headless starter and folds in the accumulated 0.10.24 notes; Windows binaries unchanged. |
 | [**v0.10.24**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.24) | **Shared output folders, Q4 KV cache, Civitai keys, Open Deepy in browser.** Manage → General now has separate **Image output** and **3D output** folders (WanGP's four `OUTPUT_KEYS`); new **Deepy KV Cache Quantization** dropdown (Auto/INT8/Q4, default Auto) with Auto-Tune recommending Q4 on tight VRAM. Civitai API keys for civitai.com and civitai.red join the existing HuggingFace token. A one-click **Open Deepy in browser** button next to Start Deepy Web. Wheel pins bumped to WGPKernels 1.4.2 and GGUF 1.0.29. |
 | [**v0.10.23**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.23) | **GPU selection finally reaches Wan2GP.** Multi-GPU / iGPU+dGPU boxes hit a bare `CUDA error: out of memory` while VRAM read free because the launcher never passed `--gpu`, so upstream's `torch.set_default_device()` never ran. The picker now resolves the saved card (stored by UUID) to `--gpu cuda:N` with `CUDA_DEVICE_ORDER=PCI_BUS_ID`, clears inherited `CUDA_VISIBLE_DEVICES`, and Auto is a real choice (highest-VRAM card). *All GPUs visible* is the no-flag escape hatch. Auto-Tune, the hardware profile, install plan, topbar VRAM tile and troubleshoot bundle all follow the pinned card instead of summing every GPU. The Launcher GPU setting was a no-op (`WEBVIEW2_ADDITIONAL_BROWSER_ARGS` → the real `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, appended not overwritten); *Integrated* now uses the reliable `--disable-gpu` (SwiftShader) since `--force_low_power_gpu` is broken on v145+. AMD HIP pin counts discrete cards only (APUs excluded). A startup diagnostic line reports per-device VRAM, resolved UUID and live env. |
 | [**v0.10.22**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.22) | **The installer now shows every prerequisite with a live status and lets you fix it in place.** Git, uv, Python and Conda each get a row with a green/red dot, the detected version and resolved path, and **Install** (or **Reinstall**, with a confirmation) / **Check** / **Version** buttons plus **Check all** in the header. Reinstall really replaces: the launcher-owned uv copy is deleted first, and every install goes through the vendor installer/winget path instead of being skipped as "already installed" — one install at a time, so two winget runs never overlap. The bare-machine gate was fixed too: the card and the gate share one readiness probe, so a python.org install that keeps `py.exe` off `PATH` is detected instead of re-showing the card forever; venv installs use the GPU profile's Python minor (3.10 GTX 10 / 3.11 / 3.12 AMD) in the gate, the shim and setup.py; and the one-click Python pin follows the hardware. |
@@ -379,45 +418,57 @@ Full workspace viewer: multi-select, reorder, eject, copy/move across workspaces
 
 | Platform | Status | What you get |
 | --- | --- | --- |
-| **Windows 10/11 x64** | Supported | Full feature set, NSIS/MSI installers, in-app self-update |
-| **Linux x86_64** | Launched and UI-verified on Ubuntu 26.04 — full install cycle not yet run | NVIDIA (CUDA), AMD (ROCm), CPU fallback; AppImage + `.deb`; desktop shortcut, auto-start, in-app update for the AppImage only |
-| **macOS Apple Silicon** | Ported — not yet run on hardware | MPS/CPU only, macOS 11+, unsigned `.dmg`; no CUDA kernels, DLSS, Triton or MSVC toolchain |
+| **Windows 10/11 x64** | **Supported** — the mature lane | Full feature set, NSIS/MSI installers, in-app self-update |
+| **Linux x86_64** | **Works on real hardware** (Ubuntu 26.04 + RTX 3080: install to completion, WanGP running) — more testers needed | NVIDIA (CUDA), AMD (ROCm), CPU fallback; AppImage + `.deb`; desktop shortcut, auto-start, in-app update for the AppImage only |
+| **macOS Apple Silicon** | **Ported and built, never run on Apple hardware** — needs testers | MPS/CPU only, macOS 11+, unsigned `.dmg`; no CUDA kernels, DLSS, Triton or MSVC toolchain |
 
-**Linux install** — the AppImage needs FUSE (`libfuse2t64` on Ubuntu 24.04+):
+Download and install steps per platform: [Download & Install](#download--install).
+Per-feature matrix, the `data-requires` capability gating (`index.html` →
+`src/services/platform-gate.js`, pinned to the Rust adapters by a test) and the
+honest gap list: [**docs/PLATFORMS.md**](docs/PLATFORMS.md).
 
-```bash
-sudo apt install libfuse2t64            # only for the AppImage
-chmod +x Wan2GP*.AppImage && ./Wan2GP*.AppImage
-# or, system-integrated (needs libwebkit2gtk-4.1-0 + libgtk-3-0):
-sudo apt install ./Wan2GP*_amd64.deb
-```
+What has actually been executed where — no more, no less:
 
-**macOS install** — open the `.dmg`, drag the app to *Applications*, then
-right-click → Open the first time (unsigned; no in-app updater).
+| | Run here | Never run |
+| --- | --- | --- |
+| Windows | install, launch, full WanGP install, generate, update | — |
+| Linux (Ubuntu 26.04, RTX 3080) | AppImage + `.deb`, window, prerequisites, full NVIDIA install to `Running on local URL`, uv/venv/conda paths, Desktop-iframe embed, console docks | AMD ROCm install, stop/port sweep, self-update, `.desktop`/auto-start, Fedora/Arch/NixOS |
+| macOS | **nothing** — the `.dmg` was only inspected (arm64 Mach-O, `Info.plist` 0.10.26, minimum 11.0) | install, launch, MPS, everything |
 
-"Ported" means the platform's code compiles for that target and is unit-tested,
-but no install → launch → generate cycle has been executed there yet. Linux has
-now been launched by hand (window, full UI, prerequisite probe); what has not
-run is the WanGP install, GPU wheels, launch/stop of WanGP itself and the
-self-update. Controls a
-platform cannot honour are hidden, not broken: `index.html` marks them with
-`data-requires`, `src/services/platform-gate.js` applies the platform's
-capability map, and a test pins that map to the Rust adapters.
+### Linux & macOS — testers wanted
 
-Details, per-feature matrix, install steps and the honest gap list:
-[**docs/PLATFORMS.md**](docs/PLATFORMS.md).
+Windows has years of use behind it. Linux and macOS were written, compiled and
+unit-tested from the same code, and Linux has now been driven end-to-end on one
+machine (RTX 3080, Ubuntu 26.04) — but **one machine is not a platform**.
+
+If you run either one, a report is worth more than a star:
+
+- **What to send:** your distro or macOS version, GPU + driver, which artifact you
+  used (AppImage / `.deb` / `.dmg`), and the launcher's own **Manage → System →
+  issue bundle** (it collects versions, probes, the config and a redacted log).
+- **Where:** [issues](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/issues/new) for anything broken (crash, wrong GPU profile, install failure, a button that does nothing), [discussions](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/discussions) for "it worked on X" and general feedback.
+- **Most useful right now:** AMD ROCm on Linux (any card), Fedora / Arch / NixOS,
+  WSL2, NVIDIA without `nvidia-smi` (nouveau), and *any* Apple Silicon result —
+  positive or negative. A working report with `uname -a` and the artifact name is
+  exactly what turns "ported" into "supported" in the table above.
+
+Known limits you should not file as bugs: Intel Macs, ARM Linux, DLSS/`nvcc`-based
+kernels on macOS, and in-app self-update on the `.deb` and `.dmg` (download the
+next release instead).
 
 ### Linux runtime notes
-- WebKitGTK 4.1 + GTK 3 required (`.deb` declares them); the AppImage bundles them, but it needs FUSE to mount.
+- WebKitGTK 4.1 + GTK 3 required (`.deb` declares them); the AppImage bundles them but needs FUSE to mount, and it is built on Ubuntu 26.04 so it needs **glibc ≥ 2.43** — on 22.04/24.04 use the `.deb` (see [Download & Install](#download--install)).
 - Prerequisite *Install* buttons are winget/choco/MSI, so Windows-only — except **uv**: Astral's installer runs without sudo, so its row keeps a working button and downloads uv into `~/Wan2GP/.tools`. `git`/`python` come from the distro.
 - NVIDIA detection uses `nvidia-smi`; AMD/Intel use `lspci` plus `/sys/class/drm` for VRAM.
 - Port-owner lookup uses `ss` (iproute2) and falls back to `lsof`; with neither, the stop path says so instead of guessing.
+- Controls a platform cannot honour are hidden, not broken: `index.html` marks them with `data-requires`, `src/services/platform-gate.js` applies the platform's capability map, and a test pins that map to the Rust adapters.
 
 ### macOS notes
 - Apple Silicon only; Intel Macs are out of scope.
 - PyTorch runs on MPS. Reported "VRAM" is unified memory (`sysctl hw.memsize`), not a dedicated pool.
 - Conda is experimental; venv/uv are the supported env types.
 - No code signature or notarization yet: first launch needs right-click → Open.
+- **No Apple hardware has run this build yet.** If you have an M-series Mac, your report (working or not) is the most useful thing you can send — see [testers wanted](#linux--macos--testers-wanted).
 
 ### Updating the launcher
 
@@ -455,8 +506,8 @@ Backend lives in `src-tauri/src/lib.rs` (`#[tauri::command]` handlers); frontend
 ### Tests
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml   # 399 backend tests (1 ignored)
-npm test                                          # 201 frontend tests
+cargo test --manifest-path src-tauri/Cargo.toml   # 424 backend tests (1 ignored)
+npm test                                          # 213 frontend tests
 ```
 
 Both suites are hermetic — the backend one redirects `get_repo_dir()` at a

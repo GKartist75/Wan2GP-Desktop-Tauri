@@ -2,16 +2,54 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
-## [0.10.24] — 2026-10-25
-
-- **Shared Image and 3D output folders.** The launcher now manages `image_save_path` and `mesh_save_path` separately (Manage → General), alongside the existing Output folder, so WanGP's four output keys (`save_path`, `image_save_path`, `audio_save_path`, `mesh_save_path`) can each point where you want.
-- **Q4 KV cache setting.** New "Deepy KV Cache Quantization" dropdown (Auto / INT8 / Q4) in the Deepy tab, written as `deepy_kv_cache_quantization`. Auto-Tune recommends Q4 on tight VRAM (saves ~24% vs INT8).
-- **Civitai API keys.** New settings for Civitai (civitai.com) and Civitai.red API keys, passed as `CIVITAI_API_KEY` / `CIVITAI_RED_API_KEY` env vars.
-- **Open Deepy in browser.** One-click button next to Start Deepy Web that starts Deepy (if needed) and opens its URL in the system browser.
-- **Wheel pins bumped** to WGPKernels 1.4.2 and GGUF kernels 1.0.29 (SHA-256 verified).
-- **Deepy crash workaround note:** "PTQ1 decode inputs must share a CUDA device" is a WanGP-side GGUF kernel issue; try disabling CUDA graphs or using INT8 KV cache.
-
 ## [Unreleased]
+
+## [0.10.26] — 2026-10-26
+
+- **Linux install works end-to-end: the AppImage stops leaking its own Python.**
+  The AppImage runtime exports `PYTHONHOME`, `LD_LIBRARY_PATH` and a `PATH`
+  prefix that point inside the mounted bundle, and every child process inherited
+  them. `uv` therefore provisioned Python 3.11.14 and then the spawned
+  interpreter aborted before it could print `sys.version`, so the installer
+  stopped with *uv could not provision Python 3.11.14* on a machine where uv had
+  just done exactly that. The spawned child now gets a cleaned copy of the
+  environment (no `PYTHONHOME`, no `LD_LIBRARY_PATH`, no bundle paths in `PATH`).
+  Verified on Ubuntu 26.04 by launching the shipped AppImage and replaying the
+  installer's own sequence under the exact child environment it produces:
+  `uv install` → `uv python install 3.11.14` → version verify → `uv venv` →
+  `uv pip install six`, all green. Only the harmless AppImage bookkeeping
+  variables (`APPDIR`, `ARGV0`, `APPIMAGE`, `OWD`) are still inherited.
+- **The cross-platform bundles now go out through the release workflow.** The
+  first real run of `.github/workflows/release.yml` built all three platforms
+  from tag `v0.10.26` and attached AppImage, `.deb`, NSIS, MSI, `.dmg`, the
+  `.app` tarball, every `.sig` and `latest.json` to one release. Two legs failed
+  first because the repository's `TAURI_SIGNING_PRIVATE_KEY` secret did not match
+  its password (`failed to decode secret key: incorrect updater private key
+  password`); re-uploading the key the config's public key was generated from
+  fixed it. The release also carries `SHA256SUMS.txt`.
+- **Runner-built AppImages do not start, so the shipped one is not built on a
+  runner.** WebKitGTK 2.44/2.48, which ubuntu-22.04/24.04 bundle into the
+  AppImage, does not warn when it cannot create an EGL display — it aborts
+  (`Could not create default EGL display: EGL_BAD_PARAMETER`). Reproduced on
+  WSLg and under Xvfb; `WEBKIT_DISABLE_DMABUF_RENDERER`,
+  `WEBKIT_DISABLE_COMPOSITING_MODE`, `GDK_GL=disable`, `EGL_PLATFORM`,
+  `LIBGL_ALWAYS_SOFTWARE` and `GALLIUM_DRIVER=llvmpipe` all still abort.
+  WebKitGTK 2.52 (Ubuntu 26.04) warns and falls back to software rendering, so
+  the shipped AppImage is a local 26.04 build — which also raises its floor to
+  **glibc ≥ 2.43**. On Ubuntu 22.04/24.04 use the `.deb`, which links the
+  distro's own WebKitGTK. The bundles are otherwise unchanged: `.deb` from an
+  ubuntu-24.04 runner, Windows and macOS from their runners.
+- **Windows, verified from the release assets.** Silent NSIS install, dashboard
+  renders at 0.10.26 with live hardware rows, console reports
+  *Launcher v0.10.26 ready*; the MSI payload was extracted and launched too.
+  macOS is build-verified only (arm64 Mach-O, `Info.plist` 0.10.26, minimum
+  macOS 11.0) — no Apple Silicon hardware here.
+- **Docs tell the truth about all three platforms.** README gains per-platform
+  download links and a *testers wanted* note, `docs/PLATFORMS.md` records the
+  EGL/glibc constraint and what has actually been run, `dist/` mirrors the
+  release with `SHA256SUMS.txt`, and the asset names in the docs now match what
+  the bundler emits (`Wan2GP.Desktop.Launcher.Tauri_<version>_<arch>…`).
+
 
 - **The CUDA-toolkit prerequisite row stops printing over itself.** On Linux
   the row's label lived in a 58px column, so "CUDA toolkit (SpargeAttn /
@@ -318,6 +356,22 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   pins the table it means and asserts the other host's answer next to it, so both
   arms are covered on every runner. Verified: 419 Rust + 212 JS on Windows, 400
   Rust on Ubuntu 26.04 (WSL2), clippy and `cargo fmt --check` clean on both.
+
+## [0.10.25] — 2026-10-25
+
+- **Docs-only release.** README gains the Deepy headless starter and folds in the
+  accumulated 0.10.24 notes; no binary changes on the Windows lane. The Linux and
+  macOS bundles that ship from 0.10.26 onward are built and verified there.
+
+
+## [0.10.24] — 2026-10-25
+
+- **Shared Image and 3D output folders.** The launcher now manages `image_save_path` and `mesh_save_path` separately (Manage → General), alongside the existing Output folder, so WanGP's four output keys (`save_path`, `image_save_path`, `audio_save_path`, `mesh_save_path`) can each point where you want.
+- **Q4 KV cache setting.** New "Deepy KV Cache Quantization" dropdown (Auto / INT8 / Q4) in the Deepy tab, written as `deepy_kv_cache_quantization`. Auto-Tune recommends Q4 on tight VRAM (saves ~24% vs INT8).
+- **Civitai API keys.** New settings for Civitai (civitai.com) and Civitai.red API keys, passed as `CIVITAI_API_KEY` / `CIVITAI_RED_API_KEY` env vars.
+- **Open Deepy in browser.** One-click button next to Start Deepy Web that starts Deepy (if needed) and opens its URL in the system browser.
+- **Wheel pins bumped** to WGPKernels 1.4.2 and GGUF kernels 1.0.29 (SHA-256 verified).
+- **Deepy crash workaround note:** "PTQ1 decode inputs must share a CUDA device" is a WanGP-side GGUF kernel issue; try disabling CUDA graphs or using INT8 KV cache.
 
 ## [0.10.22] — 2026-10-23
 
