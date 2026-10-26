@@ -4,6 +4,11 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- `docs/PLATFORMS.md`: the WSLg note now includes the llvmpipe override
+  (`MESA_LOADER_DRIVER_OVERRIDE`/`GALLIUM_DRIVER`, `GDK_BACKEND=x11`) that
+  produces a real window on Ubuntu 26.04 + Mesa 26 — verified with the 0.10.28
+  `.deb`, which renders the full installer screen and detects the host RTX 3080.
+
 ## [0.10.28] — 2026-10-26
 
 - **The Prerequisites card stops reading as Debian-only.** The copyable hint is

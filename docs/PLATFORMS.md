@@ -190,6 +190,14 @@ own caches under `~/.cache` (Manage → System → disk cleanup lists them).
 > launcher runs as a normal Windows window (verified on Ubuntu 26.04, WSL 2.7,
 > WSLg 1.0.73). Not a launcher bug.
 >
+> Mesa on 26.04 still tries the d3d12/ZINK path first and logs `MESA: error:
+> ZINK: failed to choose pdev` + `egl: failed to create dri2 screen`; the
+> process then survives without ever mapping a window. Adding
+> `MESA_LOADER_DRIVER_OVERRIDE=llvmpipe GALLIUM_DRIVER=llvmpipe GDK_BACKEND=x11`
+> gives a real window (verified with the 0.10.28 `.deb` on the same box; the
+> full installer screen renders, RTX 3080 detected through WSL's CUDA
+> passthrough).
+>
 > WSL also exposes the host's NVIDIA driver (`/usr/lib/wsl/lib/nvidia-smi`,
 > `libcuda.so`), so on an NVIDIA machine GPU detection, VRAM, profile choice and
 > CUDA execution are real — only the UI is software-rendered.
