@@ -13,6 +13,19 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- **Memory-profile guidance checked against upstream's own labels.**
+  `wgp.py:11945` (`memory_profile_choices`) lists the profiles and their
+  families, so the launcher's aligned to it: P4+ no longer receives a Dynamic
+  *VRAM Preload* for images (upstream offers that control on Profiles 0, 2, 4
+  and 5 only, and P4+ "sends one part at a time" — the mode was a dead setting),
+  the three preload tooltips name the same four profiles and say P1/P3/P3+ are
+  dynamic intrinsically, and P0 is labelled *AutoRAM · AutoVRAM* like upstream
+  instead of "experimental", which 18.83 dropped. Everything else already
+  matched: P4 recommended for most tiers, P3 for audio, P2 = HighRAM/LowVRAM,
+  P1 only where RAM and VRAM are both plentiful, P5 as failsafe, and the
+  short-of-RAM advice (lower Reserved RAM, keep Smart Memory Pinning On) is what
+  the panel already recommends.
+
 - **Deepy Web start lives with Deepy.** *Start Deepy Web* and *Open in browser*
   moved from the Phone & Remote *Start* step into the Deepy panel, directly
   under the Disabled / Deepy Zero / Deepy Prime picker they act on; the step

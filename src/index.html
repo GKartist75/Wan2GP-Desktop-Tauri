@@ -778,7 +778,7 @@
               <label class="token-hint">Video Profile</label>
               <select id="memVideoProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="0">P0 — P4 transfers with no permanent Reserved RAM; Dynamic Preload keeps what fits in VRAM (much less RAM)</option>
+                <option value="0">P0 — AutoRAM/AutoVRAM: P4 transfers, RAM reserved only while a model runs (much less RAM); Default Preload is Dynamic</option>
                 <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM (fastest; most RAM &amp; VRAM)</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part (needs a lot of RAM)</option>
                   <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM (recommended for audio)</option>
@@ -793,7 +793,7 @@
               <label class="token-hint">Image Profile</label>
               <select id="memImageProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="0">P0 — P4 transfers with no permanent Reserved RAM; Dynamic Preload keeps what fits in VRAM (much less RAM)</option>
+                <option value="0">P0 — AutoRAM/AutoVRAM: P4 transfers, RAM reserved only while a model runs (much less RAM); Default Preload is Dynamic</option>
                 <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM (fastest; most RAM &amp; VRAM)</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part (needs a lot of RAM)</option>
                   <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM</option>
@@ -808,7 +808,7 @@
               <label class="token-hint">Audio Profile</label>
               <select id="memAudioProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="0">P0 — P4 transfers with no permanent Reserved RAM; Dynamic Preload keeps what fits in VRAM</option>
+                <option value="0">P0 — AutoRAM/AutoVRAM: P4 transfers, RAM reserved only while a model runs; Default Preload is Dynamic</option>
                 <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part</option>
                   <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM (recommended for audio)</option>
@@ -962,7 +962,7 @@
               <div class="mem-hint"><span id="recVideoPreloadMB" class="tag-rec">rec: —</span><span id="savedVideoPreloadMB" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
-              <label class="token-hint" title="Image steps are short, so the transfers set the speed — Dynamic keeps as much of the model in VRAM as each generation leaves free. Needs the MMGP Optimized allocator; only used on Profiles 2, 4 and 5 (4.5 counts as 4).">VRAM Preload — Image</label>
+              <label class="token-hint" title="Image steps are short, so the transfers set the speed — Dynamic keeps as much of the model in VRAM as each generation leaves free. Needs the MMGP Optimized allocator. The control exists on Profiles 0, 2, 4 and 5 only; P1/P3/P3+ are dynamic intrinsically and P4+ sends one part at a time.">VRAM Preload — Image</label>
               <select id="memImagePreload" class="input">
                 <option value="">— unset —</option>
                 <option value="default">Default</option>
@@ -977,7 +977,7 @@
               <div class="mem-hint"><span id="recImagePreloadMB" class="tag-rec">rec: —</span><span id="savedImagePreloadMB" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
-              <label class="token-hint" title="Shown by WanGP for Profiles 2, 4 and 5 only — Profiles 1, 3 and 3+ load whole models and have nothing to preload.">VRAM Preload — Audio</label>
+              <label class="token-hint" title="Shown by WanGP for Profiles 0, 2, 4 and 5 only — Profiles 1, 3 and 3+ are dynamic intrinsically and P4+ sends one part at a time.">VRAM Preload — Audio</label>
               <select id="memAudioPreload" class="input">
                 <option value="">— unset —</option>
                 <option value="default">Default (recommended for audio)</option>

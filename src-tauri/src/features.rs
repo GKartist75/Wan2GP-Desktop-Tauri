@@ -717,7 +717,7 @@ pub fn auto_tune_recommend(
         "Failsafe · P5 (maximum compatibility)".to_string()
     } else {
         match profile.to_string().as_str() {
-            "0" => "LowRAM · no permanent Reserved RAM (upstream: experimental)",
+            "0" => "AutoRAM · AutoVRAM (P4 that reserves RAM only for the running model)",
             "1" => "HighRAM · HighVRAM",
             "2" => "HighRAM · LowVRAM",
             "3" => "LowRAM · HighVRAM (upstream: recommended for audio)",
@@ -786,14 +786,18 @@ pub fn auto_tune_recommend(
         // with a Dynamic or Manual VRAM Preload ... Video steps are usually
         // long enough to hide the transfers." Audio rides P3+, which loads
         // each model whole and hides the control entirely.
-        // wgp.py:4216 hands Dynamic to mmgp only when the profile is 2, 4 or 5
-        // (init_pipe truncates 4.5 -> 4): P1/P3/P3.5 load whole models and
-        // have nothing to preload, so recommending Dynamic there would be a
-        // setting that silently does nothing — the same rule the CUDA gate
-        // above applies to AMD/Intel. P0 is the exception: its Default *is*
-        // Dynamic (wgp.py dynamic_preload: profile 0 + "default"), so the
-        // "default" written below already preloads dynamically there.
-        let dynamic_images = [2.0, 4.0, 4.5, 5.0].contains(&profile);
+        // Upstream gives a VRAM Preload control to Profiles 0, 2, 4 and 5
+        // (`preload_mode`), and `dynamic_preload` makes P1/P3/P3+ dynamic
+        // intrinsically. P1/P3/P3+ therefore need "default", not "dynamic":
+        // recommending the mode there would be a setting that silently does
+        // nothing — the same rule the CUDA gate above applies to AMD/Intel.
+        // P0 is the exception below: its Default *is* Dynamic (profile 0 +
+        // "default"), so the "default" written for it already preloads.
+        // Upstream `preload_mode()` covers Profiles 0, 2, 4 and 5 only, and
+        // `dynamic_preload` gives 1 and 3 their Dynamic intrinsically; 4.5 (P4+)
+        // has no preload control ("sends one part at a time"), so writing
+        // Dynamic there would be a dead setting.
+        let dynamic_images = [2.0, 4.0, 5.0].contains(&profile);
         extra.insert("video_preload_mode".into(), serde_json::json!("default"));
         extra.insert(
             "image_preload_mode".into(),
@@ -3096,7 +3100,7 @@ mod autotune_matrix_tests {
         assert_eq!(roomy["attention_head_split"], 0);
         assert_eq!(
             roomy["image_preload_mode"], "default",
-            "P1 loads whole models: Dynamic preload is gated to profiles 2/4/5 upstream (wgp.py:4216), so recommending it here would be a dead setting"
+            "P1 is dynamic intrinsically (dynamic_preload) and has no preload control, so the mode stays Default"
         );
 
         let amd = auto_tune_recommend(
@@ -3316,10 +3320,6 @@ mod autotune_matrix_tests {
         assert_eq!(r["video_profile"], 0.0);
         assert_eq!(r["image_profile"], 0.0);
         assert_eq!(r["audio_profile"], 0.0);
-        assert!(r["_recommendation_label"]
-            .as_str()
-            .unwrap()
-            .starts_with("LowRAM"));
         for k in [
             "video_preload_mode",
             "image_preload_mode",
