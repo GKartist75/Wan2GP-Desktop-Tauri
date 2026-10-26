@@ -19,3 +19,4 @@ verify-out.txt
 
 dist-test/
 .rel/
+.rt/

@@ -132,7 +132,8 @@ arms of every pair compile; the Unix arm is what the flavor check exercises.
       `GKartist75/homebrew-tap` must exist) — needs `WINGET_TOKEN`/`HOMEBREW_TOKEN`
 - [ ] Configure Apple signing/notarization (needs Developer ID credentials; deferred in `plan.md`)
 - [x]* Build all platforms in one release workflow (`.github/workflows/release.yml`)
-- [x]* Upload all artifacts to one GitHub Release (draft; the rewritten multi-platform workflow has not run yet)
+- [x] Upload all artifacts to one GitHub Release — v0.10.26 (run 40367092578) is the first
+      release built by the workflow: AppImage/deb/msi/nsis/dmg + `.sig` + `latest.json`
 - [x] Update changelog with platform support/limitations
 
 ## Phase 7 - Testing and validation
@@ -205,6 +206,14 @@ arms of every pair compile; the Unix arm is what the flavor check exercises.
       400 Ubuntu), clippy + `cargo fmt --check` green on both.
 
 ## Known gaps
+- The Linux AppImage built on `ubuntu-22.04` bundles that image's WebKitGTK and
+  aborts at startup on hosts with a recent Mesa (`Could not create default EGL
+  display: EGL_BAD_PARAMETER`, reproduced on WSL2/Ubuntu 26.04). The `.deb` uses
+  the host WebKitGTK and starts fine there. Bundles moved to `ubuntu-24.04`.
+- GitHub's release secrets were stale: `TAURI_SIGNING_PRIVATE_KEY` did not match
+  the password, so the first v0.10.26 run failed both signed legs
+  (`failed to decode secret key: incorrect updater private key password`).
+  Re-uploaded from `~/.tauri/wan2gp-desktop.key`.
 - Linux runs (WSL2, Ubuntu 26.04, real RTX 3080): app starts, wizard reads the
   machine, install completes (Torch 2.10.0+cu130, SageAttention wheel, Triton
   JIT, WGPKernels, nunchaku, GGUF), WanGP launches and serves Gradio on 7861
@@ -249,3 +258,32 @@ arms of every pair compile; the Unix arm is what the flavor check exercises.
 - [ ] Surface the enhancer's mapping outcome in the UI if users report the
       `[MMGP] Not enough reserved RAM left` line being missed (it already lands
       in the log verbatim).
+
+## Session 2026-10-26 — v0.10.26 published
+
+- [x] Version bump 0.10.25 → 0.10.26 (`package.json`, `tauri.conf.json`,
+      `Cargo.toml`), commit `58c8481`, tag `v0.10.26`.
+- [x] Release workflow ran for the first time (run 40367092578). Both signed
+      legs failed: repo `TAURI_SIGNING_PRIVATE_KEY` did not match its password
+      ("failed to decode secret key: incorrect updater private key password").
+      Re-uploaded both secrets from `~/.tauri/wan2gp-desktop.key`/`.pwd`, rerun
+      green: AppImage/deb/msi/nsis/dmg + `.sig` + `latest.json` + `SHA256SUMS.txt`.
+- [x] Linux install bug verified fixed end-to-end: with the child environment the
+      launcher now spawns, `uv install → uv python install 3.11.14 → verify →
+      venv → uv pip install six` all succeed (previously the spawned python
+      aborted on `PYTHONHOME` from the AppImage and the launcher reported
+      "uv could not provision Python 3.11.14").
+- [x] Found that runner-built AppImages never start: WebKitGTK 2.44/2.48 from
+      ubuntu-22.04/24.04 aborts with `Could not create default EGL display:
+      EGL_BAD_PARAMETER` (WSLg and Xvfb; every documented workaround env var
+      still aborts). WebKitGTK 2.52 (ubuntu 26.04) warns and falls back.
+      Replaced the 24.04 AppImage with the locally built 26.04 one (glibc ≥ 2.43),
+      re-signed, patched `latest.json`, and re-tested by downloading the asset
+      from the release: window up, probe ran, env clean, no EGL abort.
+- [x] Windows NSIS verified from the release asset: silent install to
+      `D:\w2gp-test`, launches, dashboard renders 0.10.26 with live hardware
+      rows, console reports "Launcher v0.10.26 ready".
+- [x] macOS bundle inspected (arm64 Mach-O, `Info.plist` 0.10.26, min 11.0);
+      NOT executed — no Apple Silicon hardware. `[ ] Manual smoke test: macOS`.
+- [x] `dist/` mirrors the release (13 files + `SHA256SUMS.txt`) and
+      `dist/README.txt` records what was and was not run.

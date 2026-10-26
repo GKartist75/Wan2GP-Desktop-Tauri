@@ -78,8 +78,26 @@ per-platform page, including the winget and Homebrew Cask lanes that
 
 ## Installing on Linux
 
-Two bundles, both built on `ubuntu-22.04`; both were installed and started on
-Ubuntu 26.04.
+Two bundles; both were installed and started on Ubuntu 26.04. They are built on
+different hosts on purpose: the AppImage bundles the WebKitGTK of whoever builds
+it, so it is built on the newest Ubuntu here (26.04, WebKitGTK 2.52), while the
+`.deb` links the distro's WebKitGTK and is built on `ubuntu-24.04`.
+
+**AppImage + EGL.** WebKitGTK 2.44/2.48 (ubuntu-22.04/24.04 runners) does not
+just warn when it cannot create an EGL display, it aborts:
+
+```
+Could not create default EGL display: EGL_BAD_PARAMETER. Aborting...
+```
+
+Reproduced with runner-built AppImages on WSLg and under Xvfb, and no
+environment variable avoids it (`WEBKIT_DISABLE_DMABUF_RENDERER`,
+`WEBKIT_DISABLE_COMPOSITING_MODE`, `GDK_GL=disable`, `EGL_PLATFORM`,
+`LIBGL_ALWAYS_SOFTWARE`, `GALLIUM_DRIVER=llvmpipe` all still abort). WebKitGTK
+2.52 falls back to software rendering, which is why the shipped AppImage starts
+even on a host with no usable GPU. The cost is the build host's glibc floor:
+this AppImage needs **glibc ≥ 2.43** (Ubuntu 26.04+). On 22.04/24.04 use the
+`.deb`.
 
 | Form | Command | Notes |
 | --- | --- | --- |
@@ -300,12 +318,14 @@ variant, one `supports` arm per adapter, and `data-requires` in the markup.
 
 Ordered by what breaks first for a new Linux/macOS user.
 
-1. **Only launch has run on Linux; nothing has run on macOS.** Ubuntu 26.04 ran
-   the AppImage and the `.deb` (window, UI, prerequisite probe) and the debug
-   build under Xvfb. Still unexecuted anywhere on Unix: WanGP install, GPU
-   wheel install, launching WanGP, stop, self-update, port sweep, shortcut and
-   auto-start creation. First-run bugs are expected — a first-run path bug was
-   already found this way (hard-coded `\\` joins produced
+1. **Nothing has run on macOS.** Ubuntu 26.04 ran the AppImage (WSLg and Xvfb)
+   and the `.deb`: window, prerequisite probe, the installer's uv → Python
+   3.11.14 → venv → pip sequence under the exact child environment, and a full
+   NVIDIA install to a running WanGP. Still unexecuted anywhere on Unix: GPU
+   wheel install, self-update, port sweep, shortcut and auto-start creation.
+   The macOS bundle is only known to be well formed (arm64 Mach-O, `Info.plist`
+   0.10.26, minimum 11.0). First-run bugs are expected — a first-run path bug
+   was already found this way (hard-coded `\\` joins produced
    `~/Wan2GP-Models\ckpts`).
 2. **Apple code signing** is not configured: unsigned `.dmg`, Gatekeeper warning,
    self-update disabled.
@@ -317,11 +337,12 @@ Ordered by what breaks first for a new Linux/macOS user.
 5. **NVIDIA on Linux without `nvidia-smi`** is `unknown` → CPU profile.
 6. **AMD ROCm on Linux** is ported and unit-tested but has never run; the HIP
    wheel path is the same one that recently changed on Windows.
-7. **The bundle build is the only proof so far.** `build-artifacts.yml` compiled
-   and packaged both targets on real runners (that also cleared the AWS-LC /
-   `rustls` link question a Windows cross-check could never answer), but no
-   0.10.x build has been started on either OS by a human.
-8. **The artifacts in `dist/` carry no updater signature** (the artifact workflow
-   forces `createUpdaterArtifacts: false`), so they cannot self-update. Only
-   `release.yml` with `TAURI_SIGNING_PRIVATE_KEY` produces update-capable
-   bundles.
+7. **Runner-built AppImages do not start.** `release.yml` on ubuntu-24.04
+   produces an AppImage whose bundled WebKitGTK 2.48 aborts without an EGL
+   display (see *Installing on Linux*); the 0.10.26 asset is therefore a
+   local ubuntu-26.04 build with a glibc ≥ 2.43 floor. A portable AppImage needs
+   either a 26.04 runner image or a WebKit that falls back instead of aborting.
+8. **`dist/` mirrors the release, so it *is* signed** — the assets come from
+   `release.yml` with `TAURI_SIGNING_PRIVATE_KEY`, and `latest.json` points at
+   the same bytes. If the repo secrets are ever rotated, they must match
+   `~/.tauri/wan2gp-desktop.key` (the pubkey in `tauri.conf.json`).
