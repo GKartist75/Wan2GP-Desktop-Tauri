@@ -5,6 +5,12 @@ Every screen, tab and button, and what it does. The launcher has three screens
 **Viewer**. Companion: [WanGP Guidance](WAN2GP-GUIDE.md) — which model and
 settings to pick for your goal.
 
+> **Which platform?** Windows, Linux and macOS builds share this UI. What differs
+> per OS — which controls exist at all, which installer paths exist, AppImage vs
+> `.deb` vs `.dmg` — is in [Platform Support](PLATFORMS.md); download links and
+> install steps are in the [README](../README.md#download--install). Linux and
+> macOS are new and still gathering testers.
+
 ```mermaid
 flowchart TD
   S["Splash: install check"] --> D["Dashboard: health, launch, updates"]
