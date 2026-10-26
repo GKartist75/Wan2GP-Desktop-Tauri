@@ -159,7 +159,7 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   one-click on Unix — those buttons are Windows-only and answer with the distro
   command; only `uv` can be bootstrapped, into `~/Wan2GP/.tools`. Verified on Ubuntu
   26.04: AppImage and `.deb` both install and start (window, full UI,
-  git/uv/python detected), 380 Rust + 204 JS tests green on the Linux host. The
+  git/uv/python detected), 382 Rust + 205 JS tests green on the Linux host. The
   first run exposed a renderer bug, now fixed: path joins were hard-coded to
   `\`, so Linux/macOS showed `~/Wan2GP-Models\ckpts`, `\loras` and `\outputs`
   — a single file name with a backslash in it, not a subdirectory. `pathJoin`
@@ -169,6 +169,16 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   tab cannot reintroduce a hard-coded separator. Windows-only copy in the
   installer (default `C:\Wan2GP`, `AppData\Roaming`, `C:\certs\…` placeholders)
   is platform-neutral instead.
+
+- **One-click prerequisites are gated, not just refused.** The *Install* buttons
+  in the Prerequisites card were still rendered on Linux/macOS and led to a
+  "re-downloads the installer" dialog before failing. A `prereqInstall`
+  capability (mirrored in `platform/mod.rs`, pinned by the parity test) now
+  replaces the button with the package-manager command — `sudo apt install git`
+  on Linux, `xcode-select --install` on macOS — click to copy. The same run
+  showed the install-location check calling a fresh folder "foreign" because
+  the launcher's own `~/Wan2GP/.tools` (its uv) was the only entry; `.tools`
+  joins the benign list, so first-time users are no longer told to wipe it.
 
 - **Docs audited against the code and upstream 18.83.** Sixteen claims were
   wrong or stale: the guide insisted `wgp_config.json` has no reserved-memory

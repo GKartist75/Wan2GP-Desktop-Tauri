@@ -21,6 +21,9 @@ pub enum Capability {
     KernelWheels,
     TritonRepair,
     AutoStart,
+    /// One-click prerequisite install (winget/choco/MSI download). Linux and
+    /// macOS get the package-manager command instead of a button.
+    PrereqInstall,
 }
 
 pub trait Platform {
@@ -169,6 +172,7 @@ mod tests {
         assert!(w.supports(Capability::KernelWheels));
         assert!(w.supports(Capability::TritonRepair));
         assert!(w.supports(Capability::AutoStart));
+        assert!(w.supports(Capability::PrereqInstall));
 
         let l = linux::LinuxPlatform;
         assert!(l.supports(Capability::KernelWheels));
@@ -177,6 +181,7 @@ mod tests {
         assert!(!l.supports(Capability::TaskManager));
         assert!(!l.supports(Capability::Dlss));
         assert!(!l.supports(Capability::TritonRepair));
+        assert!(!l.supports(Capability::PrereqInstall));
 
         let m = macos::MacosPlatform;
         assert!(m.supports(Capability::AutoStart));
@@ -185,6 +190,7 @@ mod tests {
         assert!(!m.supports(Capability::Dlss));
         assert!(!m.supports(Capability::TritonRepair));
         assert!(!m.supports(Capability::TaskManager));
+        assert!(!m.supports(Capability::PrereqInstall));
     }
 
     /// macOS has no shortcut writer; it must answer with an explicit refusal

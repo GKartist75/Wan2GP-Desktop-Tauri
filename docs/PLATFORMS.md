@@ -82,9 +82,10 @@ Both need a desktop session with GTK 3 + WebKitGTK 4.1 (Ubuntu 22.04+, Debian 12
 Fedora 40+, Arch). The `.deb` is the smaller, system-integrated path; the AppImage
 is the only Linux form that can self-update (see Known gaps).
 
-**Prerequisites are not one-click on Linux.** The *Install* buttons in the
-Prerequisites card are Windows-only; on Linux they answer with the command to
-run instead. `git` and Python come from the distro (`sudo apt install git
+**Prerequisites are not one-click on Linux.** Those buttons are winget/choco/MSI,
+i.e. Windows-only, so on Linux the Prerequisites card replaces each *Install*
+button with the command to run (`sudo apt install git`, …); click it to copy.
+On macOS the same slot shows `xcode-select --install` / `brew install python`. `git` and Python come from the distro (`sudo apt install git
 python3`) — or uv fetches the Python build the environment needs. Conda is
 optional. `uv` is the exception: the installer can bootstrap its own copy into
 `~/Wan2GP/.tools` with Astral's `install.sh` (`UV_NO_MODIFY_PATH=1`, so your PATH

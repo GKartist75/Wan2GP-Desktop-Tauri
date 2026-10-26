@@ -1199,6 +1199,21 @@ pub(crate) fn pinokio_root(repo: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Files this launcher itself creates inside the install folder. A folder that
+/// holds nothing else is still a clean install target.
+const BENIGN_ENTRIES: &[&str] = &[
+    "desktop-config.json",
+    ".uv-cache",
+    "envs.json",
+    ".tools", // owned uv (marker_uv_in)
+];
+
+/// `entries` is the capped listing, `count` the real entry count: a truncated
+/// listing must not be mistaken for "only benign files".
+fn only_benign(entries: &[String], count: usize) -> bool {
+    entries.len() == count && entries.iter().all(|n| BENIGN_ENTRIES.contains(&n.as_str()))
+}
+
 /// Target-folder triage: what is already in the install location?
 /// Verdicts: empty | ours_healthy | ours_broken_env | repo_no_env |
 /// pinokio | foreign. The installer UI turns this into Fresh / Adopt-Reuse /
@@ -1225,10 +1240,10 @@ pub fn classify_target() -> serde_json::Value {
     if count == 0 {
         return no_target;
     }
-    // Only our own bookkeeping files (e.g. desktop-config.json written at boot)
-    // means "empty" for install purposes — don't scare fresh users.
-    const BENIGN: &[&str] = &["desktop-config.json", ".uv-cache", "envs.json"];
-    if entries.len() == count && entries.iter().all(|n| BENIGN.contains(&n.as_str())) {
+    // Only our own bookkeeping files (desktop-config.json written at boot, the
+    // owned uv in .tools, a uv cache) means "empty" for install purposes —
+    // don't scare fresh users into wiping the launcher's own files.
+    if only_benign(&entries, count) {
         return no_target;
     }
     let has_wgp = repo.join("wgp.py").exists();
@@ -6256,6 +6271,33 @@ pub async fn rollback_wangp(app: tauri::AppHandle) -> Result<serde_json::Value, 
 /// (and `pin_drift_entry` for verdicts); this is the unfiltered wrapper its tests
 /// assert against.
 #[cfg(test)]
+mod benign_entries_tests {
+    use super::*;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Anything the launcher writes itself (above all the owned uv in .tools,
+    /// which lands on first launch) must not look like a foreign folder — that
+    /// warning tells the user to wipe the folder.
+    #[test]
+    fn launcher_bookkeeping_is_not_a_foreign_folder() {
+        assert!(only_benign(&v(&[".tools"]), 1));
+        assert!(only_benign(&v(&["desktop-config.json", "envs.json"]), 2));
+        assert!(only_benign(&v(&[]), 0));
+    }
+
+    #[test]
+    fn upstream_files_and_truncated_listings_are_not_benign() {
+        assert!(!only_benign(&v(&["wgp.py"]), 1));
+        assert!(!only_benign(&v(&[".tools", "wgp.py"]), 2));
+        // 40 entries, listing capped at 12: the length mismatch is the signal.
+        assert!(!only_benign(&v(&[".tools"]), 40));
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn parse_requirement_pins(text: &str) -> Vec<(String, String)> {
     parse_requirement_pins_for(text, None)
 }
@@ -7292,7 +7334,7 @@ pub async fn install_prerequisite(
     #[cfg(not(windows))]
     {
         let _ = (app, force);
-        Err(format!("{tool} must be installed with your system package manager (one-click install is Windows-only). git: `sudo apt install git` / `brew install git`; python: `brew install python@3.11`; uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`; conda: Miniconda installer from repo.anaconda.com."))
+        Err(format!("{tool} must be installed with your system package manager (one-click install is Windows-only). git: `sudo apt install git` (Debian/Ubuntu) / `brew install git` (macOS); python: `sudo apt install python3` / `brew install python`; uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`; conda: the Miniconda installer from repo.anaconda.com."))
     }
     #[cfg(windows)]
     return install_prerequisite_windows(app, tool, force.unwrap_or(false)).await;

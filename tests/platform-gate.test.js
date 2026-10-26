@@ -58,6 +58,7 @@ test('capabilitiesFor matches the platform each control needs', () => {
     kernelWheels: true,
     tritonRepair: true,
     autoStart: true,
+    prereqInstall: true,
   })
   assert.deepStrictEqual(gate.capabilitiesFor('linux'), {
     taskManager: false,
@@ -66,6 +67,7 @@ test('capabilitiesFor matches the platform each control needs', () => {
     kernelWheels: true,
     tritonRepair: false,
     autoStart: true,
+    prereqInstall: false,
   })
   assert.deepStrictEqual(gate.capabilitiesFor('darwin'), {
     taskManager: false,
@@ -74,6 +76,7 @@ test('capabilitiesFor matches the platform each control needs', () => {
     kernelWheels: false,
     tritonRepair: false,
     autoStart: true,
+    prereqInstall: false,
   })
 })
 
@@ -191,6 +194,7 @@ test('the JS map is pinned to the Rust adapters', () => {
     KernelWheels: 'kernelWheels',
     TritonRepair: 'tritonRepair',
     AutoStart: 'autoStart',
+    PrereqInstall: 'prereqInstall',
   }
   const adapters = [
     ['w', 'win32'],
@@ -230,6 +234,24 @@ test('no renderer tab still branches on the platform string', () => {
       `${file} compares w2gp.platform — gate the element with data-requires`,
     )
   }
+})
+
+test('one-click install is Windows-only; other hosts get a command', () => {
+  assert.strictEqual(gate.has('prereqInstall', { platform: 'Win32' }), true)
+  assert.strictEqual(gate.has('prereqInstall', { platform: 'Linux x86_64' }), false)
+  assert.strictEqual(gate.has('prereqInstall', { platform: 'MacIntel' }), false)
+  // Every tool has a runnable command off Windows, and none of them mentions
+  // winget/choco (the Windows-only path) or a Windows path.
+  for (const tool of ['git', 'uv', 'python', 'conda']) {
+    for (const platform of ['linux', 'darwin']) {
+      const cmd = gate.prereqCommand(tool, platform)
+      assert.ok(cmd.length > 0, `${tool} has no command on ${platform}`)
+      assert.ok(!/winget|choco|C:\\/i.test(cmd), `${tool}/${platform}: ${cmd}`)
+    }
+  }
+  assert.strictEqual(gate.prereqCommand('git', 'darwin'), 'xcode-select --install')
+  assert.strictEqual(gate.prereqCommand('git', 'linux'), 'sudo apt install git')
+  assert.strictEqual(gate.prereqCommand('nope', 'linux'), '')
 })
 
 test('pathJoin follows the host separator', () => {

@@ -29,6 +29,7 @@
     'kernelWheels',
     'tritonRepair',
     'autoStart',
+    'prereqInstall',
   ]
 
   /**
@@ -75,7 +76,47 @@
       tritonRepair: win,
       // XDG autostart / LaunchAgent / Run key on all three.
       autoStart: true,
+      // winget/choco/MSI only. Linux and macOS get the package-manager
+      // command in place of the button.
+      prereqInstall: win,
     }
+  }
+
+  /**
+   * Does the current host support `capability`?
+   *
+   * @param {string} capability one of CAPABILITIES
+   * @param {{platform?: string, userAgentData?: {platform?: string}}} [nav]
+   * @returns {boolean}
+   */
+  function has(capability, nav) {
+    const src = nav || (typeof navigator !== 'undefined' ? navigator : null)
+    return capabilitiesFor(platformFromNavigator(src))[capability] === true
+  }
+
+  /**
+   * The command a user runs when one-click install is not available, per tool.
+   *
+   * The Prerequisites card replaces its Install button with this string on
+   * Linux and macOS (winget/choco/MSI are Windows-only), so the card tells the
+   * user what to type instead of offering a button that cannot work.
+   *
+   * @param {string} tool git|uv|python|conda
+   * @param {'win32'|'darwin'|'linux'} [platform]
+   * @returns {string} empty for an unknown tool
+   */
+  function prereqCommand(tool, platform) {
+    const p = platform || platformFromNavigator(
+      typeof navigator !== 'undefined' ? navigator : null,
+    )
+    const mac = p === 'darwin'
+    const table = {
+      git: mac ? 'xcode-select --install' : 'sudo apt install git',
+      uv: 'curl -LsSf https://astral.sh/uv/install.sh | sh',
+      python: mac ? 'brew install python' : 'sudo apt install python3',
+      conda: 'Miniconda installer from repo.anaconda.com',
+    }
+    return table[tool] || ''
   }
 
   /**
@@ -129,6 +170,8 @@
     CAPABILITIES: CAPABILITIES,
     platformFromNavigator: platformFromNavigator,
     pathJoin: pathJoin,
+    has: has,
+    prereqCommand: prereqCommand,
     capabilitiesFor: capabilitiesFor,
     applyPlatformGating: applyPlatformGating,
   }

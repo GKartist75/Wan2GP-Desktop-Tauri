@@ -2286,8 +2286,26 @@ body.ft-resizing .dash-term-resize {
  gap: 4px;
 }
 .pt-actions .btn {
- font-size: 0.62rem;
- padding: 2px 8px;
+  font-size: 0.62rem;
+  padding: 2px 8px;
+}
+/* Linux/macOS: the Install button becomes the command to run. */
+.pt-cmd {
+  font-family: "Geist Mono", monospace;
+  font-size: 0.62rem;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: copy;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pt-cmd:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
 }
 
 .reinstall-choice {

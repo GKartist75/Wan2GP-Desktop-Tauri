@@ -64,11 +64,10 @@ right-click → Open, or
 `xattr -dr com.apple.quarantine "/Applications/Wan2GP Desktop Launcher Tauri.app"`.
 There is no in-app updater on macOS — download the new `.dmg`.
 
-**Prerequisites on Linux and macOS** are **not** one-click: the *Install*
-buttons are Windows-only and answer with the command to run. Install `git` (and
-Python, unless you let uv fetch it) with the distro package manager — `sudo apt
-install git python3`, `sudo dnf install git python3`, `xcode-select --install`
-on macOS. `uv` is the exception: the installer can put its own copy in
+**Prerequisites on Linux and macOS** are **not** one-click: those buttons are
+winget/choco/MSI, so the Prerequisites card shows the command to run instead
+(click it to copy) — `sudo apt install git python3`, `sudo dnf install git
+python3`, `xcode-select --install` on macOS. `uv` is the exception: the installer can put its own copy in
 `~/Wan2GP/.tools` (Astral's `install.sh`, PATH untouched), so uv need not be
 installed beforehand.
 

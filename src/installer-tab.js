@@ -1396,7 +1396,28 @@ function prereqRow(spec) {
     actions.append(b);
     return b;
   };
-  const install = mk("install", "Install");
+  // One-click install is winget/choco/MSI, i.e. Windows-only. Off Windows the
+  // row shows the package-manager command instead of a button that would only
+  // come back with "install it yourself".
+  const install = platformGate.has("prereqInstall")
+    ? mk("install", "Install")
+    : null;
+  if (!install) {
+    const cmd = platformGate.prereqCommand(spec.tool);
+    const hint = document.createElement("code");
+    hint.className = "pt-cmd";
+    hint.textContent = cmd;
+    hint.title = "Click to copy";
+    hint.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(cmd);
+        showToast("Copied: " + cmd, null, null, 6000);
+      } catch {
+        showToast(cmd, null, null, 9000);
+      }
+    };
+    actions.append(hint);
+  }
   mk("check", "Check");
   mk("version", "Version");
   row.append(dot, name, status, actions);
@@ -1415,7 +1436,7 @@ function prereqRow(spec) {
     appendLog("[i] " + line);
     showToast(line, null, null, 8000);
   };
-  install.onclick = () => prereqInstall(spec, install);
+  if (install) install.onclick = () => prereqInstall(spec, install);
   return row;
 }
 
@@ -1446,6 +1467,7 @@ async function refreshPrereqTools() {
     status.textContent = t.ready ? t.version || "installed" : "not found";
     status.title = t.path || "";
     const inst = row.querySelector('[data-act="install"]');
+    if (!inst) continue; // no one-click install on this platform
     inst.textContent = t.ready ? "Reinstall" : "Install";
     inst.dataset.force = t.ready ? "1" : "";
     inst.title = t.ready

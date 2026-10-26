@@ -326,7 +326,8 @@ impl Platform for WindowsPlatform {
             | Capability::Dlss
             | Capability::KernelWheels
             | Capability::TritonRepair
-            | Capability::AutoStart => true,
+            | Capability::AutoStart
+            | Capability::PrereqInstall => true,
         }
     }
 }
