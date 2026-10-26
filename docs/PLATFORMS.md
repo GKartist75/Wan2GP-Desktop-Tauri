@@ -130,11 +130,19 @@ Xvfb :99 -screen 0 1400x900x24 &
 dbus-run-session -- ./src-tauri/target/debug/wan2gp-desktop-launcher-tauri
 ```
 
-For a live, clickable window use `x11vnc -display :99 -localhost -nopw` and point
-a VNC viewer at `localhost:5900`; for scripted checks use `xdotool` (click at
-coordinates) and `import -window root shot.png` (screenshot). Without
-`dbus-run-session` the WebKit portal warnings flood the log and the window may
-not map.
+For a live, clickable window point a VNC viewer at `localhost:5900` (WSL2
+forwards it) after:
+
+```bash
+env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET XDG_SESSION_TYPE=x11 \
+  x11vnc -display :99 -localhost -nopw -forever -shared -bg
+```
+
+The `env -u` matters: WSLg exports `WAYLAND_DISPLAY`, and x11vnc then refuses to
+start ("Wayland sessions are only supported via -rawfb"). For scripted checks use
+`xdotool` (click at coordinates) and `import -window root shot.png`
+(screenshot). Without `dbus-run-session` the WebKit portal warnings flood the log
+and the window may not map.
 
 Simulate a GPU without hardware: `WGP_PROBE_NVIDIA_SMI=/tmp/fake-nvidia-smi`
 replaces the `nvidia-smi` probe with your script (executed directly on
