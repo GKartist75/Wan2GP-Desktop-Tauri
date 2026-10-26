@@ -13,6 +13,16 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- **uv's *Install* button works on Linux and macOS.** The Prerequisites row for
+  uv only copied `curl -LsSf https://astral.sh/uv/install.sh | sh` off Windows,
+  even though the install flow already provisions uv exactly that way. Astral's
+  installer is user-scope (no sudo, no package manager), so the button now runs
+  it for real and puts the copy in `~/Wan2GP/.tools` — receipted, so
+  `uv self update` keeps working, with `UV_NO_MODIFY_PATH=1` so the user's PATH
+  is never edited. `git`/`python`/`conda` still answer with the command to type:
+  those need root or a GUI installer. Verified on WSL2/Ubuntu 26.04 (fresh
+  `HOME`, uv absent): *Install* → `~/Wan2GP/.tools/uv --version` →
+  `uv 0.13.5`, row green, button flips to *Reinstall*.
 - **The environment panel reports Triton on Linux and macOS.** The version
   scan asks `importlib.metadata` for each package under a fixed name and had
   Triton aliased to `triton-windows` — the PyPI fork Windows uses. On

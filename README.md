@@ -409,7 +409,7 @@ Details, per-feature matrix, install steps and the honest gap list:
 
 ### Linux runtime notes
 - WebKitGTK 4.1 + GTK 3 required (`.deb` declares them); the AppImage bundles them, but it needs FUSE to mount.
-- One-click prerequisite install is Windows-only: on Linux `git`/`python` come from the distro; the installer can bootstrap `uv` into `~/Wan2GP/.tools`.
+- Prerequisite *Install* buttons are winget/choco/MSI, so Windows-only — except **uv**: Astral's installer runs without sudo, so its row keeps a working button and downloads uv into `~/Wan2GP/.tools`. `git`/`python` come from the distro.
 - NVIDIA detection uses `nvidia-smi`; AMD/Intel use `lspci` plus `/sys/class/drm` for VRAM.
 - Port-owner lookup uses `ss` (iproute2) and falls back to `lsof`; with neither, the stop path says so instead of guessing.
 

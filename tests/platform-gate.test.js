@@ -262,6 +262,34 @@ test('one-click install is Windows-only; other hosts get a command', () => {
   assert.strictEqual(gate.prereqCommand('cuda', 'darwin'), '')
 })
 
+test('uv keeps a working install button off Windows; the rest do not', () => {
+  // uv's installer is user-scope (`curl … | sh`, no sudo) and the launcher
+  // runs it into its own tools dir, so that row is one-click everywhere.
+  for (const platform of ['Win32', 'Linux x86_64', 'MacIntel']) {
+    assert.strictEqual(
+      gate.prereqInstallable('uv', { platform }),
+      true,
+      `uv has no install button on ${platform}`,
+    )
+  }
+  for (const platform of ['Linux x86_64', 'MacIntel']) {
+    for (const tool of ['git', 'python', 'conda']) {
+      assert.strictEqual(
+        gate.prereqInstallable(tool, { platform }),
+        false,
+        `${tool} must show its command on ${platform}`,
+      )
+    }
+  }
+  // Windows keeps the package-manager route, the vendor toolkit never has one.
+  for (const tool of ['git', 'python', 'conda']) {
+    assert.strictEqual(gate.prereqInstallable(tool, { platform: 'Win32' }), true)
+  }
+  for (const platform of ['Win32', 'Linux x86_64', 'MacIntel']) {
+    assert.strictEqual(gate.prereqInstallable('cuda', { platform }), false)
+  }
+})
+
 test('pathJoin follows the host separator', () => {
   const win = { platform: 'Win32' }
   const lin = { platform: 'Linux x86_64' }

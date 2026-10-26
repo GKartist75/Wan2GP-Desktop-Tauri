@@ -129,6 +129,29 @@
   }
 
   /**
+   * Can the launcher run an installer for `tool` on this host?
+   *
+   * One-click install is winget/choco/MSI, i.e. Windows-only — with one
+   * exception: uv ships a user-scope installer (`curl … | sh`, no sudo) that
+   * the launcher runs into its own `<dataDir>/.tools`, so that row keeps its
+   * button off Windows too. `git`, `python` and `conda` need root or a GUI
+   * installer and keep showing the command to type.
+   *
+   * MUST agree with `prereq_one_click_on` in `src-tauri/src/install.rs` (the
+   * backend rejects a tool the frontend offers, and vice versa).
+   *
+   * @param {string} tool git|uv|python|conda|cuda
+   * @param {{platform?: string, userAgentData?: {platform?: string}}} [nav]
+   * @returns {boolean}
+   */
+  function prereqInstallable(tool, nav) {
+    // The CUDA toolkit is a vendor runfile download, never a package-manager
+    // install — that row always answers with the URL.
+    if (tool === 'cuda') return false
+    return tool === 'uv' || has('prereqInstall', nav)
+  }
+
+  /**
    * Join two path fragments with the host's separator.
    *
    * The renderer has no `node:path`, and every caller used to concatenate
@@ -181,6 +204,7 @@
     pathJoin: pathJoin,
     has: has,
     prereqCommand: prereqCommand,
+    prereqInstallable: prereqInstallable,
     capabilitiesFor: capabilitiesFor,
     applyPlatformGating: applyPlatformGating,
   }

@@ -1405,10 +1405,12 @@ function prereqRow(spec) {
     actions.append(b);
     return b;
   };
-  // One-click install is winget/choco/MSI, i.e. Windows-only. Off Windows the
-  // row shows the package-manager command instead of a button that would only
-  // come back with "install it yourself".
-  const install = platformGate.has("prereqInstall")
+  // One-click install is winget/choco/MSI (Windows-only), except uv: its
+  // installer runs as the user (no sudo) into the launcher's own tools dir, so
+  // that row keeps a working button everywhere. The rest show the command to
+  // type instead of a button that would only come back with "install it
+  // yourself".
+  const install = platformGate.prereqInstallable(spec.tool)
     ? mk("install", "Install")
     : null;
   if (!install) {

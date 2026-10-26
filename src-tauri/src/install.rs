@@ -7570,6 +7570,19 @@ pub async fn prerequisite_report() -> Result<serde_json::Value, String> {
     .map_err(|e| e.to_string())
 }
 
+/// Can the launcher run the installer for `tool` itself on this host?
+///
+/// Windows has a package-manager/installer route (winget, choco, MSI) for all
+/// four. Everywhere else git/python/conda need root or a GUI installer, so the
+/// launcher refuses and the row shows the command to type instead — with one
+/// exception: uv ships a user-scope installer (`curl -LsSf https://
+/// astral.sh/uv/install.sh | sh`), no sudo involved, and the install flow
+/// already provisions uv that way into `<dataDir>/.tools`. Host bits are
+/// passed in so both arms are unit-testable on any host.
+fn prereq_one_click_on(tool: &str, windows: bool) -> bool {
+    windows || tool == "uv"
+}
+
 #[tauri::command]
 pub async fn install_prerequisite(
     app: tauri::AppHandle,
@@ -7579,13 +7592,81 @@ pub async fn install_prerequisite(
     if !["git", "uv", "python", "conda"].contains(&tool.as_str()) {
         return Err(format!("unknown tool {tool}"));
     }
-    #[cfg(not(windows))]
-    {
-        let _ = (app, force);
-        Err(format!("{tool} must be installed with your system package manager (one-click install is Windows-only). git: `sudo apt install git` (Debian/Ubuntu) / `brew install git` (macOS); python: `sudo apt install python3` / `brew install python`; uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`; conda: the Miniconda installer from repo.anaconda.com."))
+    if !prereq_one_click_on(&tool, cfg!(windows)) {
+        return Err(format!("{tool} must be installed with your system package manager (the launcher cannot run it without root). git: `sudo apt install git` (Debian/Ubuntu) / `brew install git` (macOS); python: `sudo apt install python3` / `brew install python`; conda: the Miniconda installer from repo.anaconda.com."));
     }
     #[cfg(windows)]
     return install_prerequisite_windows(app, tool, force.unwrap_or(false)).await;
+    #[cfg(not(windows))]
+    return install_prerequisite_unix(app, tool, force.unwrap_or(false)).await;
+}
+
+/// uv on Linux/macOS: run the official standalone installer — the same script
+/// the Prerequisites row shows — into the launcher's own `<dataDir>/.tools`
+/// (`installer_owned_uv_in` keeps the install receipt so `uv self update`
+/// works, and `UV_NO_MODIFY_PATH` keeps the user's PATH untouched). No sudo,
+/// no package manager, no password prompt.
+#[cfg(not(windows))]
+async fn install_prerequisite_unix(
+    app: tauri::AppHandle,
+    tool: String,
+    force: bool,
+) -> Result<serde_json::Value, String> {
+    let emit = move |msg: String| {
+        crate::base::push_log(&msg, "setup");
+        let _ = app.emit("setup-output", msg);
+    };
+    let data_dir = get_data_dir();
+    if force {
+        let tools = data_dir.join(".tools");
+        for f in [UV_EXE, UV_MARKER, UV_COPY_MARKER] {
+            let _ = std::fs::remove_file(tools.join(f));
+        }
+    } else if let Some(p) = owned_uv_in(&data_dir) {
+        emit(format!("[*] {tool} is already installed: {p}\n"));
+        return Ok(serde_json::json!({"ok": true, "success": true, "ready": true, "path": p}));
+    }
+    emit(format!(
+        "[*] Installing {tool} into the launcher tools dir (official installer)…\n"
+    ));
+    let dir = data_dir.clone();
+    let owned = tauri::async_runtime::spawn_blocking(move || installer_owned_uv_in(&dir))
+        .await
+        .map_err(|e| format!("{tool} install task failed: {e}"))?;
+    match owned {
+        Some(p) => {
+            emit(format!("[✓] {tool} installed: {p}\n"));
+            Ok(serde_json::json!({"ok": true, "success": true, "ready": true, "path": p}))
+        }
+        None => Err(format!(
+            "{tool} install failed — the official installer needs network access to astral.sh and curl. See the console above; a {tool} already on PATH still works, press Check."
+        )),
+    }
+}
+
+#[cfg(test)]
+mod prereq_gate_tests {
+    use super::prereq_one_click_on;
+
+    /// Windows keeps a package-manager route for every prerequisite; elsewhere
+    /// uv is the only one the launcher may run itself (user-scope installer,
+    /// no sudo). The frontend's `prereqInstallable` mirrors this.
+    #[test]
+    fn one_click_install_is_windows_plus_uv_elsewhere() {
+        for tool in ["git", "uv", "python", "conda"] {
+            assert!(prereq_one_click_on(tool, true), "winget covers {tool}");
+        }
+        assert!(
+            prereq_one_click_on("uv", false),
+            "uv installer needs no root"
+        );
+        for tool in ["git", "python", "conda", "cuda"] {
+            assert!(
+                !prereq_one_click_on(tool, false),
+                "{tool} needs root or a GUI installer off Windows"
+            );
+        }
+    }
 }
 
 /// Stream a child process to the installer console, return exit-ok.

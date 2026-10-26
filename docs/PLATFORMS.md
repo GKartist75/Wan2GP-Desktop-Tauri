@@ -90,14 +90,16 @@ Both need a desktop session with GTK 3 + WebKitGTK 4.1 (Ubuntu 22.04+, Debian 12
 Fedora 40+, Arch). The `.deb` is the smaller, system-integrated path; the AppImage
 is the only Linux form that can self-update (see Known gaps).
 
-**Prerequisites are not one-click on Linux.** Those buttons are winget/choco/MSI,
-i.e. Windows-only, so on Linux the Prerequisites card replaces each *Install*
-button with the command to run (`sudo apt install git`, …); click it to copy.
-On macOS the same slot shows `xcode-select --install` / `brew install python`. `git` and Python come from the distro (`sudo apt install git
+**Prerequisites are mostly not one-click on Linux.** Those buttons are
+winget/choco/MSI, i.e. Windows-only, so on Linux the Prerequisites card replaces
+each *Install* button with the command to run (`sudo apt install git`, …); click
+it to copy. On macOS the same slot shows `xcode-select --install` / `brew install
+python`. `git` and Python come from the distro (`sudo apt install git
 python3`) — or uv fetches the Python build the environment needs. Conda is
-optional. `uv` is the exception: the installer can bootstrap its own copy into
-`~/Wan2GP/.tools` with Astral's `install.sh` (`UV_NO_MODIFY_PATH=1`, so your PATH
-is never touched), which is why uv does not have to be installed first.
+optional. `uv` is the exception and **keeps its Install button**: Astral's
+`install.sh` is user-scope (no sudo), so the launcher runs it and puts the copy in
+`~/Wan2GP/.tools` (`UV_NO_MODIFY_PATH=1`, so your PATH is never touched). That is
+also why uv does not have to be installed before pressing *Install*.
 
 **SpargeAttn and flash-attn need a CUDA toolkit on Linux/macOS.** Upstream
 `docs/INSTALLATION.md` names CUDA **13.1** (RTX 20XX-50XX) or **12.8**
