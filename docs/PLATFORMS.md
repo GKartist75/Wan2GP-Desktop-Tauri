@@ -132,6 +132,13 @@ On a Hyprland/wlroots session such as Omarchy, three things differ:
 - If the window opens blank on NVIDIA + Wayland, run it with
   `WEBKIT_DISABLE_DMABUF_RENDERER=1` (WebKitGTK's DMABUF path on wlroots).
 
+The **prereq chip** next to each tool is copyable and carries the Debian
+command; its tooltip lists the Arch (pacman) and Fedora (dnf) equivalents,
+since the launcher cannot tell the distro apart from the browser. **Python
+reads `not found - optional`**: `uv` provisions the pinned 3.11 the installer
+uses (`uv python find`), so a system Python is only needed by the legacy
+CPU/INTEL_XPU path.
+
 **Prerequisites are mostly not one-click on Linux.** Those buttons are
 winget/choco/MSI, i.e. Windows-only, so on Linux the Prerequisites card replaces
 each *Install* button with the command to run (`sudo apt install git`, …); click

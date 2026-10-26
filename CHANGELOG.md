@@ -4,6 +4,20 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+## [0.10.28] — 2026-10-26
+
+- **The Prerequisites card stops reading as Debian-only.** The copyable hint is
+  still one command (`sudo apt install git`), but its tooltip now carries the
+  Arch (`pacman`) and Fedora (`dnf`) equivalents, and the "cannot run it here"
+  error from `install_prerequisite` lists all three plus Homebrew.
+- **Python is marked *optional* off Windows.** `python_preflight` resolves the
+  interpreter through `uv python find`, so the installer never needs a system
+  Python; a red Python dot on a fresh macOS (no `python3`) used to look like a
+  blocker. The row now reads `not found - optional` with a tooltip saying the
+  legacy CPU path is the only consumer.
+- `docs/PLATFORMS.md` gains an Arch / CachyOS / Omarchy section and the
+  prerequisite notes match the new hints.
+
 ## [0.10.27] — 2026-10-26
 
 - **The AppImage install no longer aborts with `ModuleNotFoundError: No module

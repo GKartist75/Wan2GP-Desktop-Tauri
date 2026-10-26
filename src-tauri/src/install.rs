@@ -7585,7 +7585,7 @@ pub async fn install_prerequisite(
         return Err(format!("unknown tool {tool}"));
     }
     if !prereq_one_click_on(&tool, cfg!(windows)) {
-        return Err(format!("{tool} must be installed with your system package manager (the launcher cannot run it without root). git: `sudo apt install git` (Debian/Ubuntu) / `brew install git` (macOS); python: `sudo apt install python3` / `brew install python`; conda: the Miniconda installer from repo.anaconda.com."));
+        return Err(format!("{tool} must be installed with your system package manager (the launcher cannot run it without root). git: `sudo apt install git` (Debian/Ubuntu), `sudo pacman -S git` (Arch), `sudo dnf install git` (Fedora) or `brew install git` (macOS); python: `sudo apt install python3` / `sudo pacman -S python` / `sudo dnf install python3` / `brew install python`; conda: the Miniconda installer from repo.anaconda.com."));
     }
     #[cfg(windows)]
     return install_prerequisite_windows(app, tool, force.unwrap_or(false)).await;

@@ -3,6 +3,26 @@
    be driven in a plain browser. NOT shipped: harness/ lives under tests/. */
 ;(function () {
   'use strict'
+  // Harness-only: ?platform=linux|darwin forces navigator.platform so the
+  // Linux/macOS rendering (package-manager hints, optional Python) can be
+  // driven from a Windows host. Runs before every app script.
+  var wantPlatform = (location.search.match(/[?&]platform=(linux|darwin)/) || [])[1]
+  window.__HARNESS_PLATFORM__ = wantPlatform || 'unset'
+  if (wantPlatform) {
+    var label = wantPlatform === 'darwin' ? 'MacIntel' : 'Linux x86_64'
+    Object.defineProperty(navigator, 'platform', { value: label, configurable: true })
+    if (navigator.userAgentData) {
+      try {
+        Object.defineProperty(navigator.userAgentData, 'platform', {
+          value: wantPlatform === 'darwin' ? 'macOS' : 'Linux',
+          configurable: true,
+        })
+      } catch (e) {}
+    }
+  }
+  // ?installer=1 makes the boot probe report "nothing installed", so the
+  // first-run installer screen (and its Prerequisites card) renders.
+  var forceInstaller = /[?&]installer=1/.test(location.search)
   var STATUS = {
     ok: true, installed: true, running: true, mode: 'zero',
     hasActiveEnv: true, envPath: 'C:\\Wan2GP\\envs\\py311',
@@ -62,7 +82,7 @@
     // refreshDashboard, refreshLLMEngines) when the install probe reports BOTH a
     // repo and an env — see app.js:2149. Without this the harness looks like a
     // broken app: the LLM cards never render because nothing ever asks.
-    if (name === 'check_installed') return { ok: true, repo: true, env: true }
+    if (name === 'check_installed') return forceInstaller ? { ok: true, repo: false, env: false } : { ok: true, repo: true, env: true }
     // Prerequisite gate + panel: mixed state so Install vs Reinstall labels,
     // versions and the missing copy all render in the harness.
     if (name === 'check_command')

@@ -129,6 +129,27 @@
   }
 
   /**
+   * The same command for the other Linux package managers, so the hint does not
+   * read as Debian-only on Arch/Fedora hosts. The Prerequisites card keeps the
+   * chip click-to-copy (one command) and puts these in its tooltip.
+   *
+   * @param {string} tool git|uv|python|conda|cuda
+   * @param {'win32'|'darwin'|'linux'} [platform]
+   * @returns {string[]} empty when there is nothing to add
+   */
+  function prereqAlternates(tool, platform) {
+    const p = platform || platformFromNavigator(
+      typeof navigator !== 'undefined' ? navigator : null,
+    )
+    if (p !== 'linux') return []
+    const table = {
+      git: ['sudo pacman -S git (Arch)', 'sudo dnf install git (Fedora)'],
+      python: ['sudo pacman -S python (Arch)', 'sudo dnf install python3 (Fedora)'],
+    }
+    return table[tool] || []
+  }
+
+  /**
    * Can the launcher run an installer for `tool` on this host?
    *
    * One-click install is winget/choco/MSI, i.e. Windows-only — with one
@@ -204,6 +225,7 @@
     pathJoin: pathJoin,
     has: has,
     prereqCommand: prereqCommand,
+    prereqAlternates: prereqAlternates,
     prereqInstallable: prereqInstallable,
     capabilitiesFor: capabilitiesFor,
     applyPlatformGating: applyPlatformGating,

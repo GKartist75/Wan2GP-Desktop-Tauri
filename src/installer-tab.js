@@ -1365,10 +1365,21 @@ async function usePinokioModels(t) {
 }
 
 // ── Prerequisites panel: install / reinstall / check / show version ──
+const _win = platformGate.platformFromNavigator(
+  typeof navigator !== "undefined" ? navigator : null,
+) === "win32";
 const PREREQ_TOOLS = [
   { tool: "git", label: "Git" },
   { tool: "uv", label: "uv" },
-  { tool: "python", label: "Python" },
+  // Off Windows the installer never needs a system Python: uv provisions the
+  // pinned 3.11 itself (python_preflight runs `uv python find`). A red dot here
+  // used to read as a blocker on a fresh macOS, which ships no python3.
+  {
+    tool: "python",
+    label: "Python",
+    optional: !_win,
+    tip: "uv provides the pinned 3.11 for the environment; a system Python is only used by the legacy CPU path",
+  },
   { tool: "conda", label: "Conda" },
   // Linux + NVIDIA only (the backend omits it elsewhere). Upstream's
   // INSTALLATION.md calls the CUDA toolkit a prerequisite because SpargeAttn
@@ -1425,7 +1436,8 @@ function prereqRow(spec) {
     const hint = document.createElement("code");
     hint.className = "pt-cmd";
     hint.textContent = cmd;
-    hint.title = "Click to copy";
+    const alt = platformGate.prereqAlternates(spec.tool);
+    hint.title = alt.length ? "Click to copy · " + alt.join(" · ") : "Click to copy";
     hint.onclick = async () => {
       try {
         await navigator.clipboard.writeText(cmd);

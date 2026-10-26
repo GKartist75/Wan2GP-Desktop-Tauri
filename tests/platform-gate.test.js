@@ -255,6 +255,19 @@ test('one-click install is Windows-only; other hosts get a command', () => {
   }
   assert.strictEqual(gate.prereqCommand('git', 'darwin'), 'xcode-select --install')
   assert.strictEqual(gate.prereqCommand('git', 'linux'), 'sudo apt install git')
+  // Debian-only hints were the Arch/CachyOS rough edge: the chip stays one
+  // copyable command, the alternatives ride along for the tooltip.
+  assert.deepStrictEqual(gate.prereqAlternates('git', 'linux'), [
+    'sudo pacman -S git (Arch)',
+    'sudo dnf install git (Fedora)',
+  ])
+  assert.deepStrictEqual(gate.prereqAlternates('python', 'linux'), [
+    'sudo pacman -S python (Arch)',
+    'sudo dnf install python3 (Fedora)',
+  ])
+  assert.deepStrictEqual(gate.prereqAlternates('git', 'win32'), [])
+  assert.deepStrictEqual(gate.prereqAlternates('git', 'darwin'), [])
+  assert.deepStrictEqual(gate.prereqAlternates('cuda', 'linux'), [])
   assert.strictEqual(gate.prereqCommand('nope', 'linux'), '')
   // CUDA toolkit: no distro package is new enough (upstream INSTALLATION.md
   // wants 13.1 / 12.8), so the hint points at NVIDIA; macOS has no CUDA.
