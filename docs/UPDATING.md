@@ -77,7 +77,8 @@ chmod +x Wan2GP.Desktop.Launcher.Tauri_<version>_amd64.AppImage
 ```
 
 The AppImage needs FUSE to mount (`sudo apt install libfuse2t64` on Ubuntu
-24.04+/26.04, `libfuse2` before that). Without FUSE, run it with
+24.04+/26.04, `libfuse2` before that) and is built on Ubuntu 26.04, so it needs
+**glibc ≥ 2.43**; on 22.04/24.04 use the `.deb` lane below instead. Without FUSE, run it with
 `--appimage-extract-and-run`.
 
 ## Linux — `.deb` and `.rpm` (`deb`, `rpm`)
