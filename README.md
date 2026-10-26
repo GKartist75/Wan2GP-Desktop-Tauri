@@ -2,11 +2,13 @@
 
 One-click **Wan2GP (WanGP)** — generative video, image, audio and TTS on your own GPU. No Python, no CUDA setup.
 
-| | Download |
+**[⬇ Download the latest release](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/latest)** — pick the file for your machine:
+
+| Your machine | File |
 | --- | --- |
-| **Windows 10/11** | [installer .exe](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.27/Wan2GP.Desktop.Launcher.Tauri_0.10.27_x64-setup.exe) · 4.3 MB · unsigned, so Windows shows "unknown publisher" |
-| **Linux x86_64** | [AppImage](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.27/Wan2GP.Desktop.Launcher.Tauri_0.10.27_amd64.AppImage) · 86 MB, self-updating · [`.deb`](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.27/Wan2GP.Desktop.Launcher.Tauri_0.10.27_amd64.deb) · 7 MB |
-| **macOS Apple Silicon** | [.dmg](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.27/Wan2GP.Desktop.Launcher.Tauri_0.10.27_aarch64.dmg) · 5.7 MB · unsigned, so right-click → Open |
+| **Windows 10/11** | `Wan2GP.Desktop.Launcher.Tauri_<version>_x64-setup.exe` · 4.3 MB · unsigned, so Windows shows "unknown publisher" |
+| **Linux x86_64** | `…_<version>_amd64.AppImage` · 86 MB, self-updating · or `…_<version>_amd64.deb` · 7 MB |
+| **macOS Apple Silicon** | `…_<version>_aarch64.dmg` · 5.7 MB · unsigned, so right-click → Open |
 
 **6 GB VRAM** is enough to start; the big models want 16–24 GB. Wan2GP itself is [deepbeepmeep/WanGP](https://github.com/deepbeepmeep/Wan2GP) — this repository installs it, picks the right GPU kernels and keeps it updated.
 
@@ -54,7 +56,7 @@ No Python, no CUDA toolkit, no `pip`, no Node needed beforehand — the installe
 
 ### Linux x86_64
 
-[AppImage](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.27/Wan2GP.Desktop.Launcher.Tauri_0.10.27_amd64.AppImage) (self-contained, self-updating) or [`.deb`](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.27/Wan2GP.Desktop.Launcher.Tauri_0.10.27_amd64.deb) (system-integrated, manual updates):
+[the latest release](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/latest) — `…_amd64.AppImage` (self-contained, self-updating) or `…_amd64.deb` (system-integrated, manual updates):
 
 ```bash
 # AppImage — needs FUSE: sudo apt install libfuse2t64   (libfuse2 on 22.04)
@@ -75,7 +77,7 @@ wan2gp-desktop-launcher-tauri
 
 ### macOS Apple Silicon
 
-1. Download the [`.dmg`](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.27/Wan2GP.Desktop.Launcher.Tauri_0.10.27_aarch64.dmg), open it, drag the app into *Applications*.
+1. Download `…_aarch64.dmg` from [the latest release](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/latest), open it, drag the app into *Applications*.
 2. First start: **right-click → Open** (the build is unsigned; macOS 11+).
 3. Updates are manual — there is no in-app updater without an Apple Developer ID.
 
