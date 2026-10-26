@@ -13,6 +13,20 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- **Deepy KV Cache Quantization now carries upstream's whole value set, and
+  reads the saved one.** The panel offered Auto / INT8 / Q4 out of upstream's
+  eight (`plugins/configuration/plugin.py:640-643`): *Disabled (BF16)* (the
+  empty string, which Auto silently overrides to INT8), *INT8 keys / Q4 values*
+  (-24% vs INT8), *Q6 keys and values* (-24%), *Q6 keys / Q4 values* (-35%) and
+  *Q4.1 keys and values* (-41%) were unreachable, and the mixed layouts lost
+  their exact-overlay preset. Both are there now — a second dropdown offers
+  upstream's `s1r1024` (default) / `s1r256` / `s0r1024` / `s0r0` and shows only
+  for the mixed bodies — and the selects preselect from
+  `wgp_config.json` (`deepy_status` returns `kvCacheQuantization`), so a config
+  written upstream no longer displays as "Auto". Auto-Tune keeps INT8 keys on
+  tight VRAM (`int8_q4`, -24%) instead of the Q4/Q4 body, which upstream's own
+  Auto never selects and which costs the most precision.
+
 - **Memory-profile guidance checked against upstream's own labels.**
   `wgp.py:11945` (`memory_profile_choices`) lists the profiles and their
   families, so the launcher's aligned to it: P4+ no longer receives a Dynamic

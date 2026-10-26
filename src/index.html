@@ -1376,12 +1376,25 @@
           <!-- Deepy KV Cache Quantization -->
           <div id="deepyKvCacheWrap" style="margin-top:10px">
             <div class="deepy-sub-label">Deepy KV Cache Quantization</div>
-            <select id="deepyKvCacheSelect" class="input" style="margin-top:4px;min-width:260px">
-              <option value="auto">Auto (default)</option>
-              <option value="int8">INT8</option>
-              <option value="q4">Q4 (needs GGUF kernels 1.0.29+)</option>
-            </select>
-            <p class="path-hint" style="margin-top:6px">Quantized KV cache for Deepy. Auto lets WanGP decide. Written as <code>deepy_kv_cache_quantization</code>.</p>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px">
+              <select id="deepyKvCacheSelect" class="input" style="min-width:290px">
+                <option value="auto">Auto (INT8 once GGUF kernels 1.0.13+ are installed)</option>
+                <option value="">Disabled (BF16)</option>
+                <option value="int8">INT8 (about half the KV-cache VRAM)</option>
+                <option value="int8_q4">INT8 keys, Q4 values (-24% vs INT8)</option>
+                <option value="q6">Q6 keys and values (-24% vs INT8)</option>
+                <option value="q6_q4">Q6 keys, Q4 values (-35% vs INT8)</option>
+                <option value="q4_1">Q4.1 keys and values (-41% vs INT8)</option>
+                <option value="q4">Q4 keys and values (-47% vs INT8)</option>
+              </select>
+              <select id="deepyKvCacheExactSelect" class="input" style="min-width:240px;display:none" title="Kept at INT8 precision beside the quantized cache: the sink (first page of each sequence) and the ring of the most recent tokens.">
+                <option value="s1r1024">sink 1 page + last 1024 tokens (default)</option>
+                <option value="s1r256">sink 1 page + last 256 tokens</option>
+                <option value="s0r1024">no sink + last 1024 tokens</option>
+                <option value="s0r0">no exact tokens (smallest cache)</option>
+              </select>
+            </div>
+            <p class="path-hint" style="margin-top:6px">Quantized KV cache for Deepy. Auto lets WanGP decide: INT8 with GGUF kernels 1.0.13+, BF16 without. The second dropdown is the exact-precision overlay the mixed layouts keep. Written as <code>deepy_kv_cache_quantization</code>.</p>
           </div>
           <div id="deepyPrimeOnly" style="display:none">
             <div class="deepy-cost-note">

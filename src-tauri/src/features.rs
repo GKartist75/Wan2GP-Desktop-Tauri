@@ -810,7 +810,7 @@ pub fn auto_tune_recommend(
     }
     let mut out = serde_json::json!({
         "video_profile": profile, "image_profile": profile, "audio_profile": audio,
-        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8", "text_encoder_quantization": if ram_tier == "high" { "bf16" } else { "int8" }, "int8_kernels": "auto", "fp8_kernels": "auto", "kernel_precision": "fast", "kv_cache_quantization": if vram_tier == "tight" { "q4" } else { "auto" },
+        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8", "text_encoder_quantization": if ram_tier == "high" { "bf16" } else { "int8" }, "int8_kernels": "auto", "fp8_kernels": "auto", "kernel_precision": "fast", "kv_cache_quantization": if vram_tier == "tight" { "int8_q4" } else { "auto" },
         "_recommendation_label": label,
         "_recommendation_reason": "Auto-tuned for your hardware",
         "packages": ["torch","triton","sageattention"],
@@ -1716,7 +1716,20 @@ pub fn deepy_status() -> serde_json::Value {
     // Prompt-enhancement UI (upstream `enhancer_mode`: 0 = Manual Button +
     // Automatic on Generation, 1 = Manual Button Only) so the panel can pre-select.
     let enhancer_mode = v.get("enhancer_mode").and_then(serde_json::Value::as_i64);
-    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "promptEnhancerQuantization": quant, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode, "enhancerMode": enhancer_mode})
+    let kv_cache = kv_cache_value(&v);
+    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "promptEnhancerQuantization": quant, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode, "enhancerMode": enhancer_mode, "kvCacheQuantization": kv_cache})
+}
+/// Deepy KV cache quantization as the panel needs it, straight from the config
+/// (upstream `shared/deepy/config.py`): `""` is BF16 and stays empty — the
+/// panel shows it as its own choice — while a missing key means upstream's
+/// default, `auto`. A mixed layout keeps its `body:exact` suffix
+/// (`kv_formats.py` BODY_PRESETS / EXACT_PRESETS); the panel splits it.
+/// Pure + unit-tested.
+pub(crate) fn kv_cache_value(cfg: &serde_json::Value) -> String {
+    cfg.get("deepy_kv_cache_quantization")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_lowercase())
+        .unwrap_or_else(|| "auto".into())
 }
 /// Upstream `normalize_deepy_session_mode` (shared/deepy/config.py):
 /// disabled/selectable/dedicated, anything else falls back to disabled.
@@ -3088,6 +3101,10 @@ mod autotune_matrix_tests {
             "tight VRAM buys head split"
         );
         assert_eq!(cuda["image_preload_mode"], "dynamic");
+        assert_eq!(
+            cuda["kv_cache_quantization"], "int8_q4",
+            "tight VRAM keeps INT8 keys and Q4 values (-24% vs INT8): Auto never goes below INT8 upstream, and the Q4/Q4 body costs the most precision"
+        );
         assert_eq!(cuda["smart_memory_pinning"], true);
         // Plenty of VRAM: head split off, everything else unchanged.
         let roomy = auto_tune_recommend(
@@ -3098,6 +3115,7 @@ mod autotune_matrix_tests {
             None,
         );
         assert_eq!(roomy["attention_head_split"], 0);
+        assert_eq!(roomy["kv_cache_quantization"], "auto");
         assert_eq!(
             roomy["image_preload_mode"], "default",
             "P1 is dynamic intrinsically (dynamic_preload) and has no preload control, so the mode stays Default"
@@ -3356,6 +3374,33 @@ mod autotune_matrix_tests {
         assert_eq!(r["video_profile"], 4.5);
     }
 }
+#[cfg(test)]
+mod deepy_kv_cache_tests {
+    use super::kv_cache_value;
+    use serde_json::json;
+    /// The panel preselects from this value, so BF16 (upstream's empty string)
+    /// must not collapse into `auto`: Auto silently turns INT8 *on* while GGUF
+    /// kernels 1.0.13+ are installed, the opposite of what BF16 asks for.
+    #[test]
+    fn bf16_survives_and_missing_keys_mean_auto() {
+        assert_eq!(
+            kv_cache_value(&json!({"deepy_kv_cache_quantization": ""})),
+            ""
+        );
+        assert_eq!(kv_cache_value(&json!({})), "auto");
+        assert_eq!(
+            kv_cache_value(&json!({"deepy_kv_cache_quantization": "INT8_Q4:S1R1024"})),
+            "int8_q4:s1r1024",
+            "case normalised, overlay kept for the second dropdown"
+        );
+        assert_eq!(
+            kv_cache_value(&json!({"deepy_kv_cache_quantization": 3})),
+            "auto",
+            "a non-string falls back to upstream's default, not to garbage"
+        );
+    }
+}
+
 #[cfg(test)]
 mod kernel_setting_tests {
     use super::{normalize_qwen_quant, valid_memory_override};
