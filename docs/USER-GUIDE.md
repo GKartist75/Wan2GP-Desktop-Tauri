@@ -16,6 +16,7 @@ flowchart TD
 
 ## Contents
 
+- [Getting the launcher](#getting-the-launcher)
 - [Dashboard](#dashboard)
 - [Installer (Setup)](#installer-setup)
 - [Viewer (Desktop embed)](#viewer-desktop-embed)
@@ -32,6 +33,49 @@ flowchart TD
 - [Typical workflows](#typical-workflows)
 
 ---
+
+## Getting the launcher
+
+**Windows** — run the NSIS `setup.exe` from Releases (unsigned: "unknown
+publisher"). It installs per-user and offers to launch at the end; the in-app
+updater takes over from there.
+
+**Linux** — two forms; both were run on Ubuntu 26.04.
+
+```bash
+# AppImage: self-contained, needs FUSE (libfuse2t64 on Ubuntu 24.04+)
+sudo apt install libfuse2t64
+chmod +x Wan2GP*.AppImage && ./Wan2GP*.AppImage
+# without FUSE:
+./Wan2GP*.AppImage --appimage-extract-and-run
+
+# .deb: smaller, integrates with the desktop (menu entry + /usr/bin binary)
+sudo apt install ./Wan2GP*_amd64.deb
+```
+
+The `.deb` pulls `libwebkit2gtk-4.1-0` and `libgtk-3-0`; the AppImage bundles
+them. Only the AppImage can self-update on Linux. Uninstall with
+`sudo apt remove wan2-gp-desktop-launcher-tauri` (or delete the AppImage), then
+remove `~/Wan2GP` and `~/Wan2GP-Models` if the env and models should go too.
+
+**macOS Apple Silicon** — open the `.dmg`, drag **Wan2GP Desktop Launcher
+Tauri** into *Applications*. It is unsigned: the first launch needs
+right-click → Open, or
+`xattr -dr com.apple.quarantine "/Applications/Wan2GP Desktop Launcher Tauri.app"`.
+There is no in-app updater on macOS — download the new `.dmg`.
+
+**Prerequisites on Linux and macOS** are **not** one-click: the *Install*
+buttons are Windows-only and answer with the command to run. Install `git` (and
+Python, unless you let uv fetch it) with the distro package manager — `sudo apt
+install git python3`, `sudo dnf install git python3`, `xcode-select --install`
+on macOS. `uv` is the exception: the installer can put its own copy in
+`~/Wan2GP/.tools` (Astral's `install.sh`, PATH untouched), so uv need not be
+installed beforehand.
+
+Where the launcher writes on Linux/macOS: `~/Wan2GP` (repo + envs +
+`desktop-config.json`), `~/Wan2GP-Models` (proposed model root), plus one
+`.desktop` file for the shortcut and one for auto-start (`~/.config/autostart`
+on Linux, `~/Library/LaunchAgents/com.wan2gp.desktop.plist` on macOS).
 
 ## Dashboard
 

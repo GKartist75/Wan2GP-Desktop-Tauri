@@ -79,6 +79,27 @@
   }
 
   /**
+   * Join two path fragments with the host's separator.
+   *
+   * The renderer has no `node:path`, and every caller used to concatenate
+   * "\\" — which on Linux/macOS produced `~/Wan2GP-Models\ckpts`, a single
+   * file name containing a backslash instead of a subdirectory. Windows keeps
+   * "\\" because that is what its own dialogs show; everything else gets "/".
+   * A trailing separator on `a` is collapsed, so a bare drive root works:
+   * `pathJoin("D:", "Wan2GP")` → `D:\Wan2GP`.
+   *
+   * @param {string} a base path
+   * @param {string} b child name
+   * @param {{platform?: string, userAgentData?: {platform?: string}}} [nav]
+   * @returns {string}
+   */
+  function pathJoin(a, b, nav) {
+    const src = nav || (typeof navigator !== 'undefined' ? navigator : null)
+    const sep = platformFromNavigator(src) === 'win32' ? '\\' : '/'
+    return String(a || '').replace(/[\\/]+$/, '') + sep + String(b || '')
+  }
+
+  /**
    * Apply `data-requires` gating under `root`.
    *
    * @param {{querySelectorAll?: Function}} root document or any element
@@ -107,6 +128,7 @@
   return {
     CAPABILITIES: CAPABILITIES,
     platformFromNavigator: platformFromNavigator,
+    pathJoin: pathJoin,
     capabilitiesFor: capabilitiesFor,
     applyPlatformGating: applyPlatformGating,
   }

@@ -285,13 +285,13 @@ async function loadPaths(skipModelPaths) {
     const savedOutput = saved.modelOutputPath;
     if (_modelCkpts || savedCkpts)
       setModelPath("ckpts", _modelCkpts || savedCkpts);
-    else setModelPath("ckpts", pathJoin(md, "ckpts"));
+    else setModelPath("ckpts", platformGate.pathJoin(md, "ckpts"));
     if (_modelLoras || savedLoras)
       setModelPath("loras", _modelLoras || savedLoras);
-    else setModelPath("loras", pathJoin(md, "loras"));
+    else setModelPath("loras", platformGate.pathJoin(md, "loras"));
     if (_modelOutput || savedOutput)
       setModelPath("output", _modelOutput || savedOutput);
-    else setModelPath("output", pathJoin(md, "outputs"));
+    else setModelPath("output", platformGate.pathJoin(md, "outputs"));
   }
   // Re-triage the target folder when the installer screen is showing
   // (Browse / reset changes the location — verdict must follow).
@@ -301,10 +301,6 @@ async function loadPaths(skipModelPaths) {
       refreshModelDiskGates().catch(() => {});
     }
   } catch {}
-}
-// Tiny path join that tolerates both separators in the renderer (no node path).
-function pathJoin(a, b) {
-  return (a || "").replace(/[\\/]+$/, "") + "\\" + b;
 }
 // True when the path is a bare drive root, e.g. "D:" or "D:\" (but not "D:\Wan2GP").
 function isDriveRoot(p) {

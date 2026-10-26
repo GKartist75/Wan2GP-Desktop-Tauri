@@ -12,12 +12,15 @@ Status vocabulary, used strictly:
 | **Ported** | Compiles *and bundles* for that target on a real machine of that OS (CI), and is unit-tested, but the app has never been executed there. |
 | **Hidden** | Deliberately not offered: the UI control is removed and the backend capability reports `false`. |
 
-Today only Windows is **Working**. Linux and macOS are **Ported**: the crate
-compiles and the bundles build on `ubuntu-22.04` (x86_64) and `macos-latest`
-(arm64) runners, and `dist/` holds real artifacts. That distinction is the whole
-point of this document — a green bundle build proves the code compiles and the
-packaging works; it does not prove `uv` resolved a wheel or that a port was
-freed.
+Windows is **Working**. Linux is **Working for launch** — the AppImage and the
+`.deb` were installed and started by hand on Ubuntu 26.04 (2026-10-26): window,
+full UI, prerequisite probe (git 2.53, uv 0.13.5, Python 3.14), WebKit processes
+up. What has *not* run on Linux is the rest of the cycle: WanGP install, GPU
+wheel install, launching WanGP itself, stop, self-update. macOS is **Ported**:
+the crate compiles and the bundle builds on `macos-latest`, no human has opened
+it. That distinction is the whole point of this document — a green bundle build
+proves the code compiles and the packaging works; it does not prove `uv`
+resolved a wheel or that a port was freed.
 
 ## Feature matrix
 
@@ -67,16 +70,43 @@ Windows release script uses the same key).
 
 ## Installing on Linux
 
-Requires a desktop session with WebKitGTK 4.1 (Ubuntu 22.04+/24.04, Fedora 40+,
-Arch). No Python, CUDA toolkit or `pip` needed beforehand — the launcher fetches
-what it needs, exactly like on Windows.
+Two bundles, both built on `ubuntu-22.04`; both were installed and started on
+Ubuntu 26.04.
 
-```bash
-# Debian/Ubuntu — the AppImage needs no packages, the .deb pulls these in
-sudo apt install ./Wan2GP*_amd64.deb
-# or
-chmod +x Wan2GP*.AppImage && ./Wan2GP*.AppImage
-```
+| Form | Command | Notes |
+| --- | --- | --- |
+| AppImage | `chmod +x Wan2GP*.AppImage && ./Wan2GP*.AppImage` | self-contained (bundles WebKitGTK and its GTK deps). **Needs FUSE** — `libfuse2t64` on Ubuntu 24.04+/26.04, `libfuse2` before that. Without it: `./Wan2GP*.AppImage --appimage-extract-and-run`, or run `squashfs-root/AppRun` from an extracted bundle (running the inner binary directly fails: WebKit's helper processes are resolved relative to the AppRun environment) |
+| `.deb` | `sudo apt install ./Wan2GP*_amd64.deb` | package `wan2-gp-desktop-launcher-tauri`, installs `/usr/bin/wan2gp-desktop-launcher-tauri` and a menu entry; `Depends: libwebkit2gtk-4.1-0, libgtk-3-0` |
+
+Both need a desktop session with GTK 3 + WebKitGTK 4.1 (Ubuntu 22.04+, Debian 12+,
+Fedora 40+, Arch). The `.deb` is the smaller, system-integrated path; the AppImage
+is the only Linux form that can self-update (see Known gaps).
+
+**Prerequisites are not one-click on Linux.** The *Install* buttons in the
+Prerequisites card are Windows-only; on Linux they answer with the command to
+run instead. `git` and Python come from the distro (`sudo apt install git
+python3`) — or uv fetches the Python build the environment needs. Conda is
+optional. `uv` is the exception: the installer can bootstrap its own copy into
+`~/Wan2GP/.tools` with Astral's `install.sh` (`UV_NO_MODIFY_PATH=1`, so your PATH
+is never touched), which is why uv does not have to be installed first.
+
+Where things land:
+
+- `~/Wan2GP` — the WanGP repo and its `envs/` (changeable in the wizard)
+- `~/Wan2GP-Models` — the proposed model root (`ckpts`, `loras`, `outputs`)
+- `~/Wan2GP/desktop-config.json` — launcher settings; `envs.json` sits in the repo
+- `~/.local/share/applications/*.desktop` — the shortcut the launcher creates;
+  `~/.config/autostart/*.desktop` — auto-start
+
+Uninstall: `sudo apt remove wan2-gp-desktop-launcher-tauri` (or delete the
+AppImage), then delete `~/Wan2GP` and `~/Wan2GP-Models` if the env and the models
+should go too. The launcher writes nothing else; `uv`, `pip` and WanGP keep their
+own caches under `~/.cache` (Manage → System → disk cleanup lists them).
+
+> WSL2: the window opens on WSLg but stays blank — WebKitGTK cannot create an EGL
+> display there (`EGL_BAD_PARAMETER`). Run it on a real Ubuntu desktop, or off a
+> virtual X display with `LIBGL_ALWAYS_SOFTWARE=1` +
+> `WEBKIT_DISABLE_DMABUF_RENDERER=1`. Not a launcher bug.
 
 GPU support:
 
@@ -94,7 +124,28 @@ GPU support:
 
 ## Installing on macOS
 
-Apple Silicon only (Intel Macs are out of scope). macOS 11+.
+Apple Silicon only (Intel Macs are out of scope). macOS 11+ (the bundle's
+`minimumSystemVersion`).
+
+1. Open the `.dmg` and drag **Wan2GP Desktop Launcher Tauri** into *Applications*.
+2. It is unsigned and not notarized: first launch needs right-click → **Open**, or
+   `xattr -dr com.apple.quarantine "/Applications/Wan2GP Desktop Launcher Tauri.app"`.
+   Gatekeeper keeps warning until a Developer ID is configured.
+3. There is **no in-app updater on macOS** (an unsigned `.app` cannot replace
+   itself): download the new `.dmg`.
+
+Prerequisites: `git` from Xcode command line tools (`xcode-select --install`) or
+Homebrew; Python comes from uv when the system one is unsuitable. The one-click
+*Install* buttons are Windows-only here too; `uv` is the exception — the
+installer can put its own copy in `~/Wan2GP/.tools`.
+
+Where things land: `~/Wan2GP` (repo + `envs/`), `~/Wan2GP-Models` (model root:
+`ckpts`, `loras`, `outputs`), `~/Wan2GP/desktop-config.json`, and
+`~/Library/LaunchAgents/com.wan2gp.desktop.plist` when auto-start is on.
+
+Uninstall: drag the app to the Bin; if auto-start was enabled,
+`launchctl bootout gui/$UID/com.wan2gp.desktop` and delete that plist; then remove
+`~/Wan2GP` and `~/Wan2GP-Models`.
 
 - GPU work runs on **MPS**; there are no CUDA or ROCm paths, so the DLSS card,
   the GPU kernel-wheels card and the Triton/MSVC toolchain are hidden.
@@ -133,9 +184,13 @@ variant, one `supports` arm per adapter, and `data-requires` in the markup.
 
 Ordered by what breaks first for a new Linux/macOS user.
 
-1. **Nothing on Linux or macOS has been executed.** No install, launch, stop,
-   update, GPU probe or port lookup has run on real hardware. First-run bugs are
-   expected.
+1. **Only launch has run on Linux; nothing has run on macOS.** Ubuntu 26.04 ran
+   the AppImage and the `.deb` (window, UI, prerequisite probe) and the debug
+   build under Xvfb. Still unexecuted anywhere on Unix: WanGP install, GPU
+   wheel install, launching WanGP, stop, self-update, port sweep, shortcut and
+   auto-start creation. First-run bugs are expected — a first-run path bug was
+   already found this way (hard-coded `\\` joins produced
+   `~/Wan2GP-Models\ckpts`).
 2. **Apple code signing** is not configured: unsigned `.dmg`, Gatekeeper warning,
    self-update disabled.
 3. **Linux self-update only works for the AppImage.** `.deb` users must download

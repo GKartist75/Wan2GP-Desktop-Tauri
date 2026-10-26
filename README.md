@@ -380,11 +380,26 @@ Full workspace viewer: multi-select, reorder, eject, copy/move across workspaces
 | Platform | Status | What you get |
 | --- | --- | --- |
 | **Windows 10/11 x64** | Supported | Full feature set, NSIS/MSI installers, in-app self-update |
-| **Linux x86_64** | Ported — not yet run on hardware | NVIDIA (CUDA), AMD (ROCm), CPU fallback; AppImage + `.deb`; desktop shortcut, auto-start, in-app update for the AppImage only |
+| **Linux x86_64** | Launched and UI-verified on Ubuntu 26.04 — full install cycle not yet run | NVIDIA (CUDA), AMD (ROCm), CPU fallback; AppImage + `.deb`; desktop shortcut, auto-start, in-app update for the AppImage only |
 | **macOS Apple Silicon** | Ported — not yet run on hardware | MPS/CPU only, macOS 11+, unsigned `.dmg`; no CUDA kernels, DLSS, Triton or MSVC toolchain |
 
+**Linux install** — the AppImage needs FUSE (`libfuse2t64` on Ubuntu 24.04+):
+
+```bash
+sudo apt install libfuse2t64            # only for the AppImage
+chmod +x Wan2GP*.AppImage && ./Wan2GP*.AppImage
+# or, system-integrated (needs libwebkit2gtk-4.1-0 + libgtk-3-0):
+sudo apt install ./Wan2GP*_amd64.deb
+```
+
+**macOS install** — open the `.dmg`, drag the app to *Applications*, then
+right-click → Open the first time (unsigned; no in-app updater).
+
 "Ported" means the platform's code compiles for that target and is unit-tested,
-but no install → launch → generate cycle has been executed there yet. Controls a
+but no install → launch → generate cycle has been executed there yet. Linux has
+now been launched by hand (window, full UI, prerequisite probe); what has not
+run is the WanGP install, GPU wheels, launch/stop of WanGP itself and the
+self-update. Controls a
 platform cannot honour are hidden, not broken: `index.html` marks them with
 `data-requires`, `src/services/platform-gate.js` applies the platform's
 capability map, and a test pins that map to the Rust adapters.
@@ -393,7 +408,8 @@ Details, per-feature matrix, install steps and the honest gap list:
 [**docs/PLATFORMS.md**](docs/PLATFORMS.md).
 
 ### Linux runtime notes
-- WebKitGTK 4.1 + GTK 3 required (`.deb` declares them); the AppImage bundles them.
+- WebKitGTK 4.1 + GTK 3 required (`.deb` declares them); the AppImage bundles them, but it needs FUSE to mount.
+- One-click prerequisite install is Windows-only: on Linux `git`/`python` come from the distro; the installer can bootstrap `uv` into `~/Wan2GP/.tools`.
 - NVIDIA detection uses `nvidia-smi`; AMD/Intel use `lspci` plus `/sys/class/drm` for VRAM.
 - Port-owner lookup uses `ss` (iproute2) and falls back to `lsof`; with neither, the stop path says so instead of guessing.
 

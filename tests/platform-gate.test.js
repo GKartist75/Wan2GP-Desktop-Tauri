@@ -231,3 +231,48 @@ test('no renderer tab still branches on the platform string', () => {
     )
   }
 })
+
+test('pathJoin follows the host separator', () => {
+  const win = { platform: 'Win32' }
+  const lin = { platform: 'Linux x86_64' }
+  const mac = { platform: 'MacIntel' }
+  assert.strictEqual(gate.pathJoin('C:\\Wan2GP', 'ckpts', win), 'C:\\Wan2GP\\ckpts')
+  assert.strictEqual(gate.pathJoin('C:', 'Wan2GP', win), 'C:\\Wan2GP')
+  assert.strictEqual(gate.pathJoin('C:\\', 'Wan2GP', win), 'C:\\Wan2GP')
+  assert.strictEqual(
+    gate.pathJoin('/home/x/Wan2GP', 'ckpts', lin),
+    '/home/x/Wan2GP/ckpts',
+  )
+  assert.strictEqual(
+    gate.pathJoin('/home/x/Wan2GP-Models/', 'loras', lin),
+    '/home/x/Wan2GP-Models/loras',
+  )
+  assert.strictEqual(
+    gate.pathJoin('/Users/x/Wan2GP', 'outputs', mac),
+    '/Users/x/Wan2GP/outputs',
+  )
+})
+
+test('no renderer file joins paths with a hard-coded backslash', () => {
+  const dir = path.join(ROOT, 'src')
+  for (const file of fs.readdirSync(dir)) {
+    if (!file.endsWith('.js') || file === 'platform-gate.js') continue
+    const src = fs.readFileSync(path.join(dir, file), 'utf8')
+    assert.ok(
+      !/\+\s*"\\\\"\s*\+\s*[a-zA-Z_$]/.test(src),
+      `${file} concatenates "\\\\" to build a path — use platformGate.pathJoin`,
+    )
+  }
+})
+
+test('no renderer file hard-codes a path separator variable', () => {
+  const dir = path.join(ROOT, 'src')
+  for (const file of fs.readdirSync(dir)) {
+    if (!file.endsWith('.js') || file === 'platform-gate.js') continue
+    const src = fs.readFileSync(path.join(dir, file), 'utf8')
+    assert.ok(
+      !/=\s*"\\\\"\s*;/.test(src),
+      `${file} assigns "\\\\" as a separator — use platformGate.pathJoin`,
+    )
+  }
+})

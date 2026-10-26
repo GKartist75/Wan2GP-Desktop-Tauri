@@ -427,7 +427,7 @@
             <h3>Headless batch (queue runner)</h3>
             <p class="token-hint">Process a saved queue without the web UI — overnight renders. Save the queue in WanGP first (<em>Save Queue</em> → <code>.zip</code>) or export settings (<code>.json</code>). Progress streams to the console; exit <code>0</code> = done, <code>1</code> = error.</p>
             <div class="token-field" style="margin-top:8px">
-              <input type="text" id="batchQueueInput" class="input" placeholder="C:\path\to\saved_queue.zip" style="max-width:420px" title="Saved queue (.zip) or settings (.json)">
+              <input type="text" id="batchQueueInput" class="input" placeholder="…/saved_queue.zip" style="max-width:420px" title="Saved queue (.zip) or settings (.json)">
               <input type="text" id="batchOutputInput" class="input" placeholder="Output folder (optional)" style="max-width:280px" title="Override output directory">
             </div>
             <div class="token-field" style="margin-top:8px">
@@ -568,8 +568,8 @@
             <button class="btn btn-ghost small" id="netUrlValidateBtn" title="Validate and stage --public-url">Validate &amp; stage</button>
           </div>
           <div class="token-field" style="margin-top:8px">
-            <input type="text" id="netCertInput" class="input" placeholder="C:\certs\wangp.pem" style="max-width:320px" title="TLS certificate file">
-            <input type="text" id="netKeyInput" class="input" placeholder="C:\certs\wangp-key.pem" style="max-width:320px" title="TLS private key file">
+            <input type="text" id="netCertInput" class="input" placeholder="…/wangp.pem" style="max-width:320px" title="TLS certificate file">
+            <input type="text" id="netKeyInput" class="input" placeholder="…/wangp-key.pem" style="max-width:320px" title="TLS private key file">
             <input type="number" id="netHttpsPortInput" class="input" placeholder="HTTPS port (optional)" min="1024" max="65535" style="width:170px" title="Serve HTTPS here and redirect HTTP">
             <button class="btn btn-ghost small" id="netTlsStageBtn" title="Stage --ssl-certfile/--ssl-keyfile/--https-port">Stage TLS</button>
           </div>
@@ -714,7 +714,7 @@
         <div class="settings-section" style="margin-top:12px">
           <h3>Import finetune</h3>
           <div class="token-field">
-            <input type="text" id="libImportInput" class="input" placeholder="C:\path\to\shared-finetune.json" style="max-width:420px">
+            <input type="text" id="libImportInput" class="input" placeholder="…/shared-finetune.json" style="max-width:420px">
             <button class="btn btn-primary small" id="libImportBtn" title="Validate and copy this JSON into finetunes/">Import</button>
           </div>
           <p class="token-hint">Copies a shared <code>.json</code> into <code>finetunes/</code> after validating the filename and the <code>model</code> object — existing files are never overwritten. Then Refresh Model List in WanGP (or restart).</p>
@@ -1201,7 +1201,7 @@
     <div id="modelsWarnBanner" class="update-banner models-warn hidden">
       <div class="update-info">
         <span class="update-badge" style="background:var(--warning,#d9a441)">MODELS</span>
-        <span id="modelsWarnText">Your Wan2GP main folder and checkpoints/LoRAs are inside a roaming AppData profile. Move them to a fast, dedicated drive (e.g. C:\Wan2GP and C:\Wan2GP-Models) for speed and to avoid profile bloat.</span>
+        <span id="modelsWarnText">Your Wan2GP main folder and checkpoints/LoRAs are inside a roaming profile. Move them to a fast, dedicated location outside it for speed and to avoid profile bloat.</span>
       </div>
       <div class="models-warn-actions">
         <button id="modelsWarnMigrateBtn" class="btn btn-primary small hidden" title="Move the install and model folders out of AppData">Migrate to new location</button>
@@ -1629,11 +1629,11 @@
                         </div>
                         <div class="form-row" style="margin-top:6px">
                           <label class="path-hint" for="deepyWebCertInput">Cert .pem</label>
-                          <input id="deepyWebCertInput" type="text" style="width:220px" placeholder="C:\certs\lan-cert.pem">
+                          <input id="deepyWebCertInput" type="text" style="width:220px" placeholder="…/lan-cert.pem">
                         </div>
                         <div class="form-row" style="margin-top:6px">
                           <label class="path-hint" for="deepyWebKeyInput">Key .key</label>
-                          <input id="deepyWebKeyInput" type="text" style="width:220px" placeholder="C:\certs\lan-cert-key.pem">
+                          <input id="deepyWebKeyInput" type="text" style="width:220px" placeholder="…/lan-cert-key.pem">
                         </div>
                         <div class="form-row" style="margin-top:6px">
                           <button class="btn btn-ghost small" id="deepyWebCertBring">Use these files</button>
@@ -1969,7 +1969,7 @@
           <button class="btn btn-ghost small" id="clearAppDataPath" title="Reset to default">✕</button>
         </div>
         <div id="installRootWarn" class="install-root-warn hidden"></div>
-        <p class="path-hint">Where the Wan2GP repo, Python venv/env, and settings live. Default <code>C:\Wan2GP</code> on a fast SSD with 50+ GB free. Keep it OUT of AppData so it isn't buried in a roaming profile. Picking a bare drive root automatically uses <code>&lt;root&gt;\Wan2GP</code>.</p>
+        <p class="path-hint">Where the Wan2GP repo, Python venv/env, and settings live. The default in the field above sits on a fast drive with 50+ GB free. Keep it OUT of a roaming profile (<code>AppData</code> on Windows, a synced home folder elsewhere). Picking a bare drive root automatically appends Wan2GP.</p>
         <div id="moveToPreferredWrap" class="migrate-note hidden">
           <span class="migrate-warn">⚠ Your Wan2GP data is currently inside your roaming AppData profile (<code id="currentDataDirPath">…</code>).</span>
           <button class="btn btn-primary small" id="moveToPreferredBtn" title="Move Wan2GP data out of the roaming profile to the new location">Migrate to new location</button>
@@ -1999,7 +1999,7 @@
           <button class="btn btn-ghost small" id="clearOutputPath" title="Reset to default">✕</button>
         </div>
         <p class="path-hint">Where generated videos/images/audio are saved.</p>
-        <p class="path-hint path-hint-warn">⚠ Model checkpoints &amp; LoRAs are large (tens–hundreds of GB). Store them on a fast, non-system drive — <strong>not</strong> in AppData/Roaming, which roams with your profile and can bloat or sync unexpectedly. Default <code>C:\Wan2GP-Models\ckpts</code> keeps them separate from the repo.</p>
+        <p class="path-hint path-hint-warn">⚠ Model checkpoints &amp; LoRAs are large (tens–hundreds of GB). Store them on a fast drive, outside the repo and outside any roaming profile (<code>AppData\Roaming</code> on Windows, a synced home folder elsewhere) — the default shown above keeps them separate from the repo.</p>
       </div>
 
       <!-- Target-folder verdict (classify_target): checks first, Install button after -->

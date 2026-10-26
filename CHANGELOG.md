@@ -148,6 +148,28 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   (APUs enumerate first). A startup diagnostic line reports per-device VRAM,
   the resolved UUID, and the live `CUDA_VISIBLE_DEVICES` / `CUDA_DEVICE_ORDER`.
 
+- **Linux/macOS installation documented and Linux verified by hand.** The docs
+  now cover how to install each bundle instead of assuming you know: AppImage
+  (needs FUSE — `libfuse2t64` on 24.04+ — or `--appimage-extract-and-run`),
+  `.deb` (package `wan2-gp-desktop-launcher-tauri`, `Depends:
+  libwebkit2gtk-4.1-0, libgtk-3-0`, menu entry, `/usr/bin` binary), macOS `.dmg`
+  + quarantine + no-updater, uninstall steps for both, and where data lands
+  (`~/Wan2GP`, `~/Wan2GP-Models`, `desktop-config.json`, `envs.json`, the
+  `.desktop`/LaunchAgent files). It also stopped claiming prerequisites are
+  one-click on Unix — those buttons are Windows-only and answer with the distro
+  command; only `uv` can be bootstrapped, into `~/Wan2GP/.tools`. Verified on Ubuntu
+  26.04: AppImage and `.deb` both install and start (window, full UI,
+  git/uv/python detected), 380 Rust + 204 JS tests green on the Linux host. The
+  first run exposed a renderer bug, now fixed: path joins were hard-coded to
+  `\`, so Linux/macOS showed `~/Wan2GP-Models\ckpts`, `\loras` and `\outputs`
+  — a single file name with a backslash in it, not a subdirectory. `pathJoin`
+  lives in `platform-gate.js` now and takes the separator from the host
+  (`win32` → `\`, else `/`), the repo-containment checks compare normalized
+  keys instead of stitching `repo + "\\"`, and three tests pin it so a future
+  tab cannot reintroduce a hard-coded separator. Windows-only copy in the
+  installer (default `C:\Wan2GP`, `AppData\Roaming`, `C:\certs\…` placeholders)
+  is platform-neutral instead.
+
 - **Docs audited against the code and upstream 18.83.** Sixteen claims were
   wrong or stale: the guide insisted `wgp_config.json` has no reserved-memory
   key (it is `perc_reserved_mem_max`, a 0-100 percentage the launcher writes);
