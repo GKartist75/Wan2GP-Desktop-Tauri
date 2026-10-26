@@ -437,7 +437,7 @@ What has actually been executed where — no more, no less:
 
 ### Linux & macOS — testers wanted
 
-Windows has years of use behind it. Linux and macOS were written, compiled and
+Windows has weeks of use behind it. Linux and macOS were written, compiled and
 unit-tested from the same code, and Linux has now been driven end-to-end on one
 machine (RTX 3080, Ubuntu 26.04) — but **one machine is not a platform**.
 
