@@ -1151,10 +1151,16 @@ mod requirements_pin_tests {
     fn markers_evaluated_when_interpreter_known() {
         // Unknown interpreter: unjudgeable marker line fails open.
         assert_eq!(requirements_pin_for(REQS, "rembg", "2.0.66", None), None);
-        // Windows + py3.11: `platform_system != "Darwin"` holds → capped.
+        // py3.11: the line is `rembg==2.0.65; platform_system != "Darwin"`, so
+        // the pin applies only where the marker holds — false on macOS.
+        let expected = if cfg!(target_os = "macos") {
+            None
+        } else {
+            Some("==2.0.65".into())
+        };
         assert_eq!(
             requirements_pin_for(REQS, "rembg", "2.0.66", Some((3, 11))),
-            Some("==2.0.65".into())
+            expected
         );
         // A python_version-gated line applies per interpreter.
         let gated = "pkg==1.0; python_version >= \"3.10\"\n";

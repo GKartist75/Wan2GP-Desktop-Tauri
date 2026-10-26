@@ -2091,17 +2091,26 @@ mod tests {
 
     #[test]
     fn tri_outputs_candidates_prefer_configured() {
-        let repo = std::path::Path::new("C:/Wan2GP");
+        // Host-absolute on purpose: a Windows path is *relative* on Unix, so a
+        // literal `C:/...` fixture only proves Windows behaviour.
+        let (repo, save) = if cfg!(windows) {
+            (
+                std::path::Path::new(r"C:\Wan2GP"),
+                r"C:\Wan2GP-Models\outputs",
+            )
+        } else {
+            (
+                std::path::Path::new("/srv/Wan2GP"),
+                "/srv/Wan2GP-Models/outputs",
+            )
+        };
         let cfg = serde_json::json!({
-            "save_path": "C:/Wan2GP-Models/outputs",
+            "save_path": save,
             "image_save_path": "",
-            "audio_save_path": "C:/Wan2GP-Models/outputs",
+            "audio_save_path": save,
         });
         let c = outputs_candidates(&cfg, repo);
-        assert_eq!(
-            c.first().map(String::as_str),
-            Some("C:/Wan2GP-Models/outputs")
-        );
+        assert_eq!(c.first().map(String::as_str), Some(save));
         assert!(c.iter().any(|p| p.ends_with("outputs")));
         let rel = serde_json::json!({"save_path": "my-out"});
         let c2 = outputs_candidates(&rel, repo);
@@ -2165,9 +2174,17 @@ mod tests {
 
     #[test]
     fn tri_qwen27b_roots_read_checkpoints_paths() {
-        let repo = std::path::Path::new("C:/Wan2GP");
+        // Host-absolute, as in the outputs test above.
+        let (repo, ckpts) = if cfg!(windows) {
+            (
+                std::path::Path::new(r"C:\Wan2GP"),
+                r"C:\Wan2GP-Models\ckpts",
+            )
+        } else {
+            (std::path::Path::new("/srv/Wan2GP"), "/srv/Wan2GP-Models/ckpts")
+        };
         // Gerard's real config: absolute ckpts root + "." entry (skipped).
-        let cfg = serde_json::json!({"checkpoints_paths": ["C:\\Wan2GP-Models\\ckpts", "."]});
+        let cfg = serde_json::json!({"checkpoints_paths": [ckpts, "."]});
         let roots = qwen27b_search_roots(&cfg, repo);
         assert_eq!(roots.len(), 1);
         assert!(roots[0].ends_with("ckpts"));

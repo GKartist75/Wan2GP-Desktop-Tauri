@@ -2393,10 +2393,10 @@ mod launch_args_tests {
     fn triton_cache_pin_targets_one_stable_folder() {
         use super::triton_cache_dir_for;
         let d = triton_cache_dir_for(Path::new(r"C:\Wan2GP"));
-        assert_eq!(d, Path::new(r"C:\Wan2GP\triton-cache"));
+        assert_eq!(d, Path::new(r"C:\Wan2GP").join("triton-cache"));
         // Non-default data dir (D: pick) resolves inside it, never HOME.
         let d2 = triton_cache_dir_for(Path::new(r"D:\Tools\Wan2GP"));
-        assert_eq!(d2, Path::new(r"D:\Tools\Wan2GP\triton-cache"));
+        assert_eq!(d2, Path::new(r"D:\Tools\Wan2GP").join("triton-cache"));
         assert!(!d2.to_string_lossy().contains("AppData\\Local\\Temp"));
     }
     #[test]
@@ -2576,7 +2576,7 @@ cmd,
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod msvc_pin_tests {
     use super::{
         decide_msvc_pin, discover_msvc_pin_in, msvc_toolchain_paths, parse_vswhere_root,

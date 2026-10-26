@@ -419,10 +419,12 @@ mod tests {
 
     #[test]
     fn scan_marker_refuses_shell_metacharacters() {
-        // The marker is pasted into a single-quoted PowerShell string.
-        assert!(WindowsPlatform.scan_processes("wgp.py").is_ok());
+        // Validation rejects before any process is spawned: cross-platform.
         assert!(WindowsPlatform.scan_processes("wgp'py").is_err());
         assert!(WindowsPlatform.scan_processes("").is_err());
+        // The accepted path actually runs the PowerShell probe.
+        #[cfg(windows)]
+        assert!(WindowsPlatform.scan_processes("wgp.py").is_ok());
     }
 
     #[test]
