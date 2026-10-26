@@ -9,13 +9,15 @@ Status vocabulary, used strictly:
 | Mark | Meaning |
 | --- | --- |
 | **Working** | Built, run and exercised by hand on that OS on this branch. |
-| **Ported** | Compiles for that target (type-checked with the platform's `cfg` arms live) and is unit-tested, but has never been executed on real hardware. |
+| **Ported** | Compiles *and bundles* for that target on a real machine of that OS (CI), and is unit-tested, but the app has never been executed there. |
 | **Hidden** | Deliberately not offered: the UI control is removed and the backend capability reports `false`. |
 
-Today only Windows is **Working**. Linux and macOS are **Ported**. That
-distinction is the whole point of this document — a green CI matrix proves the
-code compiles for a target; it does not prove `uv` resolved a wheel or that a
-port was freed.
+Today only Windows is **Working**. Linux and macOS are **Ported**: the crate
+compiles and the bundles build on `ubuntu-22.04` (x86_64) and `macos-latest`
+(arm64) runners, and `dist/` holds real artifacts. That distinction is the whole
+point of this document — a green bundle build proves the code compiles and the
+packaging works; it does not prove `uv` resolved a wheel or that a port was
+freed.
 
 ## Feature matrix
 
@@ -48,8 +50,11 @@ the MSVC/Triton toolchain are all CUDA/NVIDIA-specific, and macOS has neither.
 | Linux x64 | AppImage, `.deb` | AppImage only |
 | macOS arm64 | `.app`, `.dmg` | no |
 
-The release workflow (`.github/workflows/release.yml`) builds all three from one
-tag and attaches them to a single draft release. macOS sets
+`.github/workflows/build-artifacts.yml` produces the same bundles without a tag,
+a release or a signing key (dispatch it, download the run's artifacts) — that is
+how the current `dist/` files were made. The release workflow
+(`.github/workflows/release.yml`) builds all three from one tag and attaches them
+to a single draft release. macOS sets
 `createUpdaterArtifacts: false` for the build, because replacing an unsigned
 `.app` is not a path we can support without an Apple developer identity — the
 in-app updater is only offered where it can actually work.
@@ -139,8 +144,11 @@ Ordered by what breaks first for a new Linux/macOS user.
 5. **NVIDIA on Linux without `nvidia-smi`** is `unknown` → CPU profile.
 6. **AMD ROCm on Linux** is ported and unit-tested but has never run; the HIP
    wheel path is the same one that recently changed on Windows.
-7. **The AWS-LC dependency** (`reqwest`/`rustls` chain) cannot be cross-checked
-   from Windows without a Unix C toolchain, so `cargo check --target` locally
-   proves nothing for the *linked* build; CI is the only gate for that.
-8. **Bundles have never been produced** for Linux or macOS on this branch, and no
-   `.dmg`/`.AppImage`/`.deb` exists yet to test.
+7. **The bundle build is the only proof so far.** `build-artifacts.yml` compiled
+   and packaged both targets on real runners (that also cleared the AWS-LC /
+   `rustls` link question a Windows cross-check could never answer), but no
+   0.10.x build has been started on either OS by a human.
+8. **The artifacts in `dist/` carry no updater signature** (the artifact workflow
+   forces `createUpdaterArtifacts: false`), so they cannot self-update. Only
+   `release.yml` with `TAURI_SIGNING_PRIVATE_KEY` produces update-capable
+   bundles.

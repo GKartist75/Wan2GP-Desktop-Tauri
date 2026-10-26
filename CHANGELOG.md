@@ -52,9 +52,16 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   self-update), so `latest.json` only advertises platforms where the update can
   actually apply. CI gains Linux/macOS compile, test, clippy and fmt jobs.
 
+- **Bundles exist.** `build-artifacts.yml` (dispatch-only, no signing key) built
+  the first real Unix artifacts on the project's CI: AppImage 85.0 MB (ELF64
+  x86-64), `.deb` 7.25 MB (`Depends:` was duplicated by the explicit override,
+  now left to Tauri), macOS `.dmg` 5.96 MB (UDIF). Windows keeps NSIS/MSI. The
+  release workflow attaches all three to one draft release once
+  `TAURI_SIGNING_PRIVATE_KEY` exists as a repo secret.
+
 - **Honest support label.** Windows is *supported*; Linux and macOS are *ported*
-  — the code compiles for those targets and is unit-tested, but no install →
-  launch → generate cycle has run there. See `docs/PLATFORMS.md`.
+  — the code compiles and bundles on real runners, and is unit-tested, but no
+  install → launch → generate cycle has run there. See `docs/PLATFORMS.md`.
 
 - **GPU selection actually reaches Wan2GP.** The picker used to pass
   `--gpu cuda:N` only for an explicit pick, so *Auto* launched with no flag at
