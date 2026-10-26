@@ -104,15 +104,24 @@ AppImage), then delete `~/Wan2GP` and `~/Wan2GP-Models` if the env and the model
 should go too. The launcher writes nothing else; `uv`, `pip` and WanGP keep their
 own caches under `~/.cache` (Manage → System → disk cleanup lists them).
 
-> WSL2: the window opens on WSLg but stays blank — WebKitGTK cannot create an EGL
-> display there (`EGL_BAD_PARAMETER`). Run it on a real Ubuntu desktop, or off a
-> virtual X display with `LIBGL_ALWAYS_SOFTWARE=1` +
-> `WEBKIT_DISABLE_DMABUF_RENDERER=1`. Not a launcher bug.
+> WSL2 needs three environment variables or WebKitGTK aborts with `Could not
+> create default EGL display: EGL_BAD_PARAMETER` and the window stays blank:
+> WSLg offers no `/dev/dri` (only `/dev/dxg`), so there is no GBM device for
+> WebKit's default EGL path. With `LIBGL_ALWAYS_SOFTWARE=1`,
+> `WEBKIT_DISABLE_DMABUF_RENDERER=1` and `WEBKIT_DISABLE_COMPOSITING_MODE=1` the
+> launcher runs as a normal Windows window (verified on Ubuntu 26.04, WSL 2.7,
+> WSLg 1.0.73). Not a launcher bug.
+>
+> WSL also exposes the host's NVIDIA driver (`/usr/lib/wsl/lib/nvidia-smi`,
+> `libcuda.so`), so on an NVIDIA machine GPU detection, VRAM, profile choice and
+> CUDA execution are real — only the UI is software-rendered.
 
 ### Testing the Linux build from a Windows machine
 
-WSL2 + Xvfb runs the real Linux binary (same GTK/WebKit stack, same code paths)
-in software GL. It is what the Linux verification above was done with.
+WSL2 runs the real Linux binary (same GTK/WebKit stack, same code paths, and on
+an NVIDIA host the same GPU through the driver's CUDA passthrough — `/dev/dri`
+does not exist there, but `/usr/lib/wsl/lib/libcuda.so` does). It is what the
+Linux verification above was done with.
 
 ```bash
 # one-time inside the distro
@@ -122,6 +131,18 @@ sudo apt install -y xvfb xdotool imagemagick x11vnc dbus-x11 \
 
 Build from the repo as usual (cargo needs the Linux target deps: `libwebkit2gtk-4.1-dev`,
 `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `patchelf`), then:
+
+**Route A — WSLg, native window (what you want for clicking around):**
+
+```bash
+export DISPLAY=:0 GDK_BACKEND=x11 XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir
+export LIBGL_ALWAYS_SOFTWARE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1
+dbus-run-session -- ./src-tauri/target/debug/wan2gp-desktop-launcher-tauri
+```
+
+The window is an XWayland client but appears like any other Windows window.
+
+**Route B — Xvfb (headless, scriptable):**
 
 ```bash
 export DISPLAY=:99 WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 GDK_BACKEND=x11 XDG_RUNTIME_DIR=/tmp/xdg
@@ -168,8 +189,11 @@ Unit tests: `npm test` (renderer) and `cargo test` (Rust) run unmodified inside
 the distro. Bundles: `cargo tauri build` then install the `.deb`
 (`sudo apt install ./…_amd64.deb`) or run the AppImage — both start under Xvfb.
 
-Still needs real hardware: an actual install (clone + venv + torch, several GB),
-launch/stop, the close sweep, CUDA/ROCm execution, and the updater.
+What WSL still cannot answer: AMD (needs an AMD card — Linux detection there
+uses `lspci` and `/sys/class/drm`), a genuine desktop session (WSLg has no seat,
+no display manager, no `/dev/dri`, so GTK integration like the menu entry and
+`.desktop` handling is only half-tested), and the updater. A real Ubuntu desktop
+or a live USB is the answer for those.
 
 GPU support:
 

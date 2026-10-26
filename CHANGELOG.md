@@ -159,7 +159,9 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   one-click on Unix — those buttons are Windows-only and answer with the distro
   command; only `uv` can be bootstrapped, into `~/Wan2GP/.tools`. Verified on Ubuntu
   26.04: AppImage and `.deb` both install and start (window, full UI,
-  git/uv/python detected), 382 Rust + 205 JS tests green on the Linux host. The
+  git/uv/python detected, real GPU resolved through WSL's driver passthrough —
+  RTX 3080 / 10240 MB / driver 617.42 → `CUDA 13 (cu130)`, profile `RTX 30`),
+  382 Rust + 205 JS tests green on the Linux host. The
   first run exposed a renderer bug, now fixed: path joins were hard-coded to
   `\`, so Linux/macOS showed `~/Wan2GP-Models\ckpts`, `\loras` and `\outputs`
   — a single file name with a backslash in it, not a subdirectory. `pathJoin`
