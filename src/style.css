@@ -2730,6 +2730,11 @@ table.args-table.lib-table.compact td:nth-child(5) {
 .hidden {
  display: none !important;
 }
+/* Platform gate (services/platform-gate.js): a control this OS cannot honour.
+   Separate from .hidden so code that flips .hidden later cannot resurrect it. */
+.cap-off {
+ display: none !important;
+}
 ::-webkit-scrollbar {
  width: 6px;
  height: 6px;

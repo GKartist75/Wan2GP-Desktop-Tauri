@@ -13,6 +13,49 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- **Cross-platform foundation: Linux x86_64 and macOS Apple Silicon.** The
+  launcher is now one code base with platform adapters
+  (`src-tauri/src/platform/{windows,linux,macos}.rs` + shared `unix.rs`) instead
+  of `cfg(windows)` branches scattered through `install.rs`, `launch.rs`,
+  `system.rs`, `hw.rs` and `features.rs`. GPU detection, prereq discovery,
+  process listing/kill, port owner, path opener, desktop shortcut, auto-start and
+  the task-manager hand-off all go through one `Platform` trait. Windows
+  behaviour is unchanged; the full suite still runs green on Windows.
+
+- **Capability gating instead of per-tab platform checks.** `index.html` marks a
+  control with `data-requires="capability"`; `src/services/platform-gate.js`
+  applies the platform's capability map and toggles `.cap-off`. Unknown or empty
+  capability names fail closed, so a typo hides a control instead of crashing it.
+  The JS map is pinned to the Rust adapters by `tests/platform-gate.test.js`,
+  which parses the `supports(Capability::…)` assertions out of
+  `platform/mod.rs` — the two can no longer drift. DLSS, kernel wheels, the
+  Triton/MSVC toolchain and the Task Manager button disappear on the platforms
+  that cannot honour them; `w2gp.platform` comparisons in the tabs are gone.
+
+- **macOS reports real unified memory.** `vramMB` was hard-coded to
+  `8192 MiB`, so every Mac looked like a base M1 in the tier and Auto-Tune math.
+  It now reads `sysctl -n hw.memsize` (8 GB only as a fallback when sysctl
+  refuses).
+
+- **`tool_usable` has a non-Windows arm.** The Windows adapter called a
+  Windows-only helper while every adapter compiles on every target, so a Linux
+  release build would have failed to link `crate::base::tool_usable`. It now
+  tests with `sh -c 'command -v "$1"'` elsewhere.
+
+- **First-run platform bugs.** Linux `.desktop` entries quoted `Exec=` (install
+  paths with spaces broke the shortcut); the macOS LaunchAgent label was
+  `com.wangp.desktop` and is now `com.wan2gp.desktop`.
+
+- **Multi-platform release workflow.** `.github/workflows/release.yml` builds
+  NSIS+MSI, AppImage+deb and app+dmg from one tag and attaches them to a single
+  draft release. macOS disables updater artifacts (an unsigned `.app` cannot
+  self-update), so `latest.json` only advertises platforms where the update can
+  actually apply. CI gains Linux/macOS compile, test, clippy and fmt jobs.
+
+- **Honest support label.** Windows is *supported*; Linux and macOS are *ported*
+  — the code compiles for those targets and is unit-tested, but no install →
+  launch → generate cycle has run there. See `docs/PLATFORMS.md`.
+
 - **GPU selection actually reaches Wan2GP.** The picker used to pass
   `--gpu cuda:N` only for an explicit pick, so *Auto* launched with no flag at
   all — the one path that skips upstream's `torch.set_default_device()`. Auto is

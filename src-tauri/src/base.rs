@@ -450,9 +450,10 @@ pub(crate) fn default_data_dir() -> PathBuf {
     }
     #[cfg(not(windows))]
     {
-        return home_dir().join("Wan2GP");
+        home_dir().join("Wan2GP")
     }
 }
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn dir_is_writable(p: &Path) -> bool {
     // try mkdir + probe file (same as main.js dirIsWritable)
     let target = p.to_path_buf();
@@ -643,6 +644,7 @@ pub(crate) fn snapshot_wgp_config() -> Option<String> {
     Some(name)
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn reg_val(line: &str) -> Option<(String, String)> {
     let t = line.trim();
     if t.is_empty() || t.starts_with("HKEY_") {
@@ -861,8 +863,7 @@ mod pip_spec_tests {
 /// `where python` succeeds on the Store shim (it only opens the Store), so a
 /// bare exit-status check reports "installed" on machines with no Python.
 /// Same filter diagnose_python_fail applies — centralized here so probe_tool
-/// and check_command can't drift again. Windows-only; elsewhere every
-/// `which` hit is a real binary.
+/// and check_command can't drift again.
 #[cfg(windows)]
 pub(crate) fn tool_usable(cmd: &str) -> bool {
     silent_command("where")
@@ -880,6 +881,29 @@ pub(crate) fn tool_usable(cmd: &str) -> bool {
                 !p.is_empty() && !p.to_lowercase().contains("windowsapps")
             })
         })
+}
+
+/// Non-Windows arm: `where` does not exist, and there is no WindowsApps alias
+/// dir to filter, so a plain `command -v` is the whole test. `which` is not
+/// guaranteed to be installed (minimal distros, containers), so ask the shell
+/// that is always there.
+///
+/// The Windows adapter is the only caller, but every adapter compiles on every
+/// target on purpose (`platform/mod.rs` declares all four), so this arm has to
+/// exist or a Linux release build fails on `crate::base::tool_usable`.
+#[cfg(not(windows))]
+pub(crate) fn tool_usable(cmd: &str) -> bool {
+    let name = cmd.trim();
+    // One bare word only: the name is passed as a positional parameter, not
+    // spliced into the script, so a hostile value cannot become shell syntax.
+    if name.is_empty() || name.split_whitespace().count() != 1 {
+        return false;
+    }
+    silent_command("sh")
+        .args(["-c", "command -v \"$1\" >/dev/null 2>&1", "sh", name])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// Spawn a shell-plugin child, stream stdout+stderr to `emit`, and return

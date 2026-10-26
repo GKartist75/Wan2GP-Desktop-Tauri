@@ -10,6 +10,7 @@ mod install;
 mod launch;
 mod log_server;
 mod notifier_native;
+mod platform;
 mod plugins;
 mod resolutions;
 mod status;

@@ -235,11 +235,8 @@ $("autoTuneDashBtn").addEventListener("click", () => {
   openSettings();
   switchSettingsTab("autotune");
 });
-// Windows-only UI: hide the Task Manager button on other platforms.
-if (window.w2gp && window.w2gp.platform !== "win32") {
-  const taskMgrBtn = $("taskMgrBtn");
-  if (taskMgrBtn) taskMgrBtn.style.display = "none";
-}
+// Windows-only: index.html marks #taskMgrBtn with data-requires="taskManager"
+// and services/platform-gate.js hides it elsewhere. No per-tab check needed.
 $("taskMgrBtn").addEventListener("click", () => {
   window.w2gp.openTaskManager();
 });

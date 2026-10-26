@@ -157,7 +157,7 @@
         </div>
         <div class="settings-section">
           <h3>Desktop</h3>
-          <label class="toggle-row"><input type="checkbox" id="autoStartToggle"> <span>Auto-start with Windows</span></label>
+          <label class="toggle-row"><input type="checkbox" id="autoStartToggle"> <span>Auto-start when you log in</span></label>
           <p class="token-hint">Launch Wan2GP Desktop automatically when you log in.</p>
           <div class="appear-slider" style="margin-top:8px">
             <label class="token-hint" for="windowModeSelect" style="min-width:88px">Window mode</label>
@@ -167,7 +167,7 @@
               <option value="fullscreen">Fullscreen (hides Windows chrome)</option>
             </select>
             <span class="appear-val" id="windowModeStatus"></span>
-            <div class="appear-slider" style="margin-top:8px">
+            <div class="appear-slider" style="margin-top:8px" data-requires="tritonRepair">
               <label class="token-hint" for="tritonCompilerSelect" style="min-width:88px">Triton compiler</label>
               <select id="tritonCompilerSelect" class="input" style="max-width:230px" title="Which C compiler Triton uses for its JIT stubs. TinyCC is the upstream default (no pin). Auto pins signed MSVC when installed, else TinyCC. MSVC always pins MSVC (warns if missing). Applies on next WanGP launch.">
                 <option value="tinycc">TinyCC (upstream default)</option>
@@ -586,7 +586,7 @@
             <button class="btn btn-primary small" id="tsTritonSdpaBtn" title="Clear the Triton cache and fall back to SDPA attention">Clear + fall back to SDPA</button>
             <span class="token-hint" id="tsTritonStatus" style="margin-left:8px"></span>
           </div>
-          <div class="token-field" style="margin-top:8px" id="tsMsvcRow">
+          <div class="token-field" style="margin-top:8px" id="tsMsvcRow" data-requires="tritonRepair">
             <button class="btn btn-ghost small" id="tsMsvcInstallBtn" title="MSVC C++ toolchain for Triton JIT: downloads Microsoft's official VS 2022 Build Tools bootstrapper and runs it elevated with the C++ workload (a few GB, one-time). Without it Triton builds through its bundled unsigned TinyCC, which antivirus behavioral engines may block.">Install MSVC Build Tools</button>
             <button class="btn btn-ghost small" id="tsMsvcRecheckBtn" title="Re-check for an installed MSVC toolchain">Recheck</button>
             <span class="token-hint" id="tsMsvcStatus" style="margin-left:8px"></span>
@@ -1158,7 +1158,7 @@
         <button class="btn-icon" id="stopDeepyBtn" title="Stop Deepy Web only (keeps Wan2GP running)">
           <svg viewBox="0 0 24 24" width="14" height="14"><rect x="6" y="6" width="12" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><text x="12" y="15.5" text-anchor="middle" font-size="8" fill="currentColor">D</text></svg>
         </button>
-        <button class="btn btn-ghost small" id="taskMgrBtn" title="Open Windows Task Manager">
+        <button class="btn btn-ghost small" id="taskMgrBtn" data-requires="taskManager" title="Open the Windows Task Manager">
           <svg viewBox="0 0 24 24" width="14" height="14"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="9" x2="16" y2="9" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="13" x2="14" y2="13" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="17" x2="12" y2="17" stroke="currentColor" stroke-width="1.5"/></svg>
         </button>
         <button class="btn-icon theme-toggle" id="themeToggleBtn" title="Toggle dark/light mode">
@@ -1240,7 +1240,7 @@
           </div>
         </div>
         <!-- GPU Kernel Wheels FIRST: sync state visible without scrolling (RTX 20-50 show nunchaku/gguf, RTX 50 adds lightx2v; GTX10/AMD/Apple show the friendly note). IDs unchanged so app.js renderKernelWheels works as-is. -->
-        <div class="card" id="kernelWheelsCard">
+        <div class="card" id="kernelWheelsCard" data-requires="kernelWheels">
           <div class="card-header">
             <span class="card-title">GPU Kernel Wheels</span>
             <span class="env-type-tag" id="kernelProfileTag"></span>
@@ -1717,7 +1717,7 @@
 
             <!-- Optional DLSS5 runtime (upstream scripts/install_dlss5.ps1). Consent
              ("I ACCEPT") is taken in the modal below — never skipped. -->
-        <div class="card" id="dlss5Card" style="margin-top:10px">
+        <div class="card" id="dlss5Card" data-requires="dlss" style="margin-top:10px">
           <div class="card-header">
             <span class="card-title">DLSS 5 (optional runtime)</span>
           </div>
@@ -1819,7 +1819,7 @@
             Verify / Repair Wan2GP files
           </button>
           <!-- Desktop shortcut -->
-          <button class="action-item" id="desktopShortcutBtn" title="Create a Windows desktop shortcut for the launcher">
+          <button class="action-item" id="desktopShortcutBtn" data-requires="desktopShortcut" title="Create a desktop shortcut for the launcher">
             <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="12" y1="8" x2="12" y2="16"/></svg>
             Create Desktop Shortcut
           </button>
@@ -2264,6 +2264,7 @@
        sandboxed preloads can only require whitelisted modules). Same module the
        node --test suite requires, so escaping logic lives in one place. -->
   <!-- Tauri shim: provides window.w2gp via invoke() — ponytail: one file replaces 9600L preload.js -->
+  <script src="services/platform-gate.js" defer></script>
   <script src="w2gp.js" defer></script>
   <!-- Vendored Nayuki QR-Code-generator (MIT) for the Deepy Web Phone-URL QR — offline, no npm chain -->
   <script src="qrcodegen.js" defer></script>

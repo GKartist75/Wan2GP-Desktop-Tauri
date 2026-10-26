@@ -319,47 +319,8 @@ pub fn troubleshoot_port_status() -> serde_json::Value {
     }
     // Owner lookup (Windows): Get-NetTCPConnection → OwningProcess → process name.
     let mut owner: serde_json::Value = serde_json::json!(null);
-    #[cfg(windows)]
-    {
-        let ps = format!("Get-NetTCPConnection -LocalPort {port} -State Listen | Select-Object -First 1 -ExpandProperty OwningProcess");
-        if let Ok(o) = silent_command("powershell")
-            .args(["-NoProfile", "-Command", &ps])
-            .output()
-        {
-            if o.status.success() {
-                let pid_s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                if let Ok(pid) = pid_s.parse::<u32>() {
-                    let ps2 = format!(
-                        "(Get-Process -Id {pid} -ErrorAction SilentlyContinue).ProcessName"
-                    );
-                    let name = silent_command("powershell")
-                        .args(["-NoProfile", "-Command", &ps2])
-                        .output()
-                        .ok()
-                        .filter(|o| o.status.success())
-                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or_default();
-                    // Command line tells us if it's OUR wgp.py or something foreign.
-                    let ps3 = format!("(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" | Select-Object -ExpandProperty CommandLine)");
-                    let cmd = silent_command("powershell")
-                        .args(["-NoProfile", "-Command", &ps3])
-                        .output()
-                        .ok()
-                        .filter(|o| o.status.success())
-                        .map(|o| {
-                            String::from_utf8_lossy(&o.stdout)
-                                .trim()
-                                .chars()
-                                .take(300)
-                                .collect::<String>()
-                        })
-                        .unwrap_or_default();
-                    let ours = cmd.to_lowercase().contains("wgp.py");
-                    owner = serde_json::json!({"pid": pid, "name": name, "cmd": cmd, "ours": ours});
-                }
-            }
-        }
+    if let Some(o) = crate::platform::current().port_owner(port) {
+        owner = serde_json::json!({"pid": o.pid, "name": o.name, "cmd": o.cmd, "ours": o.ours});
     }
     serde_json::json!({"ok": true, "port": port, "inUse": true, "owner": owner})
 }
@@ -399,15 +360,7 @@ pub fn troubleshoot_port_fix(action: Option<String>) -> Result<serde_json::Value
         if !(name.contains("python") || ours) {
             return Err(format!("Port {port} is owned by '{name}' (pid {pid}) — not a Python server. Change the port instead."));
         }
-        #[cfg(windows)]
-        let _ = silent_command("taskkill")
-            .args(["/pid", &pid.to_string(), "/f", "/t"])
-            .output();
-        #[cfg(not(windows))]
-        let _ = silent_command("kill")
-            .arg("-9")
-            .arg(pid.to_string())
-            .output();
+        crate::platform::current().kill_pid(pid as u32);
         std::thread::sleep(std::time::Duration::from_millis(800));
         let free = std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_err();
         return Ok(
@@ -439,7 +392,7 @@ pub fn troubleshoot_port_fix(action: Option<String>) -> Result<serde_json::Value
 pub fn troubleshoot_long_paths_status() -> serde_json::Value {
     #[cfg(not(windows))]
     {
-        return serde_json::json!({"enabled": true, "note": "Windows only"});
+        serde_json::json!({"enabled": true, "note": "Windows only"})
     }
     #[cfg(windows)]
     {
@@ -464,10 +417,11 @@ pub fn troubleshoot_long_paths_status() -> serde_json::Value {
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn long_paths_currently_enabled() -> bool {
     #[cfg(not(windows))]
     {
-        return true;
+        true
     }
     #[cfg(windows)]
     {
@@ -491,7 +445,7 @@ fn long_paths_currently_enabled() -> bool {
 pub fn troubleshoot_long_paths_enable() -> Result<serde_json::Value, String> {
     #[cfg(not(windows))]
     {
-        return Err("Windows only".into());
+        Err("Windows only".into())
     }
     #[cfg(windows)]
     {

@@ -3,11 +3,10 @@
 //! Python preflight via uv (ensure_uv_python, port of Electron installPython),
 //! and setup.py exit-code propagation (no more false "Installation complete!").
 use crate::base::*;
+#[cfg(windows)]
+use crate::hw::{wmi_all_gpus, wmi_virtual_adapters};
 use crate::{
-    hw::{
-        build_install_plan, classify_amd_driver, get_gpu_info_sync, kernel_profile_key,
-        wmi_all_gpus, wmi_virtual_adapters,
-    },
+    hw::{build_install_plan, classify_amd_driver, get_gpu_info_sync, kernel_profile_key},
     status::{get_active_env, resolve_env_python},
 };
 use std::path::{Path, PathBuf};
@@ -373,6 +372,7 @@ fn ensure_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
 
 /// Delete the launcher-owned uv binaries + markers so a Reinstall starts
 /// from a clean tools dir (returns true if anything was actually removed).
+#[cfg_attr(not(windows), allow(dead_code))]
 fn remove_owned_uv_in(data_dir: &std::path::Path) -> bool {
     let dir = data_dir.join(".tools");
     #[cfg(windows)]
@@ -467,87 +467,12 @@ fn uv_receipt_install_prefix() -> Option<String> {
         .map(str::to_string)
 }
 
-/// Well-known install locations per tool (pure tables — unit-tested).
-/// These make prerequisite installs usable INSTANTLY: no PATH refresh, no
-/// launcher restart. `home` = %USERPROFILE%. Only directly-spawnable images
-/// (never .bat — CreateProcess can't run those without cmd /C).
-#[cfg(windows)]
+/// Well-known install locations per tool (pure tables — unit-tested in
+/// `platform/{windows,linux,macos}.rs`). These make prerequisite installs
+/// usable INSTANTLY: no PATH refresh, no launcher restart. `home` =
+/// %USERPROFILE% on Windows, $HOME elsewhere.
 fn tool_candidates(tool: &str, home: &str) -> Vec<std::path::PathBuf> {
-    let p = |s: String| std::path::PathBuf::from(s);
-    match tool {
-        "git" => vec![
-            p("C:\\Program Files\\Git\\bin\\git.exe".into()),
-            p("C:\\Program Files (x86)\\Git\\bin\\git.exe".into()),
-        ],
-        // Scripts\conda.exe first: directly executable (condabin\conda.bat
-        // is not a valid process image). ProgramData covers machine-wide
-        // installs, which stock Miniconda/Anaconda offer and which used to be
-        // invisible (a second 3 GB copy got installed instead).
-        "conda" => vec![
-            p(format!("{home}\\Miniconda3\\Scripts\\conda.exe")),
-            p(format!("{home}\\Anaconda3\\Scripts\\conda.exe")),
-            p(format!("{home}\\miniconda3\\Scripts\\conda.exe")),
-            p("C:\\ProgramData\\Anaconda3\\Scripts\\conda.exe".into()),
-            p("C:\\ProgramData\\Miniconda3\\Scripts\\conda.exe".into()),
-            p("C:\\ProgramData\\miniconda3\\Scripts\\conda.exe".into()),
-            p("C:\\Anaconda3\\Scripts\\conda.exe".into()),
-            p("C:\\Miniconda3\\Scripts\\conda.exe".into()),
-        ],
-        // py launcher (system-placed; python.org and the new PyManager keep
-        // different copies — C:\Windows\py.exe is absent on the latter).
-        "py" => vec![
-            p("C:\\Windows\\py.exe".into()),
-            p(format!(
-                "{home}\\AppData\\Local\\Programs\\Python\\Launcher\\py.exe"
-            )),
-            p("C:\\Program Files\\PyManager\\py.exe".into()),
-        ],
-        "python" => vec![
-            p(format!(
-                "{home}\\AppData\\Local\\Programs\\Python\\Python311\\python.exe"
-            )),
-            p(format!(
-                "{home}\\AppData\\Local\\Programs\\Python\\Python310\\python.exe"
-            )),
-            p(format!(
-                "{home}\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
-            )),
-            p(format!(
-                "{home}\\AppData\\Local\\Programs\\Python\\Python313\\python.exe"
-            )),
-            p("C:\\Python311\\python.exe".into()),
-            p("C:\\Python310\\python.exe".into()),
-            p("C:\\Python312\\python.exe".into()),
-            p("C:\\Program Files\\Python311\\python.exe".into()),
-            p("C:\\Program Files\\Python310\\python.exe".into()),
-            p("C:\\Program Files\\Python312\\python.exe".into()),
-        ],
-        // Astral-script and cargo defaults: on PATH for new processes but
-        // invisible to a running launcher until a registry refresh — the
-        // exact "not found here, already installed there" split.
-        "uv" => vec![
-            p(format!("{home}\\.local\\bin\\uv.exe")),
-            p(format!("{home}\\.cargo\\bin\\uv.exe")),
-        ],
-        _ => vec![],
-    }
-}
-#[cfg(not(windows))]
-fn tool_candidates(tool: &str, home: &str) -> Vec<std::path::PathBuf> {
-    let p = |s: String| std::path::PathBuf::from(s);
-    match tool {
-        "git" => vec![p("/usr/bin/git".into())],
-        "conda" => vec![
-            p(format!("{home}/miniconda3/bin/conda")),
-            p(format!("{home}/anaconda3/bin/conda")),
-        ],
-        "py" | "python" => vec![p("/usr/bin/python3".into())],
-        "uv" => vec![
-            p(format!("{home}/.local/bin/uv")),
-            p(format!("{home}/.cargo/bin/uv")),
-        ],
-        _ => vec![],
-    }
+    crate::platform::current().tool_candidates(tool, home)
 }
 
 /// First existing candidate, if any (no writes, no spawning — safe in checks).
@@ -583,6 +508,7 @@ pub(crate) fn py_minor(version: &str) -> String {
 /// asks for the profile's minor (`py -3.10` / `-3.11` / `-3.12`); the shim
 /// drops exactly that selector and delegates to the pinned uv-managed
 /// Python. Pure so every profile minor can be tested.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn py_shim_script(uvpy: &str, minor: &str) -> String {
     format!("@echo off\r\nsetlocal enabledelayedexpansion\r\nset \"args=%*\"\r\nset \"args=!args:-{minor} =!\"\r\nif \"!args!\"==\"%*\" set \"args=!args:-{minor}=!\"\r\n\"{uvpy}\" !args!\r\nexit /b %errorlevel%\r\n")
 }
@@ -632,24 +558,6 @@ fn python_usable(prog: &str) -> bool {
     }
 }
 
-/// `where <exe>` hits, in PATH order (Windows only).
-#[cfg(windows)]
-fn where_hits(exe: &str) -> Vec<PathBuf> {
-    silent_command("where")
-        .arg(exe)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .map(|l| PathBuf::from(l.trim()))
-                .filter(|p| !p.as_os_str().is_empty())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// Map a `where conda` hit (`condabin\conda.bat`, `Scripts\conda.bat`, or
 /// `Scripts\conda.exe`) to the directly-spawnable `Scripts\conda.exe`.
 /// CreateProcess cannot run .bat; handing it one was the "setup.py failed to
@@ -677,7 +585,7 @@ pub(crate) fn conda_exe_from_hit(hit: &Path) -> Option<PathBuf> {
 /// install exists.
 #[cfg(windows)]
 fn conda_exe_path() -> Option<String> {
-    for hit in where_hits("conda") {
+    for hit in crate::platform::windows::where_hits("conda") {
         if let Some(c) = conda_exe_from_hit(&hit) {
             if c.is_file() {
                 return Some(c.to_string_lossy().to_string());
@@ -715,12 +623,14 @@ fn conda_base_python() -> Option<String> {
 /// uv, so a neighbouring patch is a valid `py -3.X` source. SHAs were hashed
 /// from python.org over TLS.
 #[derive(Debug, PartialEq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) struct PythonInstallerPlan {
     pub winget_id: &'static str,
     pub version: &'static str,
     pub sha256: &'static str,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn python_install_plan(wanted: &str) -> PythonInstallerPlan {
     match py_minor(wanted).as_str() {
         "3.10" => PythonInstallerPlan {
@@ -788,28 +698,7 @@ pub(crate) fn resolved_tool_path(tool: &str) -> Option<String> {
     if let Some(p) = known_tool_path(tool) {
         return Some(p);
     }
-    #[cfg(windows)]
-    {
-        where_hits(tool)
-            .into_iter()
-            .find(|p| !p.to_string_lossy().to_lowercase().contains("windowsapps"))
-            .map(|p| p.to_string_lossy().to_string())
-    }
-    #[cfg(not(windows))]
-    {
-        silent_command("which")
-            .arg(tool)
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .next()
-                    .map(|l| l.trim().to_string())
-            })
-            .filter(|s| !s.is_empty())
-    }
+    crate::platform::current().lookup_on_path(tool)
 }
 
 /// First non-empty line of probe stdout (CRLF-tolerant).
@@ -850,8 +739,8 @@ pub(crate) fn tool_version(tool: &str) -> Option<String> {
     first_line(out)
 }
 
-/// Probe for gates: absolute hit OR runnable on PATH (Store-shim filtered).
-/// Cross-platform (tool_usable is Windows-only; elsewhere `which`).
+/// Probe for gates: absolute hit OR runnable on PATH (Store-shim filtered on
+/// Windows; the PATH probe itself lives in the platform adapter).
 #[cfg_attr(windows, allow(dead_code))] // Windows readiness uses probe_tool
 pub(crate) fn tool_found(tool: &str) -> bool {
     if known_tool_path(tool).is_some() {
@@ -860,17 +749,7 @@ pub(crate) fn tool_found(tool: &str) -> bool {
     if tool == "uv" && owned_uv().is_some() {
         return true;
     }
-    #[cfg(windows)]
-    {
-        crate::base::tool_usable(tool)
-    }
-    #[cfg(not(windows))]
-    {
-        silent_command("which")
-            .arg(tool)
-            .output()
-            .is_ok_and(|o| o.status.success())
-    }
+    crate::platform::current().tool_on_path(tool)
 }
 
 async fn ensure_uv_python(
@@ -2415,6 +2294,7 @@ pub(crate) fn run_preflight_checks(
 /// but have no observed case — they stay on the reactive missing-DLL hint
 /// (all vendors, fires on actual damage), not a proactive warn.
 /// PyPI-stable CPU installs skip the noise entirely. Pure + tested.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn av_exclusion_msg(vendor: &str) -> Option<&'static str> {
     match vendor {
         "AMD" => Some("no Defender exclusion for the install folder — nightly DLLs are quarantined heuristically; consider adding one."),
@@ -2770,7 +2650,7 @@ pub async fn install(
     // AMD 3.12, RTX/CPU 3.11 — hardcoding 3.11 broke two of the three).
     // Isolated shim instead of a global Python install: without a launcher,
     // setup.py dies looking for it even when a perfect uv-managed copy exists.
-    #[cfg(windows)]
+    // Declared on every OS: the uv-tools PATH prepend below uses it too.
     let mut saved_path: Option<String> = None;
     // Provisioned exact interpreter for the venv driver (Windows only writes
     // it; the read below is shared so non-Windows compiles too).
@@ -3032,7 +2912,9 @@ pub async fn install(
                         }
                     }
                 }
+                #[cfg_attr(not(windows), allow(unused_mut))]
                 let mut syspy = tool_path("python");
+                #[cfg_attr(not(windows), allow(unused_mut))]
                 let mut runs = python_usable(&syspy);
                 // No system Python? The detected conda install has its own
                 // base interpreter — use it instead of demanding a separate
@@ -3192,8 +3074,17 @@ pub async fn install(
                 if let Some(dir) = std::path::Path::new(&uv).parent() {
                     let add = dir.to_string_lossy().to_string();
                     let cur = std::env::var("PATH").unwrap_or_default();
-                    if !cur.split(';').any(|p| p.eq_ignore_ascii_case(&add)) {
-                        std::env::set_var("PATH", format!("{add};{cur}"));
+                    let present =
+                        std::env::split_paths(&cur).any(|p| p == std::path::Path::new(&add));
+                    if !present {
+                        // join_paths uses the host's separator (`;` on Windows,
+                        // `:` everywhere else) instead of hardcoding one.
+                        if let Ok(joined) = std::env::join_paths(
+                            std::iter::once(std::path::PathBuf::from(&add))
+                                .chain(std::env::split_paths(&cur)),
+                        ) {
+                            std::env::set_var("PATH", joined);
+                        }
                     }
                     emit(&format!("[*] launcher uv on PATH for setup.py: {add}\n"));
                 }
@@ -7399,7 +7290,10 @@ pub async fn install_prerequisite(
         return Err(format!("unknown tool {tool}"));
     }
     #[cfg(not(windows))]
-    return Err(format!("{tool} must be installed with your system package manager (one-click install is Windows-only). git: `sudo apt install git` / `brew install git`; python: `brew install python@3.11`; uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`; conda: Miniconda installer from repo.anaconda.com."));
+    {
+        let _ = (app, force);
+        Err(format!("{tool} must be installed with your system package manager (one-click install is Windows-only). git: `sudo apt install git` / `brew install git`; python: `brew install python@3.11`; uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`; conda: Miniconda installer from repo.anaconda.com."))
+    }
     #[cfg(windows)]
     return install_prerequisite_windows(app, tool, force.unwrap_or(false)).await;
 }
@@ -9759,6 +9653,7 @@ mod dlss5_install_tests {
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn dlss5_classify(app: &tauri::AppHandle, chunk: &str) {
     let pkg = |name: &str| -> &str {
         let n = name.to_lowercase();
@@ -9808,6 +9703,7 @@ fn dlss5_classify(app: &tauri::AppHandle, chunk: &str) {
 /// a non-zero exit is a failure even when an older complete install still makes
 /// every file exist on disk. `complete`/`installed` stay in the payload so the
 /// panel can still hash what is there and show the real per-file state.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn dlss5_install_result(
     spawn_err: bool,
     exit_code: Option<i32>,
@@ -9854,12 +9750,26 @@ pub async fn install_dlss5(
     app: tauri::AppHandle,
     force: bool,
 ) -> Result<serde_json::Value, String> {
-    mutating_try("install-dlss5")?;
     #[cfg(not(windows))]
     {
+        let _ = (app, force);
+        mutating_try("install-dlss5")?;
         mutating_done();
-        return Err("DLSS5 is Windows-only".into());
+        Err("DLSS5 is Windows-only".into())
     }
+    #[cfg(windows)]
+    {
+        install_dlss5_windows(app, force).await
+    }
+}
+
+/// DLSS5 is NVIDIA/Windows-only: the upstream installer is a PowerShell script.
+#[cfg(windows)]
+async fn install_dlss5_windows(
+    app: tauri::AppHandle,
+    force: bool,
+) -> Result<serde_json::Value, String> {
+    mutating_try("install-dlss5")?;
     let repo = get_repo_dir();
     let emit = |msg: &str| {
         crate::base::push_log(msg, "setup");
@@ -10723,7 +10633,6 @@ mod owned_uv_tests {
 #[cfg(test)]
 mod tool_path_tests {
     use super::{known_tool_path, tool_candidates, tool_found, tool_path};
-    use std::path::PathBuf;
     #[test]
     fn tool_path_never_empty_and_falls_back_to_bare_name() {
         for t in ["git", "conda", "py", "python", "whatever"] {
@@ -10734,47 +10643,6 @@ mod tool_path_tests {
         }
         // uv resolves to owned-or-PATH (never empty either).
         assert!(!tool_path("uv").is_empty());
-    }
-    #[cfg(windows)]
-    #[test]
-    fn candidate_tables_cover_stock_layouts() {
-        let home = "C:\\Users\\t";
-        let git = tool_candidates("git", home);
-        assert!(git.contains(&PathBuf::from("C:\\Program Files\\Git\\bin\\git.exe")));
-        let conda = tool_candidates("conda", home);
-        assert!(conda.iter().any(|p| p
-            .to_string_lossy()
-            .contains("Miniconda3\\Scripts\\conda.exe")));
-        // .bat is never offered as a spawn target (not a process image).
-        assert!(!conda
-            .iter()
-            .any(|p| p.extension().is_some_and(|e| e == "bat")));
-        assert_eq!(
-            tool_candidates("py", home),
-            vec![
-                PathBuf::from("C:\\Windows\\py.exe"),
-                PathBuf::from("C:\\Users\\t\\AppData\\Local\\Programs\\Python\\Launcher\\py.exe"),
-                PathBuf::from("C:\\Program Files\\PyManager\\py.exe"),
-            ]
-        );
-        assert!(tool_candidates("conda", home)
-            .iter()
-            .any(|p| p.to_string_lossy() == "C:\\ProgramData\\Miniconda3\\Scripts\\conda.exe"));
-        // Profile minors must not shadow each other: 3.11 stays first so a
-        // box with several interpreters keeps the RTX/CPU default unless the
-        // profile pin says otherwise (the installer provisions the exact pin).
-        let python = tool_candidates("python", home);
-        let pos = |needle: &str| {
-            python
-                .iter()
-                .position(|p| p.to_string_lossy().ends_with(needle))
-                .unwrap_or_else(|| panic!("missing {needle}"))
-        };
-        assert!(pos("Python311\\python.exe") < pos("Python313\\python.exe"));
-        assert!(python
-            .iter()
-            .any(|p| p.to_string_lossy() == "C:\\Program Files\\Python312\\python.exe"));
-        assert!(tool_candidates("nope", home).is_empty());
     }
     #[test]
     fn candidate_tables_cover_astral_uv_defaults() {
@@ -10819,7 +10687,9 @@ mod tool_path_tests {
 
 #[cfg(test)]
 mod prereq_tests {
-    use super::{conda_exe_from_hit, py_minor, py_shim_script, python_install_plan};
+    #[cfg(windows)]
+    use super::conda_exe_from_hit;
+    use super::{py_minor, py_shim_script, python_install_plan};
     #[cfg(windows)]
     use std::path::{Path, PathBuf};
 

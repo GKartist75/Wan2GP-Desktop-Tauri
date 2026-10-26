@@ -128,11 +128,17 @@ async function refreshDashboard() {
         if (el) el.classList.remove("installed");
       });
       // Kernel wheels section is independent — keep it rendered from whatever we got.
-      renderKernelWheels(
-        status.kernelWheels,
-        status.kernelProfile,
-        status.osKey,
-      );
+      // Platforms without kernel wheels (Apple Silicon) hide the card entirely.
+      if (window.w2gp?.capabilities?.kernelWheels !== false) {
+        renderKernelWheels(
+          status.kernelWheels,
+          status.kernelProfile,
+          status.osKey,
+        );
+      } else {
+        const kwCard = $("kernelWheelsSubsection");
+        if (kwCard) kwCard.style.display = "none";
+      }
       const spargeEl = $("specSparge");
       if (spargeEl) spargeEl.textContent = "—";
     } else {

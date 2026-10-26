@@ -30,13 +30,27 @@
                    "active":  true,
                    "targets":  "all",
                    "createUpdaterArtifacts":  true,
+                   "category":  "GraphicsAndDesign",
+                   "shortDescription":  "One-click desktop launcher for WanGP (Wan2GP) — install, update and run local generative AI without touching Python or CUDA.",
+                   "longDescription":  "A lightweight Tauri shell for WanGP (Wan2GP): detects the GPU, installs the right Python environment and kernel wheels, launches the WanGP web UI in an embedded desktop view, and keeps models, outputs and updates in one place.",
                    "icon":  [
                                 "icons/32x32.png",
                                 "icons/128x128.png",
                                 "icons/128x128@2x.png",
                                 "icons/icon.icns",
                                 "icons/icon.ico"
-                            ]
+                            ],
+                   "macOS":  {
+                                 "minimumSystemVersion":  "11.0"
+                             },
+                   "linux":  {
+                                 "deb":  {
+                                             "depends":  [
+                                                             "libwebkit2gtk-4.1-0",
+                                                             "libgtk-3-0"
+                                                         ]
+                                         }
+                             }
                },
     "plugins":  {
                     "updater":  {

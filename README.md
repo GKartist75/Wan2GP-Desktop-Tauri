@@ -378,6 +378,34 @@ Full workspace viewer: multi-select, reorder, eject, copy/move across workspaces
 
 ---
 
+## Platform support
+
+| Platform | Status | What you get |
+| --- | --- | --- |
+| **Windows 10/11 x64** | Supported | Full feature set, NSIS/MSI installers, in-app self-update |
+| **Linux x86_64** | Ported — not yet run on hardware | NVIDIA (CUDA), AMD (ROCm), CPU fallback; AppImage + `.deb`; desktop shortcut, auto-start, in-app update for the AppImage only |
+| **macOS Apple Silicon** | Ported — not yet run on hardware | MPS/CPU only, macOS 11+, unsigned `.dmg`; no CUDA kernels, DLSS, Triton or MSVC toolchain |
+
+"Ported" means the platform's code compiles for that target and is unit-tested,
+but no install → launch → generate cycle has been executed there yet. Controls a
+platform cannot honour are hidden, not broken: `index.html` marks them with
+`data-requires`, `src/services/platform-gate.js` applies the platform's
+capability map, and a test pins that map to the Rust adapters.
+
+Details, per-feature matrix, install steps and the honest gap list:
+[**docs/PLATFORMS.md**](docs/PLATFORMS.md).
+
+### Linux runtime notes
+- WebKitGTK 4.1 + GTK 3 required (`.deb` declares them); the AppImage bundles them.
+- NVIDIA detection uses `nvidia-smi`; AMD/Intel use `lspci` plus `/sys/class/drm` for VRAM.
+- Port-owner lookup uses `ss` (iproute2) and falls back to `lsof`; with neither, the stop path says so instead of guessing.
+
+### macOS notes
+- Apple Silicon only; Intel Macs are out of scope.
+- PyTorch runs on MPS. Reported "VRAM" is unified memory (`sysctl hw.memsize`), not a dedicated pool.
+- Conda is experimental; venv/uv are the supported env types.
+- No code signature or notarization yet: first launch needs right-click → Open.
+
 ## Documentation
 
 | Doc | For |
@@ -385,6 +413,7 @@ Full workspace viewer: multi-select, reorder, eject, copy/move across workspaces
 | [**User Guide**](docs/USER-GUIDE.md) | Every screen, tab and button — where things are and what they do |
 | [**WanGP Guidance**](docs/WAN2GP-GUIDE.md) | Which model and settings to pick for your goal |
 | [**System Overview**](docs/OVERVIEW.md) | How the launcher, upstream WanGP and your machine fit together — for contributors |
+| [**Platform Support**](docs/PLATFORMS.md) | Windows / Linux / macOS feature matrix, install steps, capability gating, known gaps |
 | [**CHANGELOG**](CHANGELOG.md) | Every fix, per release |
 
 ---

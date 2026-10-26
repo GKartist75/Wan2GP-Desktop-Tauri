@@ -145,12 +145,15 @@ if (!window.__TAURI__) {
         });
         window.__bvFitWired = true;
     }
+    // Platform + capability map come from services/platform-gate.js (loaded
+    // before this script), the single JS source of truth. It is pinned against
+    // Platform::supports in src-tauri/src/platform/*.rs by
+    // tests/platform-gate.test.js.
+    const gate = window.platformGate;
+    const hostPlatform = gate.platformFromNavigator(navigator);
     const w2gp = {
-        platform: navigator.platform.includes("Win")
-            ? "win32"
-            : navigator.platform.includes("Mac")
-              ? "darwin"
-              : "linux",
+        platform: hostPlatform,
+        capabilities: gate.capabilitiesFor(hostPlatform),
         checkInstalled: () => call("check_installed"),
         detectGpu: () => call("detect_gpu"),
         detectGpus: () => call("detect_gpus"),
@@ -795,6 +798,16 @@ if (!window.__TAURI__) {
     window.w2gp = w2gp;
     // ponytail: dummy plugins for Gradio iframe that does window.parent.w2gp.plugins (MotionDesigner bridge) — prevents "Cannot read properties of undefined (reading 'plugins')" and black screen
     window.w2gp.plugins = {};
+    // Hide the controls this platform cannot honour (DLSS on Unix, kernel
+    // wheels on Apple Silicon, …). Declarative: index.html marks them with
+    // data-requires. Runs synchronously — the scripts are deferred, so the
+    // DOM is already parsed and nothing flashes before the gate applies.
+    try {
+        document.body.dataset.platform = hostPlatform;
+        gate.applyPlatformGating(document, w2gp.capabilities);
+    } catch (e) {
+        console.error("[w2gp] platform gating failed", e);
+    }
     // also expose for module users
     window.w2gpReady = true;
 })();

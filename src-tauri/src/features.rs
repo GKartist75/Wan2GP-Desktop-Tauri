@@ -466,6 +466,7 @@ pub fn memory_profile_read() -> serde_json::Value {
 /// (empty, non-numeric, multi-separator, non-positive, non-finite) so the
 /// caller falls back conservatively instead of tiering on a lie.
 /// Pure + unit-tested.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn ram_gb_from_probe(raw: &str) -> Option<f64> {
     const GB: f64 = 1024.0 * 1024.0 * 1024.0;
     let s = raw.trim();
@@ -2141,40 +2142,10 @@ pub fn deepy_activate(engine: String) -> serde_json::Value {
 // Auto-start via the per-user Run key (no admin needed). Returns success, like the UI checks.
 #[tauri::command]
 pub fn set_auto_start(enabled: bool) -> serde_json::Value {
-    #[cfg(windows)]
-    {
-        let exe = std::env::current_exe()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-        let ok = if enabled && !exe.is_empty() {
-            silent_command("reg")
-                .args([
-                    "add",
-                    key,
-                    "/v",
-                    "Wan2GPDesktop",
-                    "/t",
-                    "REG_SZ",
-                    "/d",
-                    &format!("\"{exe}\""),
-                    "/f",
-                ])
-                .output()
-                .is_ok_and(|o| o.status.success())
-        } else {
-            silent_command("reg")
-                .args(["delete", key, "/v", "Wan2GPDesktop", "/f"])
-                .output()
-                .is_ok_and(|o| o.status.success())
-        };
-        serde_json::json!({"ok": ok, "success": ok, "enabled": enabled})
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = enabled;
-        return serde_json::json!({"ok": false, "success": false, "error": "auto-start is Windows-only"});
-    }
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    crate::platform::current().set_auto_start(enabled, &exe)
 }
 #[tauri::command]
 /// Fail-closed gate for the new upstream string enums (upstream raises

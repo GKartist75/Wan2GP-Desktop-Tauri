@@ -1,12 +1,13 @@
 //! Legacy Electron launcher detection and removal.
 use crate::base::*;
+#[cfg(windows)]
 use std::path::PathBuf;
 
 #[tauri::command(async)]
 pub fn detect_electron() -> serde_json::Value {
     #[cfg(not(windows))]
     {
-        return serde_json::json!({"found": false});
+        serde_json::json!({"found": false})
     }
     #[cfg(windows)]
     {

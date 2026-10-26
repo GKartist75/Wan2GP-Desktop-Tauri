@@ -1,0 +1,115 @@
+name: Release
+
+# One release, three platforms. Windows keeps the NSIS/MSI layout the in-app
+# updater already consumes; Linux ships AppImage + deb; macOS ships dmg + app.
+#
+# Draft by default when dispatched by hand (review the assets, then publish);
+# a `v*` tag publishes directly. `scripts/release-tauri.ps1` still works for a
+# Windows-only hotfix — do not run both for the same tag.
+#
+# Required repository secrets (same key the local release script uses):
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+# Without them the Windows and Linux legs fail at bundle time, on purpose:
+# an unsigned updater artifact is worse than a missing one.
+#
+# Not configured yet (documented in docs/PLATFORMS.md):
+#   - Apple code signing / notarization. The .dmg is unsigned, so macOS shows
+#     "unidentified developer"; and the in-app updater is disabled there
+#     (createUpdaterArtifacts is overridden to false) because a signed .app is
+#     required for it to be replaced safely.
+#   - Windows code signing. Same "unknown publisher" prompt as the manual build.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish under (e.g. v0.10.26); created if missing'
+        required: true
+      draft:
+        description: 'Keep the GitHub release as a draft'
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+          # macos-latest is arm64; the Intel build is out of scope (plan.md).
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libxdo-dev
+
+      # The release leg never signs or notarizes on macOS: no Apple identity is
+      # configured, and an unsigned .app cannot self-update. Keep the bundler
+      # from emitting an updater artifact macOS users would only fail to apply.
+      - name: Disable updater artifacts on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, sys
+          p = pathlib.Path('src-tauri/tauri.conf.json')
+          cfg = json.loads(p.read_text(encoding='utf-8'))
+          cfg['bundle']['createUpdaterArtifacts'] = False
+          p.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding='utf-8')
+          print('createUpdaterArtifacts:', cfg['bundle']['createUpdaterArtifacts'])
+          PY
+
+      - name: Build and attach to the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: 'Wan2GP Desktop Launcher ${{ github.event.inputs.tag || github.ref_name }}'
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft || false }}
+          prerelease: false
+          includeUpdaterJson: true
+          # One `latest.json` covers every platform: each leg merges its own
+          # entry into the release asset instead of overwriting it.
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}

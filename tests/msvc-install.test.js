@@ -29,12 +29,14 @@ test('the w2gp bridge maps both MSVC commands', () => {
   assert.match(bridge, /tsMsvcInstall:\s*\(\)\s*=>\s*call\("troubleshoot_msvc_install"\)/)
 })
 
-test('the tab wires install + recheck and hides the row off-Windows', () => {
+test('the tab wires install + recheck and only probes on a platform that has MSVC', () => {
   assert.match(tab, /\$\("tsMsvcInstallBtn"\)\?\.addEventListener\("click"/)
   assert.match(tab, /\$\("tsMsvcRecheckBtn"\)\?\.addEventListener\("click"/)
   assert.match(tab, /tsMsvcStatus\(\)/, 'install flow must re-check status first (already-installed short-circuit)')
   assert.match(tab, /confirmDialog\(\{/, 'a multi-GB admin install needs an explicit confirm')
   assert.match(tab, /finish it, then press Recheck/, 'fire-and-forget must tell the user what happens next')
-  assert.match(tab, /platform !== "win32"/, 'no MSVC outside Windows')
-  assert.match(tab, /tsMsvcRow/, 'the hide targets the row')
+  // Visibility is declarative now (services/platform-gate.js); the tab only
+  // decides whether probing makes sense at all.
+  assert.match(tab, /capabilities\.tritonRepair/, 'no MSVC probe outside Windows')
+  assert.match(html, /id="tsMsvcRow"[^>]*data-requires="tritonRepair"/, 'the row must be gated')
 })

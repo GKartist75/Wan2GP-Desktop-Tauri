@@ -227,6 +227,125 @@ pub(crate) fn saved_gpu_pick() -> String {
     pick
 }
 
+#[cfg(target_os = "macos")]
+fn macos_gpu_info() -> Option<(String, String)> {
+    let out = std::process::Command::new("system_profiler")
+        .args(["SPDisplaysDataType"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        if line.contains("Chip") {
+            let name = line.split(':').nth(1)?.trim().to_string();
+            if !name.is_empty() {
+                return Some((name.clone(), name));
+            }
+        }
+    }
+    None
+}
+
+/// Parse `sysctl -n hw.memsize` output (bytes) into MiB.
+///
+/// Zero and non-numeric input yield `None`: `hw.memsize` is reported as 0 in
+/// some virtualised/sandboxed contexts, and feeding 0 downstream reads as
+/// "unknown GPU" and drops to a CPU profile.
+///
+/// Compiled on every target (the macOS-only caller is behind `cfg`, the test
+/// is not) so the parser itself stays testable on the Windows dev machine.
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+pub(crate) fn parse_memsize_mib(out: &str) -> Option<u64> {
+    let bytes: u64 = out.trim().parse().ok()?;
+    if bytes == 0 {
+        return None;
+    }
+    Some(bytes / (1024 * 1024))
+}
+
+/// Apple Silicon has no dedicated VRAM: the GPU addresses the same unified
+/// memory as the CPU, so the honest number is physical RAM. A hard-coded
+/// 8 GB made every Mac look like a base M1 and biased the tier and Auto-Tune
+/// math low. Falls back to 8 GB when `sysctl` is unavailable.
+#[cfg(target_os = "macos")]
+fn macos_unified_mem_mib() -> u64 {
+    let out = match crate::base::silent_command("sysctl")
+        .args(["-n", "hw.memsize"])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return 8192,
+    };
+    parse_memsize_mib(&String::from_utf8_lossy(&out.stdout)).unwrap_or(8192)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn windows_gpu_fallback_info() -> serde_json::Value {
+    if let Some((name, vendor, _raw_bytes, driver)) = wmi_gpu_fallback() {
+        match wmi_dedicated_vram_mb(&name) {
+            Some(mb) => {
+                return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":format!("WMI+REG: {name}")})
+            }
+            None => match known_vram_mb(&name) {
+                Some(mb) => {
+                    return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":format!("WMI+TABLE: {name}")})
+                }
+                None => {
+                    return serde_json::json!({"vendor":vendor,"name":name,"vramMB":"0 MiB","driverVersion":driver,"raw":format!("WMI: {name} (VRAM unknown)")})
+                }
+            },
+        }
+    }
+    serde_json::json!({"vendor":"unknown","name":"","vramMB":"0","driverVersion":"","raw":"nvidia-smi not found"})
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn linux_gpu_fallback_info() -> serde_json::Value {
+    let mut vram_mb = 0u64;
+    if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
+        for entry in entries.flatten() {
+            let path = entry.path().join("device").join("mem_info_vram_total");
+            if let Ok(s) = std::fs::read_to_string(path) {
+                if let Ok(bytes) = s.trim().parse::<u64>() {
+                    vram_mb = vram_mb.max(bytes / (1024 * 1024));
+                }
+            }
+        }
+    }
+    let vram_str = if vram_mb > 0 {
+        format!("{vram_mb} MiB")
+    } else {
+        "0 MiB".to_string()
+    };
+
+    if let Ok(out) = std::process::Command::new("sh")
+        .args(["-c", "lspci | grep -i vga"])
+        .output()
+    {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+            if text.contains("amd") || text.contains("radeon") {
+                return serde_json::json!({"vendor":"AMD","name":"AMD GPU (Linux)","vramMB":vram_str,"driverVersion":"","raw":"lspci"});
+            }
+            if text.contains("intel") {
+                return serde_json::json!({"vendor":"INTEL","name":"Intel GPU (Linux)","vramMB":vram_str,"driverVersion":"","raw":"lspci"});
+            }
+        }
+    }
+    serde_json::json!({"vendor":"unknown","name":"","vramMB":"0","driverVersion":"","raw":"nvidia-smi not found"})
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_gpu_fallback_info() -> serde_json::Value {
+    let mib = macos_unified_mem_mib();
+    if let Some((name, chip)) = macos_gpu_info() {
+        return serde_json::json!({"vendor":"APPLE","name":name,"vramMB":format!("{mib} MiB"),"driverVersion":"","raw":format!("system_profiler: {chip}; unified memory {mib} MiB")});
+    }
+    serde_json::json!({"vendor":"APPLE","name":"Apple Silicon (MPS)","vramMB":format!("{mib} MiB"),"driverVersion":"","raw":format!("system_profiler fallback; unified memory {mib} MiB")})
+}
+
 pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
     let (cards, raw) = probe_nv_cards();
     if !cards.is_empty() {
@@ -253,27 +372,7 @@ pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
     if let Some((name, mb, driver)) = pick_smi_row(&raw) {
         return serde_json::json!({"vendor":"NVIDIA","name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":raw});
     }
-    // No NVIDIA driver — WMI fallback for AMD/Intel (Electron queryGpuList parity).
-    // Doc-leading: deepbeepmeep docs/AMD-INSTALLATION.md is the spec for AMD support.
-    if let Some((name, vendor, _raw_bytes, driver)) = wmi_gpu_fallback() {
-        // Prefer 64-bit registry VRAM (AdapterRAM caps ~4GB / often 0).
-        match wmi_dedicated_vram_mb(&name) {
-            Some(mb) => {
-                return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":format!("WMI+REG: {name}")})
-            }
-            // Known-card table before giving up (R9700 PRO driver layout
-            // reports no parseable registry size).
-            None => match known_vram_mb(&name) {
-                Some(mb) => {
-                    return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":format!("WMI+TABLE: {name}")})
-                }
-                None => {
-                    return serde_json::json!({"vendor":vendor,"name":name,"vramMB":"0 MiB","driverVersion":driver,"raw":format!("WMI: {name} (VRAM unknown)")})
-                }
-            },
-        }
-    }
-    serde_json::json!({"vendor":"unknown","name":"","vramMB":"0","driverVersion":"","raw":"nvidia-smi not found"})
+    crate::platform::current().detect_gpu()
 }
 
 /// Probe spawn with a hardware-simulation hook for integration tests.
@@ -349,6 +448,7 @@ pub(crate) fn wmi_all_gpus() -> Vec<(String, String, u64, String)> {
 /// was mistiered because a virtual adapter won the pick).
 /// "Basic Display Adapter" is NOT virtual here — it's the no-driver state
 /// with its own fatal preflight check. Pure + unit-tested.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn is_virtual_display_adapter(name: &str) -> bool {
     let l = name.to_lowercase();
     [
@@ -488,6 +588,7 @@ pub(crate) fn pick_smi_row(text: &str) -> Option<(String, u64, String)> {
 /// UHD/Iris/Arc and AMD APUs) lose to discrete cards no matter what WMI
 /// enumerates first — a Ryzen laptop used to tier as its 780M iGPU even with
 /// an RX 7600S installed. Pure + unit-tested.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn gpu_primary_class(vendor: &str, name: &str) -> u8 {
     let g = name.to_uppercase();
     if vendor == "unknown" {
@@ -572,6 +673,7 @@ pub(crate) fn classify_amd_driver(version: &str) -> &'static str {
 /// digit — R9700, 9070, 7900XTX. Lets the registry match survive the small
 /// WMI-vs-DriverDesc wording differences ("Radeon AI PRO R9700" vs
 /// "AMD Radeon AI PRO R9700") without ever matching a generic iGPU entry.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn distinctive_tokens(name: &str) -> Vec<String> {
     name.to_uppercase()
         .split(|c: char| !c.is_ascii_alphanumeric())
@@ -2587,6 +2689,7 @@ pub(crate) fn get_cached_igpu() -> Option<serde_json::Value> {
         }
     }
     // first call: run WMI, cache result (even None as explicit)
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut igpu: Option<serde_json::Value> = None;
     #[cfg(windows)]
     {
@@ -3220,5 +3323,29 @@ mod intel_cpu_tests {
                 .iter()
                 .any(|p| p.as_str().unwrap().contains("CUDA")));
         }
+    }
+}
+
+#[cfg(test)]
+mod cross_platform_hw_tests {
+    use super::*;
+    #[test]
+    fn apple_maps_to_mps() {
+        assert_eq!(kernel_profile_key("APPLE", "Apple M3"), "MPS");
+    }
+    #[test]
+    fn unknown_maps_to_cpu() {
+        assert_eq!(kernel_profile_key("UNKNOWN", "Unknown GPU"), "CPU");
+    }
+    #[test]
+    fn sysctl_memsize_parses_to_mib() {
+        // 64 GB Mac: 68719476736 bytes.
+        assert_eq!(parse_memsize_mib("68719476736\n"), Some(65536));
+        assert_eq!(parse_memsize_mib(" 17179869184 "), Some(16384));
+        // Not a number, zero, or overflowing u64 -> no figure at all.
+        assert_eq!(parse_memsize_mib(""), None);
+        assert_eq!(parse_memsize_mib("0"), None);
+        assert_eq!(parse_memsize_mib("kern.hv_vmm_present: 1"), None);
+        assert_eq!(parse_memsize_mib("18446744073709551616"), None);
     }
 }
