@@ -148,6 +148,20 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   (APUs enumerate first). A startup diagnostic line reports per-device VRAM,
   the resolved UUID, and the live `CUDA_VISIBLE_DEVICES` / `CUDA_DEVICE_ORDER`.
 
+- **Docs audited against the code and upstream 18.83.** Sixteen claims were
+  wrong or stale: the guide insisted `wgp_config.json` has no reserved-memory
+  key (it is `perc_reserved_mem_max`, a 0-100 percentage the launcher writes);
+  GGUF 1.0.28 was quoted where both the launcher and upstream pin 1.0.29;
+  WGPKernels 1.3.0 where `setup_config.json` says 1.4.2; the retired rocm-sdk
+  7.14 env was still described as the AMD HIP path; P0 was still called
+  experimental *More Speed with Less RAM* (upstream renamed it
+  `AutoRAM_AutoVRAM` and dropped the flag); the "settings Auto-Tune writes"
+  lists omitted `compile`, `compute_cache` and `deepy_kv_cache_quantization`;
+  test counts said 358/166; and the Phone & remote section appeared twice with
+  contradicting path counts. `PLATFORMS.md` no longer claims the artifact
+  workflow produced the Windows installer or an MSI, and `OVERVIEW.md` now
+  shows the platform adapters and the capability gate.
+
 ## [0.10.22] — 2026-10-23
 
 - **Prerequisites panel on the installer screen.** Git, uv, Python and Conda
