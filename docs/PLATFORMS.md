@@ -108,6 +108,30 @@ Both need a desktop session with GTK 3 + WebKitGTK 4.1 (Ubuntu 22.04+, Debian 12
 Fedora 40+, Arch). The `.deb` is the smaller, system-integrated path; the AppImage
 is the only Linux form that can self-update (see Known gaps).
 
+**Arch-based distros (Arch, CachyOS, Omarchy, EndeavourOS).** Use the AppImage;
+the `.deb` is Debian packaging and `dpkg` will not install it. Arch ships glibc
+2.44 (2026-09), above this AppImage's 2.43 floor, so nothing needs rebuilding.
+Packages the launcher leans on:
+
+```bash
+sudo pacman -S fuse2 xdg-utils git   # fuse2 mounts the AppImage, xdg-utils opens folders
+```
+
+`nvidia-smi` comes from `nvidia-utils`; AMD cards are read from `/sys/class/drm`,
+no extra package. Python on PATH is not required — uv provisions 3.11 itself.
+Never run on Arch here, so treat this as the documented path, not a tested one.
+
+On a Hyprland/wlroots session such as Omarchy, three things differ:
+
+- *Start at login* writes `~/.config/autostart/wan2gp-desktop.desktop`, and
+  Hyprland does not read XDG autostart. Use
+  `exec-once = wan2gp-desktop-launcher-tauri` in the Hyprland config instead.
+- *Create desktop shortcut* writes `~/.local/share/applications/wan2gp-desktop-launcher.desktop`.
+  Hyprland has no desktop icons — start it from a keybind or a launcher
+  (walker/wofi/rofi); the entry still shows up there.
+- If the window opens blank on NVIDIA + Wayland, run it with
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1` (WebKitGTK's DMABUF path on wlroots).
+
 **Prerequisites are mostly not one-click on Linux.** Those buttons are
 winget/choco/MSI, i.e. Windows-only, so on Linux the Prerequisites card replaces
 each *Install* button with the command to run (`sudo apt install git`, …); click

@@ -60,13 +60,18 @@ No Python, no CUDA toolkit, no `pip`, no Node needed beforehand — the installe
 
 ```bash
 # AppImage — needs FUSE: sudo apt install libfuse2t64   (libfuse2 on 22.04)
+#                     Arch/CachyOS/Omarchy: sudo pacman -S fuse2 xdg-utils
 chmod +x Wan2GP.Desktop.Launcher.Tauri_*_amd64.AppImage
 ./Wan2GP.Desktop.Launcher.Tauri_*_amd64.AppImage
 
-# or the .deb (declares libwebkit2gtk-4.1-0 + libgtk-3-0)
+# or the .deb (Debian/Ubuntu only; declares libwebkit2gtk-4.1-0 + libgtk-3-0)
 sudo apt install ./Wan2GP.Desktop.Launcher.Tauri_*_amd64.deb
 wan2gp-desktop-launcher-tauri
 ```
+
+Arch-based distros take the AppImage, not the `.deb`. On a Hyprland session
+(Omarchy) *start at login* needs `exec-once` in the Hyprland config — details:
+[PLATFORMS](docs/PLATFORMS.md#installing-on-linux).
 
 | | Needs | Update lane |
 | --- | --- | --- |
