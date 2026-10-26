@@ -1002,7 +1002,7 @@
               <div class="mem-hint"><span id="recLlmCpuCompute" class="tag-rec">rec: —</span><span id="savedLlmCpuCompute" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
-              <label class="token-hint" title="Share of RAM that pinning may lock. Auto is 40% on Windows and 60% on Linux (upstream lowered Linux from 80% in v17.10). WanGP's own slider stops at 80, so this stops there too. Lower it and keep Smart Memory Pinning On if you are short of RAM.">Reserved RAM for Pinning (% — 0 = Auto)</label>
+              <label class="token-hint" title="Share of RAM that pinning may lock. Auto is 40% on Windows and 60% on Linux (upstream lowered Linux from 80% in v17.10). WanGP's own slider stops at 80, so this stops there too. Lower it and keep Smart Memory Pinning On if you are short of RAM. Since mmgp 4.4 (WanGP 18.83) this is also the budget MMGP maps weights out of: the Qwen3.5 prompt-enhancer token table is read by the GPU in place from page-locked RAM, and too small a share leaves it in VRAM instead (the log says [MMGP] Not enough reserved RAM left to map).">Reserved RAM (% — 0 = Auto)</label>
               <input type="number" id="memReservedPct" class="input" min="0" max="80" step="5" placeholder="0 = Auto">
               <div class="mem-hint"><span id="recReservedPct" class="tag-rec">rec: —</span><span id="savedReservedPct" class="tag-saved">saved: —</span></div>
             </div>

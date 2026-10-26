@@ -13,6 +13,23 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- **WanGP 18.83 / mmgp 4.4 mapped RAM: guidance, not code.** Upstream's
+  `9905f0d` moved the Qwen3.5 prompt-enhancer token table to page-locked RAM
+  read by the GPU in place (`mmgp.runtime.map_in_ram`, `mmgp/mapped.py`). The
+  mapping is budgeted by `perc_reserved_mem_max` — the same knob Auto-Tune
+  writes — so the launcher needs no contract change: no CLI flag, no
+  `wgp_config.json` key, no `requirements.txt` pin moved, `mmgp` is vendored,
+  and every choice list Auto-Tune validates still matches upstream
+  (`int8_kernels`, `fp8_kernels`, `kernel_precision`, `attention_head_split`,
+  `vram_allocator`, `ram_allocator`, preload modes, 0–100 % reserved). What
+  changed is the meaning of a *low* Reserved RAM share, so its tooltip and the
+  range error now say it also decides whether MMGP can map weights, and that
+  Auto (0) is 40 % on Windows / 60 % elsewhere. Verified on this machine with
+  the real env: a 39 MB table maps, its rows survive bit-for-bit through the
+  CUDA view, gathers match, and without a CUDA context upstream degrades with
+  `[MMGP] Unable to map … cuMemHostGetDevicePointer returned 201` instead of
+  failing the launch.
+
 - **Cross-platform foundation: Linux x86_64 and macOS Apple Silicon.** The
   launcher is now one code base with platform adapters
   (`src-tauri/src/platform/{windows,linux,macos}.rs` + shared `unix.rs`) instead
