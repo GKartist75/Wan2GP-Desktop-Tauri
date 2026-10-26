@@ -18,3 +18,4 @@ scripts/.adult-pack-cache
 verify-out.txt
 
 dist-test/
+.rel/
