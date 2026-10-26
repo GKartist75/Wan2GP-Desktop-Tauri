@@ -288,3 +288,33 @@ arms of every pair compile; the Unix arm is what the flavor check exercises.
       NOT executed — no Apple Silicon hardware. `[ ] Manual smoke test: macOS`.
 - [x] `dist/` mirrors the release (13 files + `SHA256SUMS.txt`) and
       `dist/README.txt` records what was and was not run.
+
+## Session 2026-10-26 (later) — the launch environment was silently dropped on Linux/macOS
+
+- [x] Root cause of "the log says the Triton cache is pinned, but Triton keeps
+      filling `~/.triton/cache`" (and of tokens configured in Settings never
+      reaching WanGP): 0.10.27 made every spawn go through `shell_command`,
+      which clears the child env and snapshots `child_env()` **when the
+      `Command` is built** (line 811 of `launch.rs`). Every launch pin is a
+      `set_var()` *after* that line — HF / Civitai / Claude keys from config,
+      `TRITON_CACHE_DIR`, `PYTHONUNBUFFERED` / `PYTHONUTF8` /
+      `PYTHONIOENCODING`, `TQDM_MININTERVAL` / `TQDM_MINITERS`, the
+      `WGP_GGUF_*` knobs and the MSVC `CC`/`CXX` pin — so the stale snapshot
+      won. Windows was unaffected: the plugin inherits the live process env at
+      spawn, which is why nothing showed on the only OS tested at the time.
+- [x] Proof, 0.10.28 on Ubuntu 26.04 + RTX 3080 (WSLg): launched with
+      `HF_TOKEN=probe-abc123` exported by the shell → the child's
+      `/proc/<pid>/environ` had the probe (it existed before the snapshot) and
+      **none** of `TRITON_CACHE_DIR`, `PYTHONUNBUFFERED`, `PYTHONUTF8`,
+      `PYTHONIOENCODING`, `TQDM_*`, `WGP_GGUF_*` (all set after it).
+- [x] Fix (0.10.29): re-snapshot the live env immediately before `spawn()` on
+      non-Windows targets. Windows keeps the unchanged path (one `cfg`), and
+      `shell_command` already applied the same clear/filter, so the re-apply is
+      idempotent (`env_clear().envs(child_env())`).
+- [x] Verified on the shipped **0.10.29 `.deb`** (not a local build): child env
+      now carries `TRITON_CACHE_DIR=/home/gerard/Wan2GP/triton-cache`,
+      `PYTHONUNBUFFERED=1`, `PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8`,
+      `TQDM_MININTERVAL=0`, `TQDM_MINITERS=1`. Triton honours the pin: a probe
+      kernel run under that var wrote 3 entries into the target dir.
+- [x] Release 0.10.29 published with all assets (NSIS/MSI, `.deb`, AppImage +
+      sig, `.dmg`/`.app.tar.gz`, `latest.json`); Windows `cargo check` clean.
