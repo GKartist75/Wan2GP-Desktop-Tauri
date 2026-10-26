@@ -2,7 +2,7 @@ name: Build Artifacts
 
 # Bundles for Linux and macOS without touching releases or signing keys.
 # Built for the "I only have a Windows box" case: dispatch it, download the
-# artifacts from the run. Produces AppImage + deb + dmg (+ the raw .app).
+# artifacts from the run. Produces the AppImage, the .deb and the .dmg.
 #
 # Deliberately NOT the release workflow: no tag, no release, no updater
 # metadata, and `createUpdaterArtifacts` is forced off so no minisign key is
