@@ -14,9 +14,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # ubuntu-22.04, not -latest: that is the runner the bundles are built
-        # on and the oldest glibc/webkit the .deb and AppImage claim to support.
-        os: [windows-latest, ubuntu-22.04, macos-latest]
+        # Same runner image the bundles are built on. 24.04, not 22.04: the
+        # AppImage bundles the runner's WebKitGTK, and the 22.04 one aborts at
+        # startup on hosts with a recent Mesa ("Could not create default EGL
+        # display: EGL_BAD_PARAMETER", seen on WSL2/Ubuntu 26.04).
+        os: [windows-latest, ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
