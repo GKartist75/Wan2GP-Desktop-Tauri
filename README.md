@@ -8,7 +8,7 @@
   <a href="https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/latest" style="display:inline-block;padding:14px 36px;background:#2ea043;color:#fff;border-radius:8px;font-size:1.1rem;font-weight:600;text-decoration:none">
     ⬇ Download for Windows — Latest Release
   </a><br>
-  <code>Wan2GP.Desktop.Launcher.Tauri_*_x64-setup.exe</code> · ≈ 3 MB · Windows 10 / 11<br>
+  <code>Wan2GP-Desktop-Launcher_*_x64-setup.exe</code> · ≈ 3 MB · Windows 10 / 11<br>
   <small>Hardware needs scale with the model you pick — start at 6 GB VRAM, up to 24 GB+ for max quality.</small><br>
   <small>⚠️ Unsigned installer — "unknown publisher" warning is normal for open-source without a code-signing cert.</small>
 </p>

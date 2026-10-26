@@ -19,8 +19,8 @@ The launcher knows which of six install kinds it is, from its own bundle marker
 | Install kind | What you installed | How it updates | Exact command when one is needed |
 | --- | --- | --- | --- |
 | `windows` | `*-setup.exe` (NSIS) or `.msi` | **In-app**, in place: download → *install & restart* | none — press the button |
-| `appimage` | `*.AppImage` | **In-app** once the release carries a Linux entry in `latest.json`; otherwise replace the file | `chmod +x Wan2GP.Desktop.Launcher.Tauri_<version>_amd64.AppImage` |
-| `deb` | `sudo apt install ./<file>.deb` | **Download, then install by hand** | `sudo apt install ./Wan2GP.Desktop.Launcher.Tauri_<version>_amd64.deb` |
+| `appimage` | `*.AppImage` | **In-app** once the release carries a Linux entry in `latest.json`; otherwise replace the file | `chmod +x Wan2GP-Desktop-Launcher_<version>_amd64.AppImage` |
+| `deb` | `sudo apt install ./<file>.deb` | **Download, then install by hand** | `sudo apt install ./Wan2GP-Desktop-Launcher_<version>_amd64.deb` |
 | `rpm` | `sudo rpm -Uvh <file>.rpm` | **Download, then install by hand** | `sudo rpm -Uvh ./<file>.rpm` |
 | `macapp` | `.dmg` → dragged into *Applications* | **Download, then drag** | none — open the `.dmg`, drag, replace |
 | `source` | `cargo build --manifest-path src-tauri/Cargo.toml` | **Rebuild** | `git pull` then `cargo build --manifest-path src-tauri/Cargo.toml` |
@@ -30,9 +30,9 @@ dots, which is why these are dotted while the local build output is not):
 
 | Platform | Assets |
 | --- | --- |
-| Windows x64 | `Wan2GP.Desktop.Launcher.Tauri_<version>_x64-setup.exe` (NSIS), plus the equivalent `.msi` |
-| Linux x86_64 | `Wan2GP.Desktop.Launcher.Tauri_<version>_amd64.AppImage`, `…_amd64.deb` |
-| macOS arm64 | `Wan2GP.Desktop.Launcher.Tauri_<version>_aarch64.dmg` — no updater payload, by design |
+| Windows x64 | `Wan2GP-Desktop-Launcher_<version>_x64-setup.exe` (NSIS), plus the equivalent `.msi` |
+| Linux x86_64 | `Wan2GP-Desktop-Launcher_<version>_amd64.AppImage`, `…_amd64.deb` |
+| macOS arm64 | `Wan2GP-Desktop-Launcher_<version>_aarch64.dmg` — no updater payload, by design |
 
 One merged `latest.json` on the release is what `tauri-plugin-updater` reads;
 each platform leg appends its own entry rather than overwriting the file.
@@ -72,8 +72,8 @@ running process by itself).
 By hand: download the new `…_amd64.AppImage`, replace the old one, then
 
 ```bash
-chmod +x Wan2GP.Desktop.Launcher.Tauri_<version>_amd64.AppImage
-./Wan2GP.Desktop.Launcher.Tauri_<version>_amd64.AppImage
+chmod +x Wan2GP-Desktop-Launcher_<version>_amd64.AppImage
+./Wan2GP-Desktop-Launcher_<version>_amd64.AppImage
 ```
 
 The AppImage needs FUSE to mount (`sudo apt install libfuse2t64` on Ubuntu
@@ -88,7 +88,7 @@ the real asset name already in it.
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./Wan2GP.Desktop.Launcher.Tauri_<version>_amd64.deb
+sudo apt install ./Wan2GP-Desktop-Launcher_<version>_amd64.deb
 
 # Fedora / RHEL / openSUSE
 sudo rpm -Uvh ./<the-downloaded>.rpm

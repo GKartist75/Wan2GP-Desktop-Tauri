@@ -86,6 +86,15 @@ jobs:
           find src-tauri/target/${{ matrix.target }}/release/bundle -type f \
             \( -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' -o -name '*.app.tar.gz' \) \
             -exec cp {} dist/ \;
+          # The Tauri bundler names files after productName ("Wan2GP Desktop
+          # Launcher Tauri"), which means every download needs quoting in a
+          # shell. These artifacts are downloaded by hand, so rename them;
+          # releases keep the bundle names because tauri-action writes
+          # latest.json and the .sig names from them.
+          for f in dist/*; do
+            n="dist/$(basename "$f" | sed 's/ /-/g; s/Desktop-Launcher-Tauri/Desktop-Launcher/')"
+            [ "$f" = "$n" ] || mv "$f" "$n"
+          done
           ls -la dist
 
       - uses: actions/upload-artifact@v4
