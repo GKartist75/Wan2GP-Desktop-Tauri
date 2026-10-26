@@ -109,6 +109,60 @@ own caches under `~/.cache` (Manage → System → disk cleanup lists them).
 > virtual X display with `LIBGL_ALWAYS_SOFTWARE=1` +
 > `WEBKIT_DISABLE_DMABUF_RENDERER=1`. Not a launcher bug.
 
+### Testing the Linux build from a Windows machine
+
+WSL2 + Xvfb runs the real Linux binary (same GTK/WebKit stack, same code paths)
+in software GL. It is what the Linux verification above was done with.
+
+```bash
+# one-time inside the distro
+sudo apt install -y xvfb xdotool imagemagick x11vnc dbus-x11 \
+  libwebkit2gtk-4.1-0 libgtk-3-0 curl git
+```
+
+Build from the repo as usual (cargo needs the Linux target deps: `libwebkit2gtk-4.1-dev`,
+`libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `patchelf`), then:
+
+```bash
+export DISPLAY=:99 WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 GDK_BACKEND=x11 XDG_RUNTIME_DIR=/tmp/xdg
+mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+Xvfb :99 -screen 0 1400x900x24 &
+dbus-run-session -- ./src-tauri/target/debug/wan2gp-desktop-launcher-tauri
+```
+
+For a live, clickable window use `x11vnc -display :99 -localhost -nopw` and point
+a VNC viewer at `localhost:5900`; for scripted checks use `xdotool` (click at
+coordinates) and `import -window root shot.png` (screenshot). Without
+`dbus-run-session` the WebKit portal warnings flood the log and the window may
+not map.
+
+Simulate a GPU without hardware: `WGP_PROBE_NVIDIA_SMI=/tmp/fake-nvidia-smi`
+replaces the `nvidia-smi` probe with your script (executed directly on
+Linux/macOS, via `cmd /C` on Windows), so the wizard resolves the CUDA profile,
+VRAM and the driver preflight. Two calls are made:
+
+```bash
+#!/usr/bin/env bash
+case "$*" in
+  *index,uuid*) echo "0,GPU-11111111-2222-3333-4444-555555555555,NVIDIA GeForce RTX 4080,16376,15000,550.54" ;;
+  *)            echo "NVIDIA GeForce RTX 4080, 16376 MiB, 550.54" ;;
+esac
+```
+
+That renders `GPU NVIDIA GeForce RTX 4080`, `CUDA build CUDA 13 (cu130)`,
+`Profile RTX 40` and the "driver 550.54 < R580" warning — the whole Linux
+detection → profile → preflight chain, with no NVIDIA hardware.
+
+Building straight out of `/mnt/d` works but is slow; a copy on ext4 (tar-pipe
+the repo to `~/w2gp`) rebuilds in seconds.
+
+Unit tests: `npm test` (renderer) and `cargo test` (Rust) run unmodified inside
+the distro. Bundles: `cargo tauri build` then install the `.deb`
+(`sudo apt install ./…_amd64.deb`) or run the AppImage — both start under Xvfb.
+
+Still needs real hardware: an actual install (clone + venv + torch, several GB),
+launch/stop, the close sweep, CUDA/ROCm execution, and the updater.
+
 GPU support:
 
 - **NVIDIA** — `nvidia-smi` must be on `PATH` (the proprietary driver package

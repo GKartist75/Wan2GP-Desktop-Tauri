@@ -180,6 +180,15 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   the launcher's own `~/Wan2GP/.tools` (its uv) was the only entry; `.tools`
   joins the benign list, so first-time users are no longer told to wipe it.
 
+- **Hardware-simulation hook works off Windows.** `WGP_PROBE_NVIDIA_SMI` (and
+  the PowerShell twin) spawned `cmd /C <fake>`, which does not exist on Unix, so
+  on Linux the probe silently fell through and the GPU read as `unknown` — the
+  hook the Windows integration tests rely on was Windows-only. It spawns the fake
+  directly on Linux/macOS now, which makes the whole Linux chain testable without
+  a card: `WGP_PROBE_NVIDIA_SMI=./fake ./launcher` renders `NVIDIA GeForce RTX
+  4080`, `CUDA build CUDA 13 (cu130)`, `Profile RTX 40` and the driver-preflight
+  warning.
+
 - **Docs audited against the code and upstream 18.83.** Sixteen claims were
   wrong or stale: the guide insisted `wgp_config.json` has no reserved-memory
   key (it is `perc_reserved_mem_max`, a 0-100 percentage the launcher writes);

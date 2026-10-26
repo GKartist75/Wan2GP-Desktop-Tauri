@@ -377,13 +377,29 @@ pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
 
 /// Probe spawn with a hardware-simulation hook for integration tests.
 /// `WGP_PROBE_<KIND>` (WGP_PROBE_NVIDIA_SMI / WGP_PROBE_POWERSHELL) redirects
-/// the probe through `cmd /C <fake>`; unset in production, where this is
-/// exactly silent_command. Lets tests simulate an AMD box (no nvidia-smi,
-/// canned WMI/registry answers) on any machine without touching prod behavior.
+/// the probe to `<fake>`; unset in production, where this is exactly
+/// silent_command. Lets tests simulate an AMD box (no nvidia-smi, canned
+/// WMI/registry answers) on any machine without touching prod behavior.
+///
+/// Windows needs `cmd /C` because a fake is often a `.bat`; on Linux/macOS the
+/// fake is spawned directly, so the same hook works there too — it used to
+/// spawn `cmd`, which does not exist on Unix, making the hook silently do
+/// nothing and the GPU read as `unknown`.
 pub(crate) fn probe_command(kind: &str, bin: &str) -> std::process::Command {
     if let Ok(fake) = std::env::var(format!("WGP_PROBE_{kind}")) {
-        let mut c = silent_command("cmd");
-        c.args(["/C", &fake, "--"]);
+        let mut c = {
+            #[cfg(windows)]
+            {
+                silent_command("cmd")
+            }
+            #[cfg(not(windows))]
+            {
+                silent_command(&fake)
+            }
+        };
+        #[cfg(windows)]
+        c.args(["/C", &fake]);
+        c.arg("--");
         let _ = bin;
         return c;
     }
