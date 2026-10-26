@@ -13,6 +13,14 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- **The CUDA-toolkit prerequisite row stops printing over itself.** On Linux
+  the row's label lived in a 58px column, so "CUDA toolkit (SpargeAttn /
+  flash-attn)" wrapped to four lines and drew across the status cell —
+  "not found — optional" was only legible as "found —…", which reads like the
+  opposite. Labels are one line with an ellipsis (the short "CUDA toolkit",
+  caveats in the tooltip), the name column is 88px, and the command chip is
+  capped at 220px so the status keeps its room. Seen on WSL2/Ubuntu 26.04 with
+  an RTX 3080 (no `nvcc` → the row is correctly optional-missing).
 - **uv's *Install* button works on Linux and macOS.** The Prerequisites row for
   uv only copied `curl -LsSf https://astral.sh/uv/install.sh | sh` off Windows,
   even though the install flow already provisions uv exactly that way. Astral's

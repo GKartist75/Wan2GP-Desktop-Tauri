@@ -1373,10 +1373,13 @@ const PREREQ_TOOLS = [
   // Linux + NVIDIA only (the backend omits it elsewhere). Upstream's
   // INSTALLATION.md calls the CUDA toolkit a prerequisite because SpargeAttn
   // and flash-attn are built from source there; without it the launcher skips
-  // just those two, so the row is informative, not a blocker.
+  // just those two, so the row is informative, not a blocker. The label stays
+  // short — the row grid gives the name one line, so the caveats live in the
+  // `tip` (tooltip) instead of wrapping over the status column.
   {
     tool: "cuda",
-    label: "CUDA toolkit (SpargeAttn / flash-attn)",
+    label: "CUDA toolkit",
+    tip: "SpargeAttn / flash-attn need the NVIDIA CUDA toolkit on Linux: 13.1 for RTX 20XX-50XX, 12.8 for GTX 10XX",
     optional: true,
   },
 ];
@@ -1392,6 +1395,10 @@ function prereqRow(spec) {
   const name = document.createElement("span");
   name.className = "pt-name";
   name.textContent = spec.label;
+  // One line only (the row is a grid): a longer label truncates with an
+  // ellipsis instead of wrapping over the status column. `tip` carries the
+  // detail the short label drops.
+  name.title = spec.tip || spec.label;
   const status = document.createElement("span");
   status.className = "pt-status";
   status.textContent = "checking…";

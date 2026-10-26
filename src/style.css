@@ -2245,7 +2245,7 @@ body.ft-resizing .dash-term-resize {
 }
 .pt-row {
  display: grid;
- grid-template-columns: 10px 58px minmax(0, 1fr) auto;
+ grid-template-columns: 10px 88px minmax(0, 1fr) auto;
  gap: 10px;
  align-items: center;
  padding: 5px 0;
@@ -2270,6 +2270,13 @@ body.ft-resizing .dash-term-resize {
  font-size: 0.72rem;
  font-weight: 600;
  color: var(--text-primary);
+ /* One line, always: a wrapping label used to overflow its 58px column and
+    draw over the status text ("not found — optional" was read as
+    "found —…"). Truncate and keep the full text in the tooltip. */
+ min-width: 0;
+ overflow: hidden;
+ text-overflow: ellipsis;
+ white-space: nowrap;
 }
 .pt-status {
  font-size: 0.68rem;
@@ -2298,7 +2305,11 @@ body.ft-resizing .dash-term-resize {
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   cursor: copy;
-  max-width: 340px;
+  /* The card is ~670px wide at the wizard's size: a 340px command chip left the
+     status column ~44px, so "not found — optional" read "not fou…". 220px keeps
+     the chip legible and the status readable; the full command is the tooltip
+     and the clipboard. */
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
