@@ -390,7 +390,10 @@ pub(crate) fn required_spec_in_requirements(text: &str, dist: &str) -> Option<St
 pub fn check_package(pkg: String) -> serde_json::Value {
     // Real probe: importlib version from the active env (aliases map import names to dist names).
     let dist = match pkg.as_str() {
-        "triton" => "triton-windows",
+        // AMD/Intel Windows ships the PyPI `triton-windows` fork; on Linux
+        // triton comes from the ROCm torch build under its own name.
+        "triton" if cfg!(windows) => "triton-windows",
+        "triton" => "triton",
         "spas_sage_attn" => "spas-sage-attn",
         "huggingface_hub" => "huggingface-hub",
         "opencv" | "opencv-python" => "opencv-python",
@@ -466,6 +469,7 @@ pub fn memory_profile_read() -> serde_json::Value {
 /// (empty, non-numeric, multi-separator, non-positive, non-finite) so the
 /// caller falls back conservatively instead of tiering on a lie.
 /// Pure + unit-tested.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn ram_gb_from_probe(raw: &str) -> Option<f64> {
     const GB: f64 = 1024.0 * 1024.0 * 1024.0;
     let s = raw.trim();
@@ -716,7 +720,7 @@ pub fn auto_tune_recommend(
         "Failsafe · P5 (maximum compatibility)".to_string()
     } else {
         match profile.to_string().as_str() {
-            "0" => "LowRAM · no permanent Reserved RAM (upstream: experimental)",
+            "0" => "AutoRAM · AutoVRAM (P4 that reserves RAM only for the running model)",
             "1" => "HighRAM · HighVRAM",
             "2" => "HighRAM · LowVRAM",
             "3" => "LowRAM · HighVRAM (upstream: recommended for audio)",
@@ -785,14 +789,18 @@ pub fn auto_tune_recommend(
         // with a Dynamic or Manual VRAM Preload ... Video steps are usually
         // long enough to hide the transfers." Audio rides P3+, which loads
         // each model whole and hides the control entirely.
-        // wgp.py:4216 hands Dynamic to mmgp only when the profile is 2, 4 or 5
-        // (init_pipe truncates 4.5 -> 4): P1/P3/P3.5 load whole models and
-        // have nothing to preload, so recommending Dynamic there would be a
-        // setting that silently does nothing — the same rule the CUDA gate
-        // above applies to AMD/Intel. P0 is the exception: its Default *is*
-        // Dynamic (wgp.py dynamic_preload: profile 0 + "default"), so the
-        // "default" written below already preloads dynamically there.
-        let dynamic_images = [2.0, 4.0, 4.5, 5.0].contains(&profile);
+        // Upstream gives a VRAM Preload control to Profiles 0, 2, 4 and 5
+        // (`preload_mode`), and `dynamic_preload` makes P1/P3/P3+ dynamic
+        // intrinsically. P1/P3/P3+ therefore need "default", not "dynamic":
+        // recommending the mode there would be a setting that silently does
+        // nothing — the same rule the CUDA gate above applies to AMD/Intel.
+        // P0 is the exception below: its Default *is* Dynamic (profile 0 +
+        // "default"), so the "default" written for it already preloads.
+        // Upstream `preload_mode()` covers Profiles 0, 2, 4 and 5 only, and
+        // `dynamic_preload` gives 1 and 3 their Dynamic intrinsically; 4.5 (P4+)
+        // has no preload control ("sends one part at a time"), so writing
+        // Dynamic there would be a dead setting.
+        let dynamic_images = [2.0, 4.0, 5.0].contains(&profile);
         extra.insert("video_preload_mode".into(), serde_json::json!("default"));
         extra.insert(
             "image_preload_mode".into(),
@@ -805,7 +813,7 @@ pub fn auto_tune_recommend(
     }
     let mut out = serde_json::json!({
         "video_profile": profile, "image_profile": profile, "audio_profile": audio,
-        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8", "text_encoder_quantization": if ram_tier == "high" { "bf16" } else { "int8" }, "int8_kernels": "auto", "fp8_kernels": "auto", "kernel_precision": "fast", "kv_cache_quantization": if vram_tier == "tight" { "q4" } else { "auto" },
+        "vram_safety_coefficient": coeff, "vae_config": 0, "transformer_quantization": "int8", "text_encoder_quantization": if ram_tier == "high" { "bf16" } else { "int8" }, "int8_kernels": "auto", "fp8_kernels": "auto", "kernel_precision": "fast", "kv_cache_quantization": if vram_tier == "tight" { "int8_q4" } else { "auto" },
         "_recommendation_label": label,
         "_recommendation_reason": "Auto-tuned for your hardware",
         "packages": ["torch","triton","sageattention"],
@@ -839,8 +847,15 @@ pub(crate) fn amd_package_gate_result(profile: &str, pkg: &str) -> Result<String
         Some(i) => low[..i].trim(),
         None => low.trim(),
     };
-    // Vanilla PyPI triton → triton-windows (keep any version pin).
+    // Vanilla PyPI triton → triton-windows on Windows (keep any version pin).
+    // On Linux the ROCm torch wheel ships its own triton under that name, so a
+    // PyPI triton would shadow it — refused like the other CUDA-only packages.
     if name == "triton" {
+        if !cfg!(windows) {
+            return Err(format!(
+                "{pkg} comes with the ROCm torch build on Linux — installing PyPI triton would shadow it. See {GUIDE}."
+            ));
+        }
         let pin = pkg[name.len()..].to_string();
         return Ok(format!("triton-windows{pin}"));
     }
@@ -995,15 +1010,23 @@ mod amd_package_gate_tests {
     use super::amd_package_gate_result;
     #[test]
     fn amd_refuses_cuda_bitsandbytes_vanilla_sage_flash() {
-        // Vanilla `triton` maps to triton-windows instead of refusing.
-        assert_eq!(
-            amd_package_gate_result("AMD_GFX1201", "triton").unwrap(),
-            "triton-windows"
-        );
-        assert_eq!(
-            amd_package_gate_result("AMD_GFX1201", "triton==3.4.0").unwrap(),
-            "triton-windows==3.4.0"
-        );
+        if cfg!(windows) {
+            // Vanilla `triton` maps to triton-windows instead of refusing.
+            assert_eq!(
+                amd_package_gate_result("AMD_GFX1201", "triton").unwrap(),
+                "triton-windows"
+            );
+            assert_eq!(
+                amd_package_gate_result("AMD_GFX1201", "triton==3.4.0").unwrap(),
+                "triton-windows==3.4.0"
+            );
+        } else {
+            // Linux AMD: triton belongs to the ROCm torch build.
+            for spec in ["triton", "triton==3.4.0"] {
+                let err = amd_package_gate_result("AMD_GFX1201", spec).unwrap_err();
+                assert!(err.contains("docs/AMD-INSTALLATION.md"), "{err}");
+            }
+        }
         // Upstream AMD SageAttention 1 stack: pure-PyPI 1.x passes through.
         assert_eq!(
             amd_package_gate_result("AMD_GFX1201", "sageattention==1.0.6").unwrap(),
@@ -1150,10 +1173,16 @@ mod requirements_pin_tests {
     fn markers_evaluated_when_interpreter_known() {
         // Unknown interpreter: unjudgeable marker line fails open.
         assert_eq!(requirements_pin_for(REQS, "rembg", "2.0.66", None), None);
-        // Windows + py3.11: `platform_system != "Darwin"` holds → capped.
+        // py3.11: the line is `rembg==2.0.65; platform_system != "Darwin"`, so
+        // the pin applies only where the marker holds — false on macOS.
+        let expected = if cfg!(target_os = "macos") {
+            None
+        } else {
+            Some("==2.0.65".into())
+        };
         assert_eq!(
             requirements_pin_for(REQS, "rembg", "2.0.66", Some((3, 11))),
-            Some("==2.0.65".into())
+            expected
         );
         // A python_version-gated line applies per interpreter.
         let gated = "pkg==1.0; python_version >= \"3.10\"\n";
@@ -1705,7 +1734,20 @@ pub fn deepy_status() -> serde_json::Value {
     // Prompt-enhancement UI (upstream `enhancer_mode`: 0 = Manual Button +
     // Automatic on Generation, 1 = Manual Button Only) so the panel can pre-select.
     let enhancer_mode = v.get("enhancer_mode").and_then(serde_json::Value::as_i64);
-    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "promptEnhancerQuantization": quant, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode, "enhancerMode": enhancer_mode})
+    let kv_cache = kv_cache_value(&v);
+    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "promptEnhancerQuantization": quant, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode, "enhancerMode": enhancer_mode, "kvCacheQuantization": kv_cache})
+}
+/// Deepy KV cache quantization as the panel needs it, straight from the config
+/// (upstream `shared/deepy/config.py`): `""` is BF16 and stays empty — the
+/// panel shows it as its own choice — while a missing key means upstream's
+/// default, `auto`. A mixed layout keeps its `body:exact` suffix
+/// (`kv_formats.py` BODY_PRESETS / EXACT_PRESETS); the panel splits it.
+/// Pure + unit-tested.
+pub(crate) fn kv_cache_value(cfg: &serde_json::Value) -> String {
+    cfg.get("deepy_kv_cache_quantization")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_lowercase())
+        .unwrap_or_else(|| "auto".into())
 }
 /// Upstream `normalize_deepy_session_mode` (shared/deepy/config.py):
 /// disabled/selectable/dedicated, anything else falls back to disabled.
@@ -2141,40 +2183,10 @@ pub fn deepy_activate(engine: String) -> serde_json::Value {
 // Auto-start via the per-user Run key (no admin needed). Returns success, like the UI checks.
 #[tauri::command]
 pub fn set_auto_start(enabled: bool) -> serde_json::Value {
-    #[cfg(windows)]
-    {
-        let exe = std::env::current_exe()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-        let ok = if enabled && !exe.is_empty() {
-            silent_command("reg")
-                .args([
-                    "add",
-                    key,
-                    "/v",
-                    "Wan2GPDesktop",
-                    "/t",
-                    "REG_SZ",
-                    "/d",
-                    &format!("\"{exe}\""),
-                    "/f",
-                ])
-                .output()
-                .is_ok_and(|o| o.status.success())
-        } else {
-            silent_command("reg")
-                .args(["delete", key, "/v", "Wan2GPDesktop", "/f"])
-                .output()
-                .is_ok_and(|o| o.status.success())
-        };
-        serde_json::json!({"ok": ok, "success": ok, "enabled": enabled})
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = enabled;
-        return serde_json::json!({"ok": false, "success": false, "error": "auto-start is Windows-only"});
-    }
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    crate::platform::current().set_auto_start(enabled, &exe)
 }
 #[tauri::command]
 /// Fail-closed gate for the new upstream string enums (upstream raises
@@ -3107,6 +3119,10 @@ mod autotune_matrix_tests {
             "tight VRAM buys head split"
         );
         assert_eq!(cuda["image_preload_mode"], "dynamic");
+        assert_eq!(
+            cuda["kv_cache_quantization"], "int8_q4",
+            "tight VRAM keeps INT8 keys and Q4 values (-24% vs INT8): Auto never goes below INT8 upstream, and the Q4/Q4 body costs the most precision"
+        );
         assert_eq!(cuda["smart_memory_pinning"], true);
         // Plenty of VRAM: head split off, everything else unchanged.
         let roomy = auto_tune_recommend(
@@ -3117,9 +3133,10 @@ mod autotune_matrix_tests {
             None,
         );
         assert_eq!(roomy["attention_head_split"], 0);
+        assert_eq!(roomy["kv_cache_quantization"], "auto");
         assert_eq!(
             roomy["image_preload_mode"], "default",
-            "P1 loads whole models: Dynamic preload is gated to profiles 2/4/5 upstream (wgp.py:4216), so recommending it here would be a dead setting"
+            "P1 is dynamic intrinsically (dynamic_preload) and has no preload control, so the mode stays Default"
         );
 
         let amd = auto_tune_recommend(
@@ -3339,10 +3356,6 @@ mod autotune_matrix_tests {
         assert_eq!(r["video_profile"], 0.0);
         assert_eq!(r["image_profile"], 0.0);
         assert_eq!(r["audio_profile"], 0.0);
-        assert!(r["_recommendation_label"]
-            .as_str()
-            .unwrap()
-            .starts_with("LowRAM"));
         for k in [
             "video_preload_mode",
             "image_preload_mode",
@@ -3379,6 +3392,33 @@ mod autotune_matrix_tests {
         assert_eq!(r["video_profile"], 4.5);
     }
 }
+#[cfg(test)]
+mod deepy_kv_cache_tests {
+    use super::kv_cache_value;
+    use serde_json::json;
+    /// The panel preselects from this value, so BF16 (upstream's empty string)
+    /// must not collapse into `auto`: Auto silently turns INT8 *on* while GGUF
+    /// kernels 1.0.13+ are installed, the opposite of what BF16 asks for.
+    #[test]
+    fn bf16_survives_and_missing_keys_mean_auto() {
+        assert_eq!(
+            kv_cache_value(&json!({"deepy_kv_cache_quantization": ""})),
+            ""
+        );
+        assert_eq!(kv_cache_value(&json!({})), "auto");
+        assert_eq!(
+            kv_cache_value(&json!({"deepy_kv_cache_quantization": "INT8_Q4:S1R1024"})),
+            "int8_q4:s1r1024",
+            "case normalised, overlay kept for the second dropdown"
+        );
+        assert_eq!(
+            kv_cache_value(&json!({"deepy_kv_cache_quantization": 3})),
+            "auto",
+            "a non-string falls back to upstream's default, not to garbage"
+        );
+    }
+}
+
 #[cfg(test)]
 mod kernel_setting_tests {
     use super::{normalize_qwen_quant, valid_memory_override};

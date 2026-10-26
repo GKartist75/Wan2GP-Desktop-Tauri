@@ -3,11 +3,10 @@
 //! Python preflight via uv (ensure_uv_python, port of Electron installPython),
 //! and setup.py exit-code propagation (no more false "Installation complete!").
 use crate::base::*;
+#[cfg(windows)]
+use crate::hw::{wmi_all_gpus, wmi_virtual_adapters};
 use crate::{
-    hw::{
-        build_install_plan, classify_amd_driver, get_gpu_info_sync, kernel_profile_key,
-        wmi_all_gpus, wmi_virtual_adapters,
-    },
+    hw::{build_install_plan, classify_amd_driver, get_gpu_info_sync, kernel_profile_key},
     status::{get_active_env, resolve_env_python},
 };
 use std::path::{Path, PathBuf};
@@ -140,7 +139,7 @@ async fn run_capture(
     prog: &str,
     args: &[&str],
 ) -> (bool, String) {
-    let (mut rx, _child) = match app.shell().command(prog).args(args).spawn() {
+    let (mut rx, _child) = match crate::base::shell_command(app, prog).args(args).spawn() {
         Ok(t) => t,
         Err(e) => return (false, e.to_string()),
     };
@@ -373,6 +372,7 @@ fn ensure_owned_uv_in(data_dir: &std::path::Path) -> Option<String> {
 
 /// Delete the launcher-owned uv binaries + markers so a Reinstall starts
 /// from a clean tools dir (returns true if anything was actually removed).
+#[cfg_attr(not(windows), allow(dead_code))]
 fn remove_owned_uv_in(data_dir: &std::path::Path) -> bool {
     let dir = data_dir.join(".tools");
     #[cfg(windows)]
@@ -467,87 +467,12 @@ fn uv_receipt_install_prefix() -> Option<String> {
         .map(str::to_string)
 }
 
-/// Well-known install locations per tool (pure tables — unit-tested).
-/// These make prerequisite installs usable INSTANTLY: no PATH refresh, no
-/// launcher restart. `home` = %USERPROFILE%. Only directly-spawnable images
-/// (never .bat — CreateProcess can't run those without cmd /C).
-#[cfg(windows)]
+/// Well-known install locations per tool (pure tables — unit-tested in
+/// `platform/{windows,linux,macos}.rs`). These make prerequisite installs
+/// usable INSTANTLY: no PATH refresh, no launcher restart. `home` =
+/// %USERPROFILE% on Windows, $HOME elsewhere.
 fn tool_candidates(tool: &str, home: &str) -> Vec<std::path::PathBuf> {
-    let p = |s: String| std::path::PathBuf::from(s);
-    match tool {
-        "git" => vec![
-            p("C:\\Program Files\\Git\\bin\\git.exe".into()),
-            p("C:\\Program Files (x86)\\Git\\bin\\git.exe".into()),
-        ],
-        // Scripts\conda.exe first: directly executable (condabin\conda.bat
-        // is not a valid process image). ProgramData covers machine-wide
-        // installs, which stock Miniconda/Anaconda offer and which used to be
-        // invisible (a second 3 GB copy got installed instead).
-        "conda" => vec![
-            p(format!("{home}\\Miniconda3\\Scripts\\conda.exe")),
-            p(format!("{home}\\Anaconda3\\Scripts\\conda.exe")),
-            p(format!("{home}\\miniconda3\\Scripts\\conda.exe")),
-            p("C:\\ProgramData\\Anaconda3\\Scripts\\conda.exe".into()),
-            p("C:\\ProgramData\\Miniconda3\\Scripts\\conda.exe".into()),
-            p("C:\\ProgramData\\miniconda3\\Scripts\\conda.exe".into()),
-            p("C:\\Anaconda3\\Scripts\\conda.exe".into()),
-            p("C:\\Miniconda3\\Scripts\\conda.exe".into()),
-        ],
-        // py launcher (system-placed; python.org and the new PyManager keep
-        // different copies — C:\Windows\py.exe is absent on the latter).
-        "py" => vec![
-            p("C:\\Windows\\py.exe".into()),
-            p(format!(
-                "{home}\\AppData\\Local\\Programs\\Python\\Launcher\\py.exe"
-            )),
-            p("C:\\Program Files\\PyManager\\py.exe".into()),
-        ],
-        "python" => vec![
-            p(format!(
-                "{home}\\AppData\\Local\\Programs\\Python\\Python311\\python.exe"
-            )),
-            p(format!(
-                "{home}\\AppData\\Local\\Programs\\Python\\Python310\\python.exe"
-            )),
-            p(format!(
-                "{home}\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
-            )),
-            p(format!(
-                "{home}\\AppData\\Local\\Programs\\Python\\Python313\\python.exe"
-            )),
-            p("C:\\Python311\\python.exe".into()),
-            p("C:\\Python310\\python.exe".into()),
-            p("C:\\Python312\\python.exe".into()),
-            p("C:\\Program Files\\Python311\\python.exe".into()),
-            p("C:\\Program Files\\Python310\\python.exe".into()),
-            p("C:\\Program Files\\Python312\\python.exe".into()),
-        ],
-        // Astral-script and cargo defaults: on PATH for new processes but
-        // invisible to a running launcher until a registry refresh — the
-        // exact "not found here, already installed there" split.
-        "uv" => vec![
-            p(format!("{home}\\.local\\bin\\uv.exe")),
-            p(format!("{home}\\.cargo\\bin\\uv.exe")),
-        ],
-        _ => vec![],
-    }
-}
-#[cfg(not(windows))]
-fn tool_candidates(tool: &str, home: &str) -> Vec<std::path::PathBuf> {
-    let p = |s: String| std::path::PathBuf::from(s);
-    match tool {
-        "git" => vec![p("/usr/bin/git".into())],
-        "conda" => vec![
-            p(format!("{home}/miniconda3/bin/conda")),
-            p(format!("{home}/anaconda3/bin/conda")),
-        ],
-        "py" | "python" => vec![p("/usr/bin/python3".into())],
-        "uv" => vec![
-            p(format!("{home}/.local/bin/uv")),
-            p(format!("{home}/.cargo/bin/uv")),
-        ],
-        _ => vec![],
-    }
+    crate::platform::current().tool_candidates(tool, home)
 }
 
 /// First existing candidate, if any (no writes, no spawning — safe in checks).
@@ -583,6 +508,7 @@ pub(crate) fn py_minor(version: &str) -> String {
 /// asks for the profile's minor (`py -3.10` / `-3.11` / `-3.12`); the shim
 /// drops exactly that selector and delegates to the pinned uv-managed
 /// Python. Pure so every profile minor can be tested.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn py_shim_script(uvpy: &str, minor: &str) -> String {
     format!("@echo off\r\nsetlocal enabledelayedexpansion\r\nset \"args=%*\"\r\nset \"args=!args:-{minor} =!\"\r\nif \"!args!\"==\"%*\" set \"args=!args:-{minor}=!\"\r\n\"{uvpy}\" !args!\r\nexit /b %errorlevel%\r\n")
 }
@@ -632,24 +558,6 @@ fn python_usable(prog: &str) -> bool {
     }
 }
 
-/// `where <exe>` hits, in PATH order (Windows only).
-#[cfg(windows)]
-fn where_hits(exe: &str) -> Vec<PathBuf> {
-    silent_command("where")
-        .arg(exe)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .map(|l| PathBuf::from(l.trim()))
-                .filter(|p| !p.as_os_str().is_empty())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// Map a `where conda` hit (`condabin\conda.bat`, `Scripts\conda.bat`, or
 /// `Scripts\conda.exe`) to the directly-spawnable `Scripts\conda.exe`.
 /// CreateProcess cannot run .bat; handing it one was the "setup.py failed to
@@ -677,7 +585,7 @@ pub(crate) fn conda_exe_from_hit(hit: &Path) -> Option<PathBuf> {
 /// install exists.
 #[cfg(windows)]
 fn conda_exe_path() -> Option<String> {
-    for hit in where_hits("conda") {
+    for hit in crate::platform::windows::where_hits("conda") {
         if let Some(c) = conda_exe_from_hit(&hit) {
             if c.is_file() {
                 return Some(c.to_string_lossy().to_string());
@@ -715,12 +623,14 @@ fn conda_base_python() -> Option<String> {
 /// uv, so a neighbouring patch is a valid `py -3.X` source. SHAs were hashed
 /// from python.org over TLS.
 #[derive(Debug, PartialEq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) struct PythonInstallerPlan {
     pub winget_id: &'static str,
     pub version: &'static str,
     pub sha256: &'static str,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn python_install_plan(wanted: &str) -> PythonInstallerPlan {
     match py_minor(wanted).as_str() {
         "3.10" => PythonInstallerPlan {
@@ -788,28 +698,7 @@ pub(crate) fn resolved_tool_path(tool: &str) -> Option<String> {
     if let Some(p) = known_tool_path(tool) {
         return Some(p);
     }
-    #[cfg(windows)]
-    {
-        where_hits(tool)
-            .into_iter()
-            .find(|p| !p.to_string_lossy().to_lowercase().contains("windowsapps"))
-            .map(|p| p.to_string_lossy().to_string())
-    }
-    #[cfg(not(windows))]
-    {
-        silent_command("which")
-            .arg(tool)
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .next()
-                    .map(|l| l.trim().to_string())
-            })
-            .filter(|s| !s.is_empty())
-    }
+    crate::platform::current().lookup_on_path(tool)
 }
 
 /// First non-empty line of probe stdout (CRLF-tolerant).
@@ -850,8 +739,8 @@ pub(crate) fn tool_version(tool: &str) -> Option<String> {
     first_line(out)
 }
 
-/// Probe for gates: absolute hit OR runnable on PATH (Store-shim filtered).
-/// Cross-platform (tool_usable is Windows-only; elsewhere `which`).
+/// Probe for gates: absolute hit OR runnable on PATH (Store-shim filtered on
+/// Windows; the PATH probe itself lives in the platform adapter).
 #[cfg_attr(windows, allow(dead_code))] // Windows readiness uses probe_tool
 pub(crate) fn tool_found(tool: &str) -> bool {
     if known_tool_path(tool).is_some() {
@@ -860,17 +749,7 @@ pub(crate) fn tool_found(tool: &str) -> bool {
     if tool == "uv" && owned_uv().is_some() {
         return true;
     }
-    #[cfg(windows)]
-    {
-        crate::base::tool_usable(tool)
-    }
-    #[cfg(not(windows))]
-    {
-        silent_command("which")
-            .arg(tool)
-            .output()
-            .is_ok_and(|o| o.status.success())
-    }
+    crate::platform::current().tool_on_path(tool)
 }
 
 async fn ensure_uv_python(
@@ -1320,6 +1199,21 @@ pub(crate) fn pinokio_root(repo: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Files this launcher itself creates inside the install folder. A folder that
+/// holds nothing else is still a clean install target.
+const BENIGN_ENTRIES: &[&str] = &[
+    "desktop-config.json",
+    ".uv-cache",
+    "envs.json",
+    ".tools", // owned uv (marker_uv_in)
+];
+
+/// `entries` is the capped listing, `count` the real entry count: a truncated
+/// listing must not be mistaken for "only benign files".
+fn only_benign(entries: &[String], count: usize) -> bool {
+    entries.len() == count && entries.iter().all(|n| BENIGN_ENTRIES.contains(&n.as_str()))
+}
+
 /// Target-folder triage: what is already in the install location?
 /// Verdicts: empty | ours_healthy | ours_broken_env | repo_no_env |
 /// pinokio | foreign. The installer UI turns this into Fresh / Adopt-Reuse /
@@ -1346,10 +1240,10 @@ pub fn classify_target() -> serde_json::Value {
     if count == 0 {
         return no_target;
     }
-    // Only our own bookkeeping files (e.g. desktop-config.json written at boot)
-    // means "empty" for install purposes — don't scare fresh users.
-    const BENIGN: &[&str] = &["desktop-config.json", ".uv-cache", "envs.json"];
-    if entries.len() == count && entries.iter().all(|n| BENIGN.contains(&n.as_str())) {
+    // Only our own bookkeeping files (desktop-config.json written at boot, the
+    // owned uv in .tools, a uv cache) means "empty" for install purposes —
+    // don't scare fresh users into wiping the launcher's own files.
+    if only_benign(&entries, count) {
         return no_target;
     }
     let has_wgp = repo.join("wgp.py").exists();
@@ -1656,14 +1550,14 @@ pub(crate) fn amd_therock_torch_cmds(profile: &str, gpu_name: &str) -> Option<(S
         .unwrap_or_else(|| format!("device-{}", amd_fallback_target(profile, gpu_name)));
     if let Ok(s) = std::fs::read_to_string(get_repo_dir().join("setup_config.json")) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
-            if let Some(tmpl) = v
-                .get("components")
-                .and_then(|c| c.get("torch"))
-                .and_then(|t| t.get("rocm10"))
-                .and_then(|r| r.get("cmd"))
-                .and_then(|c| c.get("win"))
-                .and_then(|w| w.as_str())
-            {
+            let rocm_cmd = crate::hw::cmd_for_platform(
+                v.get("components")
+                    .and_then(|c| c.get("torch"))
+                    .and_then(|t| t.get("rocm10"))
+                    .and_then(|r| r.get("cmd")),
+            );
+            if !rocm_cmd.is_empty() {
+                let tmpl = rocm_cmd.as_str();
                 if tmpl.contains("{device}") {
                     let primary = tmpl.replace("{device}", &extras);
                     let fallback = format!("--pre \"torch[{extras}]\" \"torchvision[{extras}]\" torchaudio --index-url https://nightly.repo.amd.com/rocm/whl-next/");
@@ -2146,6 +2040,105 @@ _profiles = _cfg.get("gpu_profiles", {}) if isinstance(_cfg, dict) else {}
 if _PROFILE not in _profiles:
     _fail("profile %r is not in this setup_config.json (keys: %s) - refusing a KeyError install." % (_PROFILE, sorted(_profiles)))
 print("[*] Launcher-forced GPU profile: %s (%s)" % (_PROFILE, _GPU_NAME))
+
+
+def _cuda_toolkit():
+    """Toolkit dir (the one holding a *native* bin/nvcc), or "" when none.
+
+    On WSL a Windows toolkit is visible through /mnt/c and its nvcc.exe is even
+    runnable via interop, but it cannot compile Linux extensions - accepting it
+    would fail the source build with the same CUDA_HOME error.
+    """
+    import shutil
+    for name in ("nvcc", "nvcc.exe") if os.name == "nt" else ("nvcc",):
+        found = shutil.which(name)
+        if found:
+            return os.path.dirname(os.path.dirname(found))
+    for var in ("CUDA_HOME", "CUDA_PATH", "CUDA_ROOT"):
+        cand = _env(var)
+        if cand and os.path.isfile(os.path.join(cand, "bin", "nvcc")):
+            return cand
+    for cand in ("/usr/local/cuda", "/usr/local/cuda-13", "/opt/cuda"):
+        if os.path.isfile(os.path.join(cand, "bin", "nvcc")):
+            return cand
+    return ""
+
+
+def _drop_foreign_cuda_home():
+    """Remove CUDA_HOME/CUDA_PATH that point at a non-native toolkit.
+
+    WSL/containers export the Windows variable verbatim; leaving it set makes
+    the source build pick up a toolkit it cannot use and fail obscurely.
+    """
+    for var in ("CUDA_HOME", "CUDA_PATH"):
+        val = _env(var)
+        if val and not os.path.isfile(os.path.join(val, "bin", "nvcc")):
+            os.environ.pop(var, None)
+            print("[!] Ignoring %s=%s: no native bin/nvcc there." % (var, val))
+
+
+# Upstream builds SpargeAttn from a git checkout on Linux/macOS (Windows gets a
+# prebuilt wheel) and setup.py runs every component with check=True, so a
+# missing CUDA toolkit aborts the whole install with "Cannot find CUDA_HOME".
+# A stock Ubuntu has no nvcc: upstream scripts/install.sh does not install one
+# either. Drop just that component and let the rest finish.
+def _linux_cmd(component, sub_key):
+    """The linux command upstream would run for this component slot."""
+    node = _cfg.get("components", {}).get(component, {})
+    if component == "sparge":
+        node = node.get("sparge", node)
+    entry = node.get(sub_key) if isinstance(node, dict) else None
+    if not isinstance(entry, dict):
+        return ""
+    cmd = entry.get("cmd")
+    if isinstance(cmd, str):
+        return cmd
+    return cmd.get("linux", "") if isinstance(cmd, dict) else ""
+
+
+def _needs_nvcc(text):
+    """True when the command compiles a CUDA extension (no wheel on Linux)."""
+    if not text or ".whl" in text:
+        return False
+    return "TRITON_AMD" not in text
+
+
+if os.name != "nt":
+    _drop_foreign_cuda_home()
+    _cuda = _cuda_toolkit()
+    _entry = _profiles.get(_PROFILE)
+    if isinstance(_entry, dict):
+        if _cuda:
+            if not _env("CUDA_HOME"):
+                os.environ["CUDA_HOME"] = _cuda
+                print("[*] CUDA toolkit found at %s - exported CUDA_HOME for source builds." % (_cuda,))
+            # INSTALLATION.md: SpargeAttn's build shells out to `python` from
+            # PATH, and nvcc must be reachable too - upstream's run.sh gets both
+            # by activating the env; we spawn setup.py directly.
+            _bins = [os.path.join(_cuda, "bin")]
+            _env_bin = os.path.dirname(sys.executable)
+            if os.path.basename(_env_bin) == "bin":
+                _bins.append(_env_bin)
+            _path = _env("PATH")
+            _missing = [p for p in _bins if p and p not in _path.split(os.pathsep)]
+            if _missing:
+                os.environ["PATH"] = os.pathsep.join(_missing + [_path])
+                print("[*] Added to PATH for source builds: %s" % (", ".join(_missing),))
+        else:
+            # Windows gets prebuilt wheels for these; Linux builds them from
+            # source, and setup.py runs components with check=True - one
+            # missing nvcc aborts the whole install (stock Ubuntu has none,
+            # and upstream scripts/install.sh does not install one either).
+            _dropped = []
+            for _key in ("sparge", "flash"):
+                _sub = _entry.get(_key)
+                if _sub and _needs_nvcc(_linux_cmd(_key, _sub)):
+                    _entry[_key] = None
+                    _dropped.append(_key)
+            if _dropped:
+                print("[!] Skipping %s: built from source here and no CUDA toolkit (nvcc) was found." % (", ".join(_dropped),))
+                print("[*] Everything else installs. To add them later: install the toolkit (e.g. 'sudo apt install nvidia-cuda-toolkit') and re-run the install.")
+
 try:
     _setup.do_install_auto(_ENV_TYPE, _cfg, _PROFILE)
 except SystemExit:
@@ -2415,6 +2408,7 @@ pub(crate) fn run_preflight_checks(
 /// but have no observed case — they stay on the reactive missing-DLL hint
 /// (all vendors, fires on actual damage), not a proactive warn.
 /// PyPI-stable CPU installs skip the noise entirely. Pure + tested.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn av_exclusion_msg(vendor: &str) -> Option<&'static str> {
     match vendor {
         "AMD" => Some("no Defender exclusion for the install folder — nightly DLLs are quarantined heuristically; consider adding one."),
@@ -2770,7 +2764,7 @@ pub async fn install(
     // AMD 3.12, RTX/CPU 3.11 — hardcoding 3.11 broke two of the three).
     // Isolated shim instead of a global Python install: without a launcher,
     // setup.py dies looking for it even when a perfect uv-managed copy exists.
-    #[cfg(windows)]
+    // Declared on every OS: the uv-tools PATH prepend below uses it too.
     let mut saved_path: Option<String> = None;
     // Provisioned exact interpreter for the venv driver (Windows only writes
     // it; the read below is shared so non-Windows compiles too).
@@ -3032,7 +3026,9 @@ pub async fn install(
                         }
                     }
                 }
+                #[cfg_attr(not(windows), allow(unused_mut))]
                 let mut syspy = tool_path("python");
+                #[cfg_attr(not(windows), allow(unused_mut))]
                 let mut runs = python_usable(&syspy);
                 // No system Python? The detected conda install has its own
                 // base interpreter — use it instead of demanding a separate
@@ -3192,8 +3188,17 @@ pub async fn install(
                 if let Some(dir) = std::path::Path::new(&uv).parent() {
                     let add = dir.to_string_lossy().to_string();
                     let cur = std::env::var("PATH").unwrap_or_default();
-                    if !cur.split(';').any(|p| p.eq_ignore_ascii_case(&add)) {
-                        std::env::set_var("PATH", format!("{add};{cur}"));
+                    let present =
+                        std::env::split_paths(&cur).any(|p| p == std::path::Path::new(&add));
+                    if !present {
+                        // join_paths uses the host's separator (`;` on Windows,
+                        // `:` everywhere else) instead of hardcoding one.
+                        if let Ok(joined) = std::env::join_paths(
+                            std::iter::once(std::path::PathBuf::from(&add))
+                                .chain(std::env::split_paths(&cur)),
+                        ) {
+                            std::env::set_var("PATH", joined);
+                        }
                     }
                     emit(&format!("[*] launcher uv on PATH for setup.py: {add}\n"));
                 }
@@ -3619,8 +3624,11 @@ pub async fn install(
     // `triton` dist owns the same `triton` import namespace and the two
     // overwrite each other (documented upstream conflict), so it is
     // uninstalled first. Warn-only throughout: never fail the install.
-    // AMD-gated only; Intel/NVIDIA/CPU flows untouched.
-    if amd_cmds.is_some() {
+    // AMD-gated and Windows-only: on Linux the ROCm torch wheel ships its own
+    // triton under the `triton` name, so installing the PyPI `triton-windows`
+    // fork (or uninstalling the bundled one) would leave the env without a
+    // working triton. Intel/NVIDIA/CPU flows untouched.
+    if amd_cmds.is_some() && cfg!(windows) {
         if let Some(py) = resolve_env_python(&repo, &env_path.to_string_lossy()) {
             let vanilla = silent_command(&py)
                 .args(["-m", "pip", "show", "triton"])
@@ -4484,7 +4492,8 @@ pub(crate) fn pip_install_argv(cmd: &str) -> Vec<String> {
 }
 
 /// Triton component spec for a profile: `gpu_profiles[profile].triton` tags
-/// into `components.triton[tag].cmd.win` — deliberately NOT under
+/// into `components.triton[tag].cmd[win|linux]` (`triton-windows>=3.7…` on
+/// Windows, `triton>=3.6,<3.7` on Linux) — deliberately NOT under
 /// `components.kernels`, which is why the shared kernel lookup never found it
 /// and Sync never upgraded an existing Triton (fresh installs went through the
 /// install phases instead). Upstream v18.18 (fde3c7e) renamed the tags —
@@ -4496,6 +4505,16 @@ pub(crate) fn pip_install_argv(cmd: &str) -> Vec<String> {
 /// token; the loop re-adds `--upgrade` itself. Profiles without a tag (GTX_10,
 /// MPS/CPU) resolve to None and stay out of the sync list. Pure + unit-tested.
 pub(crate) fn triton_component_spec(cfg: &serde_json::Value, profile: &str) -> Option<String> {
+    triton_component_spec_on(cfg, profile, cfg!(windows))
+}
+
+/// [`triton_component_spec`] with the platform as a parameter, so the Windows
+/// table can be pinned by a test running on Linux/macOS.
+pub(crate) fn triton_component_spec_on(
+    cfg: &serde_json::Value,
+    profile: &str,
+    windows: bool,
+) -> Option<String> {
     let tag = cfg
         .get("gpu_profiles")
         .and_then(|p| p.get(profile))
@@ -4505,24 +4524,46 @@ pub(crate) fn triton_component_spec(cfg: &serde_json::Value, profile: &str) -> O
     if tag.is_empty() {
         return None;
     }
-    let raw = cfg
-        .get("components")
-        .and_then(|c| c.get("triton"))
-        .and_then(|m| m.get(tag))
-        .and_then(|e| e.get("cmd"))
-        .and_then(|c| c.get("win"))
-        .and_then(|u| u.as_str())
-        .unwrap_or("")
-        .trim();
-    if raw.is_empty() {
+    let raw = crate::hw::cmd_for_platform_on(
+        cfg.get("components")
+            .and_then(|c| c.get("triton"))
+            .and_then(|m| m.get(tag))
+            .and_then(|e| e.get("cmd")),
+        windows,
+    );
+    if raw.trim().is_empty() {
         return None;
     }
-    let spec = raw.strip_prefix("-U").unwrap_or(raw).trim_start();
+    let spec = raw
+        .trim()
+        .strip_prefix("-U")
+        .unwrap_or(raw.trim())
+        .trim_start();
     let spec = spec.trim_matches('"').trim();
     if spec.is_empty() {
         None
     } else {
         Some(spec.to_string())
+    }
+}
+
+/// The Linux twin of [`SAGE_SAFE_WIN_URL`]: upstream's own PyTorch 2.10 /
+/// CUDA 13 build, which INSTALLATION.md says already keeps the fastest kernels
+/// under CUDA Graph — the swap exists for a woct0rdho-only regression.
+pub(crate) const SAGE_SAFE_LINUX_URL: &str = "https://github.com/deepbeepmeep/SageAttention/releases/download/v2.2.0-linux.cg1/sageattention-2.2.0+cu130torch2.10.0.cg1-{py}-{py}-linux_x86_64.whl";
+
+/// Known-good SageAttention wheel for this host.
+pub(crate) fn sage_safe_url() -> &'static str {
+    sage_safe_url_on(cfg!(windows))
+}
+
+/// The known-good SageAttention build for a platform. Parameterized because the
+/// safe build is a *different wheel* per platform, and the unit tests pin both.
+pub(crate) fn sage_safe_url_on(windows: bool) -> &'static str {
+    if windows {
+        SAGE_SAFE_WIN_URL
+    } else {
+        SAGE_SAFE_LINUX_URL
     }
 }
 
@@ -4540,10 +4581,17 @@ pub(crate) const SAGE_SAFE_WIN_URL: &str = "https://github.com/woct0rdho/SageAtt
 /// torch line or a non-wheel spec (Turing's `sageattention==1.0.6`) is left
 /// alone: this build cannot stand in for those.
 pub(crate) fn sage_needs_safe_swap(url: &str, sage_safe: bool) -> bool {
+    sage_needs_safe_swap_on(url, sage_safe, cfg!(windows))
+}
+
+/// As above, for a stated platform: "already the safe build" must be judged
+/// against that platform's safe build, or a Linux install would keep
+/// re-substituting the URL it already has.
+pub(crate) fn sage_needs_safe_swap_on(url: &str, sage_safe: bool, windows: bool) -> bool {
     sage_safe
         && url.starts_with("https://github.com/woct0rdho/SageAttention/releases/download/")
         && url.contains("+cu130torch2.")
-        && url != SAGE_SAFE_WIN_URL
+        && url != sage_safe_url_on(windows)
 }
 
 pub(crate) fn post_install_override_urls(
@@ -4551,15 +4599,26 @@ pub(crate) fn post_install_override_urls(
     profile: &str,
     sage_safe: bool,
 ) -> OverrideWheels {
+    post_install_override_urls_on(cfg, profile, sage_safe, cfg!(windows))
+}
+
+/// [`post_install_override_urls`] with the platform as a parameter: the wheel
+/// pins upstream publishes are per-platform, and on a host with no entry the
+/// correct answer is "no override" — which the tests pin explicitly.
+pub(crate) fn post_install_override_urls_on(
+    cfg: &serde_json::Value,
+    profile: &str,
+    sage_safe: bool,
+    windows: bool,
+) -> OverrideWheels {
     let comp = |key: &str| {
-        cfg.get("components")
-            .and_then(|c| c.get("kernels"))
-            .and_then(|m| m.get(key))
-            .and_then(|e| e.get("cmd"))
-            .and_then(|c| c.get("win"))
-            .and_then(|u| u.as_str())
-            .unwrap_or("")
-            .to_string()
+        crate::hw::cmd_for_platform_on(
+            cfg.get("components")
+                .and_then(|c| c.get("kernels"))
+                .and_then(|m| m.get(key))
+                .and_then(|e| e.get("cmd")),
+            windows,
+        )
     };
     // Upstream 5533384 splits GGUF into `gguf` (cu130/py311) + `gguf_cu128`
     // (cu128/py310); profiles still list `gguf` and setup.py remaps via
@@ -4584,21 +4643,20 @@ pub(crate) fn post_install_override_urls(
             .and_then(|pr| pr.get("sage"))
             .and_then(|v| v.as_str())
             .unwrap_or("v220_cu13");
-        cfg.get("components")
-            .and_then(|c| c.get("sage"))
-            .and_then(|m| m.get(sage_ver))
-            .and_then(|e| e.get("cmd"))
-            .and_then(|c| c.get("win"))
-            .and_then(|u| u.as_str())
-            .unwrap_or("")
-            .to_string()
+        crate::hw::cmd_for_platform_on(
+            cfg.get("components")
+                .and_then(|c| c.get("sage"))
+                .and_then(|m| m.get(sage_ver))
+                .and_then(|e| e.get("cmd")),
+            windows,
+        )
     };
     // Empty lookup → cannot prove an override is needed → no-op. The safe
     // toggle only ever substitutes inside the safe build's wheel family.
     let sage = if ["RTX_30", "RTX_40", "RTX_50"].contains(&profile)
-        && sage_needs_safe_swap(&sage_url, sage_safe)
+        && sage_needs_safe_swap_on(&sage_url, sage_safe, windows)
     {
-        Some(SAGE_SAFE_WIN_URL.to_string())
+        Some(sage_safe_url_on(windows).to_string())
     } else {
         None
     };
@@ -4662,6 +4720,7 @@ async fn sync_post_install_overrides(app: &tauri::AppHandle, repo: &std::path::P
     emit_log("[*] post-install wheel sync: applying launcher overrides setup.py cannot express (GGUF floor, sage safe build)…\n");
     let py_s = py.to_string_lossy().to_string();
     for (name, url) in jobs {
+        let url = expand_py_placeholder(&url, &py);
         emit_log(&format!("[*] sync kernel {name} (post-install override)\n"));
         let emit_k = |s: &str| {
             crate::base::push_log(s, "setup");
@@ -4808,14 +4867,12 @@ async fn sync_kernels_inner(
                 }
             })
             .unwrap_or("unknown".into());
-        let gguf_url = cfg
-            .get("components")
-            .and_then(|c| c.get("kernels"))
-            .and_then(|m| m.get("gguf"))
-            .and_then(|e| e.get("cmd"))
-            .and_then(|c| c.get("win"))
-            .and_then(|u| u.as_str())
-            .unwrap_or("");
+        let gguf_url = crate::hw::cmd_for_platform(
+            cfg.get("components")
+                .and_then(|c| c.get("kernels"))
+                .and_then(|m| m.get("gguf"))
+                .and_then(|e| e.get("cmd")),
+        );
         // wheelDistVersion extract: <dist>-<version>-cp... -> version.
         // Decode the %2B build-tag separator upstream uses so the log reads
         // "1.0.23+torch…" instead of "1.0.23%2Btorch…".
@@ -4963,14 +5020,7 @@ async fn sync_kernels_inner(
                     .and_then(|c| c.get("sage"))
                     .and_then(|m| m.get(sage_ver))
                     .and_then(|e| e.get("cmd"))
-                    .map(|cmd| match cmd {
-                        serde_json::Value::String(s) => s.clone(),
-                        other => other
-                            .get("win")
-                            .and_then(|u| u.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    })
+                    .map(|cmd| crate::hw::cmd_for_platform(Some(cmd)))
                     .unwrap_or_default()
             } else {
                 // WGPKernels stack split (upstream 17307e5, mirrors
@@ -5009,14 +5059,12 @@ async fn sync_kernels_inner(
                             continue;
                         }
                     };
-                    cfg.get("components")
-                        .and_then(|c| c.get("kernels"))
-                        .and_then(|m| m.get(comp))
-                        .and_then(|e| e.get("cmd"))
-                        .and_then(|c| c.get("win"))
-                        .and_then(|u| u.as_str())
-                        .unwrap_or("")
-                        .to_string()
+                    crate::hw::cmd_for_platform(
+                        cfg.get("components")
+                            .and_then(|c| c.get("kernels"))
+                            .and_then(|m| m.get(comp))
+                            .and_then(|e| e.get("cmd")),
+                    )
                 // GGUF build split (upstream 5533384 + the 1.0.29 ROCm wheel):
                 // profiles list `gguf` (cu130/py311), but py310 envs need
                 // `gguf_cu128` and RDNA4 AMD envs need `gguf_rocm10`. Mirror
@@ -5065,14 +5113,12 @@ async fn sync_kernels_inner(
                             }
                         }
                     };
-                    cfg.get("components")
-                        .and_then(|c| c.get("kernels"))
-                        .and_then(|m| m.get(comp))
-                        .and_then(|e| e.get("cmd"))
-                        .and_then(|c| c.get("win"))
-                        .and_then(|u| u.as_str())
-                        .unwrap_or("")
-                        .to_string()
+                    crate::hw::cmd_for_platform(
+                        cfg.get("components")
+                            .and_then(|c| c.get("kernels"))
+                            .and_then(|m| m.get(comp))
+                            .and_then(|e| e.get("cmd")),
+                    )
                 } else if name == "triton" {
                     // components.triton[tag] (v18.18 key rename honored):
                     // tagged per profile, outside kernels[]. Resolved through
@@ -5081,20 +5127,18 @@ async fn sync_kernels_inner(
                     // below, same as an unknown component.
                     triton_component_spec(&cfg, cfg_profile).unwrap_or_default()
                 } else {
-                    cfg.get("components")
-                        .and_then(|c| c.get("kernels"))
-                        .and_then(|m| m.get(name))
-                        .and_then(|e| e.get("cmd"))
-                        .and_then(|c| c.get("win"))
-                        .and_then(|u| u.as_str())
-                        .unwrap_or("")
-                        .to_string()
+                    crate::hw::cmd_for_platform(
+                        cfg.get("components")
+                            .and_then(|c| c.get("kernels"))
+                            .and_then(|m| m.get(name))
+                            .and_then(|e| e.get("cmd")),
+                    )
                 }
             };
             if url.is_empty() && (name == "sage" || name == "sageattention") {
                 // fallback to known URL if setup_config missing sage entry —
                 // post6 is both upstream's pin and the safe build now.
-                url = SAGE_SAFE_WIN_URL.into();
+                url = sage_safe_url().into();
             }
             if url.is_empty() {
                 // Unknown profile kernel (upstream added a component the
@@ -5122,7 +5166,7 @@ async fn sync_kernels_inner(
                 );
                 crate::base::push_log(&m, "setup");
                 let _ = app.emit("launch-log", m);
-                url = SAGE_SAFE_WIN_URL.into();
+                url = sage_safe_url().into();
             }
             // Sage3 is gated, never synced (#2280): Blackwell-only AND
             // py>=3.12 wheels, while managed envs are py3.10/3.11. If
@@ -5141,6 +5185,10 @@ async fn sync_kernels_inner(
             } else {
                 crate::hw::apply_gguf_override_cfg(&url, &cfg)
             };
+            // setup_config templates per-ABI Linux wheels as `{py}` (setup.py
+            // substitutes `cp311` from sys.version_info); pip 404s on the
+            // literal template, so expand it against the env interpreter.
+            let url = expand_py_placeholder(&url, &py);
             // Triton no-downgrade (#2264): a pinned/ceiling spec must not
             // clobber a working newer triton (H3-sol setups). RTX_20/GTX_10
             // are exempt — upstream genuinely needs <3.3 on Turing/Pascal.
@@ -6365,6 +6413,33 @@ pub async fn rollback_wangp(app: tauri::AppHandle) -> Result<serde_json::Value, 
 /// (and `pin_drift_entry` for verdicts); this is the unfiltered wrapper its tests
 /// assert against.
 #[cfg(test)]
+mod benign_entries_tests {
+    use super::*;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Anything the launcher writes itself (above all the owned uv in .tools,
+    /// which lands on first launch) must not look like a foreign folder — that
+    /// warning tells the user to wipe the folder.
+    #[test]
+    fn launcher_bookkeeping_is_not_a_foreign_folder() {
+        assert!(only_benign(&v(&[".tools"]), 1));
+        assert!(only_benign(&v(&["desktop-config.json", "envs.json"]), 2));
+        assert!(only_benign(&v(&[]), 0));
+    }
+
+    #[test]
+    fn upstream_files_and_truncated_listings_are_not_benign() {
+        assert!(!only_benign(&v(&["wgp.py"]), 1));
+        assert!(!only_benign(&v(&[".tools", "wgp.py"]), 2));
+        // 40 entries, listing capped at 12: the length mismatch is the signal.
+        assert!(!only_benign(&v(&[".tools"]), 40));
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn parse_requirement_pins(text: &str) -> Vec<(String, String)> {
     parse_requirement_pins_for(text, None)
 }
@@ -6460,6 +6535,20 @@ fn env_python_version(py: &std::path::Path) -> Option<(u32, u32)> {
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
     let mut it = text.lines().filter_map(|l| l.trim().parse::<u32>().ok());
     Some((it.next()?, it.next()?))
+}
+
+/// Expand setup_config's `{py}` placeholder to `cp<major><minor>` — exactly
+/// what setup.py does with `sys.version_info`. Linux sage wheels are published
+/// per ABI (`...cg1-cp311-cp311-linux_x86_64.whl`), so passing the template on
+/// unresolved 404s instead of installing.
+pub(crate) fn expand_py_placeholder(url: &str, py: &std::path::Path) -> String {
+    if !url.contains("{py}") {
+        return url.to_string();
+    }
+    match env_python_version(py) {
+        Some((major, minor)) => url.replace("{py}", &format!("cp{major}{minor}")),
+        None => url.to_string(),
+    }
 }
 
 /// Marker-aware pin parse: with `Some((major, minor))`, lines gated by an
@@ -6807,7 +6896,13 @@ mod pip_argv_tests {
 
 #[cfg(test)]
 mod triton_component_tests {
-    use super::{pip_install_argv, triton_component_spec};
+    use super::{pip_install_argv, triton_component_spec_on};
+
+    /// The spec table under test is upstream's `win` one; see the note in
+    /// `override_wheels_tests`.
+    fn triton_component_spec(cfg: &serde_json::Value, profile: &str) -> Option<String> {
+        triton_component_spec_on(cfg, profile, true)
+    }
 
     fn cfg_shape() -> serde_json::Value {
         serde_json::json!({
@@ -6873,13 +6968,29 @@ mod triton_component_tests {
             vec!["triton-windows>=3.7.0.post26,<=3.7.1.post27"]
         );
     }
+    #[test]
+    fn a_linux_host_reads_the_linux_table_not_the_windows_one() {
+        // Same config, platform switched: no `linux` entry means no spec, which
+        // is how a Linux install skips the Windows triton wheel entirely.
+        assert_eq!(
+            triton_component_spec_on(&cfg_shape(), "RTX_30", false),
+            None
+        );
+        let mut with_linux = cfg_shape();
+        with_linux["components"]["triton"]["v37"]["cmd"]["linux"] =
+            serde_json::json!("-U \"triton==3.7.1\"");
+        assert_eq!(
+            triton_component_spec_on(&with_linux, "RTX_30", false).as_deref(),
+            Some("triton==3.7.1")
+        );
+    }
 }
 #[cfg(test)]
 mod sync_transcript_tests {
     use super::{
         kernel_cfg_header_line, kernel_skip_line, kernel_spec_version_full,
         kernel_sync_summary_line, kernel_triton_keep_line, kernel_version_matches,
-        sage_needs_safe_swap, SAGE_SAFE_WIN_URL,
+        SAGE_SAFE_WIN_URL,
     };
 
     /// The whole block a healthy box prints, in order, as one golden fixture:
@@ -6924,9 +7035,16 @@ mod sync_transcript_tests {
     /// for the case where upstream moves to a different build.
     #[test]
     fn the_sage_row_of_that_run_is_the_toggle_doing_nothing_on_purpose() {
+        // The captured console is a Windows box, so this asks about a Windows
+        // host; the Linux safe build is a deepbeepmeep wheel and never matches
+        // the toggle's family either.
         assert!(
-            !sage_needs_safe_swap(SAGE_SAFE_WIN_URL, true),
+            !super::sage_needs_safe_swap_on(SAGE_SAFE_WIN_URL, true, true),
             "identical wheels must not trigger a substitution"
+        );
+        assert!(
+            !super::sage_needs_safe_swap_on(super::SAGE_SAFE_LINUX_URL, true, false),
+            "the Linux safe build is already the safe build"
         );
         let want = kernel_spec_version_full(SAGE_SAFE_WIN_URL).unwrap();
         assert!(
@@ -6949,7 +7067,18 @@ mod sync_transcript_tests {
 }
 #[cfg(test)]
 mod override_wheels_tests {
-    use super::post_install_override_urls;
+    use super::{post_install_override_urls_on, OverrideWheels};
+
+    /// These pins come from upstream's `win` table (every URL is a `win_amd64`
+    /// wheel). Pin that table on every host instead of letting the suite only
+    /// pass on Windows; the Linux answer is asserted separately below.
+    fn post_install_override_urls(
+        cfg: &serde_json::Value,
+        profile: &str,
+        sage_safe: bool,
+    ) -> OverrideWheels {
+        post_install_override_urls_on(cfg, profile, sage_safe, true)
+    }
     fn cfg_with(gguf_win: &str, sage_ver: &str, sage_win: &str) -> serde_json::Value {
         serde_json::json!({
             "components": {
@@ -6975,9 +7104,14 @@ mod override_wheels_tests {
         let sage = w.sage.expect("post4 must swap when safe");
         assert!(sage.contains("post6"), "got {sage}");
     }
+    /// These expectations are about upstream's `win` wheels, so the toggle is
+    /// asked about a Windows host on any runner (the Linux answer is asserted
+    /// in `a_linux_host_resolves_no_override_from_a_windows_only_config`).
+    fn sage_needs_safe_swap(url: &str, sage_safe: bool) -> bool {
+        super::sage_needs_safe_swap_on(url, sage_safe, true)
+    }
     #[test]
     fn safe_toggle_only_substitutes_inside_the_wheel_family() {
-        use super::sage_needs_safe_swap;
         // The historic pin and any future build in the same CUDA/torch line
         // both swap — that is what makes the toggle a real choice rather than a
         // one-off for post4.
@@ -7063,6 +7197,20 @@ mod override_wheels_tests {
             gguf.contains("1.0.29") && gguf.contains("torch271cu128py310"),
             "got {gguf}"
         );
+    }
+    #[test]
+    fn a_linux_host_resolves_no_override_from_a_windows_only_config() {
+        // Upstream publishes `cmd.win` for these kernel wheels. A Linux host
+        // finds nothing to substitute, and the loop must stay a no-op rather
+        // than hand pip a `win_amd64` file.
+        let w = post_install_override_urls_on(
+            &cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4),
+            "RTX_30",
+            true,
+            false,
+        );
+        assert!(w.gguf.is_none(), "linux must not swap to a win wheel");
+        assert!(w.sage.is_none());
     }
 }
 #[cfg(test)]
@@ -7366,10 +7514,34 @@ fn refresh_path_from_registry() {
 /// Read-only snapshot for the installer's Prerequisites panel: presence,
 /// resolved path and version for each tool. Never provisions anything (the
 /// uv resolution goes through `existing_uv`, not `uv_command`).
+/// CUDA toolkit entry for the Prerequisites card.
+///
+/// Upstream INSTALLATION.md lists CUDA 13.1 (RTX 20XX-50XX) / 12.8 (GTX 10XX)
+/// as a prerequisite on Linux because SpargeAttn and flash-attn are compiled
+/// from source there — Windows gets wheels and macOS has no CUDA, so the entry
+/// exists only where an NVIDIA driver does. A missing toolkit is not fatal: the
+/// install hook skips exactly those two components.
+#[cfg(target_os = "linux")]
+pub(crate) fn cuda_prereq_entry() -> Option<serde_json::Value> {
+    if !crate::hw::nvidia_present() {
+        return None;
+    }
+    let dir = crate::hw::cuda_toolkit_dir();
+    Some(serde_json::json!({
+        "tool": "cuda",
+        "ready": dir.is_some(),
+        "path": dir.as_ref().map(|d| d.to_string_lossy().to_string()),
+        "version": dir
+            .as_deref()
+            .and_then(crate::hw::cuda_toolkit_version),
+        "managed": false,
+    }))
+}
+
 #[tauri::command]
 pub async fn prerequisite_report() -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let tools = ["git", "uv", "python", "conda"]
+        let base = ["git", "uv", "python", "conda"]
             .iter()
             .map(|tool| {
                 let ready = tool_ready(tool);
@@ -7383,10 +7555,32 @@ pub async fn prerequisite_report() -> Result<serde_json::Value, String> {
                 })
             })
             .collect::<Vec<_>>();
+        // Upstream INSTALLATION.md lists the CUDA toolkit as a prerequisite on
+        // Linux (SpargeAttn and flash-attn are source builds there; Windows
+        // gets wheels, macOS has no CUDA). Missing is not fatal — the installer
+        // skips exactly those two components — so the card marks it optional.
+        #[cfg(target_os = "linux")]
+        let cuda = cuda_prereq_entry();
+        #[cfg(not(target_os = "linux"))]
+        let cuda: Option<serde_json::Value> = None;
+        let tools: Vec<serde_json::Value> = base.into_iter().chain(cuda).collect();
         serde_json::json!({ "tools": tools })
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+/// Can the launcher run the installer for `tool` itself on this host?
+///
+/// Windows has a package-manager/installer route (winget, choco, MSI) for all
+/// four. Everywhere else git/python/conda need root or a GUI installer, so the
+/// launcher refuses and the row shows the command to type instead — with one
+/// exception: uv ships a user-scope installer (`curl -LsSf https://
+/// astral.sh/uv/install.sh | sh`), no sudo involved, and the install flow
+/// already provisions uv that way into `<dataDir>/.tools`. Host bits are
+/// passed in so both arms are unit-testable on any host.
+fn prereq_one_click_on(tool: &str, windows: bool) -> bool {
+    windows || tool == "uv"
 }
 
 #[tauri::command]
@@ -7398,23 +7592,96 @@ pub async fn install_prerequisite(
     if !["git", "uv", "python", "conda"].contains(&tool.as_str()) {
         return Err(format!("unknown tool {tool}"));
     }
-    #[cfg(not(windows))]
-    return Err(format!("{tool} must be installed with your system package manager (one-click install is Windows-only). git: `sudo apt install git` / `brew install git`; python: `brew install python@3.11`; uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`; conda: Miniconda installer from repo.anaconda.com."));
+    if !prereq_one_click_on(&tool, cfg!(windows)) {
+        return Err(format!("{tool} must be installed with your system package manager (the launcher cannot run it without root). git: `sudo apt install git` (Debian/Ubuntu) / `brew install git` (macOS); python: `sudo apt install python3` / `brew install python`; conda: the Miniconda installer from repo.anaconda.com."));
+    }
     #[cfg(windows)]
     return install_prerequisite_windows(app, tool, force.unwrap_or(false)).await;
+    #[cfg(not(windows))]
+    return install_prerequisite_unix(app, tool, force.unwrap_or(false)).await;
+}
+
+/// uv on Linux/macOS: run the official standalone installer — the same script
+/// the Prerequisites row shows — into the launcher's own `<dataDir>/.tools`
+/// (`installer_owned_uv_in` keeps the install receipt so `uv self update`
+/// works, and `UV_NO_MODIFY_PATH` keeps the user's PATH untouched). No sudo,
+/// no package manager, no password prompt.
+#[cfg(not(windows))]
+async fn install_prerequisite_unix(
+    app: tauri::AppHandle,
+    tool: String,
+    force: bool,
+) -> Result<serde_json::Value, String> {
+    let emit = move |msg: String| {
+        crate::base::push_log(&msg, "setup");
+        let _ = app.emit("setup-output", msg);
+    };
+    let data_dir = get_data_dir();
+    if force {
+        let tools = data_dir.join(".tools");
+        for f in [UV_EXE, UV_MARKER, UV_COPY_MARKER] {
+            let _ = std::fs::remove_file(tools.join(f));
+        }
+    } else if let Some(p) = owned_uv_in(&data_dir) {
+        emit(format!("[*] {tool} is already installed: {p}\n"));
+        return Ok(serde_json::json!({"ok": true, "success": true, "ready": true, "path": p}));
+    }
+    emit(format!(
+        "[*] Installing {tool} into the launcher tools dir (official installer)…\n"
+    ));
+    let dir = data_dir.clone();
+    let owned = tauri::async_runtime::spawn_blocking(move || installer_owned_uv_in(&dir))
+        .await
+        .map_err(|e| format!("{tool} install task failed: {e}"))?;
+    match owned {
+        Some(p) => {
+            emit(format!("[✓] {tool} installed: {p}\n"));
+            Ok(serde_json::json!({"ok": true, "success": true, "ready": true, "path": p}))
+        }
+        None => Err(format!(
+            "{tool} install failed — the official installer needs network access to astral.sh and curl. See the console above; a {tool} already on PATH still works, press Check."
+        )),
+    }
+}
+
+#[cfg(test)]
+mod prereq_gate_tests {
+    use super::prereq_one_click_on;
+
+    /// Windows keeps a package-manager route for every prerequisite; elsewhere
+    /// uv is the only one the launcher may run itself (user-scope installer,
+    /// no sudo). The frontend's `prereqInstallable` mirrors this.
+    #[test]
+    fn one_click_install_is_windows_plus_uv_elsewhere() {
+        for tool in ["git", "uv", "python", "conda"] {
+            assert!(prereq_one_click_on(tool, true), "winget covers {tool}");
+        }
+        assert!(
+            prereq_one_click_on("uv", false),
+            "uv installer needs no root"
+        );
+        for tool in ["git", "python", "conda", "cuda"] {
+            assert!(
+                !prereq_one_click_on(tool, false),
+                "{tool} needs root or a GUI installer off Windows"
+            );
+        }
+    }
 }
 
 /// Stream a child process to the installer console, return exit-ok.
 #[cfg(windows)]
 async fn run_live(app: &tauri::AppHandle, prog: &str, args: Vec<String>) -> bool {
     use tauri_plugin_shell::process::CommandEvent;
-    use tauri_plugin_shell::ShellExt;
     let emit = |msg: String| {
         crate::base::push_log(&msg, "setup");
         let _ = app.emit("setup-output", msg);
     };
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (mut rx, _) = match app.shell().command(prog).args(&arg_refs[..]).spawn() {
+    let (mut rx, _) = match crate::base::shell_command(app, prog)
+        .args(&arg_refs[..])
+        .spawn()
+    {
         Ok(t) => t,
         Err(e) => {
             emit(format!("[!] spawn failed ({prog}): {e}\n"));
@@ -9759,6 +10026,7 @@ mod dlss5_install_tests {
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn dlss5_classify(app: &tauri::AppHandle, chunk: &str) {
     let pkg = |name: &str| -> &str {
         let n = name.to_lowercase();
@@ -9808,6 +10076,7 @@ fn dlss5_classify(app: &tauri::AppHandle, chunk: &str) {
 /// a non-zero exit is a failure even when an older complete install still makes
 /// every file exist on disk. `complete`/`installed` stay in the payload so the
 /// panel can still hash what is there and show the real per-file state.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn dlss5_install_result(
     spawn_err: bool,
     exit_code: Option<i32>,
@@ -9854,12 +10123,26 @@ pub async fn install_dlss5(
     app: tauri::AppHandle,
     force: bool,
 ) -> Result<serde_json::Value, String> {
-    mutating_try("install-dlss5")?;
     #[cfg(not(windows))]
     {
+        let _ = (app, force);
+        mutating_try("install-dlss5")?;
         mutating_done();
-        return Err("DLSS5 is Windows-only".into());
+        Err("DLSS5 is Windows-only".into())
     }
+    #[cfg(windows)]
+    {
+        install_dlss5_windows(app, force).await
+    }
+}
+
+/// DLSS5 is NVIDIA/Windows-only: the upstream installer is a PowerShell script.
+#[cfg(windows)]
+async fn install_dlss5_windows(
+    app: tauri::AppHandle,
+    force: bool,
+) -> Result<serde_json::Value, String> {
+    mutating_try("install-dlss5")?;
     let repo = get_repo_dir();
     let emit = |msg: &str| {
         crate::base::push_log(msg, "setup");
@@ -9890,7 +10173,10 @@ pub async fn install_dlss5(
         args.push("-Force".into());
     }
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (mut rx, _) = match app.shell().command("powershell").args(&arg_refs).spawn() {
+    let (mut rx, _) = match crate::base::shell_command(&app, "powershell")
+        .args(&arg_refs)
+        .spawn()
+    {
         Ok(v) => v,
         Err(e) => {
             // Release the mutating guard even when PowerShell never starts;
@@ -10723,7 +11009,6 @@ mod owned_uv_tests {
 #[cfg(test)]
 mod tool_path_tests {
     use super::{known_tool_path, tool_candidates, tool_found, tool_path};
-    use std::path::PathBuf;
     #[test]
     fn tool_path_never_empty_and_falls_back_to_bare_name() {
         for t in ["git", "conda", "py", "python", "whatever"] {
@@ -10734,47 +11019,6 @@ mod tool_path_tests {
         }
         // uv resolves to owned-or-PATH (never empty either).
         assert!(!tool_path("uv").is_empty());
-    }
-    #[cfg(windows)]
-    #[test]
-    fn candidate_tables_cover_stock_layouts() {
-        let home = "C:\\Users\\t";
-        let git = tool_candidates("git", home);
-        assert!(git.contains(&PathBuf::from("C:\\Program Files\\Git\\bin\\git.exe")));
-        let conda = tool_candidates("conda", home);
-        assert!(conda.iter().any(|p| p
-            .to_string_lossy()
-            .contains("Miniconda3\\Scripts\\conda.exe")));
-        // .bat is never offered as a spawn target (not a process image).
-        assert!(!conda
-            .iter()
-            .any(|p| p.extension().is_some_and(|e| e == "bat")));
-        assert_eq!(
-            tool_candidates("py", home),
-            vec![
-                PathBuf::from("C:\\Windows\\py.exe"),
-                PathBuf::from("C:\\Users\\t\\AppData\\Local\\Programs\\Python\\Launcher\\py.exe"),
-                PathBuf::from("C:\\Program Files\\PyManager\\py.exe"),
-            ]
-        );
-        assert!(tool_candidates("conda", home)
-            .iter()
-            .any(|p| p.to_string_lossy() == "C:\\ProgramData\\Miniconda3\\Scripts\\conda.exe"));
-        // Profile minors must not shadow each other: 3.11 stays first so a
-        // box with several interpreters keeps the RTX/CPU default unless the
-        // profile pin says otherwise (the installer provisions the exact pin).
-        let python = tool_candidates("python", home);
-        let pos = |needle: &str| {
-            python
-                .iter()
-                .position(|p| p.to_string_lossy().ends_with(needle))
-                .unwrap_or_else(|| panic!("missing {needle}"))
-        };
-        assert!(pos("Python311\\python.exe") < pos("Python313\\python.exe"));
-        assert!(python
-            .iter()
-            .any(|p| p.to_string_lossy() == "C:\\Program Files\\Python312\\python.exe"));
-        assert!(tool_candidates("nope", home).is_empty());
     }
     #[test]
     fn candidate_tables_cover_astral_uv_defaults() {
@@ -10819,7 +11063,9 @@ mod tool_path_tests {
 
 #[cfg(test)]
 mod prereq_tests {
-    use super::{conda_exe_from_hit, py_minor, py_shim_script, python_install_plan};
+    #[cfg(windows)]
+    use super::conda_exe_from_hit;
+    use super::{py_minor, py_shim_script, python_install_plan};
     #[cfg(windows)]
     use std::path::{Path, PathBuf};
 

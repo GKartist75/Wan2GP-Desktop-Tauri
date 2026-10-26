@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+#
+# Default-locale manifest. License and copyright match LICENSE at the repo root
+# (MIT, Copyright (c) 2026 GKartist75).
+PackageIdentifier: GKartist75.Wan2GP
+PackageVersion: 0.10.25
+PackageLocale: en-US
+Publisher: GKartist75
+PublisherUrl: https://github.com/GKartist75
+PublisherSupportUrl: https://github.com/GKartist75/Wan2GP-Desktop-Tauri/issues
+Author: GKartist75
+PackageName: Wan2GP Desktop Launcher
+PackageUrl: https://github.com/GKartist75/Wan2GP-Desktop-Tauri
+License: MIT
+LicenseUrl: https://github.com/GKartist75/Wan2GP-Desktop-Tauri/blob/master/LICENSE
+Copyright: Copyright (c) 2026 GKartist75
+CopyrightUrl: https://github.com/GKartist75/Wan2GP-Desktop-Tauri/blob/master/LICENSE
+ShortDescription: One-click desktop launcher for WanGP (Wan2GP).
+Description: >-
+  A lightweight Tauri shell for WanGP (Wan2GP): detects the GPU, installs the
+  right Python environment and kernel wheels, launches the WanGP web UI in an
+  embedded desktop view, and keeps models, outputs and updates in one place.
+  Installing the launcher does not download models or Python packages; the
+  first-run installer screen does that after you pick folders.
+Tags:
+  - ai
+  - video-generation
+  - image-generation
+  - wangp
+  - wan2gp
+  - launcher
+  - tauri
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

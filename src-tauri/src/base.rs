@@ -63,11 +63,102 @@ pub(crate) fn silent_command(prog: impl AsRef<std::ffi::OsStr>) -> std::process:
 }
 #[cfg(not(windows))]
 pub(crate) fn silent_command(prog: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
-    std::process::Command::new(prog)
+    let mut c = std::process::Command::new(prog);
+    sanitize(&mut c);
+    c
 }
-// Console tools (npm, opencode, codex) ship as .cmd shims on Windows, which
-// CreateProcess can't launch directly — route through cmd /C like a terminal.
-// (ponytail: bare Command::new("npm") fails with "program not found".)
+/// Environment the AppImage runtime (linuxdeploy's `AppRun`) exports into our
+/// own process. It describes *this bundle*, and it must not reach the tools we
+/// spawn: `PYTHONHOME` makes every other interpreter abort during startup —
+/// uv's managed CPython then reads as "found but won't run" to the installer,
+/// which then reinstalls it forever; the appdir `PATH` prefixes hijack tool
+/// lookup; and the GTK/GI/GIO pointers name loaders that do not exist for the
+/// child. Seen live on WSL2 (Ubuntu 26.04, RTX 3080): a fresh install died at
+/// "uv could not provision Python 3.11.14" although the interpreter ran fine
+/// from the same shell.
+#[cfg(any(not(windows), test))]
+const BUNDLE_ENV: &[&str] = &[
+    "PYTHONHOME",
+    "PYTHONPATH",
+    "PYTHONDONTWRITEBYTECODE",
+    "PERLLIB",
+    "GI_TYPELIB_PATH",
+    "GSETTINGS_SCHEMA_DIR",
+    "GTK_PATH",
+    "GTK_EXE_PREFIX",
+    "GTK_IM_MODULE_FILE",
+    "GDK_PIXBUF_MODULE_FILE",
+    "GIO_EXTRA_MODULES",
+    "GST_PLUGIN_SYSTEM_PATH",
+    "LD_LIBRARY_PATH",
+];
+
+/// Filter `env` down to what a child process should see. Only a bundle run
+/// (`APPDIR` set, i.e. we are the AppImage) is scrubbed — a `.deb`, a local
+/// build or a Windows/macOS app keeps whatever the user exported, including
+/// their own `PYTHONHOME`: the launcher only removes variables that describe
+/// *this* squashfs image. Pure, so the rewrite is unit-tested without mutating
+/// this process's environment.
+#[cfg(any(not(windows), test))]
+fn child_env_from(
+    env: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    appdir: Option<&std::ffi::OsStr>,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    let Some(appdir) = appdir else {
+        return env.collect();
+    };
+    let path_key = std::ffi::OsStr::new("PATH");
+    env.filter(|(k, _)| {
+        !BUNDLE_ENV
+            .iter()
+            .any(|b| k.as_os_str() == std::ffi::OsStr::new(b))
+    })
+    .map(|(k, v)| {
+        if k.as_os_str() == path_key {
+            let dir = appdir.to_string_lossy();
+            let dir = dir.trim_end_matches('/');
+            let raw = v.to_string_lossy().into_owned();
+            let kept: Vec<&str> = raw
+                .split(':')
+                .filter(|p| !p.is_empty() && *p != dir && !p.starts_with(&format!("{dir}/")))
+                .collect();
+            return (k, std::ffi::OsString::from(kept.join(":")));
+        }
+        (k, v)
+    })
+    .collect()
+}
+
+#[cfg(not(windows))]
+pub(crate) fn child_env() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    let appdir = std::env::var_os("APPDIR");
+    child_env_from(std::env::vars_os(), appdir.as_deref())
+}
+
+/// Strip the bundle environment from a std command. No-op off Linux/macOS
+/// bundles — and on Windows, where no such variables exist.
+#[cfg(not(windows))]
+pub(crate) fn sanitize(cmd: &mut std::process::Command) {
+    cmd.env_clear();
+    cmd.envs(child_env());
+}
+#[cfg(windows)]
+pub(crate) fn sanitize(_cmd: &mut std::process::Command) {}
+/// The shell plugin's counterpart of `sanitize`: every plugin spawn goes
+/// through here so children never inherit the AppImage's `PYTHONHOME` or PATH.
+pub(crate) fn shell_command(
+    app: &tauri::AppHandle,
+    prog: &str,
+) -> tauri_plugin_shell::process::Command {
+    use tauri_plugin_shell::ShellExt;
+    let cmd = app.shell().command(prog);
+    #[cfg(not(windows))]
+    let cmd = cmd.env_clear().envs(child_env());
+    cmd
+}
+/// Console tools (npm, opencode, codex) ship as .cmd shims on Windows, which
+/// CreateProcess can't launch directly — route through cmd /C like a terminal.
+/// (ponytail: bare Command::new("npm") fails with "program not found".)
 #[cfg(windows)]
 pub(crate) fn term_tool(tool: &str) -> std::process::Command {
     use std::os::windows::process::CommandExt;
@@ -78,7 +169,9 @@ pub(crate) fn term_tool(tool: &str) -> std::process::Command {
 }
 #[cfg(not(windows))]
 pub(crate) fn term_tool(tool: &str) -> std::process::Command {
-    std::process::Command::new(tool)
+    let mut c = std::process::Command::new(tool);
+    sanitize(&mut c);
+    c
 }
 pub(crate) static LOG_HISTORY: LazyLock<Mutex<Vec<String>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
@@ -450,9 +543,10 @@ pub(crate) fn default_data_dir() -> PathBuf {
     }
     #[cfg(not(windows))]
     {
-        return home_dir().join("Wan2GP");
+        home_dir().join("Wan2GP")
     }
 }
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn dir_is_writable(p: &Path) -> bool {
     // try mkdir + probe file (same as main.js dirIsWritable)
     let target = p.to_path_buf();
@@ -643,6 +737,7 @@ pub(crate) fn snapshot_wgp_config() -> Option<String> {
     Some(name)
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn reg_val(line: &str) -> Option<(String, String)> {
     let t = line.trim();
     if t.is_empty() || t.starts_with("HKEY_") {
@@ -861,8 +956,7 @@ mod pip_spec_tests {
 /// `where python` succeeds on the Store shim (it only opens the Store), so a
 /// bare exit-status check reports "installed" on machines with no Python.
 /// Same filter diagnose_python_fail applies — centralized here so probe_tool
-/// and check_command can't drift again. Windows-only; elsewhere every
-/// `which` hit is a real binary.
+/// and check_command can't drift again.
 #[cfg(windows)]
 pub(crate) fn tool_usable(cmd: &str) -> bool {
     silent_command("where")
@@ -882,6 +976,29 @@ pub(crate) fn tool_usable(cmd: &str) -> bool {
         })
 }
 
+/// Non-Windows arm: `where` does not exist, and there is no WindowsApps alias
+/// dir to filter, so a plain `command -v` is the whole test. `which` is not
+/// guaranteed to be installed (minimal distros, containers), so ask the shell
+/// that is always there.
+///
+/// The Windows adapter is the only caller, but every adapter compiles on every
+/// target on purpose (`platform/mod.rs` declares all four), so this arm has to
+/// exist or a Linux release build fails on `crate::base::tool_usable`.
+#[cfg(not(windows))]
+pub(crate) fn tool_usable(cmd: &str) -> bool {
+    let name = cmd.trim();
+    // One bare word only: the name is passed as a positional parameter, not
+    // spliced into the script, so a hostile value cannot become shell syntax.
+    if name.is_empty() || name.split_whitespace().count() != 1 {
+        return false;
+    }
+    silent_command("sh")
+        .args(["-c", "command -v \"$1\" >/dev/null 2>&1", "sh", name])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 /// Spawn a shell-plugin child, stream stdout+stderr to `emit`, and return
 /// true iff the exit code is 0. The single choke point for fallible backend
 /// commands (pip install/upgrade/uninstall, git pull, per-kernel sync) so a
@@ -894,8 +1011,8 @@ pub(crate) async fn run_logged(
     dir: Option<&Path>,
     emit: impl Fn(&str),
 ) -> bool {
-    use tauri_plugin_shell::{process::CommandEvent, ShellExt};
-    let mut cmd = app.shell().command(prog);
+    use tauri_plugin_shell::process::CommandEvent;
+    let mut cmd = shell_command(app, prog);
     cmd = cmd.args(args);
     if let Some(d) = dir {
         cmd = cmd.current_dir(d);
@@ -933,8 +1050,8 @@ pub(crate) async fn run_logged_capture(
     dir: Option<&Path>,
     emit: impl Fn(&str),
 ) -> (bool, String) {
-    use tauri_plugin_shell::{process::CommandEvent, ShellExt};
-    let mut cmd = app.shell().command(prog);
+    use tauri_plugin_shell::process::CommandEvent;
+    let mut cmd = shell_command(app, prog);
     cmd = cmd.args(args);
     if let Some(d) = dir {
         cmd = cmd.current_dir(d);
@@ -1017,6 +1134,106 @@ mod pip_output_tests {
     fn stops_at_the_requirement_legend() {
         let out = "Successfully installed a-1 b-2\n-> Downloading x\n";
         assert_eq!(pip_installed_from_output(out), vec!["a-1", "b-2"]);
+    }
+}
+
+#[cfg(test)]
+mod child_env_tests {
+    #[cfg(test)]
+    mod unix {
+        use super::super::child_env_from;
+
+        fn env(pairs: &[(&str, &str)]) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+            child_env_from(
+                pairs
+                    .iter()
+                    .map(|(k, v)| (std::ffi::OsString::from(k), std::ffi::OsString::from(v)))
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+                Some(std::ffi::OsStr::new("/tmp/.mount_Wan2GPabc")),
+            )
+        }
+
+        fn get<'a>(
+            out: &'a [(std::ffi::OsString, std::ffi::OsString)],
+            key: &str,
+        ) -> Option<&'a str> {
+            out.iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.to_str().unwrap())
+        }
+
+        /// The live failure: the AppImage exports PYTHONHOME, so uv's managed
+        /// CPython aborted at startup and the installer kept reinstalling it
+        /// ("found but won't run"). Children must not see it.
+        #[test]
+        fn drops_the_appimage_bundle_vars() {
+            let out = env(&[
+                ("PYTHONHOME", "/tmp/.mount_Wan2GPabc/usr/"),
+                ("PYTHONPATH", "/tmp/.mount_Wan2GPabc/usr/lib"),
+                ("PYTHONDONTWRITEBYTECODE", "1"),
+                ("LD_LIBRARY_PATH", "/tmp/.mount_Wan2GPabc/usr/lib"),
+                ("PERLLIB", "/tmp/.mount_Wan2GPabc/usr/lib/perl5"),
+                ("GDK_PIXBUF_MODULE_FILE", "/tmp/.mount_Wan2GPabc/lib/cache"),
+                ("HOME", "/home/gerard"),
+            ]);
+            for k in [
+                "PYTHONHOME",
+                "PYTHONPATH",
+                "PYTHONDONTWRITEBYTECODE",
+                "LD_LIBRARY_PATH",
+                "PERLLIB",
+                "GDK_PIXBUF_MODULE_FILE",
+            ] {
+                assert_eq!(get(&out, k), None, "{k} must not reach a child");
+            }
+            assert_eq!(get(&out, "HOME"), Some("/home/gerard"));
+        }
+
+        /// Not a bundle (no APPDIR): the user's own environment is untouched,
+        /// including a `PYTHONHOME` they set deliberately.
+        #[test]
+        fn leaves_a_non_bundle_environment_alone() {
+            let out = child_env_from(
+                vec![
+                    (
+                        std::ffi::OsString::from("PYTHONHOME"),
+                        std::ffi::OsString::from("/opt/py"),
+                    ),
+                    (
+                        std::ffi::OsString::from("PATH"),
+                        std::ffi::OsString::from("/usr/bin:/bin"),
+                    ),
+                ]
+                .into_iter(),
+                None,
+            );
+            assert_eq!(get(&out, "PYTHONHOME"), Some("/opt/py"));
+            assert_eq!(get(&out, "PATH"), Some("/usr/bin:/bin"));
+        }
+
+        #[test]
+        fn strips_appdir_entries_from_path_but_keeps_the_rest() {
+            let out = env(&[(
+                "PATH",
+                "/tmp/.mount_Wan2GPabc/usr/bin/:/tmp/.mount_Wan2GPabc/bin:/home/gerard/.local/bin:/usr/bin:/bin",
+            )]);
+            assert_eq!(
+                get(&out, "PATH"),
+                Some("/home/gerard/.local/bin:/usr/bin:/bin")
+            );
+        }
+
+        /// Only the bundle dir disappears — an unrelated prefix that merely
+        /// shares characters (`/tmp/.mount_Wan2GPabc2/bin`) stays.
+        #[test]
+        fn keeps_a_path_entry_that_only_shares_a_prefix() {
+            let out = env(&[("PATH", "/tmp/.mount_Wan2GPabc2/bin:/usr/bin")]);
+            assert_eq!(
+                get(&out, "PATH"),
+                Some("/tmp/.mount_Wan2GPabc2/bin:/usr/bin")
+            );
+        }
     }
 }
 

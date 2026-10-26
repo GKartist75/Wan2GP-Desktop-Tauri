@@ -76,7 +76,10 @@ function memProfileCollect() {
   if (prm !== "") {
     const pct = Number(prm);
     if (!(pct >= 0 && pct <= 100)) {
-      setMemStatus("Reserved RAM must be 0 (auto) to 100 percent", true);
+      setMemStatus(
+        "Reserved RAM must be 0 (auto) to 100 percent (0 = Auto: 40% Windows / 60% Linux)",
+        true,
+      );
       return null;
     }
     s.perc_reserved_mem_max = pct;

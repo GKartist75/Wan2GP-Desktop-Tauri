@@ -2245,7 +2245,7 @@ body.ft-resizing .dash-term-resize {
 }
 .pt-row {
  display: grid;
- grid-template-columns: 10px 58px minmax(0, 1fr) auto;
+ grid-template-columns: 10px 88px minmax(0, 1fr) auto;
  gap: 10px;
  align-items: center;
  padding: 5px 0;
@@ -2270,6 +2270,13 @@ body.ft-resizing .dash-term-resize {
  font-size: 0.72rem;
  font-weight: 600;
  color: var(--text-primary);
+ /* One line, always: a wrapping label used to overflow its 58px column and
+    draw over the status text ("not found — optional" was read as
+    "found —…"). Truncate and keep the full text in the tooltip. */
+ min-width: 0;
+ overflow: hidden;
+ text-overflow: ellipsis;
+ white-space: nowrap;
 }
 .pt-status {
  font-size: 0.68rem;
@@ -2286,8 +2293,30 @@ body.ft-resizing .dash-term-resize {
  gap: 4px;
 }
 .pt-actions .btn {
- font-size: 0.62rem;
- padding: 2px 8px;
+  font-size: 0.62rem;
+  padding: 2px 8px;
+}
+/* Linux/macOS: the Install button becomes the command to run. */
+.pt-cmd {
+  font-family: "Geist Mono", monospace;
+  font-size: 0.62rem;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: copy;
+  /* The card is ~670px wide at the wizard's size: a 340px command chip left the
+     status column ~44px, so "not found — optional" read "not fou…". 220px keeps
+     the chip legible and the status readable; the full command is the tooltip
+     and the clipboard. */
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pt-cmd:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
 }
 
 .reinstall-choice {
@@ -2728,6 +2757,11 @@ table.args-table.lib-table.compact td:nth-child(5) {
 }
 /* ── Shared ── */
 .hidden {
+ display: none !important;
+}
+/* Platform gate (services/platform-gate.js): a control this OS cannot honour.
+   Separate from .hidden so code that flips .hidden later cannot resurrect it. */
+.cap-off {
  display: none !important;
 }
 ::-webkit-scrollbar {
@@ -3765,6 +3799,12 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
  border-bottom: 1px solid var(--border);
  gap: 8px;
  flex-shrink: 0;
+ /* The left/right docks are 340px wide while the header's controls need more:
+     without wrapping, the actions row overflows the console and the last dock
+     buttons (Floating, Close) are clipped off-screen — a right-docked console
+     could not be switched back. */
+ flex-wrap: wrap;
+ row-gap: 6px;
 }
 .floating-term-title {
  font-size: 0.6875rem;
@@ -3778,6 +3818,9 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
  display: flex;
  align-items: center;
  gap: 4px;
+ flex-wrap: wrap;
+ justify-content: flex-end;
+ min-width: 0;
 }
 .floating-term .term-body {
  flex: 1;

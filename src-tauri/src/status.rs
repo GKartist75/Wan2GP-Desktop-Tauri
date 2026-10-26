@@ -175,21 +175,39 @@ pub fn get_status() -> serde_json::Value {
         let py_bin = if py.exists() { py } else { PathBuf::from(raw) };
         if py_bin.exists() {
             let helper = get_data_dir().join(".get_versions.py");
-            let code = r"import sys, importlib.metadata
+            // Triton's distribution is `triton-windows` on Windows and plain
+            // `triton` everywhere else (torch pulls it in on Linux/macOS, see
+            // upstream docs/INSTALLATION.md#linux). Probing only the Windows
+            // name silently dropped the row — the panel read "Triton —" on a
+            // host with 3.6.0 installed. Try the host's own name first, then
+            // the other, so a stray cross-name install still shows up.
+            let order = triton_dist_order();
+            let triton_order = format!("['{}','{}']", order[0], order[1]);
+            let code = r#"import sys, importlib.metadata
 try:
-    aliases={'triton':'triton-windows','spas_sage_attn':'spas-sage-attn','huggingface_hub':'huggingface-hub'}
+    aliases={'spas_sage_attn':'spas-sage-attn','huggingface_hub':'huggingface-hub'}
+    triton_order=@TRITON_ORDER@
+    def ver(*names):
+        for n in names:
+            try:
+                return importlib.metadata.version(n)
+            except Exception:
+                pass
+        raise LookupError(names[0])
     pkgs=['python','torch','triton','wgpkernels','sageattention','spas_sage_attn','flash_attn','nunchaku','llamacpp_gguf_cuda','lightx2v_kernel','diffusers','transformers','gradio','accelerate','onnxruntime','onnxruntime-gpu','xformers','mmgp','moviepy','opencv-python','insightface','peft','timm','vector_quantize_pytorch','torchcodec','torchaudio','huggingface_hub','bitsandbytes','numpy','sentencepiece','open_clip_torch','imageio','einops','librosa','soundfile','tokenizers','av','claude-agent-sdk','xatlas','fast-simplification','scikit-image','resvg-py','chumpy','smplfitter','comfy-kitchen']
     r=[]
     for p in pkgs:
         try:
             if p=='python': r.append(f'python={sys.version.split()[0]}')
+            elif p=='triton': r.append(f'triton={ver(*triton_order)}')
             elif p in aliases: r.append(f'{p}={importlib.metadata.version(aliases[p])}')
             else: r.append(f'{p}={importlib.metadata.version(p)}')
         except: pass
     print('||'.join(r))
 except Exception as e:
     print(f'error:{e}')
-";
+"#;
+            let code = code.replace("@TRITON_ORDER@", &triton_order);
             let _ = std::fs::write(&helper, code);
             if let Ok(out) = silent_command(&py_bin)
                 .arg(&helper)
@@ -419,6 +437,19 @@ pub(crate) fn pyproject_version(text: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+/// Dist names Triton can live under, host's own name first: Windows ships the
+/// `triton-windows` fork, Linux and macOS get plain `triton` pulled in by
+/// torch (upstream docs/INSTALLATION.md#linux). The panel probes them in this
+/// order and keeps the second as a fallback, so the row never reads "—" just
+/// because the other spelling is what got installed.
+pub(crate) fn triton_dist_order() -> [&'static str; 2] {
+    if cfg!(windows) {
+        ["triton-windows", "triton"]
+    } else {
+        ["triton", "triton-windows"]
+    }
+}
+
 /// the -gpu dist is installed, its version satisfies the row. Never
 /// overwrites a real `onnxruntime` version, and never touches the
 /// installed package. Pure + unit-tested.
@@ -546,6 +577,26 @@ pub fn check_command(cmd: String) -> serde_json::Value {
     // python.org install without a PATH alias looped on the same card.
     let found = crate::install::tool_ready(&cmd);
     serde_json::json!({"cmd": cmd, "found": found})
+}
+
+#[cfg(test)]
+mod triton_dist_tests {
+    use super::triton_dist_order;
+
+    /// Windows must ask for `triton-windows` first (plain `triton` there is a
+    /// shadowing mistake) and Unix for `triton`; both names are always probed
+    /// so a cross-installed build still shows up instead of a blank row.
+    #[test]
+    fn host_name_first_with_the_other_as_fallback() {
+        let [first, second] = triton_dist_order();
+        let (want_first, want_second) = if cfg!(windows) {
+            ("triton-windows", "triton")
+        } else {
+            ("triton", "triton-windows")
+        };
+        assert_eq!(first, want_first);
+        assert_eq!(second, want_second);
+    }
 }
 
 #[cfg(test)]

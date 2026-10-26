@@ -144,7 +144,7 @@ $("browseAppDataPath")?.addEventListener("click", async () => {
   // Bare drive root: don't block — show it resolved to <root>\Wan2GP and use
   // that (backend rejects raw roots too, defense in depth).
   if (isDriveRoot(folder)) {
-    const suggested = pathJoin(folder, "Wan2GP");
+    const suggested = platformGate.pathJoin(folder, "Wan2GP");
     appendLog(
       "[*] Drive root selected (" +
         folder +
@@ -253,7 +253,7 @@ $("browseLorasPath")?.addEventListener("click", () =>
 $("clearCkptsPath")?.addEventListener("click", async () => {
   const p = await window.w2gp.getInstallPaths();
   const def = p?.modelsDefault
-    ? pathJoin(p.modelsDefault, "ckpts")
+    ? platformGate.pathJoin(p.modelsDefault, "ckpts")
     : "(default)";
   setModelPath("ckpts", "");
   const el = $("installCkptsPath");
@@ -270,7 +270,7 @@ $("clearCkptsPath")?.addEventListener("click", async () => {
 $("clearLorasPath")?.addEventListener("click", async () => {
   const p = await window.w2gp.getInstallPaths();
   const def = p?.modelsDefault
-    ? pathJoin(p.modelsDefault, "loras")
+    ? platformGate.pathJoin(p.modelsDefault, "loras")
     : "(default)";
   setModelPath("loras", "");
   const el = $("installLorasPath");
@@ -289,7 +289,7 @@ $("browseOutputPath")?.addEventListener("click", () =>
 $("clearOutputPath")?.addEventListener("click", async () => {
   const p = await window.w2gp.getInstallPaths();
   const def = p?.modelsDefault
-    ? pathJoin(p.modelsDefault, "outputs")
+    ? platformGate.pathJoin(p.modelsDefault, "outputs")
     : "(default)";
   setModelPath("output", "");
   const el = $("installOutputPath");
@@ -725,24 +725,23 @@ function showReinstallBackupModal() {
         entryBytes[e.name.toLowerCase()] = e.bytes;
       // Which model folders live INSIDE the wiped repo?
       const mp = await window.w2gp.getModelPaths().catch(() => null);
-      const norm = (p) => (p || "").replace(/\//g, "\\");
-      const abs = (p) =>
-        /^[A-Za-z]:\\/.test(p || "") || /\\\\/.test(p || "")
-          ? norm(p)
-          : norm(repo + "\\" + (p || ""));
-      const inside = (p) => {
-        const a = abs(p).toLowerCase();
-        return a.startsWith(repo.toLowerCase().replace(/\\+$/, "") + "\\");
-      };
+      // Canonical form for comparison only: forward slashes, no trailing
+      // separator. The paths shown and handed to Rust keep the host
+      // separator, so Windows dialogs still read D:\…
+      const norm = (p) => (p || "").replace(/\\/g, "/").replace(/\/+$/, "");
+      const key = (p) => norm(p).toLowerCase();
+      const isAbs = (p) => /^[A-Za-z]:/.test(norm(p)) || norm(p).startsWith("/");
+      const abs = (p) => (isAbs(p) ? p : platformGate.pathJoin(repo, p || ""));
+      const inside = (p) => key(abs(p)).startsWith(key(repo) + "/");
       const found = [];
-      const repoNorm = repo.toLowerCase().replace(/\\+$/, "");
+      const repoKey = key(repo);
       const push = (type, label, from, trusted) => {
         if (!from) return;
         const a = abs(from);
-        if (a.toLowerCase() === repoNorm) return; // '.' == the repo itself — never offer to move it
+        if (key(a) === repoKey) return; // '.' == the repo itself — never offer to move it
         if (
           !inside(from) ||
-          found.some((f) => f.from.toLowerCase() === a.toLowerCase())
+          found.some((f) => key(f.from) === key(a))
         )
           return;
         found.push({ type, label, from: a, trusted: !!trusted });
@@ -759,13 +758,13 @@ function showReinstallBackupModal() {
         ["outputs", "output", "Output"],
         ["output", "output", "Output"],
       ]) {
-        push(type, label, repo + "\\" + sub, false);
+        push(type, label, platformGate.pathJoin(repo, sub), false);
       }
       // Untrusted (default-subdir) rows need a size entry proving they exist;
       // config-listed rows are trusted as-is.
       const rows = found.filter((f) => {
         if (f.trusted) return true;
-        const base = f.from.split("\\").pop().toLowerCase();
+        const base = key(f.from).split("/").pop();
         return Object.hasOwn(entryBytes, base);
       });
       const dsts = {};
@@ -781,7 +780,7 @@ function showReinstallBackupModal() {
       secEl.style.display = "";
       rowsEl.innerHTML = "";
       rows.forEach((r, i) => {
-        const base = r.from.split("\\").pop().toLowerCase();
+        const base = key(r.from).split("/").pop();
         const div = document.createElement("div");
         div.className = "migrate-row";
         const lab = document.createElement("label");
@@ -810,11 +809,7 @@ function showReinstallBackupModal() {
             notifyUser("Pick a folder, not a drive root.");
             return;
           }
-          if (
-            dir
-              .toLowerCase()
-              .startsWith(repo.toLowerCase().replace(/\\+$/, "") + "\\")
-          ) {
+          if (inside(dir)) {
             notifyUser(
               "Destination must be OUTSIDE the wiped folder — it would be deleted too.",
             );
@@ -1340,9 +1335,8 @@ async function refreshTargetVerdict() {
 // NOTE: writes desktop-config only — wgp_config.json here belongs to Pinokio.
 async function usePinokioModels(t) {
   const repo = (t && t.repo) || "";
-  const sep = "\\";
   const pick = async (type, sub) => {
-    const p = repo.replace(/\\+$/, "") + sep + sub;
+    const p = platformGate.pathJoin(repo, sub);
     setModelPath(type, p);
     try {
       const cfg = await window.w2gp.configLoad();
@@ -1376,6 +1370,18 @@ const PREREQ_TOOLS = [
   { tool: "uv", label: "uv" },
   { tool: "python", label: "Python" },
   { tool: "conda", label: "Conda" },
+  // Linux + NVIDIA only (the backend omits it elsewhere). Upstream's
+  // INSTALLATION.md calls the CUDA toolkit a prerequisite because SpargeAttn
+  // and flash-attn are built from source there; without it the launcher skips
+  // just those two, so the row is informative, not a blocker. The label stays
+  // short — the row grid gives the name one line, so the caveats live in the
+  // `tip` (tooltip) instead of wrapping over the status column.
+  {
+    tool: "cuda",
+    label: "CUDA toolkit",
+    tip: "SpargeAttn / flash-attn need the NVIDIA CUDA toolkit on Linux: 13.1 for RTX 20XX-50XX, 12.8 for GTX 10XX",
+    optional: true,
+  },
 ];
 let _prereqReport = {};
 let _prereqInstalling = false;
@@ -1389,6 +1395,10 @@ function prereqRow(spec) {
   const name = document.createElement("span");
   name.className = "pt-name";
   name.textContent = spec.label;
+  // One line only (the row is a grid): a longer label truncates with an
+  // ellipsis instead of wrapping over the status column. `tip` carries the
+  // detail the short label drops.
+  name.title = spec.tip || spec.label;
   const status = document.createElement("span");
   status.className = "pt-status";
   status.textContent = "checking…";
@@ -1402,7 +1412,30 @@ function prereqRow(spec) {
     actions.append(b);
     return b;
   };
-  const install = mk("install", "Install");
+  // One-click install is winget/choco/MSI (Windows-only), except uv: its
+  // installer runs as the user (no sudo) into the launcher's own tools dir, so
+  // that row keeps a working button everywhere. The rest show the command to
+  // type instead of a button that would only come back with "install it
+  // yourself".
+  const install = platformGate.prereqInstallable(spec.tool)
+    ? mk("install", "Install")
+    : null;
+  if (!install) {
+    const cmd = platformGate.prereqCommand(spec.tool);
+    const hint = document.createElement("code");
+    hint.className = "pt-cmd";
+    hint.textContent = cmd;
+    hint.title = "Click to copy";
+    hint.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(cmd);
+        showToast("Copied: " + cmd, null, null, 6000);
+      } catch {
+        showToast(cmd, null, null, 9000);
+      }
+    };
+    actions.append(hint);
+  }
   mk("check", "Check");
   mk("version", "Version");
   row.append(dot, name, status, actions);
@@ -1421,15 +1454,13 @@ function prereqRow(spec) {
     appendLog("[i] " + line);
     showToast(line, null, null, 8000);
   };
-  install.onclick = () => prereqInstall(spec, install);
+  if (install) install.onclick = () => prereqInstall(spec, install);
   return row;
 }
 
 async function refreshPrereqTools() {
   const box = $("prereqToolsRows");
   if (!box) return;
-  if (!box.children.length)
-    for (const spec of PREREQ_TOOLS) box.append(prereqRow(spec));
   const btn = $("prereqToolsRefresh");
   if (btn) btn.disabled = true;
   let report = null;
@@ -1441,6 +1472,15 @@ async function refreshPrereqTools() {
   if (btn) btn.disabled = false;
   _prereqReport = {};
   for (const t of (report && report.tools) || []) _prereqReport[t.tool] = t;
+  if (!box.children.length) {
+    // Rows follow the backend's report (it adds `cuda` only where it applies);
+    // a failed report still shows the always-relevant four.
+    const reported = report ? new Set(Object.keys(_prereqReport)) : null;
+    for (const spec of PREREQ_TOOLS) {
+      if (reported && !reported.has(spec.tool)) continue;
+      box.append(prereqRow(spec));
+    }
+  }
   for (const spec of PREREQ_TOOLS) {
     const row = box.querySelector('.pt-row[data-tool="' + spec.tool + '"]');
     if (!row) continue;
@@ -1449,9 +1489,14 @@ async function refreshPrereqTools() {
       "pt-dot " + (t.ready ? "ok" : "missing");
     const status = row.querySelector(".pt-status");
     status.className = "pt-status" + (t.ready ? "" : " missing");
-    status.textContent = t.ready ? t.version || "installed" : "not found";
+    status.textContent = t.ready
+      ? t.version || "installed"
+      : spec.optional
+        ? "not found — optional"
+        : "not found";
     status.title = t.path || "";
     const inst = row.querySelector('[data-act="install"]');
+    if (!inst) continue; // no one-click install on this platform
     inst.textContent = t.ready ? "Reinstall" : "Install";
     inst.dataset.force = t.ready ? "1" : "";
     inst.title = t.ready

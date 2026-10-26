@@ -2,16 +2,244 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
-## [0.10.24] — 2026-10-25
-
-- **Shared Image and 3D output folders.** The launcher now manages `image_save_path` and `mesh_save_path` separately (Manage → General), alongside the existing Output folder, so WanGP's four output keys (`save_path`, `image_save_path`, `audio_save_path`, `mesh_save_path`) can each point where you want.
-- **Q4 KV cache setting.** New "Deepy KV Cache Quantization" dropdown (Auto / INT8 / Q4) in the Deepy tab, written as `deepy_kv_cache_quantization`. Auto-Tune recommends Q4 on tight VRAM (saves ~24% vs INT8).
-- **Civitai API keys.** New settings for Civitai (civitai.com) and Civitai.red API keys, passed as `CIVITAI_API_KEY` / `CIVITAI_RED_API_KEY` env vars.
-- **Open Deepy in browser.** One-click button next to Start Deepy Web that starts Deepy (if needed) and opens its URL in the system browser.
-- **Wheel pins bumped** to WGPKernels 1.4.2 and GGUF kernels 1.0.29 (SHA-256 verified).
-- **Deepy crash workaround note:** "PTQ1 decode inputs must share a CUDA device" is a WanGP-side GGUF kernel issue; try disabling CUDA graphs or using INT8 KV cache.
-
 ## [Unreleased]
+
+## [0.10.26] — 2026-10-26
+
+- **Linux install works end-to-end: the AppImage stops leaking its own Python.**
+  The AppImage runtime exports `PYTHONHOME`, `LD_LIBRARY_PATH` and a `PATH`
+  prefix that point inside the mounted bundle, and every child process inherited
+  them. `uv` therefore provisioned Python 3.11.14 and then the spawned
+  interpreter aborted before it could print `sys.version`, so the installer
+  stopped with *uv could not provision Python 3.11.14* on a machine where uv had
+  just done exactly that. The spawned child now gets a cleaned copy of the
+  environment (no `PYTHONHOME`, no `LD_LIBRARY_PATH`, no bundle paths in `PATH`).
+  Verified on Ubuntu 26.04 by launching the shipped AppImage and replaying the
+  installer's own sequence under the exact child environment it produces:
+  `uv install` → `uv python install 3.11.14` → version verify → `uv venv` →
+  `uv pip install six`, all green. Only the harmless AppImage bookkeeping
+  variables (`APPDIR`, `ARGV0`, `APPIMAGE`, `OWD`) are still inherited.
+- **The cross-platform bundles now go out through the release workflow.** The
+  first real run of `.github/workflows/release.yml` built all three platforms
+  from tag `v0.10.26` and attached AppImage, `.deb`, NSIS, MSI, `.dmg`, the
+  `.app` tarball, every `.sig` and `latest.json` to one release. Two legs failed
+  first because the repository's `TAURI_SIGNING_PRIVATE_KEY` secret did not match
+  its password (`failed to decode secret key: incorrect updater private key
+  password`); re-uploading the key the config's public key was generated from
+  fixed it. The release also carries `SHA256SUMS.txt`.
+- **Runner-built AppImages do not start, so the shipped one is not built on a
+  runner.** WebKitGTK 2.44/2.48, which ubuntu-22.04/24.04 bundle into the
+  AppImage, does not warn when it cannot create an EGL display — it aborts
+  (`Could not create default EGL display: EGL_BAD_PARAMETER`). Reproduced on
+  WSLg and under Xvfb; `WEBKIT_DISABLE_DMABUF_RENDERER`,
+  `WEBKIT_DISABLE_COMPOSITING_MODE`, `GDK_GL=disable`, `EGL_PLATFORM`,
+  `LIBGL_ALWAYS_SOFTWARE` and `GALLIUM_DRIVER=llvmpipe` all still abort.
+  WebKitGTK 2.52 (Ubuntu 26.04) warns and falls back to software rendering, so
+  the shipped AppImage is a local 26.04 build — which also raises its floor to
+  **glibc ≥ 2.43**. On Ubuntu 22.04/24.04 use the `.deb`, which links the
+  distro's own WebKitGTK. The bundles are otherwise unchanged: `.deb` from an
+  ubuntu-24.04 runner, Windows and macOS from their runners.
+- **Windows, verified from the release assets.** Silent NSIS install, dashboard
+  renders at 0.10.26 with live hardware rows, console reports
+  *Launcher v0.10.26 ready*; the MSI payload was extracted and launched too.
+  macOS is build-verified only (arm64 Mach-O, `Info.plist` 0.10.26, minimum
+  macOS 11.0) — no Apple Silicon hardware here.
+- **Docs tell the truth about all three platforms.** README gains per-platform
+  download links and a *testers wanted* note, `docs/PLATFORMS.md` records the
+  EGL/glibc constraint and what has actually been run, `dist/` mirrors the
+  release with `SHA256SUMS.txt`, and the asset names in the docs now match what
+  the bundler emits (`Wan2GP.Desktop.Launcher.Tauri_<version>_<arch>…`).
+
+
+- **The CUDA-toolkit prerequisite row stops printing over itself.** On Linux
+  the row's label lived in a 58px column, so "CUDA toolkit (SpargeAttn /
+  flash-attn)" wrapped to four lines and drew across the status cell —
+  "not found — optional" was only legible as "found —…", which reads like the
+  opposite. Labels are one line with an ellipsis (the short "CUDA toolkit",
+  caveats in the tooltip), the name column is 88px, and the command chip is
+  capped at 220px so the status keeps its room. Seen on WSL2/Ubuntu 26.04 with
+  an RTX 3080 (no `nvcc` → the row is correctly optional-missing).
+- **uv's *Install* button works on Linux and macOS.** The Prerequisites row for
+  uv only copied `curl -LsSf https://astral.sh/uv/install.sh | sh` off Windows,
+  even though the install flow already provisions uv exactly that way. Astral's
+  installer is user-scope (no sudo, no package manager), so the button now runs
+  it for real and puts the copy in `~/Wan2GP/.tools` — receipted, so
+  `uv self update` keeps working, with `UV_NO_MODIFY_PATH=1` so the user's PATH
+  is never edited. `git`/`python`/`conda` still answer with the command to type:
+  those need root or a GUI installer. Verified on WSL2/Ubuntu 26.04 (fresh
+  `HOME`, uv absent): *Install* → `~/Wan2GP/.tools/uv --version` →
+  `uv 0.13.5`, row green, button flips to *Reinstall*.
+- **The environment panel reports Triton on Linux and macOS.** The version
+  scan asks `importlib.metadata` for each package under a fixed name and had
+  Triton aliased to `triton-windows` — the PyPI fork Windows uses. On
+  Linux/macOS that distribution does not exist (torch pulls plain `triton` in
+  as a dependency: 3.6 with torch 2.10), so the probe raised and the panel row
+  read "Triton —" on an env that had 3.6.0 installed. The scan now asks for the
+  host's own name first and the other one as a fallback. Verified on WSL2
+  Ubuntu 26.04: the panel's own generated probe prints `triton=3.6.0` and the
+  ENV card shows **Triton 3.6.0** instead of a dash.
+- **The Desktop renderer is Windows-only, and the UI now knows it.** `native`
+  renders Wan2GP in a real WebView2 child webview composited over the launcher;
+  GTK and WKWebView cannot do that — `add_child` puts both webviews in the
+  window's layout box, so on Linux the launcher page was squeezed into the top
+  half (an empty black band under the header) and Gradio was pushed into the
+  bottom half. Measured on WSL2/Ubuntu 26.04: window 1032px tall, launcher
+  webview 493px, child webview 492px. A new `nativeEmbed` capability (true on
+  Windows only, pinned JS↔Rust by `tests/platform-gate.test.js`) makes the
+  backend return `iframe` regardless of the saved setting and disables the
+  `native` option in both renderer pickers. Re-measured after the fix:
+  webview = 1908×999 = the whole window, embed rect = 0,44 → 1908×955.
+- **The console docks correctly in Desktop mode.** With the split gone, bottom /
+  top / left / right each shrink the embed to the space left over (measured
+  200px for bottom/top, 340px for left/right) and Floating restores the full
+  viewport. The 340px side docks were also clipping their own header: the
+  controls row is wider than the console, so `Floating` and `✕` sat past the
+  right edge and a right-docked console could not be switched back — the header
+  and actions now wrap.
+- **Kernel sync follows the host OS.** `setup_config.json` component commands
+  are per-OS maps (`{"win": "triton-windows>=3.6,<3.7", "linux":
+  "triton>=3.6,<3.7"}`), but the sync read the `win` key on every platform — so
+  on Linux *↻ Update GPU Wheels* downloaded Windows wheels (`ERROR: … is not a
+  supported wheel on this platform`) and asked PyPI for `triton-windows`, which
+  publishes nothing for Linux (`from versions: none`). Every config command now
+  resolves through the host's key (`hw::cmd_for_platform`, absent key = loud
+  skip instead of installing a foreign wheel), per-ABI `{py}` templates expand
+  to the env interpreter (`cp311`) the way `setup.py` does, and the known-good
+  SageAttention fallback is the Linux build (`…-linux.cg1-…-linux_x86_64.whl`).
+  Verified on WSL2 Ubuntu 26.04 against the live config: triton resolves to
+  `triton>=3.6,<3.7` and all five profile wheels are `linux_x86_64`, each
+  accepted by pip (`--dry-run`, exit 0).
+- **The AMD triton step is Windows-only.** The AMD install finished by
+  uninstalling any vanilla `triton` and pip-installing the PyPI
+  `triton-windows` fork. On Linux the ROCm torch wheel ships its own `triton`
+  under that name, so that step would have left the env without one; it is now
+  skipped there, and the AMD package gate refuses `triton` on Linux with the
+  same docs pointer instead of rewriting it to a Windows-only distribution.
+- **Linux/macOS install no longer dies on components that need a CUDA
+  toolkit.** Upstream ships prebuilt wheels for SpargeAttn and flash-attn on
+  Windows but builds both from source (`git+…`, sdist) on Linux/macOS, and its
+  `setup.py` runs every component with `check=True` — so on a stock Ubuntu (no
+  `nvcc`; upstream's own `scripts/install.sh` never installs one) the install
+  aborted with `Cannot find CUDA_HOME` before reaching the GPU kernels. The
+  launcher now detects a *native* toolkit, exports `CUDA_HOME` when it finds one,
+  and otherwise skips just those two components with an explicit message
+  (everything else, including WGPKernels/nunchaku/GGUF, installs). A toolkit seen
+  through a Windows mount (`/mnt/c/...` under WSL, `nvcc.exe` via interop) is
+  ignored — it cannot compile Linux extensions — and a Windows `CUDA_HOME`
+  leaking into the env is dropped. The wizard overview flags the skipped
+  components as "skipped — needs the CUDA toolkit (nvcc)" instead of naming a
+  version it will not install.
+- **CUDA toolkit shown as a Linux prerequisite.** Upstream `INSTALLATION.md`
+  calls CUDA 13.1 (RTX 20XX-50XX) / 12.8 (GTX 10XX) a prerequisite because
+  SpargeAttn and flash-attn are compiled there. The Prerequisites card now
+  carries a "CUDA toolkit" row on Linux NVIDIA hosts with the detected version
+  (from `version.json`), marked optional since a missing toolkit only costs
+  those two components. When a toolkit *is* present the install exports
+  `CUDA_HOME` and puts both its `bin` and the environment's `bin` on `PATH` —
+  SpargeAttn's build shells out to `python` and `nvcc`, which upstream's
+  `run.sh` gets from activating the env and the launcher does not.
+
+- **Deepy KV Cache Quantization now carries upstream's whole value set, and
+  reads the saved one.** The panel offered Auto / INT8 / Q4 out of upstream's
+  eight (`plugins/configuration/plugin.py:640-643`): *Disabled (BF16)* (the
+  empty string, which Auto silently overrides to INT8), *INT8 keys / Q4 values*
+  (-24% vs INT8), *Q6 keys and values* (-24%), *Q6 keys / Q4 values* (-35%) and
+  *Q4.1 keys and values* (-41%) were unreachable, and the mixed layouts lost
+  their exact-overlay preset. Both are there now — a second dropdown offers
+  upstream's `s1r1024` (default) / `s1r256` / `s0r1024` / `s0r0` and shows only
+  for the mixed bodies — and the selects preselect from
+  `wgp_config.json` (`deepy_status` returns `kvCacheQuantization`), so a config
+  written upstream no longer displays as "Auto". Auto-Tune keeps INT8 keys on
+  tight VRAM (`int8_q4`, -24%) instead of the Q4/Q4 body, which upstream's own
+  Auto never selects and which costs the most precision.
+
+- **Memory-profile guidance checked against upstream's own labels.**
+  `wgp.py:11945` (`memory_profile_choices`) lists the profiles and their
+  families, so the launcher's aligned to it: P4+ no longer receives a Dynamic
+  *VRAM Preload* for images (upstream offers that control on Profiles 0, 2, 4
+  and 5 only, and P4+ "sends one part at a time" — the mode was a dead setting),
+  the three preload tooltips name the same four profiles and say P1/P3/P3+ are
+  dynamic intrinsically, and P0 is labelled *AutoRAM · AutoVRAM* like upstream
+  instead of "experimental", which 18.83 dropped. Everything else already
+  matched: P4 recommended for most tiers, P3 for audio, P2 = HighRAM/LowVRAM,
+  P1 only where RAM and VRAM are both plentiful, P5 as failsafe, and the
+  short-of-RAM advice (lower Reserved RAM, keep Smart Memory Pinning On) is what
+  the panel already recommends.
+
+- **Deepy Web start lives with Deepy.** *Start Deepy Web* and *Open in browser*
+  moved from the Phone & Remote *Start* step into the Deepy panel, directly
+  under the Disabled / Deepy Zero / Deepy Prime picker they act on; the step
+  below keeps *Stop*, *Outputs folder*, extra args and every address/auth
+  control, and is now labelled *4 · Server controls*. IDs and handlers are
+  unchanged, so the topbar LED, the status line and both flows behave exactly
+  as before.
+
+- **WanGP 18.83 / mmgp 4.4 mapped RAM: guidance, not code.** Upstream's
+  `9905f0d` moved the Qwen3.5 prompt-enhancer token table to page-locked RAM
+  read by the GPU in place (`mmgp.runtime.map_in_ram`, `mmgp/mapped.py`). The
+  mapping is budgeted by `perc_reserved_mem_max` — the same knob Auto-Tune
+  writes — so the launcher needs no contract change: no CLI flag, no
+  `wgp_config.json` key, no `requirements.txt` pin moved, `mmgp` is vendored,
+  and every choice list Auto-Tune validates still matches upstream
+  (`int8_kernels`, `fp8_kernels`, `kernel_precision`, `attention_head_split`,
+  `vram_allocator`, `ram_allocator`, preload modes, 0–100 % reserved). What
+  changed is the meaning of a *low* Reserved RAM share, so its tooltip and the
+  range error now say it also decides whether MMGP can map weights, and that
+  Auto (0) is 40 % on Windows / 60 % elsewhere. Verified on this machine with
+  the real env: a 39 MB table maps, its rows survive bit-for-bit through the
+  CUDA view, gathers match, and without a CUDA context upstream degrades with
+  `[MMGP] Unable to map … cuMemHostGetDevicePointer returned 201` instead of
+  failing the launch.
+
+- **Cross-platform foundation: Linux x86_64 and macOS Apple Silicon.** The
+  launcher is now one code base with platform adapters
+  (`src-tauri/src/platform/{windows,linux,macos}.rs` + shared `unix.rs`) instead
+  of `cfg(windows)` branches scattered through `install.rs`, `launch.rs`,
+  `system.rs`, `hw.rs` and `features.rs`. GPU detection, prereq discovery,
+  process listing/kill, port owner, path opener, desktop shortcut, auto-start and
+  the task-manager hand-off all go through one `Platform` trait. Windows
+  behaviour is unchanged; the full suite still runs green on Windows.
+
+- **Capability gating instead of per-tab platform checks.** `index.html` marks a
+  control with `data-requires="capability"`; `src/services/platform-gate.js`
+  applies the platform's capability map and toggles `.cap-off`. Unknown or empty
+  capability names fail closed, so a typo hides a control instead of crashing it.
+  The JS map is pinned to the Rust adapters by `tests/platform-gate.test.js`,
+  which parses the `supports(Capability::…)` assertions out of
+  `platform/mod.rs` — the two can no longer drift. DLSS, kernel wheels, the
+  Triton/MSVC toolchain and the Task Manager button disappear on the platforms
+  that cannot honour them; `w2gp.platform` comparisons in the tabs are gone.
+
+- **macOS reports real unified memory.** `vramMB` was hard-coded to
+  `8192 MiB`, so every Mac looked like a base M1 in the tier and Auto-Tune math.
+  It now reads `sysctl -n hw.memsize` (8 GB only as a fallback when sysctl
+  refuses).
+
+- **`tool_usable` has a non-Windows arm.** The Windows adapter called a
+  Windows-only helper while every adapter compiles on every target, so a Linux
+  release build would have failed to link `crate::base::tool_usable`. It now
+  tests with `sh -c 'command -v "$1"'` elsewhere.
+
+- **First-run platform bugs.** Linux `.desktop` entries quoted `Exec=` (install
+  paths with spaces broke the shortcut); the macOS LaunchAgent label was
+  `com.wangp.desktop` and is now `com.wan2gp.desktop`.
+
+- **Multi-platform release workflow.** `.github/workflows/release.yml` builds
+  NSIS+MSI, AppImage+deb and app+dmg from one tag and attaches them to a single
+  draft release. macOS disables updater artifacts (an unsigned `.app` cannot
+  self-update), so `latest.json` only advertises platforms where the update can
+  actually apply. CI gains Linux/macOS compile, test, clippy and fmt jobs.
+
+- **Bundles exist.** `build-artifacts.yml` (dispatch-only, no signing key) built
+  the first real Unix artifacts on the project's CI: AppImage 85.0 MB (ELF64
+  x86-64), `.deb` 7.25 MB (`Depends:` was duplicated by the explicit override,
+  now left to Tauri), macOS `.dmg` 5.96 MB (UDIF). Windows keeps NSIS/MSI. The
+  release workflow attaches all three to one draft release once
+  `TAURI_SIGNING_PRIVATE_KEY` exists as a repo secret.
+
+- **Honest support label.** Windows is *supported*; Linux and macOS are *ported*
+  — the code compiles and bundles on real runners, and is unit-tested, but no
+  install → launch → generate cycle has run there. See `docs/PLATFORMS.md`.
 
 - **GPU selection actually reaches Wan2GP.** The picker used to pass
   `--gpu cuda:N` only for an explicit pick, so *Auto* launched with no flag at
@@ -45,6 +273,105 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   and excluded from the count; the discrete card is pinned at its HIP index
   (APUs enumerate first). A startup diagnostic line reports per-device VRAM,
   the resolved UUID, and the live `CUDA_VISIBLE_DEVICES` / `CUDA_DEVICE_ORDER`.
+
+- **Linux/macOS installation documented and Linux verified by hand.** The docs
+  now cover how to install each bundle instead of assuming you know: AppImage
+  (needs FUSE — `libfuse2t64` on 24.04+ — or `--appimage-extract-and-run`),
+  `.deb` (package `wan2-gp-desktop-launcher-tauri`, `Depends:
+  libwebkit2gtk-4.1-0, libgtk-3-0`, menu entry, `/usr/bin` binary), macOS `.dmg`
+  + quarantine + no-updater, uninstall steps for both, and where data lands
+  (`~/Wan2GP`, `~/Wan2GP-Models`, `desktop-config.json`, `envs.json`, the
+  `.desktop`/LaunchAgent files). It also stopped claiming prerequisites are
+  one-click on Unix — those buttons are Windows-only and answer with the distro
+  command; only `uv` can be bootstrapped, into `~/Wan2GP/.tools`. Verified on Ubuntu
+  26.04: AppImage and `.deb` both install and start (window, full UI,
+  git/uv/python detected, real GPU resolved through WSL's driver passthrough —
+  RTX 3080 / 10240 MB / driver 617.42 → `CUDA 13 (cu130)`, profile `RTX 30`),
+  382 Rust + 205 JS tests green on the Linux host. The
+  first run exposed a renderer bug, now fixed: path joins were hard-coded to
+  `\`, so Linux/macOS showed `~/Wan2GP-Models\ckpts`, `\loras` and `\outputs`
+  — a single file name with a backslash in it, not a subdirectory. `pathJoin`
+  lives in `platform-gate.js` now and takes the separator from the host
+  (`win32` → `\`, else `/`), the repo-containment checks compare normalized
+  keys instead of stitching `repo + "\\"`, and three tests pin it so a future
+  tab cannot reintroduce a hard-coded separator. Windows-only copy in the
+  installer (default `C:\Wan2GP`, `AppData\Roaming`, `C:\certs\…` placeholders)
+  is platform-neutral instead.
+
+- **One-click prerequisites are gated, not just refused.** The *Install* buttons
+  in the Prerequisites card were still rendered on Linux/macOS and led to a
+  "re-downloads the installer" dialog before failing. A `prereqInstall`
+  capability (mirrored in `platform/mod.rs`, pinned by the parity test) now
+  replaces the button with the package-manager command — `sudo apt install git`
+  on Linux, `xcode-select --install` on macOS — click to copy. The same run
+  showed the install-location check calling a fresh folder "foreign" because
+  the launcher's own `~/Wan2GP/.tools` (its uv) was the only entry; `.tools`
+  joins the benign list, so first-time users are no longer told to wipe it.
+
+- **Hardware-simulation hook works off Windows.** `WGP_PROBE_NVIDIA_SMI` (and
+  the PowerShell twin) spawned `cmd /C <fake>`, which does not exist on Unix, so
+  on Linux the probe silently fell through and the GPU read as `unknown` — the
+  hook the Windows integration tests rely on was Windows-only. It spawns the fake
+  directly on Linux/macOS now, which makes the whole Linux chain testable without
+  a card: `WGP_PROBE_NVIDIA_SMI=./fake ./launcher` renders `NVIDIA GeForce RTX
+  4080`, `CUDA build CUDA 13 (cu130)`, `Profile RTX 40` and the driver-preflight
+  warning.
+
+- **Docs audited against the code and upstream 18.83.** Sixteen claims were
+  wrong or stale: the guide insisted `wgp_config.json` has no reserved-memory
+  key (it is `perc_reserved_mem_max`, a 0-100 percentage the launcher writes);
+  GGUF 1.0.28 was quoted where both the launcher and upstream pin 1.0.29;
+  WGPKernels 1.3.0 where `setup_config.json` says 1.4.2; the retired rocm-sdk
+  7.14 env was still described as the AMD HIP path; P0 was still called
+  experimental *More Speed with Less RAM* (upstream renamed it
+  `AutoRAM_AutoVRAM` and dropped the flag); the "settings Auto-Tune writes"
+  lists omitted `compile`, `compute_cache` and `deepy_kv_cache_quantization`;
+  test counts said 358/166; and the Phone & remote section appeared twice with
+  contradicting path counts. `PLATFORMS.md` no longer claims the artifact
+  workflow produced the Windows installer or an MSI, and `OVERVIEW.md` now
+  shows the platform adapters and the capability gate.
+
+- **Every install kind gets the update answer it can use.** The update control
+  assumed a `*-setup.exe`: on a `.deb`, an `.rpm`, a `.dmg` or a `cargo build`
+  directory it offered an installer that would not run, or failed with whatever
+  the plugin said. The launcher now classifies the copy it is running from
+  (`appimage`, `deb`, `rpm`, `windows`, `macapp`, `source`) and the button plus
+  the **Manage → Updates** row say what that kind can do — *vX — Download* next to
+  the finished `sudo apt install ./…` line, *vX — Releases* and "this copy runs
+  from a build directory — git pull, then rebuild" — instead of a generic failure.
+  `docs/UPDATING.md` is the per-platform page; winget and Homebrew Cask
+  definitions ship in `packaging/`, and `.github/workflows/package-managers.yml`
+  submits them on a published release (called from `release.yml`, because a
+  `release: published` event raised by `GITHUB_TOKEN` never starts a workflow).
+
+- **The test suite no longer depends on the host that runs it.** Seven assertions
+  pinned Windows values through helpers that branch on `cfg!(windows)`: the
+  Triton spec, the GGUF/SageAttention override pins, the safe SageAttention URL
+  and the flash-attn/sparge rendering. On Linux those helpers read the `linux`
+  table, so the assertions failed — the Ubuntu CI job would have gone red the
+  first time it ran the suite. The platform is a parameter now
+  (`cmd_for_platform_on`, `triton_component_spec_on`,
+  `post_install_override_urls_on`, `sage_safe_url_on`,
+  `sage_needs_safe_swap_on`, `hardware_profile_detail_with_ram_on`); each test
+  pins the table it means and asserts the other host's answer next to it, so both
+  arms are covered on every runner. Verified: 419 Rust + 212 JS on Windows, 400
+  Rust on Ubuntu 26.04 (WSL2), clippy and `cargo fmt --check` clean on both.
+
+## [0.10.25] — 2026-10-25
+
+- **Docs-only release.** README gains the Deepy headless starter and folds in the
+  accumulated 0.10.24 notes; no binary changes on the Windows lane. The Linux and
+  macOS bundles that ship from 0.10.26 onward are built and verified there.
+
+
+## [0.10.24] — 2026-10-25
+
+- **Shared Image and 3D output folders.** The launcher now manages `image_save_path` and `mesh_save_path` separately (Manage → General), alongside the existing Output folder, so WanGP's four output keys (`save_path`, `image_save_path`, `audio_save_path`, `mesh_save_path`) can each point where you want.
+- **Q4 KV cache setting.** New "Deepy KV Cache Quantization" dropdown (Auto / INT8 / Q4) in the Deepy tab, written as `deepy_kv_cache_quantization`. Auto-Tune recommends Q4 on tight VRAM (saves ~24% vs INT8).
+- **Civitai API keys.** New settings for Civitai (civitai.com) and Civitai.red API keys, passed as `CIVITAI_API_KEY` / `CIVITAI_RED_API_KEY` env vars.
+- **Open Deepy in browser.** One-click button next to Start Deepy Web that starts Deepy (if needed) and opens its URL in the system browser.
+- **Wheel pins bumped** to WGPKernels 1.4.2 and GGUF kernels 1.0.29 (SHA-256 verified).
+- **Deepy crash workaround note:** "PTQ1 decode inputs must share a CUDA device" is a WanGP-side GGUF kernel issue; try disabling CUDA graphs or using INT8 KV cache.
 
 ## [0.10.22] — 2026-10-23
 

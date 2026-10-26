@@ -136,7 +136,7 @@ async function runMigration(doMove) {
   }
   // Bare drive root ⇒ resolve to <root>\Wan2GP like the installer Browse does.
   if (isDriveRoot(choices.dataDir)) {
-    choices.dataDir = pathJoin(choices.dataDir, "Wan2GP");
+    choices.dataDir = platformGate.pathJoin(choices.dataDir, "Wan2GP");
     $("migDataDir").value = choices.dataDir;
     appendLog(
       "[*] Drive root selected — using " + choices.dataDir + " instead.",

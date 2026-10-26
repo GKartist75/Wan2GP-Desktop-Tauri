@@ -227,6 +227,125 @@ pub(crate) fn saved_gpu_pick() -> String {
     pick
 }
 
+#[cfg(target_os = "macos")]
+fn macos_gpu_info() -> Option<(String, String)> {
+    let out = std::process::Command::new("system_profiler")
+        .args(["SPDisplaysDataType"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        if line.contains("Chip") {
+            let name = line.split(':').nth(1)?.trim().to_string();
+            if !name.is_empty() {
+                return Some((name.clone(), name));
+            }
+        }
+    }
+    None
+}
+
+/// Parse `sysctl -n hw.memsize` output (bytes) into MiB.
+///
+/// Zero and non-numeric input yield `None`: `hw.memsize` is reported as 0 in
+/// some virtualised/sandboxed contexts, and feeding 0 downstream reads as
+/// "unknown GPU" and drops to a CPU profile.
+///
+/// Compiled on every target (the macOS-only caller is behind `cfg`, the test
+/// is not) so the parser itself stays testable on the Windows dev machine.
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+pub(crate) fn parse_memsize_mib(out: &str) -> Option<u64> {
+    let bytes: u64 = out.trim().parse().ok()?;
+    if bytes == 0 {
+        return None;
+    }
+    Some(bytes / (1024 * 1024))
+}
+
+/// Apple Silicon has no dedicated VRAM: the GPU addresses the same unified
+/// memory as the CPU, so the honest number is physical RAM. A hard-coded
+/// 8 GB made every Mac look like a base M1 and biased the tier and Auto-Tune
+/// math low. Falls back to 8 GB when `sysctl` is unavailable.
+#[cfg(target_os = "macos")]
+fn macos_unified_mem_mib() -> u64 {
+    let out = match crate::base::silent_command("sysctl")
+        .args(["-n", "hw.memsize"])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return 8192,
+    };
+    parse_memsize_mib(&String::from_utf8_lossy(&out.stdout)).unwrap_or(8192)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn windows_gpu_fallback_info() -> serde_json::Value {
+    if let Some((name, vendor, _raw_bytes, driver)) = wmi_gpu_fallback() {
+        match wmi_dedicated_vram_mb(&name) {
+            Some(mb) => {
+                return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":format!("WMI+REG: {name}")})
+            }
+            None => match known_vram_mb(&name) {
+                Some(mb) => {
+                    return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":format!("WMI+TABLE: {name}")})
+                }
+                None => {
+                    return serde_json::json!({"vendor":vendor,"name":name,"vramMB":"0 MiB","driverVersion":driver,"raw":format!("WMI: {name} (VRAM unknown)")})
+                }
+            },
+        }
+    }
+    serde_json::json!({"vendor":"unknown","name":"","vramMB":"0","driverVersion":"","raw":"nvidia-smi not found"})
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn linux_gpu_fallback_info() -> serde_json::Value {
+    let mut vram_mb = 0u64;
+    if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
+        for entry in entries.flatten() {
+            let path = entry.path().join("device").join("mem_info_vram_total");
+            if let Ok(s) = std::fs::read_to_string(path) {
+                if let Ok(bytes) = s.trim().parse::<u64>() {
+                    vram_mb = vram_mb.max(bytes / (1024 * 1024));
+                }
+            }
+        }
+    }
+    let vram_str = if vram_mb > 0 {
+        format!("{vram_mb} MiB")
+    } else {
+        "0 MiB".to_string()
+    };
+
+    if let Ok(out) = std::process::Command::new("sh")
+        .args(["-c", "lspci | grep -i vga"])
+        .output()
+    {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+            if text.contains("amd") || text.contains("radeon") {
+                return serde_json::json!({"vendor":"AMD","name":"AMD GPU (Linux)","vramMB":vram_str,"driverVersion":"","raw":"lspci"});
+            }
+            if text.contains("intel") {
+                return serde_json::json!({"vendor":"INTEL","name":"Intel GPU (Linux)","vramMB":vram_str,"driverVersion":"","raw":"lspci"});
+            }
+        }
+    }
+    serde_json::json!({"vendor":"unknown","name":"","vramMB":"0","driverVersion":"","raw":"nvidia-smi not found"})
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_gpu_fallback_info() -> serde_json::Value {
+    let mib = macos_unified_mem_mib();
+    if let Some((name, chip)) = macos_gpu_info() {
+        return serde_json::json!({"vendor":"APPLE","name":name,"vramMB":format!("{mib} MiB"),"driverVersion":"","raw":format!("system_profiler: {chip}; unified memory {mib} MiB")});
+    }
+    serde_json::json!({"vendor":"APPLE","name":"Apple Silicon (MPS)","vramMB":format!("{mib} MiB"),"driverVersion":"","raw":format!("system_profiler fallback; unified memory {mib} MiB")})
+}
+
 pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
     let (cards, raw) = probe_nv_cards();
     if !cards.is_empty() {
@@ -253,38 +372,34 @@ pub(crate) fn get_gpu_info_sync() -> serde_json::Value {
     if let Some((name, mb, driver)) = pick_smi_row(&raw) {
         return serde_json::json!({"vendor":"NVIDIA","name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":raw});
     }
-    // No NVIDIA driver — WMI fallback for AMD/Intel (Electron queryGpuList parity).
-    // Doc-leading: deepbeepmeep docs/AMD-INSTALLATION.md is the spec for AMD support.
-    if let Some((name, vendor, _raw_bytes, driver)) = wmi_gpu_fallback() {
-        // Prefer 64-bit registry VRAM (AdapterRAM caps ~4GB / often 0).
-        match wmi_dedicated_vram_mb(&name) {
-            Some(mb) => {
-                return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":format!("WMI+REG: {name}")})
-            }
-            // Known-card table before giving up (R9700 PRO driver layout
-            // reports no parseable registry size).
-            None => match known_vram_mb(&name) {
-                Some(mb) => {
-                    return serde_json::json!({"vendor":vendor,"name":name,"vramMB":format!("{mb} MiB"),"driverVersion":driver,"raw":format!("WMI+TABLE: {name}")})
-                }
-                None => {
-                    return serde_json::json!({"vendor":vendor,"name":name,"vramMB":"0 MiB","driverVersion":driver,"raw":format!("WMI: {name} (VRAM unknown)")})
-                }
-            },
-        }
-    }
-    serde_json::json!({"vendor":"unknown","name":"","vramMB":"0","driverVersion":"","raw":"nvidia-smi not found"})
+    crate::platform::current().detect_gpu()
 }
 
 /// Probe spawn with a hardware-simulation hook for integration tests.
 /// `WGP_PROBE_<KIND>` (WGP_PROBE_NVIDIA_SMI / WGP_PROBE_POWERSHELL) redirects
-/// the probe through `cmd /C <fake>`; unset in production, where this is
-/// exactly silent_command. Lets tests simulate an AMD box (no nvidia-smi,
-/// canned WMI/registry answers) on any machine without touching prod behavior.
+/// the probe to `<fake>`; unset in production, where this is exactly
+/// silent_command. Lets tests simulate an AMD box (no nvidia-smi, canned
+/// WMI/registry answers) on any machine without touching prod behavior.
+///
+/// Windows needs `cmd /C` because a fake is often a `.bat`; on Linux/macOS the
+/// fake is spawned directly, so the same hook works there too — it used to
+/// spawn `cmd`, which does not exist on Unix, making the hook silently do
+/// nothing and the GPU read as `unknown`.
 pub(crate) fn probe_command(kind: &str, bin: &str) -> std::process::Command {
     if let Ok(fake) = std::env::var(format!("WGP_PROBE_{kind}")) {
-        let mut c = silent_command("cmd");
-        c.args(["/C", &fake, "--"]);
+        let mut c = {
+            #[cfg(windows)]
+            {
+                silent_command("cmd")
+            }
+            #[cfg(not(windows))]
+            {
+                silent_command(&fake)
+            }
+        };
+        #[cfg(windows)]
+        c.args(["/C", &fake]);
+        c.arg("--");
         let _ = bin;
         return c;
     }
@@ -349,6 +464,7 @@ pub(crate) fn wmi_all_gpus() -> Vec<(String, String, u64, String)> {
 /// was mistiered because a virtual adapter won the pick).
 /// "Basic Display Adapter" is NOT virtual here — it's the no-driver state
 /// with its own fatal preflight check. Pure + unit-tested.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn is_virtual_display_adapter(name: &str) -> bool {
     let l = name.to_lowercase();
     [
@@ -488,6 +604,7 @@ pub(crate) fn pick_smi_row(text: &str) -> Option<(String, u64, String)> {
 /// UHD/Iris/Arc and AMD APUs) lose to discrete cards no matter what WMI
 /// enumerates first — a Ryzen laptop used to tier as its 780M iGPU even with
 /// an RX 7600S installed. Pure + unit-tested.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn gpu_primary_class(vendor: &str, name: &str) -> u8 {
     let g = name.to_uppercase();
     if vendor == "unknown" {
@@ -572,6 +689,7 @@ pub(crate) fn classify_amd_driver(version: &str) -> &'static str {
 /// digit — R9700, 9070, 7900XTX. Lets the registry match survive the small
 /// WMI-vs-DriverDesc wording differences ("Radeon AI PRO R9700" vs
 /// "AMD Radeon AI PRO R9700") without ever matching a generic iGPU entry.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn distinctive_tokens(name: &str) -> Vec<String> {
     name.to_uppercase()
         .split(|c: char| !c.is_ascii_alphanumeric())
@@ -1188,6 +1306,36 @@ pub(crate) fn apply_gguf_override(url: &str) -> String {
 /// falls back to the hardcoded docs build. The AMD/HIP wheel owns itself and
 /// is never touched here (see [`is_amd_gguf_wheel`]).
 /// Pure + unit-tested.
+/// The command a `setup_config.json` component runs on **this** host.
+///
+/// Component cmds are either a bare spec (`"sageattention==1.0.6"`) or a per-OS
+/// map (`{"win": …, "linux": …}`). The kernel sync used to read `win`
+/// unconditionally, so on Linux "Update GPU Wheels" downloaded Windows wheels
+/// ("not a supported wheel on this platform") and asked PyPI for
+/// `triton-windows`, which publishes nothing for Linux ("from versions: none").
+/// A platform key that is absent yields an empty string — the caller logs a
+/// skip; substituting the other OS's command would install a foreign wheel.
+pub(crate) fn cmd_for_platform(cmd: Option<&serde_json::Value>) -> String {
+    cmd_for_platform_on(cmd, cfg!(windows))
+}
+
+/// Platform selection with the platform as a parameter. Upstream's
+/// `setup_config.json` carries a `win` table and a `linux` one (macOS reads
+/// `linux`), so the unit tests can pin either table on whichever host runs them.
+pub(crate) fn cmd_for_platform_on(cmd: Option<&serde_json::Value>, windows: bool) -> String {
+    let Some(cmd) = cmd else {
+        return String::new();
+    };
+    if let Some(text) = cmd.as_str() {
+        return text.to_string();
+    }
+    let key = if windows { "win" } else { "linux" };
+    cmd.get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
 pub(crate) fn apply_gguf_override_cfg(url: &str, cfg: &serde_json::Value) -> String {
     let low = url.to_ascii_lowercase();
     if is_amd_gguf_wheel(&low) {
@@ -2339,11 +2487,200 @@ pub(crate) fn probe_ram_gb() -> Option<f64> {
 /// (24GB VRAM + 8GB RAM showed P1, which needs 64GB). `ram_gb=None`
 /// (unknown) stays conservative: never P1–P3, matching upstream-with-16GB-RAM
 /// behavior.
+/// `/mnt/c/...`-style mount: a Windows toolkit, visible (and partly runnable)
+/// from WSL but unable to compile Linux extensions.
+fn on_foreign_mount(dir: &std::path::Path) -> bool {
+    if cfg!(windows) {
+        return false;
+    }
+    let rest = match dir
+        .to_string_lossy()
+        .strip_prefix("/mnt/")
+        .map(String::from)
+    {
+        Some(r) => r,
+        None => return false,
+    };
+    let mut chars = rest.chars();
+    matches!((chars.next(), chars.next()), (Some(drive), Some('/')) if drive.is_ascii_alphabetic())
+}
+
+/// Directory of a usable CUDA toolkit (the one with `bin/nvcc`), if any.
+///
+/// Upstream builds SpargeAttn from a git checkout on Linux/macOS (Windows gets a
+/// prebuilt wheel), and that build needs the toolkit - not just the pip wheels
+/// that carry `libcudart`. Without it `setup.py` aborts the whole install with
+/// `RuntimeError: Cannot find CUDA_HOME`, which is what a stock Ubuntu box does
+/// (upstream `scripts/install.sh` never installs a toolkit either).
+pub(crate) fn cuda_toolkit_dir() -> Option<std::path::PathBuf> {
+    let has_nvcc =
+        |dir: &std::path::Path| !on_foreign_mount(dir) && dir.join("bin").join("nvcc").is_file();
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            if has_nvcc(&dir) {
+                // <toolkit>/bin/nvcc -> <toolkit>
+                return dir.parent().map(|p| p.to_path_buf());
+            }
+        }
+    }
+    for var in ["CUDA_HOME", "CUDA_PATH", "CUDA_ROOT"] {
+        if let Some(dir) = std::env::var_os(var) {
+            let dir = std::path::PathBuf::from(dir);
+            if has_nvcc(&dir) {
+                return Some(dir);
+            }
+        }
+    }
+    // Standard toolkit locations; WSL/containers often have nvcc here without
+    // PATH or CUDA_HOME being set.
+    for dir in ["/usr/local/cuda", "/usr/local/cuda-13", "/opt/cuda"] {
+        let dir = std::path::PathBuf::from(dir);
+        if has_nvcc(&dir) {
+            return Some(dir);
+        }
+    }
+    None
+}
+
+/// NVIDIA driver present on a Unix host (WSL exposes `nvidia-smi` through the
+/// host driver, but has no `/proc/driver/nvidia`). Only used to decide whether
+/// the Prerequisites card should mention the CUDA toolkit at all.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn nvidia_present() -> bool {
+    if cfg!(windows) {
+        return true;
+    }
+    if std::path::Path::new("/proc/driver/nvidia/version").exists() {
+        return true;
+    }
+    std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths).any(|dir| {
+                dir.join("nvidia-smi").is_file()
+                    || dir.join("libcuda.so.1").is_file()
+                    || dir.join("libcuda.so").is_file()
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Installed CUDA toolkit version ("13.1"), from `version.json` (CUDA 11+)
+/// or `nvcc --version` on toolkits that predate it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn cuda_toolkit_version(dir: &std::path::Path) -> Option<String> {
+    let short = |v: &str| -> Option<String> {
+        let v = v.trim();
+        let mut parts = v.split('.');
+        let major = parts.next()?;
+        let minor = parts.next().unwrap_or("0");
+        if major.chars().all(|c| c.is_ascii_digit()) {
+            Some(format!("{major}.{minor}"))
+        } else {
+            None
+        }
+    };
+    if let Ok(text) = std::fs::read_to_string(dir.join("version.json")) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(v) = json
+                .get("cuda")
+                .and_then(|c| c.get("version"))
+                .and_then(|v| v.as_str())
+            {
+                return short(v);
+            }
+        }
+    }
+    let out = std::process::Command::new(dir.join("bin").join("nvcc"))
+        .arg("--version")
+        .output()
+        .ok()?;
+    parse_nvcc_version(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Pull the version out of `nvcc --version` output.
+///
+/// `Cuda compilation tools, release 13.1, V13.1.80` — the trailing `V13.1.80`
+/// is the build number, and a naive `split('.')` on the whole tail produced
+/// "13.1, V13" in the Prerequisites card.
+fn parse_nvcc_version(text: &str) -> Option<String> {
+    let line = text.lines().find(|l| l.contains("release"))?;
+    let tail = line.split("release").nth(1)?.trim();
+    let token = tail
+        .split(|c: char| !c.is_ascii_digit() && c != '.')
+        .find(|t| !t.is_empty())?;
+    token
+        .split('.')
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(".")
+        .into()
+}
+
+#[cfg(test)]
+mod cuda_toolkit_tests {
+    /// `version.json` is what CUDA >= 11 ships; "13.1.80" must read as "13.1"
+    /// so the Prerequisites card can name the version the user has.
+    #[test]
+    fn version_json_is_shortened() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("version.json"),
+            r#"{"cuda":{"name":"CUDA SDK","version":"13.1.80"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            super::cuda_toolkit_version(dir.path()).as_deref(),
+            Some("13.1")
+        );
+    }
+
+    /// `nvcc --version` puts a build number after the release: the card must
+    /// show "13.1", not "13.1, V13".
+    #[test]
+    fn nvcc_banner_is_parsed() {
+        let banner = "nvcc: NVIDIA (R) Cuda compiler driver\n\
+                      Copyright (c) 2005-2025 NVIDIA Corporation\n\
+                      Cuda compilation tools, release 13.1, V13.1.80\n\
+                      Build cuda_13.1.r13.1/compiler.35478435_0\n";
+        assert_eq!(super::parse_nvcc_version(banner).as_deref(), Some("13.1"));
+        assert_eq!(super::parse_nvcc_version("no version here"), None);
+    }
+
+    /// A directory without `version.json` or a runnable nvcc reports nothing
+    /// rather than inventing a version.
+    #[test]
+    fn missing_metadata_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(super::cuda_toolkit_version(dir.path()), None);
+    }
+}
+
+/// Can a source-built component (SpargeAttn) be compiled here?
+/// Windows downloads a wheel, so it never needs the toolkit.
+fn can_build_from_source() -> bool {
+    cfg!(windows) || cuda_toolkit_dir().is_some()
+}
+
 pub(crate) fn hardware_profile_detail_with_ram(
     vendor: &str,
     name: &str,
     vram_mb: f64,
     ram_gb: Option<f64>,
+) -> serde_json::Value {
+    hardware_profile_detail_with_ram_on(vendor, name, vram_mb, ram_gb, can_build_from_source())
+}
+
+/// [`hardware_profile_detail_with_ram`] with "can this box compile a CUDA
+/// component" supplied by the caller. The pins a profile declares are fixed;
+/// only their *rendering* depends on the toolkit, and pinning that rendering in
+/// a test would otherwise mean a Windows-only expectation in a cross-platform
+/// suite.
+pub(crate) fn hardware_profile_detail_with_ram_on(
+    vendor: &str,
+    name: &str,
+    vram_mb: f64,
+    ram_gb: Option<f64>,
+    source_builds: bool,
 ) -> serde_json::Value {
     struct Prof {
         python: &'static str,
@@ -2495,10 +2832,15 @@ pub(crate) fn hardware_profile_detail_with_ram(
         packages.push(format!("🌀 Sage Attn {s}"));
     }
     if let Some(s) = prof.sparge {
-        packages.push(format!("🌊 Sparge Attn {s}"));
+        if source_builds {
+            packages.push(format!("🌊 Sparge Attn {s}"));
+        }
     }
     if let Some(f) = prof.flash {
-        packages.push(format!("💥 Flash Attn {f}"));
+        // Linux/macOS install flash-attn from the sdist (source build).
+        if source_builds {
+            packages.push(format!("💥 Flash Attn {f}"));
+        }
     }
     packages.push("📋 100+ reqs (diffusers, transformers, gradio, torchcodec…)".into());
     let kernel_labels: Vec<String> = prof
@@ -2512,8 +2854,16 @@ pub(crate) fn hardware_profile_detail_with_ram(
         "torch": prof.torch,
         "triton": prof.triton.map(|t| triton_label(profile_str, t)).unwrap_or("—".into()),
         "sage": prof.sage.map(comp_label).unwrap_or("—".into()),
-        "sparge": prof.sparge.map(comp_label).unwrap_or("—".into()),
-        "flash": prof.flash.map(comp_label).unwrap_or("—".into()),
+        "sparge": match prof.sparge {
+            Some(s) if source_builds => comp_label(s),
+            Some(_) => "skipped — needs the CUDA toolkit (nvcc)".into(),
+            None => "—".into(),
+        },
+        "flash": match prof.flash {
+            Some(f) if source_builds => comp_label(f),
+            Some(_) => "skipped — needs the CUDA toolkit (nvcc)".into(),
+            None => "—".into(),
+        },
         "kernels": kernel_labels,
     });
     // Upstream-parity pid (setup.py create_wgp_config): RAM and VRAM
@@ -2587,6 +2937,7 @@ pub(crate) fn get_cached_igpu() -> Option<serde_json::Value> {
         }
     }
     // first call: run WMI, cache result (even None as explicit)
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut igpu: Option<serde_json::Value> = None;
     #[cfg(windows)]
     {
@@ -3067,7 +3418,14 @@ mod adapter_ram_tests {
 }
 #[cfg(test)]
 mod overview_pid_tests {
-    use super::hardware_profile_detail_with_ram;
+    use super::{hardware_profile_detail_with_ram, hardware_profile_detail_with_ram_on};
+
+    /// The pins a profile declares belong to the table, not to the host: a
+    /// box without a CUDA toolkit renders "skipped" for the same pin (see
+    /// `pins_render_honestly_without_a_toolkit`).
+    fn detail(vendor: &str, name: &str, vram_mb: f64, ram_gb: Option<f64>) -> serde_json::Value {
+        hardware_profile_detail_with_ram_on(vendor, name, vram_mb, ram_gb, true)
+    }
     fn pnum(vendor: &str, name: &str, vram_mb: f64, ram_gb: Option<f64>) -> i64 {
         hardware_profile_detail_with_ram(vendor, name, vram_mb, ram_gb)["profileNum"]
             .as_i64()
@@ -3120,7 +3478,7 @@ mod overview_pid_tests {
     fn overview_pins_match_upstream_setup_config() {
         // Sources of truth: setup_config.json gpu_profiles + components.*.label.
         // RTX_20 pins triton v33 (3.2.x) and declares no flash attention.
-        let rtx20 = hardware_profile_detail_with_ram(
+        let rtx20 = detail(
             "NVIDIA",
             "NVIDIA GeForce RTX 2080 Ti",
             11.0 * 1024.0,
@@ -3137,7 +3495,7 @@ mod overview_pid_tests {
         assert_eq!(rtx20["detail"]["flash"], serde_json::json!("—"));
         // RTX 30–50 pin the recommended Triton 3.7 Windows line (v18.18
         // fde3c7e — prebuilt helper builds) and flash 2.8.3.
-        let rtx40 = hardware_profile_detail_with_ram(
+        let rtx40 = detail(
             "NVIDIA",
             "NVIDIA GeForce RTX 4090",
             24.0 * 1024.0,
@@ -3150,12 +3508,7 @@ mod overview_pid_tests {
         );
         assert!(rtx40["detail"]["flash"].as_str().unwrap().contains("2.8.3"));
         // AMD pins triton v38 (3.7.x, Rocm line) and ships the ROCm flash wheel.
-        let amd = hardware_profile_detail_with_ram(
-            "AMD",
-            "AMD Radeon RX 9070 XT",
-            16.0 * 1024.0,
-            Some(32.0),
-        );
+        let amd = detail("AMD", "AMD Radeon RX 9070 XT", 16.0 * 1024.0, Some(32.0));
         assert_eq!(
             amd["detail"]["triton"],
             serde_json::json!("Triton 3.7.x (Torch 2.13, AMD ROCm)")
@@ -3178,13 +3531,39 @@ mod overview_pid_tests {
         };
         assert!(labels(rtx40).contains(&"WGPKernels (INT8)".to_string()));
         assert!(labels(amd).contains(&"WGPKernels (INT8)".to_string()));
-        let rtx20 = hardware_profile_detail_with_ram(
+        let rtx20 = detail(
             "NVIDIA",
             "NVIDIA GeForce RTX 2080 Ti",
             11.0 * 1024.0,
             Some(32.0),
         );
         assert!(labels(rtx20).contains(&"WGPKernels (INT8)".to_string()));
+    }
+    #[test]
+    fn pins_render_honestly_without_a_toolkit() {
+        // Linux/macOS without nvcc cannot build flash-attn/sparge from source,
+        // so the same profile must say so instead of naming a wheel it cannot
+        // install. The pin itself is unchanged (asserted above).
+        let d = hardware_profile_detail_with_ram_on(
+            "NVIDIA",
+            "NVIDIA GeForce RTX 4090",
+            24.0 * 1024.0,
+            Some(64.0),
+            false,
+        );
+        let skipped = serde_json::json!("skipped — needs the CUDA toolkit (nvcc)");
+        assert_eq!(d["detail"]["flash"], skipped);
+        assert_eq!(d["detail"]["sparge"], skipped);
+        assert!(d["detail"]["triton"].as_str().unwrap().contains("3.7"));
+        // A profile that declares no flash attention keeps the dash either way.
+        let rtx20 = hardware_profile_detail_with_ram_on(
+            "NVIDIA",
+            "NVIDIA GeForce RTX 2080 Ti",
+            11.0 * 1024.0,
+            Some(32.0),
+            false,
+        );
+        assert_eq!(rtx20["detail"]["flash"], serde_json::json!("—"));
     }
 }
 #[cfg(test)]
@@ -3220,5 +3599,71 @@ mod intel_cpu_tests {
                 .iter()
                 .any(|p| p.as_str().unwrap().contains("CUDA")));
         }
+    }
+}
+
+#[cfg(test)]
+mod cross_platform_hw_tests {
+    use super::*;
+    #[test]
+    fn apple_maps_to_mps() {
+        assert_eq!(kernel_profile_key("APPLE", "Apple M3"), "MPS");
+    }
+    #[test]
+    fn unknown_maps_to_cpu() {
+        assert_eq!(kernel_profile_key("UNKNOWN", "Unknown GPU"), "CPU");
+    }
+    #[test]
+    fn sysctl_memsize_parses_to_mib() {
+        // 64 GB Mac: 68719476736 bytes.
+        assert_eq!(parse_memsize_mib("68719476736\n"), Some(65536));
+        assert_eq!(parse_memsize_mib(" 17179869184 "), Some(16384));
+        // Not a number, zero, or overflowing u64 -> no figure at all.
+        assert_eq!(parse_memsize_mib(""), None);
+        assert_eq!(parse_memsize_mib("0"), None);
+        assert_eq!(parse_memsize_mib("kern.hv_vmm_present: 1"), None);
+        assert_eq!(parse_memsize_mib("18446744073709551616"), None);
+    }
+
+    #[test]
+    fn component_cmd_follows_the_host_os() {
+        // Linux "Update GPU Wheels" used to read the `win` key and install
+        // Windows wheels ("not a supported wheel on this platform"), asking
+        // PyPI for `triton-windows` ("from versions: none").
+        let both: serde_json::Value = serde_json::from_str(
+            r#"{"win": "-U \"triton-windows>=3.6,<3.7\"", "linux": "-U \"triton>=3.6,<3.7\""}"#,
+        )
+        .unwrap();
+        let want = if cfg!(windows) {
+            "triton-windows>=3.6,<3.7"
+        } else {
+            "triton>=3.6,<3.7"
+        };
+        let got = super::cmd_for_platform(Some(&both));
+        assert!(got.contains(want), "{got}");
+        assert!(
+            !got.contains(if cfg!(windows) {
+                "triton>="
+            } else {
+                "triton-windows"
+            }),
+            "{got}"
+        );
+    }
+
+    #[test]
+    fn component_cmd_handles_strings_and_absent_keys() {
+        let bare = serde_json::json!("sageattention==1.0.6");
+        assert_eq!(super::cmd_for_platform(Some(&bare)), "sageattention==1.0.6");
+        // A Windows-only entry must NOT fall back to the Windows command on
+        // another host: an empty result makes the sync skip it loudly.
+        let win_only = serde_json::json!({"win": "-U \"triton-windows>=3.7\""});
+        let want = if cfg!(windows) {
+            "-U \"triton-windows>=3.7\""
+        } else {
+            ""
+        };
+        assert_eq!(super::cmd_for_platform(Some(&win_only)), want);
+        assert_eq!(super::cmd_for_platform(None), "");
     }
 }

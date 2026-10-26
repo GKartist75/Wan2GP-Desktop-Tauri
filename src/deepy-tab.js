@@ -85,6 +85,23 @@ function updateDeepyQuantHint(value, enhancerId) {
         : "Quanto Int8 preserves quality; GGUF Q4 uses less memory when kernels are installed.";
 }
 
+// Upstream `deepy_kv_cache_quantization` (shared/deepy/config.py) is "" for
+// BF16, auto, int8, or a body preset; the mixed bodies carry an exact-overlay
+// preset joined as "body:exact", defaulting to s1r1024
+// (shared/llm_engines/lmgp/layers/kv_formats.py BODY_PRESETS / EXACT_PRESETS).
+// Auto resolves to int8 only while GGUF kernels >= 1.0.13 are installed.
+const KV_MIXED = ["int8_q4", "q6", "q6_q4", "q4_1", "q4"];
+function kvSplit(raw) {
+  const [body, exact] = String(raw == null ? "auto" : raw)
+    .trim()
+    .toLowerCase()
+    .split(":");
+  return { body, exact: exact || "s1r1024" };
+}
+function kvJoin(body, exact) {
+  if (!KV_MIXED.includes(body)) return body;
+  return body + ":" + (exact || "s1r1024");
+}
 async function refreshDeepy() {
   const opts = $("deepyPrimeOnly");
   // Helper: the checked Prime engine radio across the Local/Remote groups.
@@ -457,18 +474,44 @@ async function refreshDeepy() {
     // No pending changes left — park both buttons until the next edit.
     for (const b of [applyBtn, promptApplyBtn]) if (b) b.disabled = true;
 
-// Deepy KV Cache Quantization — written directly to wgp_config.json.
+// Deepy KV Cache Quantization — written directly to wgp_config.json. Upstream
+// `deepy_kv_cache_quantization` (shared/deepy/config.py) is a body preset,
+// plus an exact-overlay preset for the mixed layouts joined as "body:exact"
+// (shared/llm_engines/lmgp/layers/kv_formats.py BODY_PRESETS / EXACT_PRESETS).
 const kvSel = $("deepyKvCacheSelect");
-if (kvSel) {
-  kvSel.addEventListener("change", async (e) => {
-    const v = e.target.value || "auto";
+const kvExact = $("deepyKvCacheExactSelect");
+const kvSync = () => {
+  if (!kvExact) return;
+  kvExact.style.display =
+    kvSel && KV_MIXED.includes(kvSel.value) ? "" : "none";
+};
+const kvPopulate = (raw) => {
+  if (!kvSel) return;
+  const { body, exact } = kvSplit(raw);
+  kvSel.value = [...kvSel.options].some((o) => o.value === body)
+    ? body
+    : "auto";
+  if (kvExact && [...kvExact.options].some((o) => o.value === exact))
+    kvExact.value = exact;
+  kvSync();
+};
+kvPopulate(status.kvCacheQuantization);
+if (kvSel && !kvSel.dataset.kvBound) {
+  kvSel.dataset.kvBound = "1";
+  const kvWrite = async () => {
+    const v = kvJoin(kvSel.value, kvExact && kvExact.value);
     try {
       await window.w2gp.writeWgpConfig({ deepy_kv_cache_quantization: v });
-      showToast("✓ Deepy KV cache quantization: " + v);
+      showToast("✓ Deepy KV cache: " + (v === "" ? "BF16 (disabled)" : v));
     } catch (err) {
       showToast("✗ " + (err?.message || err));
     }
+  };
+  kvSel.addEventListener("change", () => {
+    kvSync();
+    kvWrite();
   });
+  if (kvExact) kvExact.addEventListener("change", kvWrite);
 }
     if (r && r.ok) {
       const s = document.createElement("span");

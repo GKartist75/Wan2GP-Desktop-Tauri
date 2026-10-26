@@ -1,0 +1,147 @@
+name: Package managers
+
+# One published release → the same version offered by winget and, when a tap
+# token exists, by the Homebrew cask. Both lanes are outward-facing (a pull
+# request against microsoft/winget-pkgs, another against
+# GKartist75/homebrew-tap), so neither may fail the release: a missing secret
+# prints a notice and skips. The packaging templates themselves live in
+# `packaging/winget/` and `packaging/homebrew/`; this is only the transport.
+#
+# Required repository secrets (each optional, independently):
+#   WINGET_TOKEN     classic PAT with `public_repo`, from the account whose
+#                    winget-pkgs fork the submission comes from.
+#   HOMEBREW_TOKEN   PAT with `repo` on GKartist75/homebrew-tap (the bump pushes
+#                    a branch there and opens the PR).
+#
+# On the guard: `secrets` is not in scope for a job-level `if` (only
+# github/needs/vars/inputs are), so writing `if: ${{ secrets.HOMEBREW_TOKEN != '' }}`
+# would not parse at all. The tokens are probed once in the `tokens` job and
+# published as outputs; `needs.tokens.outputs.*` then gates the real jobs, so a
+# missing token skips the job entirely instead of spending a macOS runner on it.
+
+on:
+  release:
+    types: [published]
+  # `release.yml` publishes through tauri-action with GITHUB_TOKEN, and GitHub
+  # never starts a workflow from an event that token caused — so the trigger
+  # above only catches a draft a human publishes by hand. The release workflow
+  # calls this file directly once every platform leg has attached its assets;
+  # that is the normal path, and the two never overlap (a hand-published draft
+  # never went through the caller).
+  workflow_call:
+
+concurrency:
+  # `github.event.release` is empty on the workflow_call path, so the tag is
+  # resolved the same way the `tokens` job resolves it.
+  group: package-managers-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: true
+
+# Read-only here: both lanes authenticate against *other* repositories with their
+# own tokens. Nothing in this repo is written by this workflow.
+permissions:
+  contents: read
+
+jobs:
+  tokens:
+    runs-on: ubuntu-latest
+    outputs:
+      winget: ${{ steps.probe.outputs.winget }}
+      homebrew: ${{ steps.probe.outputs.homebrew }}
+      tag: ${{ steps.probe.outputs.tag }}
+    steps:
+      - name: Probe the package-manager tokens
+        id: probe
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          HOMEBREW_TOKEN: ${{ secrets.HOMEBREW_TOKEN }}
+          # Published release tag, or the dispatched/tag-push ref that produced it.
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag || github.ref_name }}
+        run: |
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [ -n "$WINGET_TOKEN" ]; then
+            echo "winget=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "winget=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::WINGET_TOKEN is not set — skipping the winget submission."
+          fi
+          if [ -n "$HOMEBREW_TOKEN" ]; then
+            echo "homebrew=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "homebrew=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::HOMEBREW_TOKEN is not set — skipping the cask bump (the tap stays hand-bumped)."
+          fi
+
+  winget:
+    needs: tokens
+    if: needs.tokens.outputs.winget == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # Takes version, URL and SHA-256 straight off the release's own NSIS asset,
+      # so packaging/winget/ never has to be bumped by hand. `-setup\.exe$`
+      # keeps the `.msi` and the updater `.sig` out of the manifest.
+      # `komac update` runs underneath, so the identifier must already exist in
+      # winget-pkgs — the first submission is manual (packaging/winget/README.md).
+      # (`vedantmgoyal2009` is the pre-rename owner of this action; GitHub still
+      # redirects it, and the action needs a *published* release — which is
+      # exactly what this trigger is.)
+      - name: Submit to winget-pkgs
+        uses: vedantmgoyal2009/winget-releaser@v2
+        with:
+          identifier: GKartist75.Wan2GP
+          installers-regex: '-setup\.exe$'
+          release-tag: ${{ needs.tokens.outputs.tag }}
+          token: ${{ secrets.WINGET_TOKEN }}
+
+  homebrew:
+    needs: tokens
+    if: needs.tokens.outputs.homebrew == 'true'
+    # macOS runner: `brew` — including the `bump-cask-pr` dev command — is
+    # preinstalled, and the cask is a macOS-only artifact anyway.
+    runs-on: macos-latest
+    env:
+      HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_TOKEN }}
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - name: Resolve version and .dmg asset
+        id: rel
+        env:
+          TAG: ${{ needs.tokens.outputs.tag }}
+        run: |
+          version="${TAG#v}"
+          # GitHub turns the spaces in the bundle's file name into dots on
+          # upload, so this is the release-asset spelling, not the local one.
+          dmg="Wan2GP.Desktop.Launcher.Tauri_${version}_aarch64.dmg"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${dmg}" >> "$GITHUB_OUTPUT"
+
+      # The cask starts life as `sha256 :no_check`; bump-cask-pr needs the real
+      # digest, and that only exists once the release is published.
+      - name: Checksum the .dmg
+        id: sha
+        env:
+          URL: ${{ steps.rel.outputs.url }}
+        run: |
+          dmg="$RUNNER_TEMP/wan2gp-cask.dmg"
+          curl -fsSL "$URL" -o "$dmg"
+          echo "sha256=$(shasum -a 256 "$dmg" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Set a git identity for the bump commit
+        run: |
+          git config --global user.name "GKartist75"
+          git config --global user.email "GKartist75@users.noreply.github.com"
+
+      # The tap belongs to the same account as the token, so there is nothing to
+      # fork: push the bump branch into the tap itself (`--no-fork`) and open the
+      # PR from there. A tap that cannot be reached is a configuration error and
+      # should fail loudly — only a missing secret is a skip.
+      - name: Bump the cask in the tap
+        env:
+          VERSION: ${{ steps.rel.outputs.version }}
+          SHA256: ${{ steps.sha.outputs.sha256 }}
+        run: |
+          brew tap GKartist75/homebrew-tap
+          brew bump-cask-pr wan2gp-desktop \
+            --version "$VERSION" \
+            --sha256 "$SHA256" \
+            --no-fork \
+            --no-browse

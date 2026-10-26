@@ -2,7 +2,7 @@ name: Build Artifacts
 
 # Bundles for Linux and macOS without touching releases or signing keys.
 # Built for the "I only have a Windows box" case: dispatch it, download the
-# artifacts from the run. Produces AppImage + deb + dmg (+ the raw .app).
+# artifacts from the run. Produces the AppImage, the .deb and the .dmg.
 #
 # Deliberately NOT the release workflow: no tag, no release, no updater
 # metadata, and `createUpdaterArtifacts` is forced off so no minisign key is
@@ -32,7 +32,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             bundles: appimage,deb
             artifact: linux-x86_64
@@ -86,6 +86,15 @@ jobs:
           find src-tauri/target/${{ matrix.target }}/release/bundle -type f \
             \( -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' -o -name '*.app.tar.gz' \) \
             -exec cp {} dist/ \;
+          # The Tauri bundler names files after productName ("Wan2GP Desktop
+          # Launcher Tauri"), which means every download needs quoting in a
+          # shell. These artifacts are downloaded by hand, so rename them;
+          # releases keep the bundle names because tauri-action writes
+          # latest.json and the .sig names from them.
+          for f in dist/*; do
+            n="dist/$(basename "$f" | sed 's/ /-/g; s/Desktop-Launcher-Tauri/Desktop-Launcher/')"
+            [ "$f" = "$n" ] || mv "$f" "$n"
+          done
           ls -la dist
 
       - uses: actions/upload-artifact@v4

@@ -592,8 +592,10 @@ mod tests {
 
     #[test]
     fn wheel_cache_dir_sits_next_to_the_triton_cache() {
+        // join() rather than a literal: the separator must follow the host, or
+        // this asserts Windows behaviour on the Linux/macOS CI legs.
         let d = wheel_cache_dir_for(Path::new(r"C:\Wan2GP"));
-        assert_eq!(d, Path::new(r"C:\Wan2GP\wheel-cache"));
+        assert_eq!(d, Path::new(r"C:\Wan2GP").join("wheel-cache"));
     }
 
     /// Network test, ignored by default: proves the real download → hash →

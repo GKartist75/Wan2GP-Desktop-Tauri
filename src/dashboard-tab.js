@@ -28,7 +28,8 @@ async function refreshDashboard() {
       const _cfg = await window.w2gp.configLoad().catch(() => ({}));
       const _et = $("embedModeTop");
       if (_et)
-        _et.value = _cfg && _cfg.embedMode === "iframe" ? "iframe" : "native";
+        _et.value = window.w2gp.effectiveEmbedMode(_cfg);
+        window.w2gp.gateRendererSelect(_et);
     } catch {}
     // Launch buttons only make sense when Wan2GP is actually installed
     try {
@@ -128,11 +129,17 @@ async function refreshDashboard() {
         if (el) el.classList.remove("installed");
       });
       // Kernel wheels section is independent — keep it rendered from whatever we got.
-      renderKernelWheels(
-        status.kernelWheels,
-        status.kernelProfile,
-        status.osKey,
-      );
+      // Platforms without kernel wheels (Apple Silicon) hide the card entirely.
+      if (window.w2gp?.capabilities?.kernelWheels !== false) {
+        renderKernelWheels(
+          status.kernelWheels,
+          status.kernelProfile,
+          status.osKey,
+        );
+      } else {
+        const kwCard = $("kernelWheelsSubsection");
+        if (kwCard) kwCard.style.display = "none";
+      }
       const spargeEl = $("specSparge");
       if (spargeEl) spargeEl.textContent = "—";
     } else {

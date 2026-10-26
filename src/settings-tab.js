@@ -226,15 +226,18 @@ $("embedModeTop")?.addEventListener("change", async () => {
     syncEmbedSwitchLocks();
     return;
   }
-  const val = $("embedModeTop")?.value === "iframe" ? "iframe" : "native";
+  const val = $("embedModeTop")?.value === "native" ? "native" : "iframe";
   try {
     const cfg = await window.w2gp.configLoad();
-    const prev = cfg.embedMode === "iframe" ? "iframe" : "native";
+    const prev = window.w2gp.effectiveEmbedMode(cfg);
     if (val === prev) return;
     cfg.embedMode = val;
     await window.w2gp.configSave(cfg);
     const mg = $("embedModeSelect");
-    if (mg) mg.value = val;
+    if (mg) {
+      mg.value = val;
+      window.w2gp.gateRendererSelect(mg);
+    }
     appendLog(
       `[*] Renderer set to ${val} (was ${prev}) — applies on Desktop launch`,
     );
@@ -253,7 +256,7 @@ $("embedModeSaveBtn")?.addEventListener("click", async () => {
   }
   const val = $("embedModeSelect")?.value === "native" ? "native" : "iframe";
   const cfg = await window.w2gp.configLoad();
-  const prev = cfg.embedMode === "iframe" ? "iframe" : "native";
+  const prev = window.w2gp.effectiveEmbedMode(cfg);
   cfg.embedMode = val;
   await window.w2gp.configSave(cfg);
   if (val === prev) {

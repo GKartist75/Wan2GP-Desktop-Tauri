@@ -15,13 +15,7 @@ pub fn open_folder(path: String, app: tauri::AppHandle) -> Result<(), String> {
     app.opener()
         .open_path(&path, None::<&str>)
         .map_err(|e| e.to_string())
-        .or_else(|_| {
-            silent_command("explorer")
-                .arg(&path)
-                .spawn()
-                .map(|_| ())
-                .map_err(|e| e.to_string())
-        })
+        .or_else(|_| crate::platform::current().open_path(&path))
 }
 #[tauri::command]
 pub async fn select_folder(app: tauri::AppHandle) -> Option<String> {
@@ -985,18 +979,11 @@ pub fn report_issue() -> serde_json::Value {
         let _ = std::fs::copy(&eq, bundle.join("error_queue.zip"));
     }
     let zip = get_data_dir().join(format!("report-{stamp}.zip"));
-    let zip_ok = silent_command("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            &format!(
-                "Compress-Archive -Path '{}\\*' -DestinationPath '{}' -Force",
-                bundle.display(),
-                zip.display()
-            ),
-        ])
-        .output()
-        .is_ok_and(|o| o.status.success());
+    // In-process deflate. The previous code shelled out to PowerShell
+    // (Windows) or `zip` (elsewhere); `zip` is NOT installed by default on
+    // Ubuntu or Fedora, so a Linux user's "Create report" silently produced
+    // no archive.
+    let zip_ok = zip_dir(&bundle, &zip).is_ok();
     let zip_path = if zip_ok {
         zip.to_string_lossy().to_string()
     } else {
@@ -1007,11 +994,49 @@ pub fn report_issue() -> serde_json::Value {
     } else {
         bundle.to_string_lossy().to_string()
     };
-    #[cfg(windows)]
-    {
-        let _ = silent_command("explorer").arg(&open_path).spawn();
-    }
+    let _ = crate::platform::current().open_path(&open_path);
     serde_json::json!({"ok": true, "success": true, "logLines": 0, "zipPath": zip_path, "bundleDir": bundle.to_string_lossy().to_string(), "hadErrorQueue": had})
+}
+
+/// Compress `dir` into `out` as a zip archive (deflate), preserving the
+/// directory tree with `/` separators. Cross-platform, no external binary.
+fn zip_dir(dir: &std::path::Path, out: &std::path::Path) -> Result<(), String> {
+    let file = std::fs::File::create(out).map_err(|e| format!("zip create: {e}"))?;
+    let mut zw = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    add_tree(&mut zw, dir, dir, opts)?;
+    zw.finish().map_err(|e| format!("zip finish: {e}"))?;
+    Ok(())
+}
+
+/// Recursive half of `zip_dir`: `root` is the archive root, `dir` the current
+/// directory. Unreadable entries are skipped rather than failing the whole
+/// report (a locked file must not cost the user the diagnostics).
+fn add_tree(
+    zw: &mut zip::ZipWriter<std::fs::File>,
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    opts: zip::write::SimpleFileOptions,
+) -> Result<(), String> {
+    let rd = std::fs::read_dir(dir).map_err(|e| format!("zip read {}: {e}", dir.display()))?;
+    for entry in rd.flatten() {
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(root)
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .replace('\\', "/");
+        if path.is_dir() {
+            zw.add_directory(format!("{rel}/"), opts)
+                .map_err(|e| e.to_string())?;
+            add_tree(zw, root, &path, opts)?;
+        } else if let Ok(mut f) = std::fs::File::open(&path) {
+            zw.start_file(rel, opts).map_err(|e| e.to_string())?;
+            std::io::copy(&mut f, zw).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 /// F11: list wgp_config backups newest-first.
@@ -1101,21 +1126,7 @@ pub fn create_desktop_shortcut() -> serde_json::Value {
     if !py.exists() {
         return serde_json::json!({"ok": false, "error": "Python not found"});
     }
-    let desktop = std::env::var("USERPROFILE")
-        .map_or(PathBuf::from("C:\\Users\\Public\\Desktop"), |p| {
-            PathBuf::from(p).join("Desktop")
-        });
-    let lnk = desktop.join("Wan2GP Tauri.lnk");
-    let ps = format!("$s=New-Object -ComObject WScript.Shell; $l=$s.CreateShortcut('{}'); $l.TargetPath='{}'; $l.Arguments='wgp.py'; $l.WorkingDirectory='{}'; $l.Description='Wan2GP Tauri'; $l.Save()", lnk.display(), py.display(), repo.display());
-    let ok = silent_command("powershell")
-        .args(["-NoProfile", "-Command", &ps])
-        .output()
-        .is_ok_and(|o| o.status.success());
-    if ok {
-        serde_json::json!({"ok": true, "success": true, "path": lnk.to_string_lossy().to_string()})
-    } else {
-        serde_json::json!({"ok": false, "error": "Failed to create shortcut"})
-    }
+    crate::platform::current().create_desktop_shortcut(&repo, &py)
 }
 // ── Desktop embed: iframe vs native child webview ──
 // Manage → Launch → "Desktop embed" persists `embedMode` in desktop-config.json:
@@ -1208,9 +1219,20 @@ fn move_file_verified(src: &Path, dst: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+/// Can this host composite a real child webview over the launcher page?
+/// Windows (WebView2) can; GTK/WKWebView put the child in the window's layout
+/// box, which halves the launcher page instead of overlaying it — there the
+/// iframe renderer is the only correct one.
+pub(crate) fn native_embed_supported() -> bool {
+    crate::platform::current().supports(crate::platform::Capability::NativeEmbed)
+}
+
 fn embed_mode(opts: Option<&serde_json::Value>) -> String {
     // Explicit frontend request wins (lets the UI detect a failed native
     // stand-up); otherwise fall back to the persisted Manage → Launch setting.
+    if !native_embed_supported() {
+        return "iframe".to_string();
+    }
     if let Some(m) = opts
         .as_ref()
         .and_then(|o| o.get("mode"))
@@ -1376,19 +1398,10 @@ pub fn get_log_history() -> serde_json::Value {
 }
 #[tauri::command]
 pub fn open_task_manager() -> Result<serde_json::Value, String> {
-    #[cfg(windows)]
-    {
-        std::process::Command::new("taskmgr.exe")
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(not(windows))]
-    {
-        silent_command("gnome-system-monitor")
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(serde_json::json!({"ok": true, "success": true}))
+    // The task-manager command is Windows-only by capability; the adapter
+    // refuses explicitly everywhere else instead of spawning some third-party
+    // monitor the user may not have installed.
+    crate::platform::current().open_task_manager()
 }
 // ui_mode persists across renderer reloads so a crash can restore the session.
 // get_crash_recovery_info reports pending:true only when the saved mode says a
@@ -1874,6 +1887,28 @@ pub(crate) fn shutdown_cleanup_full(app: &tauri::AppHandle) {
 mod report_tests {
     use super::redact_config_secrets;
 
+    /// The report bundle must not depend on a host binary: Windows has no
+    /// `zip`, and Ubuntu/Fedora do not install one. Round-trip a nested tree
+    /// through the in-process writer.
+    #[test]
+    fn zip_dir_preserves_nested_tree() {
+        let data = std::env::temp_dir().join(format!("wgp-zip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        let src = data.join("report");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("system-info.txt"), b"hello").unwrap();
+        std::fs::write(src.join("sub").join("nested.json"), b"{}").unwrap();
+        let out = data.join("out.zip");
+        super::zip_dir(&src, &out).expect("zip_dir");
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
+        let names: Vec<String> = (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .collect();
+        assert!(names.contains(&"system-info.txt".to_string()), "{names:?}");
+        assert!(names.contains(&"sub/nested.json".to_string()), "{names:?}");
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
     #[test]
     fn redacts_secret_keys_case_insensitive() {
         let v = serde_json::json!({
@@ -1905,6 +1940,25 @@ mod report_tests {
         let v = serde_json::json!({ "launchArgs": "--profile 4", "deepy_context_tokens": 32000 });
         let r = redact_config_secrets(&v);
         assert_eq!(r, v);
+    }
+
+    /// The renderer picker must never hand back "native" on a host that cannot
+    /// composite a child webview: GTK/WKWebView split the window instead of
+    /// overlaying, which squeezes the launcher page into half the height.
+    #[test]
+    fn native_renderer_is_refused_where_it_cannot_composite() {
+        use super::embed_mode;
+        let asked = serde_json::json!({"mode": "native"});
+        let supported =
+            crate::platform::current().supports(crate::platform::Capability::NativeEmbed);
+        assert_eq!(
+            embed_mode(Some(&asked)),
+            if supported { "native" } else { "iframe" }
+        );
+        if !supported {
+            // Persisted setting or not, the host cannot render a child webview.
+            assert_eq!(embed_mode(None), "iframe");
+        }
     }
 
     #[test]

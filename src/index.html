@@ -157,7 +157,7 @@
         </div>
         <div class="settings-section">
           <h3>Desktop</h3>
-          <label class="toggle-row"><input type="checkbox" id="autoStartToggle"> <span>Auto-start with Windows</span></label>
+          <label class="toggle-row"><input type="checkbox" id="autoStartToggle"> <span>Auto-start when you log in</span></label>
           <p class="token-hint">Launch Wan2GP Desktop automatically when you log in.</p>
           <div class="appear-slider" style="margin-top:8px">
             <label class="token-hint" for="windowModeSelect" style="min-width:88px">Window mode</label>
@@ -167,7 +167,7 @@
               <option value="fullscreen">Fullscreen (hides Windows chrome)</option>
             </select>
             <span class="appear-val" id="windowModeStatus"></span>
-            <div class="appear-slider" style="margin-top:8px">
+            <div class="appear-slider" style="margin-top:8px" data-requires="tritonRepair">
               <label class="token-hint" for="tritonCompilerSelect" style="min-width:88px">Triton compiler</label>
               <select id="tritonCompilerSelect" class="input" style="max-width:230px" title="Which C compiler Triton uses for its JIT stubs. TinyCC is the upstream default (no pin). Auto pins signed MSVC when installed, else TinyCC. MSVC always pins MSVC (warns if missing). Applies on next WanGP launch.">
                 <option value="tinycc">TinyCC (upstream default)</option>
@@ -427,7 +427,7 @@
             <h3>Headless batch (queue runner)</h3>
             <p class="token-hint">Process a saved queue without the web UI — overnight renders. Save the queue in WanGP first (<em>Save Queue</em> → <code>.zip</code>) or export settings (<code>.json</code>). Progress streams to the console; exit <code>0</code> = done, <code>1</code> = error.</p>
             <div class="token-field" style="margin-top:8px">
-              <input type="text" id="batchQueueInput" class="input" placeholder="C:\path\to\saved_queue.zip" style="max-width:420px" title="Saved queue (.zip) or settings (.json)">
+              <input type="text" id="batchQueueInput" class="input" placeholder="…/saved_queue.zip" style="max-width:420px" title="Saved queue (.zip) or settings (.json)">
               <input type="text" id="batchOutputInput" class="input" placeholder="Output folder (optional)" style="max-width:280px" title="Override output directory">
             </div>
             <div class="token-field" style="margin-top:8px">
@@ -568,8 +568,8 @@
             <button class="btn btn-ghost small" id="netUrlValidateBtn" title="Validate and stage --public-url">Validate &amp; stage</button>
           </div>
           <div class="token-field" style="margin-top:8px">
-            <input type="text" id="netCertInput" class="input" placeholder="C:\certs\wangp.pem" style="max-width:320px" title="TLS certificate file">
-            <input type="text" id="netKeyInput" class="input" placeholder="C:\certs\wangp-key.pem" style="max-width:320px" title="TLS private key file">
+            <input type="text" id="netCertInput" class="input" placeholder="…/wangp.pem" style="max-width:320px" title="TLS certificate file">
+            <input type="text" id="netKeyInput" class="input" placeholder="…/wangp-key.pem" style="max-width:320px" title="TLS private key file">
             <input type="number" id="netHttpsPortInput" class="input" placeholder="HTTPS port (optional)" min="1024" max="65535" style="width:170px" title="Serve HTTPS here and redirect HTTP">
             <button class="btn btn-ghost small" id="netTlsStageBtn" title="Stage --ssl-certfile/--ssl-keyfile/--https-port">Stage TLS</button>
           </div>
@@ -586,7 +586,7 @@
             <button class="btn btn-primary small" id="tsTritonSdpaBtn" title="Clear the Triton cache and fall back to SDPA attention">Clear + fall back to SDPA</button>
             <span class="token-hint" id="tsTritonStatus" style="margin-left:8px"></span>
           </div>
-          <div class="token-field" style="margin-top:8px" id="tsMsvcRow">
+          <div class="token-field" style="margin-top:8px" id="tsMsvcRow" data-requires="tritonRepair">
             <button class="btn btn-ghost small" id="tsMsvcInstallBtn" title="MSVC C++ toolchain for Triton JIT: downloads Microsoft's official VS 2022 Build Tools bootstrapper and runs it elevated with the C++ workload (a few GB, one-time). Without it Triton builds through its bundled unsigned TinyCC, which antivirus behavioral engines may block.">Install MSVC Build Tools</button>
             <button class="btn btn-ghost small" id="tsMsvcRecheckBtn" title="Re-check for an installed MSVC toolchain">Recheck</button>
             <span class="token-hint" id="tsMsvcStatus" style="margin-left:8px"></span>
@@ -714,7 +714,7 @@
         <div class="settings-section" style="margin-top:12px">
           <h3>Import finetune</h3>
           <div class="token-field">
-            <input type="text" id="libImportInput" class="input" placeholder="C:\path\to\shared-finetune.json" style="max-width:420px">
+            <input type="text" id="libImportInput" class="input" placeholder="…/shared-finetune.json" style="max-width:420px">
             <button class="btn btn-primary small" id="libImportBtn" title="Validate and copy this JSON into finetunes/">Import</button>
           </div>
           <p class="token-hint">Copies a shared <code>.json</code> into <code>finetunes/</code> after validating the filename and the <code>model</code> object — existing files are never overwritten. Then Refresh Model List in WanGP (or restart).</p>
@@ -778,7 +778,7 @@
               <label class="token-hint">Video Profile</label>
               <select id="memVideoProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="0">P0 — P4 transfers with no permanent Reserved RAM; Dynamic Preload keeps what fits in VRAM (much less RAM)</option>
+                <option value="0">P0 — AutoRAM/AutoVRAM: P4 transfers, RAM reserved only while a model runs (much less RAM); Default Preload is Dynamic</option>
                 <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM (fastest; most RAM &amp; VRAM)</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part (needs a lot of RAM)</option>
                   <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM (recommended for audio)</option>
@@ -793,7 +793,7 @@
               <label class="token-hint">Image Profile</label>
               <select id="memImageProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="0">P0 — P4 transfers with no permanent Reserved RAM; Dynamic Preload keeps what fits in VRAM (much less RAM)</option>
+                <option value="0">P0 — AutoRAM/AutoVRAM: P4 transfers, RAM reserved only while a model runs (much less RAM); Default Preload is Dynamic</option>
                 <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM (fastest; most RAM &amp; VRAM)</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part (needs a lot of RAM)</option>
                   <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM</option>
@@ -808,7 +808,7 @@
               <label class="token-hint">Audio Profile</label>
               <select id="memAudioProfile" class="input">
                 <option value="">— unset —</option>
-                <option value="0">P0 — P4 transfers with no permanent Reserved RAM; Dynamic Preload keeps what fits in VRAM</option>
+                <option value="0">P0 — AutoRAM/AutoVRAM: P4 transfers, RAM reserved only while a model runs; Default Preload is Dynamic</option>
                 <option value="1">P1 — P2 + Dynamic Preload; all models in Reserved RAM, extra layers stay in VRAM</option>
                 <option value="2">P2 — all in Reserved RAM, sent part by part</option>
                   <option value="3">P3 — P4 + Dynamic Preload; main models in Reserved RAM (recommended for audio)</option>
@@ -962,7 +962,7 @@
               <div class="mem-hint"><span id="recVideoPreloadMB" class="tag-rec">rec: —</span><span id="savedVideoPreloadMB" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
-              <label class="token-hint" title="Image steps are short, so the transfers set the speed — Dynamic keeps as much of the model in VRAM as each generation leaves free. Needs the MMGP Optimized allocator; only used on Profiles 2, 4 and 5 (4.5 counts as 4).">VRAM Preload — Image</label>
+              <label class="token-hint" title="Image steps are short, so the transfers set the speed — Dynamic keeps as much of the model in VRAM as each generation leaves free. Needs the MMGP Optimized allocator. The control exists on Profiles 0, 2, 4 and 5 only; P1/P3/P3+ are dynamic intrinsically and P4+ sends one part at a time.">VRAM Preload — Image</label>
               <select id="memImagePreload" class="input">
                 <option value="">— unset —</option>
                 <option value="default">Default</option>
@@ -977,7 +977,7 @@
               <div class="mem-hint"><span id="recImagePreloadMB" class="tag-rec">rec: —</span><span id="savedImagePreloadMB" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
-              <label class="token-hint" title="Shown by WanGP for Profiles 2, 4 and 5 only — Profiles 1, 3 and 3+ load whole models and have nothing to preload.">VRAM Preload — Audio</label>
+              <label class="token-hint" title="Shown by WanGP for Profiles 0, 2, 4 and 5 only — Profiles 1, 3 and 3+ are dynamic intrinsically and P4+ sends one part at a time.">VRAM Preload — Audio</label>
               <select id="memAudioPreload" class="input">
                 <option value="">— unset —</option>
                 <option value="default">Default (recommended for audio)</option>
@@ -1002,7 +1002,7 @@
               <div class="mem-hint"><span id="recLlmCpuCompute" class="tag-rec">rec: —</span><span id="savedLlmCpuCompute" class="tag-saved">saved: —</span></div>
             </div>
             <div class="mem-field">
-              <label class="token-hint" title="Share of RAM that pinning may lock. Auto is 40% on Windows and 60% on Linux (upstream lowered Linux from 80% in v17.10). WanGP's own slider stops at 80, so this stops there too. Lower it and keep Smart Memory Pinning On if you are short of RAM.">Reserved RAM for Pinning (% — 0 = Auto)</label>
+              <label class="token-hint" title="Share of RAM that pinning may lock. Auto is 40% on Windows and 60% on Linux (upstream lowered Linux from 80% in v17.10). WanGP's own slider stops at 80, so this stops there too. Lower it and keep Smart Memory Pinning On if you are short of RAM. Since mmgp 4.4 (WanGP 18.83) this is also the budget MMGP maps weights out of: the Qwen3.5 prompt-enhancer token table is read by the GPU in place from page-locked RAM, and too small a share leaves it in VRAM instead (the log says [MMGP] Not enough reserved RAM left to map).">Reserved RAM (% — 0 = Auto)</label>
               <input type="number" id="memReservedPct" class="input" min="0" max="80" step="5" placeholder="0 = Auto">
               <div class="mem-hint"><span id="recReservedPct" class="tag-rec">rec: —</span><span id="savedReservedPct" class="tag-saved">saved: —</span></div>
             </div>
@@ -1158,7 +1158,7 @@
         <button class="btn-icon" id="stopDeepyBtn" title="Stop Deepy Web only (keeps Wan2GP running)">
           <svg viewBox="0 0 24 24" width="14" height="14"><rect x="6" y="6" width="12" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><text x="12" y="15.5" text-anchor="middle" font-size="8" fill="currentColor">D</text></svg>
         </button>
-        <button class="btn btn-ghost small" id="taskMgrBtn" title="Open Windows Task Manager">
+        <button class="btn btn-ghost small" id="taskMgrBtn" data-requires="taskManager" title="Open the Windows Task Manager">
           <svg viewBox="0 0 24 24" width="14" height="14"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="9" x2="16" y2="9" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="13" x2="14" y2="13" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="17" x2="12" y2="17" stroke="currentColor" stroke-width="1.5"/></svg>
         </button>
         <button class="btn-icon theme-toggle" id="themeToggleBtn" title="Toggle dark/light mode">
@@ -1201,7 +1201,7 @@
     <div id="modelsWarnBanner" class="update-banner models-warn hidden">
       <div class="update-info">
         <span class="update-badge" style="background:var(--warning,#d9a441)">MODELS</span>
-        <span id="modelsWarnText">Your Wan2GP main folder and checkpoints/LoRAs are inside a roaming AppData profile. Move them to a fast, dedicated drive (e.g. C:\Wan2GP and C:\Wan2GP-Models) for speed and to avoid profile bloat.</span>
+        <span id="modelsWarnText">Your Wan2GP main folder and checkpoints/LoRAs are inside a roaming profile. Move them to a fast, dedicated location outside it for speed and to avoid profile bloat.</span>
       </div>
       <div class="models-warn-actions">
         <button id="modelsWarnMigrateBtn" class="btn btn-primary small hidden" title="Move the install and model folders out of AppData">Migrate to new location</button>
@@ -1240,7 +1240,7 @@
           </div>
         </div>
         <!-- GPU Kernel Wheels FIRST: sync state visible without scrolling (RTX 20-50 show nunchaku/gguf, RTX 50 adds lightx2v; GTX10/AMD/Apple show the friendly note). IDs unchanged so app.js renderKernelWheels works as-is. -->
-        <div class="card" id="kernelWheelsCard">
+        <div class="card" id="kernelWheelsCard" data-requires="kernelWheels">
           <div class="card-header">
             <span class="card-title">GPU Kernel Wheels</span>
             <span class="env-type-tag" id="kernelProfileTag"></span>
@@ -1344,6 +1344,14 @@
             <label class="deepy-mode-opt"><input type="radio" name="deepyMode" value="zero"> Deepy Zero <span class="deepy-mode-sub">local model</span></label>
             <label class="deepy-mode-opt"><input type="radio" name="deepyMode" value="prime"> Deepy Prime <span class="deepy-mode-sub">remote / local LLM</span></label>
           </div>
+          <!-- Start/browser sit with the mode they act on: the same Deepy Web
+               process serves whichever mode is picked, and the topbar LED
+               mirrors it. Its port, auth and URL list stay under Phone &
+               Remote access, next to Stop. -->
+          <div class="deepy-actions" style="margin-top:6px" data-keep-visible>
+            <button class="btn btn-primary small" id="deepyWebStartBtn" title="Start the Deepy Web server (wgp.py --deepy-server) on the port set under Phone &amp; Remote access" data-keep-visible>Start Deepy Web</button>
+            <button class="btn btn-primary small" id="openDeepyBrowserBtn" title="Open Deepy in your system browser" data-keep-visible>Open in browser</button>
+          </div>
           <!-- Local model (Prompt Enhancer) selector — shown for Disabled/Zero,
                hidden for Prime. Options come from DEEPY_ENHANCER_OPTIONS in app.js. -->
           <div id="deepyEnhancerWrap" style="margin-top:10px; display:none">
@@ -1368,12 +1376,25 @@
           <!-- Deepy KV Cache Quantization -->
           <div id="deepyKvCacheWrap" style="margin-top:10px">
             <div class="deepy-sub-label">Deepy KV Cache Quantization</div>
-            <select id="deepyKvCacheSelect" class="input" style="margin-top:4px;min-width:260px">
-              <option value="auto">Auto (default)</option>
-              <option value="int8">INT8</option>
-              <option value="q4">Q4 (needs GGUF kernels 1.0.29+)</option>
-            </select>
-            <p class="path-hint" style="margin-top:6px">Quantized KV cache for Deepy. Auto lets WanGP decide. Written as <code>deepy_kv_cache_quantization</code>.</p>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px">
+              <select id="deepyKvCacheSelect" class="input" style="min-width:290px">
+                <option value="auto">Auto (INT8 once GGUF kernels 1.0.13+ are installed)</option>
+                <option value="">Disabled (BF16)</option>
+                <option value="int8">INT8 (about half the KV-cache VRAM)</option>
+                <option value="int8_q4">INT8 keys, Q4 values (-24% vs INT8)</option>
+                <option value="q6">Q6 keys and values (-24% vs INT8)</option>
+                <option value="q6_q4">Q6 keys, Q4 values (-35% vs INT8)</option>
+                <option value="q4_1">Q4.1 keys and values (-41% vs INT8)</option>
+                <option value="q4">Q4 keys and values (-47% vs INT8)</option>
+              </select>
+              <select id="deepyKvCacheExactSelect" class="input" style="min-width:240px;display:none" title="Kept at INT8 precision beside the quantized cache: the sink (first page of each sequence) and the ring of the most recent tokens.">
+                <option value="s1r1024">sink 1 page + last 1024 tokens (default)</option>
+                <option value="s1r256">sink 1 page + last 256 tokens</option>
+                <option value="s0r1024">no sink + last 1024 tokens</option>
+                <option value="s0r0">no exact tokens (smallest cache)</option>
+              </select>
+            </div>
+            <p class="path-hint" style="margin-top:6px">Quantized KV cache for Deepy. Auto lets WanGP decide: INT8 with GGUF kernels 1.0.13+, BF16 without. The second dropdown is the exact-precision overlay the mixed layouts keep. Written as <code>deepy_kv_cache_quantization</code>.</p>
           </div>
           <div id="deepyPrimeOnly" style="display:none">
             <div class="deepy-cost-note">
@@ -1608,11 +1629,11 @@
                         </div>
                         <div class="form-row" style="margin-top:6px">
                           <label class="path-hint" for="deepyWebCertInput">Cert .pem</label>
-                          <input id="deepyWebCertInput" type="text" style="width:220px" placeholder="C:\certs\lan-cert.pem">
+                          <input id="deepyWebCertInput" type="text" style="width:220px" placeholder="…/lan-cert.pem">
                         </div>
                         <div class="form-row" style="margin-top:6px">
                           <label class="path-hint" for="deepyWebKeyInput">Key .key</label>
-                          <input id="deepyWebKeyInput" type="text" style="width:220px" placeholder="C:\certs\lan-cert-key.pem">
+                          <input id="deepyWebKeyInput" type="text" style="width:220px" placeholder="…/lan-cert-key.pem">
                         </div>
                         <div class="form-row" style="margin-top:6px">
                           <button class="btn btn-ghost small" id="deepyWebCertBring">Use these files</button>
@@ -1634,11 +1655,9 @@
                     </details>
                   </div>
 <!-- Step 4 · Start -->
-              <div class="deepy-sub-label" style="margin-top:12px">4 · Start</div>
+              <div class="deepy-sub-label" style="margin-top:12px">4 · Server controls</div>
 <div class="deepy-actions" style="margin-top:6px">
-                <button class="btn btn-primary" id="deepyWebStartBtn" data-keep-visible>Start Deepy Web</button>
-                <button class="btn btn-primary small" id="openDeepyBrowserBtn" title="Open Deepy in your system browser" data-keep-visible>Open in browser</button>
-                <button class="btn btn-ghost" id="deepyWebStopBtn" data-keep-visible>Stop</button>
+                <button class="btn btn-primary" id="deepyWebStopBtn" data-keep-visible>Stop</button>
                 <button class="btn btn-ghost" id="deepyWebOutputsBtn" title="Open the shared Wan2GP outputs folder in Explorer">Outputs folder</button>
               </div>
               <div style="margin-top:8px">
@@ -1717,7 +1736,7 @@
 
             <!-- Optional DLSS5 runtime (upstream scripts/install_dlss5.ps1). Consent
              ("I ACCEPT") is taken in the modal below — never skipped. -->
-        <div class="card" id="dlss5Card" style="margin-top:10px">
+        <div class="card" id="dlss5Card" data-requires="dlss" style="margin-top:10px">
           <div class="card-header">
             <span class="card-title">DLSS 5 (optional runtime)</span>
           </div>
@@ -1819,7 +1838,7 @@
             Verify / Repair Wan2GP files
           </button>
           <!-- Desktop shortcut -->
-          <button class="action-item" id="desktopShortcutBtn" title="Create a Windows desktop shortcut for the launcher">
+          <button class="action-item" id="desktopShortcutBtn" data-requires="desktopShortcut" title="Create a desktop shortcut for the launcher">
             <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="12" y1="8" x2="12" y2="16"/></svg>
             Create Desktop Shortcut
           </button>
@@ -1950,7 +1969,7 @@
           <button class="btn btn-ghost small" id="clearAppDataPath" title="Reset to default">✕</button>
         </div>
         <div id="installRootWarn" class="install-root-warn hidden"></div>
-        <p class="path-hint">Where the Wan2GP repo, Python venv/env, and settings live. Default <code>C:\Wan2GP</code> on a fast SSD with 50+ GB free. Keep it OUT of AppData so it isn't buried in a roaming profile. Picking a bare drive root automatically uses <code>&lt;root&gt;\Wan2GP</code>.</p>
+        <p class="path-hint">Where the Wan2GP repo, Python venv/env, and settings live. The default in the field above sits on a fast drive with 50+ GB free. Keep it OUT of a roaming profile (<code>AppData</code> on Windows, a synced home folder elsewhere). Picking a bare drive root automatically appends Wan2GP.</p>
         <div id="moveToPreferredWrap" class="migrate-note hidden">
           <span class="migrate-warn">⚠ Your Wan2GP data is currently inside your roaming AppData profile (<code id="currentDataDirPath">…</code>).</span>
           <button class="btn btn-primary small" id="moveToPreferredBtn" title="Move Wan2GP data out of the roaming profile to the new location">Migrate to new location</button>
@@ -1980,7 +1999,7 @@
           <button class="btn btn-ghost small" id="clearOutputPath" title="Reset to default">✕</button>
         </div>
         <p class="path-hint">Where generated videos/images/audio are saved.</p>
-        <p class="path-hint path-hint-warn">⚠ Model checkpoints &amp; LoRAs are large (tens–hundreds of GB). Store them on a fast, non-system drive — <strong>not</strong> in AppData/Roaming, which roams with your profile and can bloat or sync unexpectedly. Default <code>C:\Wan2GP-Models\ckpts</code> keeps them separate from the repo.</p>
+        <p class="path-hint path-hint-warn">⚠ Model checkpoints &amp; LoRAs are large (tens–hundreds of GB). Store them on a fast drive, outside the repo and outside any roaming profile (<code>AppData\Roaming</code> on Windows, a synced home folder elsewhere) — the default shown above keeps them separate from the repo.</p>
       </div>
 
       <!-- Target-folder verdict (classify_target): checks first, Install button after -->
@@ -2264,6 +2283,7 @@
        sandboxed preloads can only require whitelisted modules). Same module the
        node --test suite requires, so escaping logic lives in one place. -->
   <!-- Tauri shim: provides window.w2gp via invoke() — ponytail: one file replaces 9600L preload.js -->
+  <script src="services/platform-gate.js" defer></script>
   <script src="w2gp.js" defer></script>
   <!-- Vendored Nayuki QR-Code-generator (MIT) for the Deepy Web Phone-URL QR — offline, no npm chain -->
   <script src="qrcodegen.js" defer></script>
@@ -2273,6 +2293,7 @@
   <script src="services/launch-args.js" defer></script>
   <script src="services/mcp-command.js" defer></script>
   <script src="services/prompt-tools.js" defer></script>
+  <script src="services/launcher-update.js" defer></script>
   <script src="app.js" defer></script>
   <!-- After app.js: refreshLLMEngines reads globals ($/showToast/getLLMEngines) that app.js defines. All defer scripts run in document order, so this ordering is the contract. -->
   <script src="llm-engines-tab.js" defer></script>

@@ -14,9 +14,14 @@
 // clickable toast.
 
 // What pressing an update control should do right now: "" = run a check,
-// "download" = fetch the update, "install" = restart into it.
+// "download" = fetch the update, "install" = swap it in, "open" = this copy
+// cannot be patched in place so the control opens the download page, and
+// "relaunch" = the new file is written and the process is still the old one.
 let updateAction = "";
 let updateVersion = "";
+// Last `unmanaged` payload: {version, installKind, url, command, ...}. Kept so
+// the download action and the Manage command survive a re-render.
+let updateRelease = null;
 // One announcement per moment per session: the toast is an event, not a
 // fixture, so repeating it on every background poll would be nagging.
 let announcedAvailable = false;
@@ -29,6 +34,8 @@ let announcedReady = false;
 function runUpdateAction(e) {
   if (updateAction === "install") window.w2gp.installUpdate();
   else if (updateAction === "download") window.w2gp.downloadUpdate();
+  else if (updateAction === "open") openLauncherDownload();
+  else if (updateAction === "relaunch") window.w2gp.relaunchApp();
   else window.w2gp.checkUpdate(e && e.shiftKey ? { local: true } : undefined);
 }
 
@@ -72,6 +79,69 @@ function setDesktopUpdateIndicator(on) {
   }
 }
 
+/**
+ * This copy cannot be swapped in place: open the page for its install kind.
+ * A source build has no asset — its `url` is the releases page, which is the
+ * only thing that helps.
+ */
+function openLauncherDownload() {
+  const url = window.launcherUpdate
+    ? window.launcherUpdate.downloadUrl(updateRelease)
+    : (updateRelease && (updateRelease.url || updateRelease.htmlUrl)) || "";
+  if (!url) return;
+  try {
+    window.w2gp.openExternal(url);
+  } catch {}
+}
+
+/**
+ * Where a shell step is needed (.deb/.rpm), Manage carries the command and a
+ * copy button — the launcher never runs a package manager itself, and never
+ * asks for a password.
+ */
+function renderManageCommand(release) {
+  const status = $("manageUpdateDesktopStatus");
+  if (!status) return;
+  const cmd = release ? updateCommandText(release) : "";
+  let btn = $("manageUpdateCopyCmdBtn");
+  if (!cmd) {
+    if (btn) btn.remove();
+    return;
+  }
+  if (!btn) {
+    btn = document.createElement("button");
+    btn.id = "manageUpdateCopyCmdBtn";
+    btn.className = "btn btn-ghost small";
+    btn.style.marginTop = "6px";
+    btn.title = "Copy the command that installs this download";
+    btn.addEventListener("click", () => {
+      const text = btn.dataset.cmd || "";
+      const done = (ok) => {
+        btn.textContent = ok ? "Copied ✓" : "Copy failed";
+        setTimeout(() => {
+          btn.textContent = "Copy install command";
+        }, 1500);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText)
+        navigator.clipboard
+          .writeText(text)
+          .then(() => done(true), () => done(false));
+      else done(false);
+    });
+    status.insertAdjacentElement("afterend", btn);
+  }
+  btn.dataset.cmd = cmd;
+  btn.textContent = "Copy install command";
+}
+
+function updateCommandText(release) {
+  return window.launcherUpdate
+    ? window.launcherUpdate.commandFor(release)
+    : release && release.command
+      ? String(release.command)
+      : "";
+}
+
 window.w2gp.onUpdateStatus((status) => {
   // Mirror to Manage → Updates tab if present
   const mS = $("manageUpdateDesktopStatus");
@@ -92,6 +162,14 @@ window.w2gp.onUpdateStatus((status) => {
         "v" +
         status.version +
         " ready — press this button to install & restart";
+    else if (status.status === "unmanaged")
+      mS.textContent =
+        window.launcherUpdate && window.launcherUpdate.statusLine
+          ? window.launcherUpdate.statusLine(status)
+          : "v" + status.version + " available";
+    else if (status.status === "installed")
+      mS.textContent =
+        "v" + status.version + " installed — restart the launcher";
     else if (status.status === "up-to-date") mS.textContent = "Up to date ✓";
     else if (status.status === "error")
       mS.textContent = "Error: " + (status.message || "");
@@ -142,8 +220,49 @@ window.w2gp.onUpdateStatus((status) => {
           );
       }
       break;
+    case "unmanaged":
+      // No in-place install is possible here (source build, or a release with
+      // no asset for this platform). The control becomes a download link and
+      // Manage carries the exact shell step when one is needed.
+      updateVersion = status.version;
+      updateRelease = status;
+      updateAction = "open";
+      setDesktopUpdateIndicator(true);
+      setUpdateLabel(
+        `v${status.version} — ${
+          window.launcherUpdate
+            ? window.launcherUpdate.actionText(status.installKind)
+            : "Download"
+        }`,
+      );
+      renderManageCommand(status);
+      if (!announcedAvailable) {
+        announcedAvailable = true;
+        showToast(
+          `UPDATE · v${status.version} available — click to ${
+            status.installKind === "source" ? "open releases" : "download"
+          }`,
+          () => openLauncherDownload(),
+          "update",
+        );
+      }
+      break;
+    case "installed":
+      // Unix: the plugin swapped the file but cannot restart this process.
+      updateVersion = status.version;
+      updateAction = "relaunch";
+      setDesktopUpdateIndicator(true);
+      setUpdateLabel(`v${status.version} installed — click to restart`);
+      showToast(
+        `UPDATE · v${status.version} installed — click to restart the launcher`,
+        () => window.w2gp.relaunchApp(),
+        "update",
+      );
+      break;
     case "up-to-date":
       updateAction = "";
+      updateRelease = null;
+      renderManageCommand(null);
       setDesktopUpdateIndicator(false);
       setUpdateLabel("");
       // Console trace so the background boot check (30s + every 5h) leaves
@@ -155,6 +274,8 @@ window.w2gp.onUpdateStatus((status) => {
       break;
     case "error":
       updateAction = "";
+      updateRelease = null;
+      renderManageCommand(null);
       setDesktopUpdateIndicator(false);
       setUpdateLabel("");
         showToast(

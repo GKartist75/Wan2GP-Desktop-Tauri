@@ -10,10 +10,10 @@ history see [CHANGELOG.md](../CHANGELOG.md).
 flowchart TB
     subgraph Launcher["Tauri launcher (this repo)"]
         UI["Dashboard UI\n(src/: app.js, w2gp.js, services/)"]
-        BE["Backend (src-tauri/src/)\ninstall · launch · status · features · base\nplugins · config · hw · updates · wheels\namd · system · troubleshoot · electron\ndeepy_web · log_server"]
+        BE["Backend (src-tauri/src/)\ninstall · launch · status · features · base\nplugins · config · hw · updates · wheels\namd · system · troubleshoot · electron\ndeepy_web · log_server\nplatform/{windows,linux,macos,unix}"]
         UI <-->|invoke / events| BE
     end
-    subgraph Machine["Windows machine"]
+    subgraph Machine["Host machine (Windows / Linux / macOS)"]
         PREREQ["Prerequisites\ngit · uv · python · conda"]
         ENV["Environments\n(base = repo folder)"]
         WAN2GP["Wan2GP (upstream git)\nwgp.py + setup.py + setup_config.json"]
@@ -38,6 +38,14 @@ except where upstream lags its own docs (GGUF floor), declares data nothing
 consumes (HSA override), or ships a template that breaks its own installs
 (conda `conda run` re-quoting corrupts wheel URLs → direct-pip patch); all
 are documented at the call site, drift-refusing, and auto-follow upstream flips.
+
+Platform rule: **one trait, three adapters.** `src-tauri/src/platform/` holds
+`windows.rs`, `linux.rs`, `macos.rs` and the shared `unix.rs` (ss/lsof/ps); each
+implements the same `Platform` trait — GPU probe, port owner, process
+listing/kill, path opener, shortcut, auto-start — and answers
+`supports(Capability)`. `src/services/platform-gate.js` mirrors that map in the
+renderer and hides what the host cannot honour (`data-requires`), so a control
+never appears where it would only fail. See [PLATFORMS.md](PLATFORMS.md).
 
 Tooling rule: **never depend on PATH.** uv lives owned in `<dataDir>\.tools`
 (self-updating receipted copy); env interpreters, git/conda/python resolve to

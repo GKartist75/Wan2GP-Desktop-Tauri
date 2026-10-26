@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
+#
+# Version manifest for the Wan2GP Desktop Launcher.
+#
+# These three files are the *shape* of the package, kept in this repo so the
+# submission is reviewable next to the code it packages. They are NOT what users
+# install: winget only ever reads the copy in microsoft/winget-pkgs. Bumping
+# PackageVersion here does nothing on its own — see README.md in this folder.
+PackageIdentifier: GKartist75.Wan2GP
+PackageVersion: 0.10.25
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0

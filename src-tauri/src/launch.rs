@@ -139,6 +139,7 @@ pub(crate) fn build_wgp_args(base: &WgpLaunchBase) -> Vec<String> {
 }
 static TERMINAL_TITLE: std::sync::LazyLock<std::sync::Mutex<Option<String>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn terminal_title() -> Option<String> {
     TERMINAL_TITLE.lock().ok().and_then(|g| g.clone())
 }
@@ -301,6 +302,7 @@ fn terminal_server_command(py: &str, args: &[String]) -> String {
 // Nine wires (same env/args as hidden launch, plus the no-GPU open mode) —
 // kept flat to mirror the launch() call-site locals; allowed by policy.
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(windows), allow(unused_variables))]
 fn launch_in_terminal(
     app: tauri::AppHandle,
     repo: &Path,
@@ -461,9 +463,9 @@ fn launch_in_terminal(
     }
     #[cfg(not(windows))]
     {
-        let _ = (cfg, hf_token, claude_key, no_gpu);
+        let _ = no_gpu;
         mutating_done();
-        return Err("External terminal mode is Windows-only in this build".into());
+        Err("External terminal mode is Windows-only in this build".into())
     }
 }
 #[tauri::command]
@@ -805,9 +807,8 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     }
     emit(&format!("[*] Python: {py}\n"));
     emit(&format!("[*] Port: {port}\n"));
-    use tauri_plugin_shell::ShellExt;
     // ponytail: PYTHONUNBUFFERED for streaming logs (tqdm), plus HF_TOKEN/claude key
-    let mut cmd = app.shell().command(&py);
+    let mut cmd = crate::base::shell_command(&app, &py);
     cmd = cmd.args(&args).current_dir(&repo);
     // shell plugin env() — if not available, fallback to std env (child inherits)
     // tauri-plugin-shell 2.x supports .env() — use it when available
@@ -1250,19 +1251,7 @@ fn kill_pid(pid: u32, killed: &mut Vec<u32>) {
     if pid == 0 || pid == std::process::id() || killed.contains(&pid) {
         return;
     }
-    #[cfg(windows)]
-    {
-        let _ = silent_command("taskkill")
-            .args(["/pid", &pid.to_string(), "/f", "/t"])
-            .output();
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = silent_command("kill")
-            .arg("-9")
-            .arg(pid.to_string())
-            .output();
-    }
+    crate::platform::current().kill_pid(pid);
     killed.push(pid);
 }
 /// Wan2GP ports: configured serverPort + the 7860/7861 defaults. Shared
@@ -1324,41 +1313,7 @@ fn process_signature(pid: u32) -> Option<(String, String)> {
     if pid == 0 || pid == std::process::id() {
         return None;
     }
-    #[cfg(windows)]
-    {
-        let ps = format!(
-"Get-CimInstance Win32_Process -Filter \"ProcessId='{pid}'\" | ForEach-Object {{ $_.ExecutablePath + '|' + $_.CommandLine }}"
-);
-        let o = silent_command("powershell")
-            .args(["-NoProfile", "-Command", &ps])
-            .output()
-            .ok()?;
-        if !o.status.success() {
-            return None;
-        }
-        let line = String::from_utf8_lossy(&o.stdout).trim().to_string();
-        if line.is_empty() {
-            return None;
-        }
-        let mut parts = line.splitn(2, '|');
-        match (parts.next(), parts.next()) {
-            (Some(exe), Some(cmd)) if !cmd.trim().is_empty() => {
-                Some((exe.to_string(), cmd.to_string()))
-            }
-            _ => None,
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let cmd = std::fs::read_to_string(format!("/proc/{pid}/cmdline"))
-            .ok()
-            .map(|s| s.replace('\0', " ").trim().to_string())
-            .filter(|s| !s.is_empty())?;
-        let exe = std::fs::read_link(format!("/proc/{pid}/exe"))
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
-        Some((exe, cmd))
-    }
+    crate::platform::current().process_signature(pid)
 }
 /// Close-path guard: never ourselves, never PID 0. Origin is checked
 /// separately via is_ours_process — this is only the sanity gate.
@@ -1378,72 +1333,16 @@ pub(crate) fn close_port_sweep() -> Vec<u32> {
     let tracked = WANGP_PID.lock().ok().and_then(|g| *g);
     // One scan: (pid, process name, port) for EVERY listener on our
     // ports — no owner pre-filter; origin is decided per PID below.
-    let mut listeners: Vec<(u32, String, u64)> = Vec::new();
-    #[cfg(windows)]
-    {
-        let list = sports
-            .iter()
-            .map(|p| p.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-        let ps = format!("Get-NetTCPConnection -LocalPort {list} -State Listen | ForEach-Object {{ $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p) {{ $p.Id.ToString() + '|' + $p.ProcessName + '|' + $_.LocalPort }} }}");
-        match silent_command("powershell")
-            .args(["-NoProfile", "-Command", &ps])
-            .output()
-        {
-            Ok(o) if o.status.success() => {
-                for line in String::from_utf8_lossy(&o.stdout).lines() {
-                    let mut parts = line.splitn(3, '|');
-                    if let (Some(pid_s), Some(name), Some(port_s)) =
-                        (parts.next(), parts.next(), parts.next())
-                    {
-                        if let (Ok(pid), Ok(port)) =
-                            (pid_s.trim().parse::<u32>(), port_s.trim().parse::<u64>())
-                        {
-                            listeners.push((pid, name.trim().to_string(), port));
-                        }
-                    }
-                }
-            }
-            // Exit 1 + "No matching" = ports free (the CLEAN case) — silent.
-            Ok(o) => {
-                let code = o.status.code().unwrap_or(-1);
-                let err: String = String::from_utf8_lossy(&o.stderr)
-                    .chars()
-                    .take(200)
-                    .collect();
-                if !(code == 1 && err.contains("No matching")) {
-                    crate::base::push_log(
-                        &format!("[stop] CLOSE sweep scan failed (exit {code}): {err}\n"),
-                        "launch",
-                    );
-                }
-            }
-            Err(e) => crate::base::push_log(
-                &format!("[stop] CLOSE sweep scan spawn failed: {e}\n"),
-                "launch",
-            ),
+    let listeners = match crate::platform::current().port_listeners(&sports) {
+        Ok(v) => v,
+        Err(e) => {
+            crate::base::push_log(&format!("[stop] CLOSE sweep scan failed: {e}\n"), "launch");
+            Vec::new()
         }
-    }
-    #[cfg(not(windows))]
-    {
-        for port in &sports {
-            if let Ok(o) = silent_command("lsof")
-                .args(["-ti", &format!("tcp:{port}")])
-                .output()
-            {
-                if o.status.success() {
-                    for line in String::from_utf8_lossy(&o.stdout).lines() {
-                        if let Ok(pid) = line.trim().parse::<u32>() {
-                            listeners.push((pid, String::new(), *port));
-                        }
-                    }
-                }
-            }
-        }
-    }
+    };
     let mut killed: Vec<u32> = Vec::new();
-    for (pid, name, port) in listeners {
+    for l in listeners {
+        let (pid, name, port) = (l.pid, l.name, l.port);
         if !close_sweep_should_kill(pid) || killed.contains(&pid) {
             continue;
         }
@@ -1505,19 +1404,7 @@ pub(crate) fn wangp_running() -> bool {
 pub(crate) fn stop_wangp_fast() {
     if let Some(pid) = WANGP_PID.lock().ok().and_then(|g| *g) {
         if pid != 0 && pid != std::process::id() {
-            #[cfg(windows)]
-            {
-                let _ = silent_command("taskkill")
-                    .args(["/pid", &pid.to_string(), "/f", "/t"])
-                    .output();
-            }
-            #[cfg(not(windows))]
-            {
-                let _ = silent_command("kill")
-                    .arg("-9")
-                    .arg(pid.to_string())
-                    .output();
-            }
+            crate::platform::current().kill_pid(pid);
         }
     }
     #[cfg(windows)]
@@ -1559,66 +1446,20 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
     // the old repo-path-only filter).
     let repo_pre = wangp_repo_prefix();
     let mut killed: Vec<u32> = Vec::new();
-    // One scan pass: all python.exe with wgp.py in the command line.
-    // Returns (pid, exe_path, cmdline); filtering happens in Rust (exact,
-    // case-insensitive — no PowerShell quoting pitfalls). Failures are LOUD:
+    // One scan pass: every process whose command line mentions wgp.py. The
+    // adapter owns the query (WMI/PowerShell on Windows, pgrep on Unix) and
+    // origin filtering happens in Rust (exact, case-insensitive). The marker
+    // is the FILE NAME, not the absolute path, so a server started with a
+    // relative `wgp.py` argv (cwd = repo) is still found. Failures are LOUD:
     // a silently-empty scan is exactly how orphans used to survive Stop.
-    let scan = || -> Vec<(u32, String, String)> {
-        let mut out = Vec::new();
-        #[cfg(windows)]
-        {
-            // python.exe OR pythonw.exe: windowed interpreters have no console
-            // but run our server just the same (missed by the old filter).
-            let ps = "Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='pythonw.exe'\" | Where-Object { $_.CommandLine -like '*wgp.py*' } | ForEach-Object { $_.ProcessId + '|' + $_.ExecutablePath + '|' + $_.CommandLine }";
-            match silent_command("powershell")
-                .args(["-NoProfile", "-Command", ps])
-                .output()
-            {
-                Ok(o) if o.status.success() => {
-                    for line in String::from_utf8_lossy(&o.stdout).lines() {
-                        let mut parts = line.splitn(3, '|');
-                        if let (Some(pid_s), Some(exe), Some(cmd)) =
-                            (parts.next(), parts.next(), parts.next())
-                        {
-                            if let Ok(pid) = pid_s.trim().parse::<u32>() {
-                                out.push((pid, exe.to_string(), cmd.to_string()));
-                            }
-                        }
-                    }
-                }
-                Ok(o) => crate::base::push_log(
-                    &format!(
-                        "[stop] WMI scan failed (exit {}): {}\n",
-                        o.status.code().unwrap_or(-1),
-                        String::from_utf8_lossy(&o.stderr)
-                            .chars()
-                            .take(300)
-                            .collect::<String>()
-                    ),
-                    "launch",
-                ),
-                Err(e) => {
-                    crate::base::push_log(&format!("[stop] WMI scan spawn failed: {e}\n"), "launch")
-                }
+    let scan = || -> Vec<crate::platform::ProcessInfo> {
+        match crate::platform::current().scan_processes("wgp.py") {
+            Ok(v) => v,
+            Err(e) => {
+                crate::base::push_log(&format!("[stop] process scan failed: {e}\n"), "launch");
+                Vec::new()
             }
         }
-        #[cfg(not(windows))]
-        {
-            let pat = get_repo_dir().join("wgp.py").to_string_lossy().to_string();
-            if let Ok(o) = silent_command("pgrep").args(["-af", &pat]).output() {
-                if o.status.success() {
-                    for line in String::from_utf8_lossy(&o.stdout).lines() {
-                        let mut parts = line.splitn(2, ' ');
-                        if let (Some(pid_s), Some(cmd)) = (parts.next(), parts.next()) {
-                            if let Ok(pid) = pid_s.trim().parse::<u32>() {
-                                out.push((pid, String::new(), cmd.to_string()));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        out
     };
     // Origin matcher shared with the close sweep (is_ours_process) —
     // one definition, one behaviour, unit-tested at the file level.
@@ -1631,9 +1472,9 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
     // the extra python-listener probe stays the ONE extra PS call.
     let scan_first = scan();
     found += scan_first.len();
-    for (pid, exe, cmd) in &scan_first {
-        if is_ours(exe, cmd) {
-            kill_pid(*pid, &mut killed);
+    for p in &scan_first {
+        if is_ours(&p.exe, &p.cmd) {
+            kill_pid(p.pid, &mut killed);
         }
     }
     // our external-terminal window (unique timestamped title)
@@ -1663,78 +1504,24 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
     };
     say("[stop] scanning Wan2GP processes…\n");
     // Pure scan (no kill): (pid, port) of python listeners on ANY of `ports`.
-    // ONE PowerShell call for all ports (was one per port — the stall).
-    // Used by the sweep below and by the alive check, so survivors are
+    // One adapter call for all ports (was one PowerShell spawn per port — the
+    // stall). Used by the sweep below and by the alive check, so survivors are
     // reported, not hidden.
     let port_listeners = |ports: &[u64]| -> Vec<(u32, u64)> {
-        let mut out = Vec::new();
-        #[cfg(windows)]
-        {
-            let list = ports
-                .iter()
-                .map(|p| p.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let ps = format!("Get-NetTCPConnection -LocalPort {list} -State Listen | ForEach-Object {{ $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p) {{ $p.Id.ToString() + '|' + $p.ProcessName + '|' + $_.LocalPort }} }}");
-            match silent_command("powershell")
-                .args(["-NoProfile", "-Command", &ps])
-                .output()
-            {
-                Ok(o) if o.status.success() => {
-                    for line in String::from_utf8_lossy(&o.stdout).lines() {
-                        let mut parts = line.splitn(3, '|');
-                        if let (Some(pid_s), Some(name), Some(port_s)) =
-                            (parts.next(), parts.next(), parts.next())
-                        {
-                            if name.trim().to_lowercase().contains("python") {
-                                if let (Ok(pid), Ok(port)) =
-                                    (pid_s.trim().parse::<u32>(), port_s.trim().parse::<u64>())
-                                {
-                                    out.push((pid, port));
-                                }
-                            }
-                        }
-                    }
-                }
-                // Exit 1 + "No matching" = no listeners on these ports (the
-                // CLEAN case) — not an error, stay silent so Stop reads clean.
-                Ok(o) => {
-                    let code = o.status.code().unwrap_or(-1);
-                    let err: String = String::from_utf8_lossy(&o.stderr)
-                        .chars()
-                        .take(200)
-                        .collect();
-                    if !(code == 1 && err.contains("No matching")) {
-                        crate::base::push_log(
-                            &format!("[stop] port scan ({list}) failed (exit {code}): {err}\n"),
-                            "launch",
-                        );
-                    }
-                }
-                Err(e) => crate::base::push_log(
-                    &format!("[stop] port scan ({list}) spawn failed: {e}\n"),
-                    "launch",
-                ),
+        let listeners = match crate::platform::current().port_listeners(ports) {
+            Ok(v) => v,
+            Err(e) => {
+                crate::base::push_log(&format!("[stop] port scan failed: {e}\n"), "launch");
+                Vec::new()
             }
-        }
-        #[cfg(not(windows))]
-        {
-            for port in ports {
-                if let Ok(o) = silent_command("lsof")
-                    .args(["-ti", &format!("tcp:{port}")])
-                    .output()
-                {
-                    if o.status.success() {
-                        for line in String::from_utf8_lossy(&o.stdout).lines() {
-                            if let Ok(pid) = line.trim().parse::<u32>() {
-                                out.push((pid, *port));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        out
+        };
+        // Restricted to python* owners: Gradio always runs on Python, and we
+        // never kill whatever else happens to hold a Wan2GP port.
+        listeners
+            .into_iter()
+            .filter(|l| l.name.to_lowercase().contains("python"))
+            .map(|l| (l.pid, l.port))
+            .collect()
     };
     say("[stop] checking Wan2GP ports…\n");
     for (pid, port) in port_listeners(&sports) {
@@ -1744,77 +1531,44 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
         );
         kill_pid(pid, &mut killed);
     }
-    // Custom-port evasion: ONE extra PS call listing ALL python-owned
-    // listeners (any LocalPort). Rust keeps only PIDs whose WMI cmdline
-    // has our signals (via the cached first scan + is_ours) or whose port
-    // is in `sports`. Kill scope is NOT widened — kill_pid only, same as
-    // every other sweep. Non-Windows: skipped (no cheap equivalent).
-    #[cfg(windows)]
-    {
-        let ps_any = "Get-NetTCPConnection -State Listen | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p -and $p.ProcessName -like 'python*') { $p.Id.ToString() + '|' + $_.LocalPort } }";
-        let any_listeners: Vec<(u32, u64)> = match silent_command("powershell")
-            .args(["-NoProfile", "-Command", ps_any])
-            .output()
-        {
-            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .filter_map(|line| {
-                    let mut parts = line.splitn(2, '|');
-                    match (parts.next(), parts.next()) {
-                        (Some(pid_s), Some(port_s)) => {
-                            match (pid_s.trim().parse::<u32>(), port_s.trim().parse::<u64>()) {
-                                (Ok(pid), Ok(port)) => Some((pid, port)),
-                                _ => None,
-                            }
-                        }
-                        _ => None,
-                    }
-                })
-                .collect(),
-            Ok(o) => {
-                let code = o.status.code().unwrap_or(-1);
-                let err: String = String::from_utf8_lossy(&o.stderr)
-                    .chars()
-                    .take(200)
-                    .collect();
-                if !(code == 1 && err.contains("No matching")) {
-                    crate::base::push_log(
-                        &format!("[stop] python-listener scan failed (exit {code}): {err}\n"),
-                        "launch",
-                    );
-                }
-                Vec::new()
-            }
+    // Custom-port evasion: every TCP listener on the box, any LocalPort. Kept
+    // only when it is provably ours — python-owned on a known Wan2GP port, or
+    // the cmdline from the first scan carries our repo signals. Kill scope is
+    // NOT widened: kill_pid only, same as every other sweep.
+    let any_listeners: Vec<crate::platform::Listener> =
+        match crate::platform::current().tcp_listeners() {
+            Ok(v) => v,
             Err(e) => {
-                crate::base::push_log(
-                    &format!("[stop] python-listener scan spawn failed: {e}\n"),
-                    "launch",
-                );
+                crate::base::push_log(&format!("[stop] listener scan failed: {e}\n"), "launch");
                 Vec::new()
             }
         };
-        for (pid, port) in any_listeners {
-            if killed.contains(&pid) {
-                continue;
-            }
-            if sports.contains(&port) {
-                // Already covered by the sports sweep above; a live entry
-                // here means the earlier kill missed — retry loudly.
+    for l in any_listeners {
+        if killed.contains(&l.pid) {
+            continue;
+        }
+        if sports.contains(&l.port) {
+            // Already covered by the sports sweep above; a live entry here
+            // means the earlier kill missed — retry loudly.
+            if l.name.to_lowercase().contains("python") {
                 crate::base::push_log(
-                    &format!("[stop] port {port}: killing python PID {pid}\n"),
+                    &format!("[stop] port {}: killing python PID {}\n", l.port, l.pid),
                     "launch",
                 );
-                kill_pid(pid, &mut killed);
-            } else if let Some((_, exe, cmd)) = scan_first.iter().find(|(p, _, _)| *p == pid) {
-                // Custom-port evasion: python listener off the known ports
-                // that is still OURS by cmdline signals.
-                if is_ours(exe, cmd) {
-                    crate::base::push_log(
-                        &format!("[stop] custom port {port}: killing ours PID {pid}\n"),
-                        "launch",
-                    );
-                    kill_pid(pid, &mut killed);
-                }
+                kill_pid(l.pid, &mut killed);
+            }
+        } else if let Some(p) = scan_first.iter().find(|p| p.pid == l.pid) {
+            // Custom-port evasion: python listener off the known ports that is
+            // still OURS by cmdline signals.
+            if is_ours(&p.exe, &p.cmd) {
+                crate::base::push_log(
+                    &format!(
+                        "[stop] custom port {}: killing ours PID {}\n",
+                        l.port, l.pid
+                    ),
+                    "launch",
+                );
+                kill_pid(l.pid, &mut killed);
             }
         }
     }
@@ -1824,9 +1578,9 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
     // Verify: re-scan after the dust settles, kill stragglers once, report
     // who's still alive instead of claiming success with orphans around.
     std::thread::sleep(std::time::Duration::from_millis(1200));
-    for (pid, exe, cmd) in scan() {
-        if is_ours(&exe, &cmd) && !killed.contains(&pid) {
-            kill_pid(pid, &mut killed);
+    for p in scan() {
+        if is_ours(&p.exe, &p.cmd) && !killed.contains(&p.pid) {
+            kill_pid(p.pid, &mut killed);
         }
     }
     // Stragglers on ANY Wan2GP port (same orphan class as above).
@@ -1843,8 +1597,8 @@ pub(crate) fn stop_wangp_blocking(app: tauri::AppHandle) -> serde_json::Value {
     std::thread::sleep(std::time::Duration::from_millis(600));
     let mut alive: Vec<u32> = scan()
         .into_iter()
-        .filter(|(_, exe, cmd)| is_ours(exe, cmd))
-        .map(|(pid, _, _)| pid)
+        .filter(|p| is_ours(&p.exe, &p.cmd))
+        .map(|p| p.pid)
         .collect();
     for (pid, _port) in port_listeners(&sports) {
         // Still listening = still alive, even if we already tried to kill
@@ -1900,40 +1654,82 @@ fn expand_win_env(s: &str) -> String {
     }
     out
 }
-/// Install-location candidates per browser (user-level LocalAppData first,
-/// then system-wide Program Files — Brave/Opera/Vivaldi all support those).
-fn browser_candidates(id: &str) -> &[&str] {
-    match id {
-        "chrome" => &[
-            "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe",
-            "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe",
-            "%LocalAppData%\\Google\\Chrome\\Application\\chrome.exe",
-        ],
-        "edge" => &[
-            "%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe",
-            "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe",
-        ],
-        "firefox" => &[
-            "%ProgramFiles%\\Mozilla Firefox\\firefox.exe",
-            "%ProgramFiles(x86)%\\Mozilla Firefox\\firefox.exe",
-            "%LocalAppData%\\Mozilla Firefox\\firefox.exe",
-        ],
-        "brave" => &[
-            "%LocalAppData%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
-            "%ProgramFiles%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
-            "%ProgramFiles(x86)%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
-        ],
-        "opera" => &[
-            "%LocalAppData%\\Programs\\Opera\\launcher.exe",
-            "%ProgramFiles%\\Opera\\launcher.exe",
-            "%ProgramFiles(x86)%\\Opera\\launcher.exe",
-        ],
-        "vivaldi" => &[
-            "%LocalAppData%\\Vivaldi\\Application\\vivaldi.exe",
-            "%ProgramFiles%\\Vivaldi\\Application\\vivaldi.exe",
-            "%ProgramFiles(x86)%\\Vivaldi\\Application\\vivaldi.exe",
-        ],
-        _ => &[],
+/// Install-location candidates per browser, per OS. The table used to be
+/// Windows-only, so on Linux/macOS the No-GPU probe never found a browser and
+/// the launch buttons stayed disabled even with Chrome or Firefox installed.
+/// Windows keeps `%Var%` entries (expanded by `expand_win_env`); Linux lists
+/// distro/snap paths, macOS the `.app` bundle executables.
+fn browser_candidates(id: &str) -> &'static [&'static str] {
+    if cfg!(windows) {
+        match id {
+            "chrome" => &[
+                "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe",
+                "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe",
+                "%LocalAppData%\\Google\\Chrome\\Application\\chrome.exe",
+            ],
+            "edge" => &[
+                "%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe",
+                "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe",
+            ],
+            "firefox" => &[
+                "%ProgramFiles%\\Mozilla Firefox\\firefox.exe",
+                "%ProgramFiles(x86)%\\Mozilla Firefox\\firefox.exe",
+                "%LocalAppData%\\Mozilla Firefox\\firefox.exe",
+            ],
+            "brave" => &[
+                "%LocalAppData%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+                "%ProgramFiles%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+                "%ProgramFiles(x86)%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+            ],
+            "opera" => &[
+                "%LocalAppData%\\Programs\\Opera\\launcher.exe",
+                "%ProgramFiles%\\Opera\\launcher.exe",
+                "%ProgramFiles(x86)%\\Opera\\launcher.exe",
+            ],
+            "vivaldi" => &[
+                "%LocalAppData%\\Vivaldi\\Application\\vivaldi.exe",
+                "%ProgramFiles%\\Vivaldi\\Application\\vivaldi.exe",
+                "%ProgramFiles(x86)%\\Vivaldi\\Application\\vivaldi.exe",
+            ],
+            _ => &[],
+        }
+    } else if cfg!(target_os = "macos") {
+        match id {
+            "chrome" => &["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
+            "edge" => &["/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"],
+            "firefox" => &["/Applications/Firefox.app/Contents/MacOS/firefox"],
+            "brave" => &["/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
+            "opera" => &[
+                "/Applications/Opera.app/Contents/MacOS/Opera",
+                "/Applications/Opera GX.app/Contents/MacOS/Opera",
+            ],
+            "vivaldi" => &["/Applications/Vivaldi.app/Contents/MacOS/Vivaldi"],
+            _ => &[],
+        }
+    } else {
+        match id {
+            "chrome" => &[
+                "/usr/bin/google-chrome",
+                "/usr/bin/google-chrome-stable",
+                "/usr/bin/chromium",
+                "/usr/bin/chromium-browser",
+                "/snap/bin/chromium",
+            ],
+            "edge" => &[
+                "/usr/bin/microsoft-edge",
+                "/usr/bin/microsoft-edge-stable",
+                "/opt/microsoft/msedge/msedge",
+            ],
+            "firefox" => &[
+                "/usr/bin/firefox",
+                "/snap/bin/firefox",
+                "/usr/lib/firefox/firefox",
+            ],
+            "brave" => &["/usr/bin/brave-browser", "/snap/bin/brave"],
+            "opera" => &["/usr/bin/opera", "/usr/bin/opera-stable"],
+            "vivaldi" => &["/usr/bin/vivaldi", "/usr/bin/vivaldi-stable"],
+            _ => &[],
+        }
     }
 }
 #[tauri::command]
@@ -2638,10 +2434,10 @@ mod launch_args_tests {
     fn triton_cache_pin_targets_one_stable_folder() {
         use super::triton_cache_dir_for;
         let d = triton_cache_dir_for(Path::new(r"C:\Wan2GP"));
-        assert_eq!(d, Path::new(r"C:\Wan2GP\triton-cache"));
+        assert_eq!(d, Path::new(r"C:\Wan2GP").join("triton-cache"));
         // Non-default data dir (D: pick) resolves inside it, never HOME.
         let d2 = triton_cache_dir_for(Path::new(r"D:\Tools\Wan2GP"));
-        assert_eq!(d2, Path::new(r"D:\Tools\Wan2GP\triton-cache"));
+        assert_eq!(d2, Path::new(r"D:\Tools\Wan2GP").join("triton-cache"));
         assert!(!d2.to_string_lossy().contains("AppData\\Local\\Temp"));
     }
     #[test]
@@ -2821,7 +2617,7 @@ cmd,
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod msvc_pin_tests {
     use super::{
         decide_msvc_pin, discover_msvc_pin_in, msvc_toolchain_paths, parse_vswhere_root,
@@ -3216,7 +3012,9 @@ pub async fn batch_process(
             .unwrap_or_default()
     ));
     let code = tauri::async_runtime::spawn_blocking(move || {
-        let mut child = std::process::Command::new(&py)
+        let mut cmd = std::process::Command::new(&py);
+        crate::base::sanitize(&mut cmd);
+        let mut child = cmd
             .args(&argv)
             .current_dir(&repo)
             .stdout(std::process::Stdio::piped())
@@ -3306,5 +3104,31 @@ mod batch_tests {
         let exe = "/bin/sh";
         assert!(batch_argv(exe, None, false).unwrap_err().contains(".zip"));
         assert!(batch_argv(env!("CARGO_MANIFEST_DIR"), None, false).is_err());
+    }
+}
+
+#[cfg(test)]
+mod browser_candidate_tests {
+    use super::browser_candidates;
+    #[test]
+    fn candidates_match_the_host_os() {
+        let chrome = browser_candidates("chrome");
+        let firefox = browser_candidates("firefox");
+        assert!(!chrome.is_empty() && !firefox.is_empty());
+        if cfg!(windows) {
+            assert!(chrome[0].ends_with("chrome.exe"), "{chrome:?}");
+        } else if cfg!(target_os = "macos") {
+            assert!(chrome[0].contains(".app/Contents/MacOS/"), "{chrome:?}");
+        } else {
+            // The No-GPU probe never found a browser on Linux while the table
+            // was Windows-only, so the launch buttons stayed disabled.
+            assert!(chrome.contains(&"/usr/bin/google-chrome"), "{chrome:?}");
+            assert!(chrome.contains(&"/usr/bin/chromium"), "{chrome:?}");
+            assert!(firefox.contains(&"/usr/bin/firefox"), "{firefox:?}");
+        }
+    }
+    #[test]
+    fn unknown_browser_has_no_candidates() {
+        assert!(browser_candidates("netscape").is_empty());
     }
 }

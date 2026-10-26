@@ -5,6 +5,12 @@ Every screen, tab and button, and what it does. The launcher has three screens
 **Viewer**. Companion: [WanGP Guidance](WAN2GP-GUIDE.md) — which model and
 settings to pick for your goal.
 
+> **Which platform?** Windows, Linux and macOS builds share this UI. What differs
+> per OS — which controls exist at all, which installer paths exist, AppImage vs
+> `.deb` vs `.dmg` — is in [Platform Support](PLATFORMS.md); download links and
+> install steps are in the [README](../README.md#download--install). Linux and
+> macOS are new and still gathering testers.
+
 ```mermaid
 flowchart TD
   S["Splash: install check"] --> D["Dashboard: health, launch, updates"]
@@ -16,6 +22,7 @@ flowchart TD
 
 ## Contents
 
+- [Getting the launcher](#getting-the-launcher)
 - [Dashboard](#dashboard)
 - [Installer (Setup)](#installer-setup)
 - [Viewer (Desktop embed)](#viewer-desktop-embed)
@@ -32,6 +39,49 @@ flowchart TD
 - [Typical workflows](#typical-workflows)
 
 ---
+
+## Getting the launcher
+
+**Windows** — run the NSIS `setup.exe` from Releases (unsigned: "unknown
+publisher"). It installs per-user and offers to launch at the end; the in-app
+updater takes over from there.
+
+**Linux** — two forms; both were run on Ubuntu 26.04.
+
+```bash
+# AppImage: self-contained, needs FUSE (libfuse2t64 on Ubuntu 24.04+)
+sudo apt install libfuse2t64
+chmod +x Wan2GP*.AppImage && ./Wan2GP*.AppImage
+# without FUSE:
+./Wan2GP*.AppImage --appimage-extract-and-run
+
+# .deb: smaller, integrates with the desktop (menu entry + /usr/bin binary)
+sudo apt install ./Wan2GP*_amd64.deb
+```
+
+The `.deb` pulls `libwebkit2gtk-4.1-0` and `libgtk-3-0`; the AppImage bundles
+them. Only the AppImage can self-update on Linux. Uninstall with
+`sudo apt remove wan2-gp-desktop-launcher-tauri` (or delete the AppImage), then
+remove `~/Wan2GP` and `~/Wan2GP-Models` if the env and models should go too.
+
+**macOS Apple Silicon** — open the `.dmg`, drag **Wan2GP Desktop Launcher
+Tauri** into *Applications*. It is unsigned: the first launch needs
+right-click → Open, or
+`xattr -dr com.apple.quarantine "/Applications/Wan2GP Desktop Launcher Tauri.app"`.
+There is no in-app updater on macOS — download the new `.dmg`.
+
+**Prerequisites on Linux and macOS** are **mostly not** one-click: those buttons
+are winget/choco/MSI, so the Prerequisites card shows the command to run instead
+(click it to copy) — `sudo apt install git python3`, `sudo dnf install git
+python3`, `xcode-select --install` on macOS. `uv` is the exception: its row keeps
+a working *Install* button, because Astral's `install.sh` runs without sudo — the
+launcher puts that copy in `~/Wan2GP/.tools` (PATH untouched), so uv need not be
+installed beforehand.
+
+Where the launcher writes on Linux/macOS: `~/Wan2GP` (repo + envs +
+`desktop-config.json`), `~/Wan2GP-Models` (proposed model root), plus one
+`.desktop` file for the shortcut and one for auto-start (`~/.config/autostart`
+on Linux, `~/Library/LaunchAgents/com.wan2gp.desktop.plist` on macOS).
 
 ## Dashboard
 
@@ -72,7 +122,7 @@ The home screen. Top to bottom:
 **AMD and the experimental kernels (RX 9060 / 9070 series — gfx1200/gfx1201).** Both wheels now install straight into the installer's torch 2.13+rocm10 env — there is no separate environment any more:
 
 - **WGPKernels (INT8)** — the INT8 fast path. One-click on NVIDIA RTX 20/30/40/50 (the launcher picks `cu130`/`cu128` from your torch build; Turing 7.5 is in since 1.3.0) and on AMD RDNA4 (the `rocm100` build installs right in the installer's TheRock torch 2.13+rocm10 env). *↻ Update GPU Wheels* also installs it now that upstream profiles list it.
-- **HIP GGUF (exp)** — the AMD build of the GGUF wheel (1.0.28, `torch213rocm100py312`). It is built for **this** env — torch 2.13.0+rocm10.0.0 — and the wheel checks the ROCm torch build at import. *↻ Update GPU Wheels* lands it automatically on RDNA4; the button stays as a reinstall path.
+- **HIP GGUF (exp)** — the AMD build of the GGUF wheel (1.0.29, `torch213rocm100py312`). It is built for **this** env — torch 2.13.0+rocm10.0.0 — and the wheel checks the ROCm torch build at import. *↻ Update GPU Wheels* lands it automatically on RDNA4; the button stays as a reinstall path.
 
 RDNA 1–3.5 cards have **no** WGPKernels/HIP wheel. Upstream's own HIP validation is still pending (no RDNA4 board on their side), so treat the HIP path as experimental.
 
@@ -98,6 +148,19 @@ OpenCode, …) with *↻ Refresh* to re-check status; pick one and press *Apply*
 (Disabled / selectable Workspace / dedicated Workspace — selectable is the
 launcher default, one shared outputs folder), reset behavior, gallery media
 (keep links vs copy into session). Per-session workspace choice stays inside WanGP.
+
+**Deepy KV Cache Quantization** — the dropdown in the Deepy card writes
+`deepy_kv_cache_quantization` directly. The values are WanGP's own eight: *Auto*
+(INT8 once GGUF kernels 1.0.13+ are installed, BF16 without), *Disabled (BF16)*
+(the empty string — explicit, where Auto may still turn INT8 on), *INT8* (about
+half the KV-cache VRAM), and the five mixed bodies *INT8 keys, Q4 values*
+(−24% vs INT8), *Q6 keys and values* (−24%), *Q6 keys, Q4 values* (−35%),
+*Q4.1 keys and values* (−41%) and *Q4 keys and values* (−47%). For a mixed body
+a second dropdown appears: the exact-precision overlay WanGP keeps beside the
+quantized cache — sink pages plus a ring of the most recent tokens, `s1r1024`
+(default) / `s1r256` / `s0r1024` / `s0r0` — and the pair is written as
+`body:exact`. Both dropdowns preselect from `wgp_config.json`, so a value set in
+WanGP shows as it is.
 
 **Prompt enhancement card** (below Active Environment, above Deepy) — *Enhancement UI*:
 *Enhance Prompt button* (default) or *Automatic dropdown* on Wan2GP generation
@@ -284,6 +347,17 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   Downloads, Save As… opens the native dialog with the real file-type filter
   (`*.zip`/`*.json`/… — issue #29) and reopens at the last-used folder.
 - Reload, zoom 25–200%, hide/show keeps the session alive.
+- **Renderer** — `native` (a real WebView2 child webview, exact Save-As
+  downloads) exists on **Windows only**. GTK and WKWebView cannot composite a
+  second webview over the page: `add_child` puts both webviews in the window's
+  layout box, the launcher page is squeezed into the top half and the embed is
+  pushed into the bottom half. On Linux/macOS the launcher therefore forces
+  `iframe` and disables the `native` option in both pickers
+  (Manage → Launch and the topbar), so the choice can never strand the UI.
+- **Console docks** — bottom / top / left / right each shrink the embed to the
+  remaining area instead of covering it; Floating returns the embed to the full
+  viewport. A right or left dock is 340px wide, so the console header wraps
+  instead of clipping its own dock buttons.
 
 ---
 
@@ -417,7 +491,7 @@ WanGP is faster with vendor kernels than stock PyTorch. The launcher reads WanGP
 | **SpargeAttn** | RTX 30+ | — | sparsity-aware speed-up alongside Sage |
 | **FlashAttention** | `2.8.3` (RTX 30+, Ampere+) | `2.8.4` (ROCm/Triton, prebuilt wheel) | memory-efficient exact attention |
 | **Nunchaku** | `1.2.1` | — | SVD-quantized (NF4/SVDQ) runtime |
-| **GGUF llama.cpp** | CUDA `1.0.28` build (`cu130` or `cu128` per env) | HIP `1.0.28` build (in-env ROCm 10, RDNA4, experimental) | 4-bit GGUF kernels (single-launch row loop from 1.0.27 — 2–10% faster decode, less VRAM; packed rows from 1.0.26 — fixes MiniMax H3 image-reference projections; 1.0.28 adds RTX 20's PTQ1_0/Bonsai decode win — each weight block is decoded once for all tokens of a step) |
+| **GGUF llama.cpp** | CUDA `1.0.29` build (`cu130` or `cu128` per env) | HIP `1.0.29` build (in-env ROCm 10, RDNA4, experimental) | 4-bit GGUF kernels (single-launch row loop from 1.0.27 — 2–10% faster decode, less VRAM; packed rows from 1.0.26 — fixes MiniMax H3 image-reference projections; 1.0.28 added RTX 20's PTQ1_0/Bonsai decode win — each weight block is decoded once for all tokens of a step) |
 | **LightX2V** | RTX 50xx only | — | FP4 kernels (sm120+) |
 | **bitsandbytes NF4** | `0.49.2` (optional — *not* installed by the default set) | — | 8-bit / NF4 dequant (one-click install from the dashboard, pinned) |
 
@@ -437,7 +511,7 @@ Only RTX 20–50 / AMD rows are shown above; GTX 10xx/16xx stay on Python `3.10.
 >
 > 🛡️ **Triton JIT files + antivirus (Bitdefender "Gen:Variant.Ulise"-style reports).** Triton — the compiler behind sage/sage2 attention, FP8 kernels and the VAE fusions — used to compile small helper extensions (`cuda_utils`, `__triton_launcher`) on your machine when a generation first needed them: unsigned, freshly built each time, one unique hash per build. Antivirus heuristics distrust exactly that pattern and sometimes quarantined the file *mid-compile*, breaking the next generation with a `PermissionError` or a silent sage→SDPA fallback.
 >
-> **The upstream fix (WanGP v18.18):** for the recommended Triton builds — `triton-windows>=3.7.0.post26,<=3.7.1.post27` — WanGP now ships a **prebuilt CUDA helper** (`hip_utils` equivalent for AMD ROCm besides) directly in the repo, checksum-verified against Triton's own sources and loaded automatically on Windows with Python 3.11 (NVIDIA envs) / 3.12 (AMD HIP envs **3.12 + rocm-sdk 7.14**, marked experimental). The helper is never JIT-compiled, so there is no fresh hash to distrust and no TinyCC/MSVC compile step to block: **no antivirus exclusion is needed on those stacks**, and Triton acceleration stays fully enabled including GPU-kernel compilation on first use. Running ↻ Update GPU Wheels (or a fresh install) moves you onto the recommended range and the helper engages by itself; the WanGP console prints `[Triton] Using WanGP's Prebuilt CUDA Helper (…)` when it does. Existing Triton 3.6 installs keep working as before — upgrade only if you want the AV-free path.
+> **The upstream fix (WanGP v18.18):** for the recommended Triton builds — `triton-windows>=3.7.0.post26,<=3.7.1.post27` — WanGP now ships a **prebuilt CUDA helper** (`hip_utils` equivalent for AMD ROCm besides) directly in the repo, checksum-verified against Triton's own sources and loaded automatically on Windows with Python 3.11 (NVIDIA envs) / 3.12 (AMD HIP envs: torch 2.13 + ROCm 10 — the separate rocm-sdk 7.14 environment is retired). The helper is never JIT-compiled, so there is no fresh hash to distrust and no TinyCC/MSVC compile step to block: **no antivirus exclusion is needed on those stacks**, and Triton acceleration stays fully enabled including GPU-kernel compilation on first use. Running ↻ Update GPU Wheels (or a fresh install) moves you onto the recommended range and the helper engages by itself; the WanGP console prints `[Triton] Using WanGP's Prebuilt CUDA Helper (…)` when it does. Existing Triton 3.6 installs keep working as before — upgrade only if you want the AV-free path.
 >
 > **The dashboard watches the helper for you.** The Active Environment panel's *Prebuilt Helper* row verifies presence and hashes (against each manifest's own `binary_sha256`) of `shared/triton_runtime/` on every dashboard refresh. Green = intact. A **missing** or **modified** verdict means an antivirus (or a corruption event) got to the helper binaries — hover the row for which file, and restore by reinstalling/re-running ↻ Update Wan2GP after whitelisting `C:\Wan2GP`. A stripped helper falls back to the JIT expose described below without any other symptom, so the row exists to catch it early.
 >
@@ -470,7 +544,7 @@ Upstream v17 ships these off by default, asking every user to switch them on by 
 | RAM Allocator | `ram_allocator` | nothing (manual) | **Needs a restart.** Hands the RAM of freed CPU tensors back to the system when the queue is done or RAM runs short, where PyTorch keeps it for the session (on Windows it can commit up to twice what a tensor needs). Windows/Linux with PyTorch 2.6–2.15; elsewhere WanGP falls back and says so at startup |
 | Attention Head Split | `attention_head_split` | `2` (Medium) under 12 GB, else Off | Upstream measures ~2 GB less VRAM for ≤3% slower steps on H3 1920×1088 / 362 frames. **Same quality, not identical output** — details, and sometimes motion, can differ. Only engages on long sequences (8192+ tokens) |
 | Smart Memory Pinning | `smart_memory_pinning` | on | 1–2 GB of Reserved RAM to reach the GPU nearly as fast. Changing it reloads the model |
-| VRAM Preload | `video/image/audio_preload_mode` | video `default`, image `dynamic` (Profiles 2, 4 and 5 only), audio `default` | See below — this is the one where video and image genuinely differ. Auto-Tune writes image `default` on Profiles 1, 3 and 3+, where upstream never engages a preload |
+| VRAM Preload | `video/image/audio_preload_mode` | video `default`, image `dynamic` (Profiles 2, 4 and 5), audio `default` | See below — this is the one where video and image genuinely differ. Auto-Tune writes image `default` on Profiles 0, 1, 3, 3+ and 4+ — upstream honours the key on Profiles 0, 2, 4 and 5 only (P0's Default *is* already Dynamic; 1 and 3 always preload dynamically; P4+ sends one part at a time) |
 | Reserved RAM for Pinning | `perc_reserved_mem_max` | `0` (Auto) | 0 = 40% on Windows, 60% on Linux (upstream v17.10 lowered Linux from 80%). Upstream treats this as a **percentage** since v17 |
 
 **Why video gets `default` and image gets `dynamic`** — this is upstream's advice, quoted:
@@ -486,7 +560,7 @@ Two caveats if you override video to `dynamic`: it **only engages with the MMGP 
 
 ### Settings written by older Auto-Tune tiers
 
-`video/image/audio_profile` (upstream accepts 0–5; Auto-Tune writes **P0** — *More Speed with Less RAM*, no permanent Reserved RAM — wherever RAM is under 32 GB, P1–P5 above that, and names its pick above the matrix), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `text_encoder_quantization` (bf16 / int8), `int8_kernels` (Auto / WGPKernels / Comfy Kitchen / Triton / Disabled), `fp8_kernels` (Auto / CUDA / Triton / PyTorch), `kernel_precision` (fast approximate / strict), `vae_config` (always Auto: 16GB+ / 8GB+ / 6GB+ presets), `vram_safety_coefficient` (**0.85 / 0.70 / 0.60** — upstream raised its own default from 0.80 to 0.85 in v18.20, so the non-tight tiers track it; 0.70 is the launcher's own valve under 12 GB). **Failsafe** forces P5 for hardware where the recommendation still crashes. Audio models now default to **P3** (upstream's "recommended for audio": P4 + Dynamic Preload), not P3+, except where the video profile is P0 or P5 — those inherit, since neither keeps Reserved RAM to hand over.
+`video/image/audio_profile` (upstream accepts 0–5; Auto-Tune writes **P0** — *AutoRAM_AutoVRAM*, no permanent Reserved RAM — wherever RAM is under 32 GB, P1–P5 and P3+ above that, and names its pick above the matrix), `transformer_quantization` (Int8 / FP8 / NVFP4 / None), `text_encoder_quantization` (bf16 / int8), `int8_kernels` (Auto / WGPKernels / Comfy Kitchen / Triton / Disabled), `fp8_kernels` (Auto / CUDA / Triton / PyTorch), `kernel_precision` (fast approximate / strict), `vae_config` (always Auto: 16GB+ / 8GB+ / 6GB+ presets), `vram_safety_coefficient` (**0.85 / 0.70 / 0.60** — upstream raised its own default from 0.80 to 0.85 in v18.20, so the non-tight tiers track it; 0.70 is the launcher's own valve under 12 GB), `deepy_kv_cache_quantization` (`int8_q4` on tight VRAM, `auto` otherwise), `compile` (CUDA Graphs, RTX 30/40) and `compute_cache` (RTX 50). **Failsafe** forces P5 for hardware where the recommendation still crashes. Audio models now default to **P3** (upstream's "recommended for audio": P4 + Dynamic Preload), not P3+, except where the video profile is P0 or P5 — those inherit, since neither keeps Reserved RAM to hand over.
 
 The panel also carries settings Auto-Tune never recommends, only writes when you set them: `video/image/audio_preload_in_VRAM` (the megabytes a **Manual** VRAM Preload keeps — upstream measured ~6000 MB taking Flux dev 1024² P4 steps within ~20% of P1, 8000 MB or more bringing it close to P1) and `llm_cpu_compute` (*Language Models CPU Compute*: **Auto** by default, **On** to force the CPU to help Deepy and the prompt enhancer while their layers stream from RAM, **Off** for GPU transfers only).
 

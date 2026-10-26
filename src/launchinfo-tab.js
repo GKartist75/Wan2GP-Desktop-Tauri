@@ -91,7 +91,7 @@ async function openDesktopView(url, fresh) {
     // (Just re-showing would keep the OLD renderer forever.)
     try {
       const _cfg = await window.w2gp.configLoad().catch(() => ({}));
-      const _want = _cfg && _cfg.embedMode === "iframe" ? "iframe" : "native";
+      const _want = window.w2gp.effectiveEmbedMode(_cfg);
       const _have =
         window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()
           ? "native"

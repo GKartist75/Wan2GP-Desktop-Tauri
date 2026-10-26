@@ -23,10 +23,13 @@ pub fn config_save(cfg: serde_json::Value) -> Result<serde_json::Value, String> 
 pub fn get_install_paths() -> serde_json::Value {
     let data = get_data_dir();
     let repo = get_repo_dir();
+    // `appDataRoot` only feeds the "is this path inside a roaming profile" check,
+    // which cannot be true off Windows. Reporting a literal C:\ path there made
+    // the field look broken in the Linux/macOS UI and in the troubleshoot bundle.
     let orig = if let Ok(a) = std::env::var("APPDATA") {
         PathBuf::from(a).join("wan2gp-desktop")
     } else {
-        PathBuf::from("C:\\Users\\Default\\AppData\\Roaming\\wan2gp-desktop")
+        appdata_dir().join("wan2gp-desktop")
     };
     let models_default = data.with_file_name(format!(
         "{}-Models",

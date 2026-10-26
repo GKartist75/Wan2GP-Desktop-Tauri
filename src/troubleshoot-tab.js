@@ -438,10 +438,9 @@ $("tsMsvcInstallBtn")?.addEventListener("click", async function () {
   }
 });
 try {
-  if (window.w2gp.platform !== "win32") {
-    const row = $("tsMsvcRow");
-    if (row) row.style.display = "none";
-  } else {
+  // Gated by data-requires="tritonRepair" in index.html (platform-gate.js);
+  // the refresh only makes sense where the toolchain exists.
+  if (window.w2gp.capabilities.tritonRepair) {
     tsMsvcRefresh();
   }
 } catch {}
