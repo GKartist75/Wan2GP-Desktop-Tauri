@@ -13,6 +13,14 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- **Deepy Web start lives with Deepy.** *Start Deepy Web* and *Open in browser*
+  moved from the Phone & Remote *Start* step into the Deepy panel, directly
+  under the Disabled / Deepy Zero / Deepy Prime picker they act on; the step
+  below keeps *Stop*, *Outputs folder*, extra args and every address/auth
+  control, and is now labelled *4 · Server controls*. IDs and handlers are
+  unchanged, so the topbar LED, the status line and both flows behave exactly
+  as before.
+
 - **WanGP 18.83 / mmgp 4.4 mapped RAM: guidance, not code.** Upstream's
   `9905f0d` moved the Qwen3.5 prompt-enhancer token table to page-locked RAM
   read by the GPU in place (`mmgp.runtime.map_in_ram`, `mmgp/mapped.py`). The

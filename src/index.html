@@ -1344,6 +1344,14 @@
             <label class="deepy-mode-opt"><input type="radio" name="deepyMode" value="zero"> Deepy Zero <span class="deepy-mode-sub">local model</span></label>
             <label class="deepy-mode-opt"><input type="radio" name="deepyMode" value="prime"> Deepy Prime <span class="deepy-mode-sub">remote / local LLM</span></label>
           </div>
+          <!-- Start/browser sit with the mode they act on: the same Deepy Web
+               process serves whichever mode is picked, and the topbar LED
+               mirrors it. Its port, auth and URL list stay under Phone &
+               Remote access, next to Stop. -->
+          <div class="deepy-actions" style="margin-top:6px" data-keep-visible>
+            <button class="btn btn-primary small" id="deepyWebStartBtn" title="Start the Deepy Web server (wgp.py --deepy-server) on the port set under Phone &amp; Remote access" data-keep-visible>Start Deepy Web</button>
+            <button class="btn btn-primary small" id="openDeepyBrowserBtn" title="Open Deepy in your system browser" data-keep-visible>Open in browser</button>
+          </div>
           <!-- Local model (Prompt Enhancer) selector — shown for Disabled/Zero,
                hidden for Prime. Options come from DEEPY_ENHANCER_OPTIONS in app.js. -->
           <div id="deepyEnhancerWrap" style="margin-top:10px; display:none">
@@ -1634,11 +1642,9 @@
                     </details>
                   </div>
 <!-- Step 4 · Start -->
-              <div class="deepy-sub-label" style="margin-top:12px">4 · Start</div>
+              <div class="deepy-sub-label" style="margin-top:12px">4 · Server controls</div>
 <div class="deepy-actions" style="margin-top:6px">
-                <button class="btn btn-primary" id="deepyWebStartBtn" data-keep-visible>Start Deepy Web</button>
-                <button class="btn btn-primary small" id="openDeepyBrowserBtn" title="Open Deepy in your system browser" data-keep-visible>Open in browser</button>
-                <button class="btn btn-ghost" id="deepyWebStopBtn" data-keep-visible>Stop</button>
+                <button class="btn btn-primary" id="deepyWebStopBtn" data-keep-visible>Stop</button>
                 <button class="btn btn-ghost" id="deepyWebOutputsBtn" title="Open the shared Wan2GP outputs folder in Explorer">Outputs folder</button>
               </div>
               <div style="margin-top:8px">
