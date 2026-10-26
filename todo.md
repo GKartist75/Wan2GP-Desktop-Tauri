@@ -156,7 +156,8 @@ arms of every pair compile; the Unix arm is what the flavor check exercises.
 - [x]* Run full CI on Ubuntu (run 40281177754: JS 201 + Rust 399 tests, clippy, fmt green)
 - [x]* Run full CI on macOS (run 40281177754: same jobs, green)
 - [x]* Manual smoke test: Linux (WSL2 + Xvfb, wizard + bundles only — see Phase 3)
-- [x] Manual smoke test: Linux NVIDIA (WSL2 + real RTX 3080 passthrough: install to completion, WGPKernels/nunchaku/GGUF loaded, `Running on local URL: http://localhost:7861`)
+- [x] Manual smoke test: Linux NVIDIA (WSL2 + real RTX 3080 passthrough: install to completion, WGPKernels/nunchaku/GGUF loaded, `Running on local URL: http://localhost:7861`).
+  Re-run on the shipped **0.10.28 `.deb`** (Ubuntu 26.04, WSLg): `env_uv` 9.1 GB, `torch 2.10.0+cu130 cuda=True`, SageAttention 2.2.0 wheel, smoke test passed, ZImageTurbo + Qwen3 + VAE downloaded (11 GB), WGPKernels INT8 autotune ran (660x1024x3840 → 651 µs), `/` and `/deepy/` both 200. SpargeAttn/flash-attn skipped: no `nvcc` on the box (the CUDA toolkit row reads *optional* for exactly this reason).
 - [ ] Manual smoke test: Linux AMD
 - [ ] Manual smoke test: macOS Apple Silicon
 
