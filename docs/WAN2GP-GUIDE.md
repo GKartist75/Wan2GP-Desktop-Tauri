@@ -14,7 +14,7 @@ Upstream truth: model selector in WanGP, `defaults/*.json`, `profiles/*/*.json`,
 - [Install prerequisites](#install-prerequisites-what-the-launcher-sets-up-for-you)
 - [Guided paths](#guided-paths)
 - [Launcher vs WanGP settings map](#launcher-vs-wangp-settings-map)
-- [Models reference](#models-reference--complete-inventory-276-defaultsjson)
+- [Models reference](#models-reference--inventory-by-family-282-defaultsjson-at-wangp-1883)
 - [Generation settings reference](#generation-settings-reference)
 - [LoRAs + accelerator profiles](#loras--accelerator-profiles)
 - [Prompts + sliding windows](#prompts--sliding-windows)
@@ -78,7 +78,7 @@ From `INSTALLATION.md` — the launcher automates all of this; listed so you kno
 | PyTorch | 2.10.0 + CUDA 13.0/13.1 (cu130, needs R580+ driver) | 2.7.1 + CUDA 12.8 (no R580 needed) | 2.13.0 ROCm 10 TheRock (stable whl-next, per-box device-gfx targets) | CPU / MPS (SDPA only) |
 | Triton | `triton-windows>=3.7.0.post26,<=3.7.1.post27` (torch 2.10, recommended since v18.18 — ships WanGP's prebuilt CUDA helper, no JIT helper compile, no antivirus exclusion needed on these builds); `>=3.6,<3.7` legacy (torch 2.10, launcher Repair/roll-back target); `>=3.3,<3.4` (torch 2.7); `>=3.2,<3.3` (RTX 20XX) | — | `triton-windows>=3.7.0.post26,<=3.7.1.post27` (torch 2.13; prebuilt HIP helper, experimental) | — |
 | Attention | Sage 2.2.0 (RTX 30+, Ampere+) / Sage 1.0.6 (RTX 20) / Flash 2.8.3 / Sparge 0.1.0 | SDPA | SDPA (default, AOTriton on RDNA3+) / Sage 1.0.6 / Flash 2.8.4 (ROCm/Triton) | SDPA |
-| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.28 (packed MMVQ/MMQ, direct FP16/BF16 activation quantization, CUDA-graph-safe workspaces, quantized KV-cache attention; single-launch row loop — 2–10% faster decode, less VRAM; packed rows crossing quant blocks — fixes MiniMax H3 image-reference projections), LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2 (optional, manual), Comfy Kitchen via requirements, WGPKernels 1.3.0 (in setup_config: RTX 20XX+/RDNA4, recommended) | — | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back); HIP GGUF 1.0.28 wheel (in-env ROCm 10, RDNA4 opt-in, version-only bump — keeps the previous kernels, the single-kernel row loop is CUDA-only) | — |
+| Quant kernels | Nunchaku 1.2.1, GGUF CUDA 1.0.29 (packed MMVQ/MMQ, direct FP16/BF16 activation quantization, CUDA-graph-safe workspaces, quantized KV-cache attention; single-launch row loop — 2–10% faster decode, less VRAM; packed rows crossing quant blocks — fixes MiniMax H3 image-reference projections), LightX2V 0.0.2 (RTX 50/sm120+ only), bitsandbytes 0.49.2 (optional, manual), Comfy Kitchen via requirements, WGPKernels 1.4.2 (in setup_config: RTX 20XX+/RDNA4, recommended) | — | Kitchen HIP (RDNA 3/3.5/4; RDNA2 falls back); HIP GGUF 1.0.29 wheel (in-env ROCm 10, RDNA4 opt-in, version-only bump — keeps the previous kernels, the single-kernel row loop is CUDA-only) | — |
 
 Avoid PyTorch 2.8.0 (RAM leak on model switch) and 2.9.0 (VAE VRAM blowup).
 `int8_kernels`: Auto tries WGPKernels → Kitchen CUDA/HIP → Triton → PyTorch
@@ -100,9 +100,9 @@ video, 3D, speech and music models up to 10% faster with slightly less VRAM"
 (inpainting, VACE masks) now run on WanGP's Turing kernel instead of falling back to
 SDPA, and BF16 q/k/v are read as bits for sequences up to 2,048 tokens instead of
 being copied to FP16 first (`shared/sage1_core.py`).
-WGPKernels 1.3.0 is in `setup_config.json` (the Windows and Linux install
+WGPKernels 1.4.2 is in `setup_config.json` (the Windows and Linux install
 scripts include WGPKernels for RTX 20XX, 30XX, 40XX and 50XX; upstream labels it
-"WGPKernels 1.3.0 (CUDA 13, RTX 20XX+)", "(CUDA 12.8, RTX 20XX+)" and
+"WGPKernels 1.4.2 (CUDA 13, RTX 20XX+)", "(CUDA 12.8, RTX 20XX+)" and
 "(ROCm 10, RDNA4, experimental)", the `RTX_20` GPU profile now lists
 `wgpkernels` and every other NVIDIA/AMD profile is unchanged) — WanGP checks the
 kernels on your GPU before using them; install/update it from
@@ -112,10 +112,10 @@ kernels on your GPU before using them; install/update it from
 Sync); Auto prefers it once present.
 On AMD, RDNA4 (RX 9060/9060 XT gfx1200 + RX 9070/9070 XT/R9700 gfx1201) uses
 the experimental `rocm100` build, which loads in the installer's torch
-2.13+rocm10 env — no separate env. The HIP GGUF wheel (1.0.28,
+2.13+rocm10 env — no separate env. The HIP GGUF wheel (1.0.29,
 `torch213rocm100py312`) is built for that same env and *↻ Update GPU Wheels*
 installs it automatically on RDNA4. RDNA 1–3.5 cards have no WGPKernels/HIP
-wheel. GGUF 1.0.28 also speeds RTX 20 language models: Bonsai and other PTQ1_0
+wheel. GGUF 1.0.28 added a speedup for RTX 20 language models: Bonsai and other PTQ1_0
 models decode their tokens and speculative drafts faster because each block of
 weights is decoded once for all the tokens of a step.
 
@@ -265,11 +265,12 @@ WanGP owns **model, prompt, generation, LoRA pick, control, post**.
 
 ---
 
-## Models reference — complete inventory (276 `defaults/*.json`)
+## Models reference — inventory by family (282 `defaults/*.json` at WanGP 18.83)
 
-Reconciled live against upstream `defaults/` (276 files + `ReadMe.txt`, WanGP v18.21 /
-`9d25c601` — 18.21 adds **no** `defaults/*.json`, so the count is unchanged: its two
-commits are kernel and model-internals work plus the new **FlashVSR+ Turbo**
+Reconciled live against upstream `defaults/` (282 files + `ReadMe.txt`, WanGP v18.83);
+the 18.21 pass counted 276, and the families below list the variants that change
+the pick rather than every sibling id. The 18.21 commits were kernel and
+model-internals work plus the new **FlashVSR+ Turbo**
 extension model, which is a `postprocessing/` handler and not a `model_type`; the
 v18.20 reconciliation added Fibo 2.0 Dev, Fibo 2.0 Edit Turbo and the two MiniMax
 H3 FastH3 Omni presets; v18.19 added MOSS-TTS v1.5 (8B + Local 4B) and
@@ -410,8 +411,10 @@ Essentials (names as in `docs/SETTINGS.md` / Export Settings JSON):
 > is `none/int8/fp8/nvfp4`; int8 is the recommended balance. `text_encoder_quantization`
 > is `bf16` (16-bit, better quality, more RAM) or `int8` (8-bit, less RAM). `int8_kernels`
 > (`auto/disabled/wgpkernels/triton/kitchen`) + `fp8_kernels` (`auto/pytorch/triton/cuda`)
-> + `kernel_precision` (`fast/strict`) are the kernel settings (v18.11). There is NO reserved-memory key in `wgp_config.json` —
-> that is the CLI `--perc-reserved-mem-max`. `vram_safety_coefficient` default is
+> + `kernel_precision` (`fast/strict`) are the kernel settings (v18.11). Reserved RAM
+> is `perc_reserved_mem_max`, a percentage 0–100 in `wgp_config.json`
+> (`wgp.py`: `server_config.get("perc_reserved_mem_max", 0) / 100`); the CLI
+> `--perc-reserved-mem-max` takes a fraction and wins when non-zero. `vram_safety_coefficient` default is
 > now `0.85` (upstream `shared/cli_args.py`; `mmgp/README.md` says "0.85 by
 > default") for >=12 GB VRAM — the launcher's own tighter tiers keep their
 > values (`0.70` tight, `0.60` failsafe, failsafe forces P5). Upstream profile

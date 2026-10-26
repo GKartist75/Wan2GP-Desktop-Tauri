@@ -46,13 +46,15 @@ the MSVC/Triton toolchain are all CUDA/NVIDIA-specific, and macOS has neither.
 
 | Platform | Artifacts | Updater artifact |
 | --- | --- | --- |
-| Windows x64 | NSIS `setup.exe`, MSI | yes (minisign) |
+| Windows x64 | NSIS `setup.exe`, MSI (`release.yml` bundles `nsis,msi`; `dist/windows-x64` holds the NSIS one) | yes (minisign) |
 | Linux x64 | AppImage, `.deb` | AppImage only |
 | macOS arm64 | `.app`, `.dmg` | no |
 
 `.github/workflows/build-artifacts.yml` produces the same bundles without a tag,
-a release or a signing key (dispatch it, download the run's artifacts) — that is
-how the current `dist/` files were made. The release workflow
+a release or a signing key (dispatch it, download the run's artifacts). The
+Linux and macOS files in `dist/` came from it; the Windows installer there comes
+from `release.yml` (or a local `npm run tauri -- build`), because the artifact
+workflow builds the two Unix targets only. The release workflow
 (`.github/workflows/release.yml`) builds all three from one tag and attaches them
 to a single draft release. macOS sets
 `createUpdaterArtifacts: false` for the build, because replacing an unsigned
