@@ -12,7 +12,6 @@ use crate::{
 use std::path::{Path, PathBuf};
 use tauri::Emitter;
 use tauri_plugin_shell::process::CommandEvent;
-use tauri_plugin_shell::ShellExt;
 
 /// Pull the first X.Y[.Z] out of a version string ("3.11.14", "3.11", ">=3.11").
 fn scan_version(s: &str) -> String {
@@ -2554,11 +2553,8 @@ pub async fn install(
                 "[*] Target not empty — cloning into temp {}\n",
                 tmp.display()
             ));
-            use tauri_plugin_shell::ShellExt;
             let git = tool_path("git");
-            let (mut rx, _child) = app
-                .shell()
-                .command(git.as_str())
+            let (mut rx, _child) = crate::base::shell_command(&app, git.as_str())
                 .args([
                     "clone",
                     "--depth",
@@ -2609,9 +2605,7 @@ pub async fn install(
             }
             let _ = std::fs::remove_dir_all(&tmp);
         } else {
-            let (mut rx, _child) = app
-                .shell()
-                .command(tool_path("git"))
+            let (mut rx, _child) = crate::base::shell_command(&app, &tool_path("git"))
                 .args([
                     "clone",
                     "--depth",
@@ -3203,9 +3197,7 @@ pub async fn install(
                     emit(&format!("[*] launcher uv on PATH for setup.py: {add}\n"));
                 }
             }
-            let (mut rx, child) = match app
-                .shell()
-                .command(&py)
+            let (mut rx, child) = match crate::base::shell_command(&app, &py)
                 .args(args.clone())
                 .current_dir(&repo)
                 .spawn()

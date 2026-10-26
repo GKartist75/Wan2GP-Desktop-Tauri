@@ -104,10 +104,29 @@ fn child_env_from(
     env: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
     appdir: Option<&std::ffi::OsStr>,
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
-    let Some(appdir) = appdir else {
-        return env.collect();
-    };
     let path_key = std::ffi::OsStr::new("PATH");
+    let Some(appdir) = appdir else {
+        // Not a bundle, but a python prefix can still name a *dead* AppImage
+        // mount (an exported PTY, a wrapper script, a shell that kept it).
+        // Those libraries vanish with the run, so the child would abort with
+        // "No module named 'encodings'" — drop just those entries.
+        return env
+            .filter_map(|(k, v)| {
+                if k != std::ffi::OsStr::new("PYTHONHOME")
+                    && k != std::ffi::OsStr::new("PYTHONPATH")
+                {
+                    return Some((k, v));
+                }
+                let raw = v.to_string_lossy();
+                if !raw.contains("/.mount_") {
+                    return Some((k, v));
+                }
+                let kept: Vec<&str> = raw.split(':').filter(|p| !p.contains("/.mount_")).collect();
+                let joined = kept.join(":");
+                (!joined.is_empty()).then(|| (k, std::ffi::OsString::from(joined)))
+            })
+            .collect();
+    };
     env.filter(|(k, _)| {
         !BUNDLE_ENV
             .iter()
@@ -1192,6 +1211,35 @@ mod child_env_tests {
 
         /// Not a bundle (no APPDIR): the user's own environment is untouched,
         /// including a `PYTHONHOME` they set deliberately.
+        /// A dead mount can leak in without APPDIR: the child still must not
+        /// inherit a python prefix whose libraries went away with the run.
+        #[test]
+        fn drops_a_dead_mount_python_prefix_without_appdir() {
+            let out = child_env_from(
+                vec![
+                    (
+                        std::ffi::OsString::from("PYTHONHOME"),
+                        std::ffi::OsString::from("/tmp/.mount_Wan2GPkapFEN/usr/"),
+                    ),
+                    (
+                        std::ffi::OsString::from("PYTHONPATH"),
+                        std::ffi::OsString::from(
+                            "/tmp/.mount_Wan2GPkapFEN/usr/share/pyshared/:/opt/py",
+                        ),
+                    ),
+                    (
+                        std::ffi::OsString::from("HOME"),
+                        std::ffi::OsString::from("/home/gerard"),
+                    ),
+                ]
+                .into_iter(),
+                None,
+            );
+            assert_eq!(get(&out, "PYTHONHOME"), None);
+            assert_eq!(get(&out, "PYTHONPATH"), Some("/opt/py"));
+            assert_eq!(get(&out, "HOME"), Some("/home/gerard"));
+        }
+
         #[test]
         fn leaves_a_non_bundle_environment_alone() {
             let out = child_env_from(

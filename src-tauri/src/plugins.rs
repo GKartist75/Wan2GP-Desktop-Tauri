@@ -378,7 +378,6 @@ async fn install_requirements(
     log: &impl Fn(&str),
 ) {
     use tauri_plugin_shell::process::CommandEvent;
-    use tauri_plugin_shell::ShellExt;
     let req = target.join("requirements.txt");
     if !req.exists() {
         return;
@@ -386,9 +385,7 @@ async fn install_requirements(
     match env_python() {
         Some(py) => {
             log(&format!("[*] Installing {id} requirements…\n"));
-            match app
-                .shell()
-                .command(&py)
+            match crate::base::shell_command(app, &py.to_string_lossy())
                 .args(["-m", "pip", "install", "-r", &req.to_string_lossy()])
                 .current_dir(repo)
                 .spawn()

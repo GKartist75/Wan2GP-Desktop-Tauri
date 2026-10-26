@@ -4,6 +4,24 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+## [0.10.27] — 2026-10-26
+
+- **The AppImage install no longer aborts with `ModuleNotFoundError: No module
+  named 'encodings'`.** 0.10.26 stripped the bundle's `PYTHONHOME`/`PYTHONPATH`
+  from spawned children — but only the *probe* spawns went through that helper.
+  The installer's own spawns (the `setup.py` run, both `git clone` calls, the
+  plugin `pip install`, the outdated-packages query) still called
+  `app.shell().command(...)` directly and inherited the mounted AppDir, so uv's
+  managed CPython 3.11.14 reported `PYTHONHOME = /tmp/.mount_…/usr/`, its
+  `stdlib dir` pointed inside the squashfs and it died during startup. Reported
+  on WSL2 Ubuntu + RTX 3080: the clone succeeded, the interpreter failed, and
+  the installer reported "setup.py exited with code 1" twice. Every spawn now
+  goes through the scrubbed builder.
+- **A dead `/tmp/.mount_*` Python prefix is dropped even outside an AppImage.**
+  Second defence for the same failure: if `PYTHONHOME`/`PYTHONPATH` still name a
+  vanished mount (a wrapper script, a kept shell), those entries are removed
+  instead of being passed on; ordinary user environments are untouched.
+
 ## [0.10.26] — 2026-10-26
 
 - **Linux install works end-to-end: the AppImage stops leaking its own Python.**

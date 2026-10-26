@@ -1,21 +1,16 @@
-# Wan2GP Desktop Launcher — Tauri Edition
+# Wan2GP Desktop Launcher
 
-> The easiest way to run **Wan2GP (WanGP)** — the open-source generative video/image/audio toolkit — on **Windows, Linux and macOS**. One installer. One click to launch. Zero Python/CUDA setup. **Rust + Tauri** shell: a fraction of the download, a fraction of the RAM.
+One-click **Wan2GP (WanGP)** — generative video, image, audio and TTS on your own GPU. No Python, no CUDA setup.
 
-[![Stars](https://img.shields.io/github/stars/GKartist75/Wan2GP-Desktop-Tauri?style=flat-square)](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/stargazers) &nbsp; [![Release](https://img.shields.io/github/v/release/GKartist75/Wan2GP-Desktop-Tauri?style=flat-square&label=release)](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases) &nbsp; [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue?style=flat-square)](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases) &nbsp; [![Tauri](https://img.shields.io/badge/shell-Tauri%202-orange?style=flat-square)](https://tauri.app/) &nbsp; [![Rust](https://img.shields.io/badge/backend-Rust-black?style=flat-square)](https://www.rust-lang.org/)
+| | Download |
+| --- | --- |
+| **Windows 10/11** | [installer .exe](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.27/Wan2GP.Desktop.Launcher.Tauri_0.10.27_x64-setup.exe) · 4.3 MB · unsigned, so Windows shows "unknown publisher" |
+| **Linux x86_64** | [AppImage](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.27/Wan2GP.Desktop.Launcher.Tauri_0.10.27_amd64.AppImage) · 86 MB, self-updating · [`.deb`](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.27/Wan2GP.Desktop.Launcher.Tauri_0.10.27_amd64.deb) · 7 MB |
+| **macOS Apple Silicon** | [.dmg](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.27/Wan2GP.Desktop.Launcher.Tauri_0.10.27_aarch64.dmg) · 5.7 MB · unsigned, so right-click → Open |
 
-<p align="center">
-  <a href="https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/latest" style="display:inline-block;padding:14px 36px;background:#2ea043;color:#fff;border-radius:8px;font-size:1.1rem;font-weight:600;text-decoration:none">
-    ⬇ Download — Latest Release
-  </a><br>
-  <small><b>Windows 10/11</b> — <code>Wan2GP.Desktop.Launcher.Tauri_*_x64-setup.exe</code> · 4.3 MB · unsigned ("unknown publisher" is normal)</small><br>
-  <small><b>Linux x86_64</b> — <code>…_amd64.AppImage</code> (86 MB) · or <code>…_amd64.deb</code> (7 MB)</small><br>
-  <small><b>macOS Apple Silicon</b> — <code>…_aarch64.dmg</code> · 5.7 MB · unsigned (right-click → Open)</small><br>
-  <small>Hardware needs scale with the model you pick — start at 6 GB VRAM, up to 24 GB+ for max quality.</small><br>
-  <small>⚠️ <b>Linux and macOS are new</b> — tested on real hardware here, but they need more testers: <a href="#linux--macos--testers-wanted">Testers wanted</a>.</small>
-</p>
+**6 GB VRAM** is enough to start; the big models want 16–24 GB. Wan2GP itself is [deepbeepmeep/WanGP](https://github.com/deepbeepmeep/Wan2GP) — this repository installs it, picks the right GPU kernels and keeps it updated.
 
-> **New here? What is Wan2GP?** [WanGP](https://github.com/deepbeepmeep/Wan2GP) by deepbeepmeep is the open-source app this launcher installs — video, image, audio and TTS generation in your browser, running on as little as **6 GB VRAM**. This repo is the launcher for it: one-click install, per-GPU kernels, Auto-Tune profiles, no Python/CUDA setup. Details: [What you get](#what-you-get).
+**Linux and macOS are new** — they work, but they need testers: [how to help](#linux--macos--testers-wanted).
 
 ## Contents
 
@@ -59,7 +54,7 @@ No Python, no CUDA toolkit, no `pip`, no Node needed beforehand — the installe
 
 ### Linux x86_64
 
-[AppImage](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.26/Wan2GP.Desktop.Launcher.Tauri_0.10.26_amd64.AppImage) (self-contained, self-updating) or [`.deb`](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.26/Wan2GP.Desktop.Launcher.Tauri_0.10.26_amd64.deb) (system-integrated, manual updates):
+[AppImage](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.27/Wan2GP.Desktop.Launcher.Tauri_0.10.27_amd64.AppImage) (self-contained, self-updating) or [`.deb`](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.27/Wan2GP.Desktop.Launcher.Tauri_0.10.27_amd64.deb) (system-integrated, manual updates):
 
 ```bash
 # AppImage — needs FUSE: sudo apt install libfuse2t64   (libfuse2 on 22.04)
@@ -80,7 +75,7 @@ wan2gp-desktop-launcher-tauri
 
 ### macOS Apple Silicon
 
-1. Download the [`.dmg`](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.26/Wan2GP.Desktop.Launcher.Tauri_0.10.26_aarch64.dmg), open it, drag the app into *Applications*.
+1. Download the [`.dmg`](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.27/Wan2GP.Desktop.Launcher.Tauri_0.10.27_aarch64.dmg), open it, drag the app into *Applications*.
 2. First start: **right-click → Open** (the build is unsigned; macOS 11+).
 3. Updates are manual — there is no in-app updater without an Apple Developer ID.
 
@@ -129,6 +124,7 @@ C:\Wan2GP-Models\               ← models library
 
 | Version | Headline |
 | --- | --- |
+| [**v0.10.27**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.27) | **A first-run Linux install no longer dies at `No module named 'encodings'`.** 0.10.26 cleaned the AppImage bundle variables out of the spawned children — but only on the probe paths. The installer's own spawns (the `setup.py` run, both `git clone` calls, the plugin `pip install`, the update query) still used `app.shell().command(...)` directly, so uv's CPython 3.11.14 inherited `PYTHONHOME=/tmp/.mount_…/usr/` and aborted before printing a line. Every spawn now goes through the scrubbed builder, and a `/tmp/.mount_*` Python prefix is dropped even when `APPDIR` is absent. Also: the README now leads with a three-row download table instead of a wall of text. |
 | [**v0.10.26**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.26) | **Linux and macOS joins Windows — one release, three platforms.** The release workflow now builds and signs the AppImage, `.deb`, NSIS/`.msi` and `.dmg` from the same tag, with `latest.json` and `SHA256SUMS.txt`. The Linux installer finally completes end-to-end: the AppImage no longer leaks its own `PYTHONHOME` / `LD_LIBRARY_PATH` / `PATH` into child processes, which made `uv` provision Python 3.11.14 and then watch the spawned interpreter abort (*uv could not provision Python 3.11.14*). Verified with the shipped AppImage: `uv install → uv python install 3.11.14 → verify → venv → uv pip install`, under the exact child environment the launcher spawns. The shipped AppImage is built on Ubuntu 26.04 (glibc ≥ 2.43): WebKitGTK 2.48 from the older runner images aborts without an EGL display; on 22.04/24.04 use the `.deb`. **Linux and macOS need testers** — [details](#linux--macos--testers-wanted). |
 | [**v0.10.25**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.25) | **Docs-only release.** README gains the Deepy headless starter and folds in the accumulated 0.10.24 notes; Windows binaries unchanged. |
 | [**v0.10.24**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.24) | **Shared output folders, Q4 KV cache, Civitai keys, Open Deepy in browser.** Manage → General now has separate **Image output** and **3D output** folders (WanGP's four `OUTPUT_KEYS`); new **Deepy KV Cache Quantization** dropdown (Auto/INT8/Q4, default Auto) with Auto-Tune recommending Q4 on tight VRAM. Civitai API keys for civitai.com and civitai.red join the existing HuggingFace token. A one-click **Open Deepy in browser** button next to Start Deepy Web. Wheel pins bumped to WGPKernels 1.4.2 and GGUF 1.0.29. |

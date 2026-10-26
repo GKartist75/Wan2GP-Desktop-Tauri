@@ -291,10 +291,7 @@ pub async fn check_package_updates(
         return Ok(serde_json::json!([]));
     };
     use tauri_plugin_shell::process::CommandEvent;
-    use tauri_plugin_shell::ShellExt;
-    let (mut rx, _) = app
-        .shell()
-        .command(&py)
+    let (mut rx, _) = crate::base::shell_command(&app, &py.to_string_lossy())
         .args(["-m", "pip", "list", "--outdated", "--format=json"])
         .spawn()
         .map_err(|e| e.to_string())?;
