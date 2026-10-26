@@ -29,6 +29,21 @@ test('panel container and check-all control exist on the installer screen', () =
   }
 })
 
+test('CUDA toolkit row is optional and rendered only when reported', () => {
+  const list = TAB.match(/const PREREQ_TOOLS = \[[\s\S]*?\]/)
+  assert.ok(list, 'tool table missing')
+  assert.match(list[0], /tool: "cuda"[\s\S]*?optional: true/)
+  // The backend adds `cuda` on Linux + NVIDIA only; a Windows, macOS or AMD
+  // host must not get a row that can only read "not found".
+  assert.match(
+    TAB,
+    /const reported = report \? new Set\(Object\.keys\(_prereqReport\)\) : null/,
+  )
+  assert.match(TAB, /if \(reported && !reported\.has\(spec\.tool\)\) continue/)
+  // Missing-but-optional is not the same as a hard prerequisite.
+  assert.match(TAB, /"not found — optional"/)
+})
+
 test('every row offers install, check and version actions', () => {
   assert.match(TAB, /mk\("install", "Install"\)/)
   assert.match(TAB, /mk\("check", "Check"\)/)

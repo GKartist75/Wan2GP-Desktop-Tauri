@@ -24,6 +24,11 @@ pub enum Capability {
     /// One-click prerequisite install (winget/choco/MSI download). Linux and
     /// macOS get the package-manager command instead of a button.
     PrereqInstall,
+    /// The Desktop view rendered as a real child webview composited over the
+    /// launcher (WebView2). GTK and WKWebView cannot overlay a second webview:
+    /// `add_child` puts both in the window's layout box, so the launcher page
+    /// is squeezed to the top half and the embed fills the bottom half.
+    NativeEmbed,
 }
 
 pub trait Platform {
@@ -173,6 +178,7 @@ mod tests {
         assert!(w.supports(Capability::TritonRepair));
         assert!(w.supports(Capability::AutoStart));
         assert!(w.supports(Capability::PrereqInstall));
+        assert!(w.supports(Capability::NativeEmbed));
 
         let l = linux::LinuxPlatform;
         assert!(l.supports(Capability::KernelWheels));
@@ -182,6 +188,7 @@ mod tests {
         assert!(!l.supports(Capability::Dlss));
         assert!(!l.supports(Capability::TritonRepair));
         assert!(!l.supports(Capability::PrereqInstall));
+        assert!(!l.supports(Capability::NativeEmbed));
 
         let m = macos::MacosPlatform;
         assert!(m.supports(Capability::AutoStart));
@@ -191,6 +198,7 @@ mod tests {
         assert!(!m.supports(Capability::TritonRepair));
         assert!(!m.supports(Capability::TaskManager));
         assert!(!m.supports(Capability::PrereqInstall));
+        assert!(!m.supports(Capability::NativeEmbed));
     }
 
     /// macOS has no shortcut writer; it must answer with an explicit refusal

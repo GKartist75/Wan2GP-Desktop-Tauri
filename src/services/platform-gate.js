@@ -30,6 +30,7 @@
     'tritonRepair',
     'autoStart',
     'prereqInstall',
+    'nativeEmbed',
   ]
 
   /**
@@ -79,6 +80,10 @@
       // winget/choco/MSI only. Linux and macOS get the package-manager
       // command in place of the button.
       prereqInstall: win,
+      // WebView2 composites a child webview over the page. GTK/WKWebView put
+      // it in the window's box instead (the launcher page gets squeezed into
+      // the other half), so the native Desktop renderer is Windows-only.
+      nativeEmbed: win,
     }
   }
 
@@ -101,7 +106,7 @@
    * Linux and macOS (winget/choco/MSI are Windows-only), so the card tells the
    * user what to type instead of offering a button that cannot work.
    *
-   * @param {string} tool git|uv|python|conda
+   * @param {string} tool git|uv|python|conda|cuda
    * @param {'win32'|'darwin'|'linux'} [platform]
    * @returns {string} empty for an unknown tool
    */
@@ -115,6 +120,10 @@
       uv: 'curl -LsSf https://astral.sh/uv/install.sh | sh',
       python: mac ? 'brew install python' : 'sudo apt install python3',
       conda: 'Miniconda installer from repo.anaconda.com',
+      // Upstream INSTALLATION.md: CUDA 13.1 for RTX 20XX-50XX, 12.8 for
+      // GTX 10XX. Not a distro package (too old there), so point at NVIDIA's
+      // runfile archive rather than `apt install nvidia-cuda-toolkit`.
+      cuda: mac ? '' : 'NVIDIA CUDA toolkit (13.1 / 12.8) — developer.nvidia.com/cuda-downloads',
     }
     return table[tool] || ''
   }

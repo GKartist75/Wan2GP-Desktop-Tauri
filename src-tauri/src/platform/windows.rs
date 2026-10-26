@@ -327,7 +327,8 @@ impl Platform for WindowsPlatform {
             | Capability::KernelWheels
             | Capability::TritonRepair
             | Capability::AutoStart
-            | Capability::PrereqInstall => true,
+            | Capability::PrereqInstall
+            | Capability::NativeEmbed => true,
         }
     }
 }

@@ -340,6 +340,17 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   Downloads, Save As… opens the native dialog with the real file-type filter
   (`*.zip`/`*.json`/… — issue #29) and reopens at the last-used folder.
 - Reload, zoom 25–200%, hide/show keeps the session alive.
+- **Renderer** — `native` (a real WebView2 child webview, exact Save-As
+  downloads) exists on **Windows only**. GTK and WKWebView cannot composite a
+  second webview over the page: `add_child` puts both webviews in the window's
+  layout box, the launcher page is squeezed into the top half and the embed is
+  pushed into the bottom half. On Linux/macOS the launcher therefore forces
+  `iframe` and disables the `native` option in both pickers
+  (Manage → Launch and the topbar), so the choice can never strand the UI.
+- **Console docks** — bottom / top / left / right each shrink the embed to the
+  remaining area instead of covering it; Floating returns the embed to the full
+  viewport. A right or left dock is 340px wide, so the console header wraps
+  instead of clipping its own dock buttons.
 
 ---
 

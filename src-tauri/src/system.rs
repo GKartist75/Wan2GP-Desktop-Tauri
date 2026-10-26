@@ -1219,9 +1219,20 @@ fn move_file_verified(src: &Path, dst: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+/// Can this host composite a real child webview over the launcher page?
+/// Windows (WebView2) can; GTK/WKWebView put the child in the window's layout
+/// box, which halves the launcher page instead of overlaying it — there the
+/// iframe renderer is the only correct one.
+pub(crate) fn native_embed_supported() -> bool {
+    crate::platform::current().supports(crate::platform::Capability::NativeEmbed)
+}
+
 fn embed_mode(opts: Option<&serde_json::Value>) -> String {
     // Explicit frontend request wins (lets the UI detect a failed native
     // stand-up); otherwise fall back to the persisted Manage → Launch setting.
+    if !native_embed_supported() {
+        return "iframe".to_string();
+    }
     if let Some(m) = opts
         .as_ref()
         .and_then(|o| o.get("mode"))
@@ -1929,6 +1940,25 @@ mod report_tests {
         let v = serde_json::json!({ "launchArgs": "--profile 4", "deepy_context_tokens": 32000 });
         let r = redact_config_secrets(&v);
         assert_eq!(r, v);
+    }
+
+    /// The renderer picker must never hand back "native" on a host that cannot
+    /// composite a child webview: GTK/WKWebView split the window instead of
+    /// overlaying, which squeezes the launcher page into half the height.
+    #[test]
+    fn native_renderer_is_refused_where_it_cannot_composite() {
+        use super::embed_mode;
+        let asked = serde_json::json!({"mode": "native"});
+        let supported =
+            crate::platform::current().supports(crate::platform::Capability::NativeEmbed);
+        assert_eq!(
+            embed_mode(Some(&asked)),
+            if supported { "native" } else { "iframe" }
+        );
+        if !supported {
+            // Persisted setting or not, the host cannot render a child webview.
+            assert_eq!(embed_mode(None), "iframe");
+        }
     }
 
     #[test]

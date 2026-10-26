@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+#
+# Installer manifest: the NSIS bundle from
+# `.github/workflows/release.yml` — the same `*-setup.exe` the in-app updater
+# consumes, so a winget upgrade and an in-app upgrade land on identical bits.
+#
+# GitHub turns the spaces in the bundle's file name into dots on upload, which
+# is why the URL below reads `Wan2GP.Desktop.Launcher.Tauri_…` and not
+# `Wan2GP Desktop Launcher Tauri_…` (see scripts/release-tauri.ps1).
+#
+# <SHA256> is a placeholder on purpose: the hash cannot exist before the asset
+# is built, so the release workflow's `vedantmgoyal2009/winget-releaser` step
+# renders this manifest with the real value and opens the PR against
+# microsoft/winget-pkgs. `winget validate` therefore fails on this copy; it
+# passes on the one the workflow submits.
+PackageIdentifier: GKartist75.Wan2GP
+PackageVersion: 0.10.25
+InstallerLocale: en-US
+InstallerType: nullsoft
+# Tauri's NSIS bundle defaults to a per-user install (no `installMode` override
+# in src-tauri/tauri.conf.json), hence Scope: user.
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/download/v0.10.25/Wan2GP.Desktop.Launcher.Tauri_0.10.25_x64-setup.exe
+    InstallerSha256: <SHA256>
+    InstallerSwitches:
+      Silent: /S
+      SilentWithProgress: /S
+ManifestType: installer
+ManifestVersion: 1.6.0

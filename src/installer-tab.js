@@ -1370,6 +1370,15 @@ const PREREQ_TOOLS = [
   { tool: "uv", label: "uv" },
   { tool: "python", label: "Python" },
   { tool: "conda", label: "Conda" },
+  // Linux + NVIDIA only (the backend omits it elsewhere). Upstream's
+  // INSTALLATION.md calls the CUDA toolkit a prerequisite because SpargeAttn
+  // and flash-attn are built from source there; without it the launcher skips
+  // just those two, so the row is informative, not a blocker.
+  {
+    tool: "cuda",
+    label: "CUDA toolkit (SpargeAttn / flash-attn)",
+    optional: true,
+  },
 ];
 let _prereqReport = {};
 let _prereqInstalling = false;
@@ -1443,8 +1452,6 @@ function prereqRow(spec) {
 async function refreshPrereqTools() {
   const box = $("prereqToolsRows");
   if (!box) return;
-  if (!box.children.length)
-    for (const spec of PREREQ_TOOLS) box.append(prereqRow(spec));
   const btn = $("prereqToolsRefresh");
   if (btn) btn.disabled = true;
   let report = null;
@@ -1456,6 +1463,15 @@ async function refreshPrereqTools() {
   if (btn) btn.disabled = false;
   _prereqReport = {};
   for (const t of (report && report.tools) || []) _prereqReport[t.tool] = t;
+  if (!box.children.length) {
+    // Rows follow the backend's report (it adds `cuda` only where it applies);
+    // a failed report still shows the always-relevant four.
+    const reported = report ? new Set(Object.keys(_prereqReport)) : null;
+    for (const spec of PREREQ_TOOLS) {
+      if (reported && !reported.has(spec.tool)) continue;
+      box.append(prereqRow(spec));
+    }
+  }
   for (const spec of PREREQ_TOOLS) {
     const row = box.querySelector('.pt-row[data-tool="' + spec.tool + '"]');
     if (!row) continue;
@@ -1464,7 +1480,11 @@ async function refreshPrereqTools() {
       "pt-dot " + (t.ready ? "ok" : "missing");
     const status = row.querySelector(".pt-status");
     status.className = "pt-status" + (t.ready ? "" : " missing");
-    status.textContent = t.ready ? t.version || "installed" : "not found";
+    status.textContent = t.ready
+      ? t.version || "installed"
+      : spec.optional
+        ? "not found — optional"
+        : "not found";
     status.title = t.path || "";
     const inst = row.querySelector('[data-act="install"]');
     if (!inst) continue; // no one-click install on this platform

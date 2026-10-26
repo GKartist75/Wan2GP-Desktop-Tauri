@@ -13,6 +13,76 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- **The environment panel reports Triton on Linux and macOS.** The version
+  scan asks `importlib.metadata` for each package under a fixed name and had
+  Triton aliased to `triton-windows` — the PyPI fork Windows uses. On
+  Linux/macOS that distribution does not exist (torch pulls plain `triton` in
+  as a dependency: 3.6 with torch 2.10), so the probe raised and the panel row
+  read "Triton —" on an env that had 3.6.0 installed. The scan now asks for the
+  host's own name first and the other one as a fallback. Verified on WSL2
+  Ubuntu 26.04: the panel's own generated probe prints `triton=3.6.0` and the
+  ENV card shows **Triton 3.6.0** instead of a dash.
+- **The Desktop renderer is Windows-only, and the UI now knows it.** `native`
+  renders Wan2GP in a real WebView2 child webview composited over the launcher;
+  GTK and WKWebView cannot do that — `add_child` puts both webviews in the
+  window's layout box, so on Linux the launcher page was squeezed into the top
+  half (an empty black band under the header) and Gradio was pushed into the
+  bottom half. Measured on WSL2/Ubuntu 26.04: window 1032px tall, launcher
+  webview 493px, child webview 492px. A new `nativeEmbed` capability (true on
+  Windows only, pinned JS↔Rust by `tests/platform-gate.test.js`) makes the
+  backend return `iframe` regardless of the saved setting and disables the
+  `native` option in both renderer pickers. Re-measured after the fix:
+  webview = 1908×999 = the whole window, embed rect = 0,44 → 1908×955.
+- **The console docks correctly in Desktop mode.** With the split gone, bottom /
+  top / left / right each shrink the embed to the space left over (measured
+  200px for bottom/top, 340px for left/right) and Floating restores the full
+  viewport. The 340px side docks were also clipping their own header: the
+  controls row is wider than the console, so `Floating` and `✕` sat past the
+  right edge and a right-docked console could not be switched back — the header
+  and actions now wrap.
+- **Kernel sync follows the host OS.** `setup_config.json` component commands
+  are per-OS maps (`{"win": "triton-windows>=3.6,<3.7", "linux":
+  "triton>=3.6,<3.7"}`), but the sync read the `win` key on every platform — so
+  on Linux *↻ Update GPU Wheels* downloaded Windows wheels (`ERROR: … is not a
+  supported wheel on this platform`) and asked PyPI for `triton-windows`, which
+  publishes nothing for Linux (`from versions: none`). Every config command now
+  resolves through the host's key (`hw::cmd_for_platform`, absent key = loud
+  skip instead of installing a foreign wheel), per-ABI `{py}` templates expand
+  to the env interpreter (`cp311`) the way `setup.py` does, and the known-good
+  SageAttention fallback is the Linux build (`…-linux.cg1-…-linux_x86_64.whl`).
+  Verified on WSL2 Ubuntu 26.04 against the live config: triton resolves to
+  `triton>=3.6,<3.7` and all five profile wheels are `linux_x86_64`, each
+  accepted by pip (`--dry-run`, exit 0).
+- **The AMD triton step is Windows-only.** The AMD install finished by
+  uninstalling any vanilla `triton` and pip-installing the PyPI
+  `triton-windows` fork. On Linux the ROCm torch wheel ships its own `triton`
+  under that name, so that step would have left the env without one; it is now
+  skipped there, and the AMD package gate refuses `triton` on Linux with the
+  same docs pointer instead of rewriting it to a Windows-only distribution.
+- **Linux/macOS install no longer dies on components that need a CUDA
+  toolkit.** Upstream ships prebuilt wheels for SpargeAttn and flash-attn on
+  Windows but builds both from source (`git+…`, sdist) on Linux/macOS, and its
+  `setup.py` runs every component with `check=True` — so on a stock Ubuntu (no
+  `nvcc`; upstream's own `scripts/install.sh` never installs one) the install
+  aborted with `Cannot find CUDA_HOME` before reaching the GPU kernels. The
+  launcher now detects a *native* toolkit, exports `CUDA_HOME` when it finds one,
+  and otherwise skips just those two components with an explicit message
+  (everything else, including WGPKernels/nunchaku/GGUF, installs). A toolkit seen
+  through a Windows mount (`/mnt/c/...` under WSL, `nvcc.exe` via interop) is
+  ignored — it cannot compile Linux extensions — and a Windows `CUDA_HOME`
+  leaking into the env is dropped. The wizard overview flags the skipped
+  components as "skipped — needs the CUDA toolkit (nvcc)" instead of naming a
+  version it will not install.
+- **CUDA toolkit shown as a Linux prerequisite.** Upstream `INSTALLATION.md`
+  calls CUDA 13.1 (RTX 20XX-50XX) / 12.8 (GTX 10XX) a prerequisite because
+  SpargeAttn and flash-attn are compiled there. The Prerequisites card now
+  carries a "CUDA toolkit" row on Linux NVIDIA hosts with the detected version
+  (from `version.json`), marked optional since a missing toolkit only costs
+  those two components. When a toolkit *is* present the install exports
+  `CUDA_HOME` and puts both its `bin` and the environment's `bin` on `PATH` —
+  SpargeAttn's build shells out to `python` and `nvcc`, which upstream's
+  `run.sh` gets from activating the env and the launcher does not.
+
 - **Deepy KV Cache Quantization now carries upstream's whole value set, and
   reads the saved one.** The panel offered Auto / INT8 / Q4 out of upstream's
   eight (`plugins/configuration/plugin.py:640-643`): *Disabled (BF16)* (the
@@ -204,6 +274,32 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   contradicting path counts. `PLATFORMS.md` no longer claims the artifact
   workflow produced the Windows installer or an MSI, and `OVERVIEW.md` now
   shows the platform adapters and the capability gate.
+
+- **Every install kind gets the update answer it can use.** The update control
+  assumed a `*-setup.exe`: on a `.deb`, an `.rpm`, a `.dmg` or a `cargo build`
+  directory it offered an installer that would not run, or failed with whatever
+  the plugin said. The launcher now classifies the copy it is running from
+  (`appimage`, `deb`, `rpm`, `windows`, `macapp`, `source`) and the button plus
+  the **Manage → Updates** row say what that kind can do — *vX — Download* next to
+  the finished `sudo apt install ./…` line, *vX — Releases* and "this copy runs
+  from a build directory — git pull, then rebuild" — instead of a generic failure.
+  `docs/UPDATING.md` is the per-platform page; winget and Homebrew Cask
+  definitions ship in `packaging/`, and `.github/workflows/package-managers.yml`
+  submits them on a published release (called from `release.yml`, because a
+  `release: published` event raised by `GITHUB_TOKEN` never starts a workflow).
+
+- **The test suite no longer depends on the host that runs it.** Seven assertions
+  pinned Windows values through helpers that branch on `cfg!(windows)`: the
+  Triton spec, the GGUF/SageAttention override pins, the safe SageAttention URL
+  and the flash-attn/sparge rendering. On Linux those helpers read the `linux`
+  table, so the assertions failed — the Ubuntu CI job would have gone red the
+  first time it ran the suite. The platform is a parameter now
+  (`cmd_for_platform_on`, `triton_component_spec_on`,
+  `post_install_override_urls_on`, `sage_safe_url_on`,
+  `sage_needs_safe_swap_on`, `hardware_profile_detail_with_ram_on`); each test
+  pins the table it means and asserts the other host's answer next to it, so both
+  arms are covered on every runner. Verified: 419 Rust + 212 JS on Windows, 400
+  Rust on Ubuntu 26.04 (WSL2), clippy and `cargo fmt --check` clean on both.
 
 ## [0.10.22] — 2026-10-23
 

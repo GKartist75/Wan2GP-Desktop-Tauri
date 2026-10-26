@@ -390,7 +390,10 @@ pub(crate) fn required_spec_in_requirements(text: &str, dist: &str) -> Option<St
 pub fn check_package(pkg: String) -> serde_json::Value {
     // Real probe: importlib version from the active env (aliases map import names to dist names).
     let dist = match pkg.as_str() {
-        "triton" => "triton-windows",
+        // AMD/Intel Windows ships the PyPI `triton-windows` fork; on Linux
+        // triton comes from the ROCm torch build under its own name.
+        "triton" if cfg!(windows) => "triton-windows",
+        "triton" => "triton",
         "spas_sage_attn" => "spas-sage-attn",
         "huggingface_hub" => "huggingface-hub",
         "opencv" | "opencv-python" => "opencv-python",
@@ -844,8 +847,15 @@ pub(crate) fn amd_package_gate_result(profile: &str, pkg: &str) -> Result<String
         Some(i) => low[..i].trim(),
         None => low.trim(),
     };
-    // Vanilla PyPI triton → triton-windows (keep any version pin).
+    // Vanilla PyPI triton → triton-windows on Windows (keep any version pin).
+    // On Linux the ROCm torch wheel ships its own triton under that name, so a
+    // PyPI triton would shadow it — refused like the other CUDA-only packages.
     if name == "triton" {
+        if !cfg!(windows) {
+            return Err(format!(
+                "{pkg} comes with the ROCm torch build on Linux — installing PyPI triton would shadow it. See {GUIDE}."
+            ));
+        }
         let pin = pkg[name.len()..].to_string();
         return Ok(format!("triton-windows{pin}"));
     }
@@ -1000,15 +1010,23 @@ mod amd_package_gate_tests {
     use super::amd_package_gate_result;
     #[test]
     fn amd_refuses_cuda_bitsandbytes_vanilla_sage_flash() {
-        // Vanilla `triton` maps to triton-windows instead of refusing.
-        assert_eq!(
-            amd_package_gate_result("AMD_GFX1201", "triton").unwrap(),
-            "triton-windows"
-        );
-        assert_eq!(
-            amd_package_gate_result("AMD_GFX1201", "triton==3.4.0").unwrap(),
-            "triton-windows==3.4.0"
-        );
+        if cfg!(windows) {
+            // Vanilla `triton` maps to triton-windows instead of refusing.
+            assert_eq!(
+                amd_package_gate_result("AMD_GFX1201", "triton").unwrap(),
+                "triton-windows"
+            );
+            assert_eq!(
+                amd_package_gate_result("AMD_GFX1201", "triton==3.4.0").unwrap(),
+                "triton-windows==3.4.0"
+            );
+        } else {
+            // Linux AMD: triton belongs to the ROCm torch build.
+            for spec in ["triton", "triton==3.4.0"] {
+                let err = amd_package_gate_result("AMD_GFX1201", spec).unwrap_err();
+                assert!(err.contains("docs/AMD-INSTALLATION.md"), "{err}");
+            }
+        }
         // Upstream AMD SageAttention 1 stack: pure-PyPI 1.x passes through.
         assert_eq!(
             amd_package_gate_result("AMD_GFX1201", "sageattention==1.0.6").unwrap(),

@@ -28,7 +28,8 @@ async function refreshDashboard() {
       const _cfg = await window.w2gp.configLoad().catch(() => ({}));
       const _et = $("embedModeTop");
       if (_et)
-        _et.value = _cfg && _cfg.embedMode === "iframe" ? "iframe" : "native";
+        _et.value = window.w2gp.effectiveEmbedMode(_cfg);
+        window.w2gp.gateRendererSelect(_et);
     } catch {}
     // Launch buttons only make sense when Wan2GP is actually installed
     try {

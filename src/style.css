@@ -3788,6 +3788,12 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
  border-bottom: 1px solid var(--border);
  gap: 8px;
  flex-shrink: 0;
+ /* The left/right docks are 340px wide while the header's controls need more:
+     without wrapping, the actions row overflows the console and the last dock
+     buttons (Floating, Close) are clipped off-screen — a right-docked console
+     could not be switched back. */
+ flex-wrap: wrap;
+ row-gap: 6px;
 }
 .floating-term-title {
  font-size: 0.6875rem;
@@ -3801,6 +3807,9 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
  display: flex;
  align-items: center;
  gap: 4px;
+ flex-wrap: wrap;
+ justify-content: flex-end;
+ min-width: 0;
 }
 .floating-term .term-body {
  flex: 1;

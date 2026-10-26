@@ -1550,14 +1550,14 @@ pub(crate) fn amd_therock_torch_cmds(profile: &str, gpu_name: &str) -> Option<(S
         .unwrap_or_else(|| format!("device-{}", amd_fallback_target(profile, gpu_name)));
     if let Ok(s) = std::fs::read_to_string(get_repo_dir().join("setup_config.json")) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
-            if let Some(tmpl) = v
-                .get("components")
-                .and_then(|c| c.get("torch"))
-                .and_then(|t| t.get("rocm10"))
-                .and_then(|r| r.get("cmd"))
-                .and_then(|c| c.get("win"))
-                .and_then(|w| w.as_str())
-            {
+            let rocm_cmd = crate::hw::cmd_for_platform(
+                v.get("components")
+                    .and_then(|c| c.get("torch"))
+                    .and_then(|t| t.get("rocm10"))
+                    .and_then(|r| r.get("cmd")),
+            );
+            if !rocm_cmd.is_empty() {
+                let tmpl = rocm_cmd.as_str();
                 if tmpl.contains("{device}") {
                     let primary = tmpl.replace("{device}", &extras);
                     let fallback = format!("--pre \"torch[{extras}]\" \"torchvision[{extras}]\" torchaudio --index-url https://nightly.repo.amd.com/rocm/whl-next/");
@@ -2040,6 +2040,105 @@ _profiles = _cfg.get("gpu_profiles", {}) if isinstance(_cfg, dict) else {}
 if _PROFILE not in _profiles:
     _fail("profile %r is not in this setup_config.json (keys: %s) - refusing a KeyError install." % (_PROFILE, sorted(_profiles)))
 print("[*] Launcher-forced GPU profile: %s (%s)" % (_PROFILE, _GPU_NAME))
+
+
+def _cuda_toolkit():
+    """Toolkit dir (the one holding a *native* bin/nvcc), or "" when none.
+
+    On WSL a Windows toolkit is visible through /mnt/c and its nvcc.exe is even
+    runnable via interop, but it cannot compile Linux extensions - accepting it
+    would fail the source build with the same CUDA_HOME error.
+    """
+    import shutil
+    for name in ("nvcc", "nvcc.exe") if os.name == "nt" else ("nvcc",):
+        found = shutil.which(name)
+        if found:
+            return os.path.dirname(os.path.dirname(found))
+    for var in ("CUDA_HOME", "CUDA_PATH", "CUDA_ROOT"):
+        cand = _env(var)
+        if cand and os.path.isfile(os.path.join(cand, "bin", "nvcc")):
+            return cand
+    for cand in ("/usr/local/cuda", "/usr/local/cuda-13", "/opt/cuda"):
+        if os.path.isfile(os.path.join(cand, "bin", "nvcc")):
+            return cand
+    return ""
+
+
+def _drop_foreign_cuda_home():
+    """Remove CUDA_HOME/CUDA_PATH that point at a non-native toolkit.
+
+    WSL/containers export the Windows variable verbatim; leaving it set makes
+    the source build pick up a toolkit it cannot use and fail obscurely.
+    """
+    for var in ("CUDA_HOME", "CUDA_PATH"):
+        val = _env(var)
+        if val and not os.path.isfile(os.path.join(val, "bin", "nvcc")):
+            os.environ.pop(var, None)
+            print("[!] Ignoring %s=%s: no native bin/nvcc there." % (var, val))
+
+
+# Upstream builds SpargeAttn from a git checkout on Linux/macOS (Windows gets a
+# prebuilt wheel) and setup.py runs every component with check=True, so a
+# missing CUDA toolkit aborts the whole install with "Cannot find CUDA_HOME".
+# A stock Ubuntu has no nvcc: upstream scripts/install.sh does not install one
+# either. Drop just that component and let the rest finish.
+def _linux_cmd(component, sub_key):
+    """The linux command upstream would run for this component slot."""
+    node = _cfg.get("components", {}).get(component, {})
+    if component == "sparge":
+        node = node.get("sparge", node)
+    entry = node.get(sub_key) if isinstance(node, dict) else None
+    if not isinstance(entry, dict):
+        return ""
+    cmd = entry.get("cmd")
+    if isinstance(cmd, str):
+        return cmd
+    return cmd.get("linux", "") if isinstance(cmd, dict) else ""
+
+
+def _needs_nvcc(text):
+    """True when the command compiles a CUDA extension (no wheel on Linux)."""
+    if not text or ".whl" in text:
+        return False
+    return "TRITON_AMD" not in text
+
+
+if os.name != "nt":
+    _drop_foreign_cuda_home()
+    _cuda = _cuda_toolkit()
+    _entry = _profiles.get(_PROFILE)
+    if isinstance(_entry, dict):
+        if _cuda:
+            if not _env("CUDA_HOME"):
+                os.environ["CUDA_HOME"] = _cuda
+                print("[*] CUDA toolkit found at %s - exported CUDA_HOME for source builds." % (_cuda,))
+            # INSTALLATION.md: SpargeAttn's build shells out to `python` from
+            # PATH, and nvcc must be reachable too - upstream's run.sh gets both
+            # by activating the env; we spawn setup.py directly.
+            _bins = [os.path.join(_cuda, "bin")]
+            _env_bin = os.path.dirname(sys.executable)
+            if os.path.basename(_env_bin) == "bin":
+                _bins.append(_env_bin)
+            _path = _env("PATH")
+            _missing = [p for p in _bins if p and p not in _path.split(os.pathsep)]
+            if _missing:
+                os.environ["PATH"] = os.pathsep.join(_missing + [_path])
+                print("[*] Added to PATH for source builds: %s" % (", ".join(_missing),))
+        else:
+            # Windows gets prebuilt wheels for these; Linux builds them from
+            # source, and setup.py runs components with check=True - one
+            # missing nvcc aborts the whole install (stock Ubuntu has none,
+            # and upstream scripts/install.sh does not install one either).
+            _dropped = []
+            for _key in ("sparge", "flash"):
+                _sub = _entry.get(_key)
+                if _sub and _needs_nvcc(_linux_cmd(_key, _sub)):
+                    _entry[_key] = None
+                    _dropped.append(_key)
+            if _dropped:
+                print("[!] Skipping %s: built from source here and no CUDA toolkit (nvcc) was found." % (", ".join(_dropped),))
+                print("[*] Everything else installs. To add them later: install the toolkit (e.g. 'sudo apt install nvidia-cuda-toolkit') and re-run the install.")
+
 try:
     _setup.do_install_auto(_ENV_TYPE, _cfg, _PROFILE)
 except SystemExit:
@@ -3525,8 +3624,11 @@ pub async fn install(
     // `triton` dist owns the same `triton` import namespace and the two
     // overwrite each other (documented upstream conflict), so it is
     // uninstalled first. Warn-only throughout: never fail the install.
-    // AMD-gated only; Intel/NVIDIA/CPU flows untouched.
-    if amd_cmds.is_some() {
+    // AMD-gated and Windows-only: on Linux the ROCm torch wheel ships its own
+    // triton under the `triton` name, so installing the PyPI `triton-windows`
+    // fork (or uninstalling the bundled one) would leave the env without a
+    // working triton. Intel/NVIDIA/CPU flows untouched.
+    if amd_cmds.is_some() && cfg!(windows) {
         if let Some(py) = resolve_env_python(&repo, &env_path.to_string_lossy()) {
             let vanilla = silent_command(&py)
                 .args(["-m", "pip", "show", "triton"])
@@ -4390,7 +4492,8 @@ pub(crate) fn pip_install_argv(cmd: &str) -> Vec<String> {
 }
 
 /// Triton component spec for a profile: `gpu_profiles[profile].triton` tags
-/// into `components.triton[tag].cmd.win` — deliberately NOT under
+/// into `components.triton[tag].cmd[win|linux]` (`triton-windows>=3.7…` on
+/// Windows, `triton>=3.6,<3.7` on Linux) — deliberately NOT under
 /// `components.kernels`, which is why the shared kernel lookup never found it
 /// and Sync never upgraded an existing Triton (fresh installs went through the
 /// install phases instead). Upstream v18.18 (fde3c7e) renamed the tags —
@@ -4402,6 +4505,16 @@ pub(crate) fn pip_install_argv(cmd: &str) -> Vec<String> {
 /// token; the loop re-adds `--upgrade` itself. Profiles without a tag (GTX_10,
 /// MPS/CPU) resolve to None and stay out of the sync list. Pure + unit-tested.
 pub(crate) fn triton_component_spec(cfg: &serde_json::Value, profile: &str) -> Option<String> {
+    triton_component_spec_on(cfg, profile, cfg!(windows))
+}
+
+/// [`triton_component_spec`] with the platform as a parameter, so the Windows
+/// table can be pinned by a test running on Linux/macOS.
+pub(crate) fn triton_component_spec_on(
+    cfg: &serde_json::Value,
+    profile: &str,
+    windows: bool,
+) -> Option<String> {
     let tag = cfg
         .get("gpu_profiles")
         .and_then(|p| p.get(profile))
@@ -4411,24 +4524,46 @@ pub(crate) fn triton_component_spec(cfg: &serde_json::Value, profile: &str) -> O
     if tag.is_empty() {
         return None;
     }
-    let raw = cfg
-        .get("components")
-        .and_then(|c| c.get("triton"))
-        .and_then(|m| m.get(tag))
-        .and_then(|e| e.get("cmd"))
-        .and_then(|c| c.get("win"))
-        .and_then(|u| u.as_str())
-        .unwrap_or("")
-        .trim();
-    if raw.is_empty() {
+    let raw = crate::hw::cmd_for_platform_on(
+        cfg.get("components")
+            .and_then(|c| c.get("triton"))
+            .and_then(|m| m.get(tag))
+            .and_then(|e| e.get("cmd")),
+        windows,
+    );
+    if raw.trim().is_empty() {
         return None;
     }
-    let spec = raw.strip_prefix("-U").unwrap_or(raw).trim_start();
+    let spec = raw
+        .trim()
+        .strip_prefix("-U")
+        .unwrap_or(raw.trim())
+        .trim_start();
     let spec = spec.trim_matches('"').trim();
     if spec.is_empty() {
         None
     } else {
         Some(spec.to_string())
+    }
+}
+
+/// The Linux twin of [`SAGE_SAFE_WIN_URL`]: upstream's own PyTorch 2.10 /
+/// CUDA 13 build, which INSTALLATION.md says already keeps the fastest kernels
+/// under CUDA Graph — the swap exists for a woct0rdho-only regression.
+pub(crate) const SAGE_SAFE_LINUX_URL: &str = "https://github.com/deepbeepmeep/SageAttention/releases/download/v2.2.0-linux.cg1/sageattention-2.2.0+cu130torch2.10.0.cg1-{py}-{py}-linux_x86_64.whl";
+
+/// Known-good SageAttention wheel for this host.
+pub(crate) fn sage_safe_url() -> &'static str {
+    sage_safe_url_on(cfg!(windows))
+}
+
+/// The known-good SageAttention build for a platform. Parameterized because the
+/// safe build is a *different wheel* per platform, and the unit tests pin both.
+pub(crate) fn sage_safe_url_on(windows: bool) -> &'static str {
+    if windows {
+        SAGE_SAFE_WIN_URL
+    } else {
+        SAGE_SAFE_LINUX_URL
     }
 }
 
@@ -4446,10 +4581,17 @@ pub(crate) const SAGE_SAFE_WIN_URL: &str = "https://github.com/woct0rdho/SageAtt
 /// torch line or a non-wheel spec (Turing's `sageattention==1.0.6`) is left
 /// alone: this build cannot stand in for those.
 pub(crate) fn sage_needs_safe_swap(url: &str, sage_safe: bool) -> bool {
+    sage_needs_safe_swap_on(url, sage_safe, cfg!(windows))
+}
+
+/// As above, for a stated platform: "already the safe build" must be judged
+/// against that platform's safe build, or a Linux install would keep
+/// re-substituting the URL it already has.
+pub(crate) fn sage_needs_safe_swap_on(url: &str, sage_safe: bool, windows: bool) -> bool {
     sage_safe
         && url.starts_with("https://github.com/woct0rdho/SageAttention/releases/download/")
         && url.contains("+cu130torch2.")
-        && url != SAGE_SAFE_WIN_URL
+        && url != sage_safe_url_on(windows)
 }
 
 pub(crate) fn post_install_override_urls(
@@ -4457,15 +4599,26 @@ pub(crate) fn post_install_override_urls(
     profile: &str,
     sage_safe: bool,
 ) -> OverrideWheels {
+    post_install_override_urls_on(cfg, profile, sage_safe, cfg!(windows))
+}
+
+/// [`post_install_override_urls`] with the platform as a parameter: the wheel
+/// pins upstream publishes are per-platform, and on a host with no entry the
+/// correct answer is "no override" — which the tests pin explicitly.
+pub(crate) fn post_install_override_urls_on(
+    cfg: &serde_json::Value,
+    profile: &str,
+    sage_safe: bool,
+    windows: bool,
+) -> OverrideWheels {
     let comp = |key: &str| {
-        cfg.get("components")
-            .and_then(|c| c.get("kernels"))
-            .and_then(|m| m.get(key))
-            .and_then(|e| e.get("cmd"))
-            .and_then(|c| c.get("win"))
-            .and_then(|u| u.as_str())
-            .unwrap_or("")
-            .to_string()
+        crate::hw::cmd_for_platform_on(
+            cfg.get("components")
+                .and_then(|c| c.get("kernels"))
+                .and_then(|m| m.get(key))
+                .and_then(|e| e.get("cmd")),
+            windows,
+        )
     };
     // Upstream 5533384 splits GGUF into `gguf` (cu130/py311) + `gguf_cu128`
     // (cu128/py310); profiles still list `gguf` and setup.py remaps via
@@ -4490,21 +4643,20 @@ pub(crate) fn post_install_override_urls(
             .and_then(|pr| pr.get("sage"))
             .and_then(|v| v.as_str())
             .unwrap_or("v220_cu13");
-        cfg.get("components")
-            .and_then(|c| c.get("sage"))
-            .and_then(|m| m.get(sage_ver))
-            .and_then(|e| e.get("cmd"))
-            .and_then(|c| c.get("win"))
-            .and_then(|u| u.as_str())
-            .unwrap_or("")
-            .to_string()
+        crate::hw::cmd_for_platform_on(
+            cfg.get("components")
+                .and_then(|c| c.get("sage"))
+                .and_then(|m| m.get(sage_ver))
+                .and_then(|e| e.get("cmd")),
+            windows,
+        )
     };
     // Empty lookup → cannot prove an override is needed → no-op. The safe
     // toggle only ever substitutes inside the safe build's wheel family.
     let sage = if ["RTX_30", "RTX_40", "RTX_50"].contains(&profile)
-        && sage_needs_safe_swap(&sage_url, sage_safe)
+        && sage_needs_safe_swap_on(&sage_url, sage_safe, windows)
     {
-        Some(SAGE_SAFE_WIN_URL.to_string())
+        Some(sage_safe_url_on(windows).to_string())
     } else {
         None
     };
@@ -4568,6 +4720,7 @@ async fn sync_post_install_overrides(app: &tauri::AppHandle, repo: &std::path::P
     emit_log("[*] post-install wheel sync: applying launcher overrides setup.py cannot express (GGUF floor, sage safe build)…\n");
     let py_s = py.to_string_lossy().to_string();
     for (name, url) in jobs {
+        let url = expand_py_placeholder(&url, &py);
         emit_log(&format!("[*] sync kernel {name} (post-install override)\n"));
         let emit_k = |s: &str| {
             crate::base::push_log(s, "setup");
@@ -4714,14 +4867,12 @@ async fn sync_kernels_inner(
                 }
             })
             .unwrap_or("unknown".into());
-        let gguf_url = cfg
-            .get("components")
-            .and_then(|c| c.get("kernels"))
-            .and_then(|m| m.get("gguf"))
-            .and_then(|e| e.get("cmd"))
-            .and_then(|c| c.get("win"))
-            .and_then(|u| u.as_str())
-            .unwrap_or("");
+        let gguf_url = crate::hw::cmd_for_platform(
+            cfg.get("components")
+                .and_then(|c| c.get("kernels"))
+                .and_then(|m| m.get("gguf"))
+                .and_then(|e| e.get("cmd")),
+        );
         // wheelDistVersion extract: <dist>-<version>-cp... -> version.
         // Decode the %2B build-tag separator upstream uses so the log reads
         // "1.0.23+torch…" instead of "1.0.23%2Btorch…".
@@ -4869,14 +5020,7 @@ async fn sync_kernels_inner(
                     .and_then(|c| c.get("sage"))
                     .and_then(|m| m.get(sage_ver))
                     .and_then(|e| e.get("cmd"))
-                    .map(|cmd| match cmd {
-                        serde_json::Value::String(s) => s.clone(),
-                        other => other
-                            .get("win")
-                            .and_then(|u| u.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    })
+                    .map(|cmd| crate::hw::cmd_for_platform(Some(cmd)))
                     .unwrap_or_default()
             } else {
                 // WGPKernels stack split (upstream 17307e5, mirrors
@@ -4915,14 +5059,12 @@ async fn sync_kernels_inner(
                             continue;
                         }
                     };
-                    cfg.get("components")
-                        .and_then(|c| c.get("kernels"))
-                        .and_then(|m| m.get(comp))
-                        .and_then(|e| e.get("cmd"))
-                        .and_then(|c| c.get("win"))
-                        .and_then(|u| u.as_str())
-                        .unwrap_or("")
-                        .to_string()
+                    crate::hw::cmd_for_platform(
+                        cfg.get("components")
+                            .and_then(|c| c.get("kernels"))
+                            .and_then(|m| m.get(comp))
+                            .and_then(|e| e.get("cmd")),
+                    )
                 // GGUF build split (upstream 5533384 + the 1.0.29 ROCm wheel):
                 // profiles list `gguf` (cu130/py311), but py310 envs need
                 // `gguf_cu128` and RDNA4 AMD envs need `gguf_rocm10`. Mirror
@@ -4971,14 +5113,12 @@ async fn sync_kernels_inner(
                             }
                         }
                     };
-                    cfg.get("components")
-                        .and_then(|c| c.get("kernels"))
-                        .and_then(|m| m.get(comp))
-                        .and_then(|e| e.get("cmd"))
-                        .and_then(|c| c.get("win"))
-                        .and_then(|u| u.as_str())
-                        .unwrap_or("")
-                        .to_string()
+                    crate::hw::cmd_for_platform(
+                        cfg.get("components")
+                            .and_then(|c| c.get("kernels"))
+                            .and_then(|m| m.get(comp))
+                            .and_then(|e| e.get("cmd")),
+                    )
                 } else if name == "triton" {
                     // components.triton[tag] (v18.18 key rename honored):
                     // tagged per profile, outside kernels[]. Resolved through
@@ -4987,20 +5127,18 @@ async fn sync_kernels_inner(
                     // below, same as an unknown component.
                     triton_component_spec(&cfg, cfg_profile).unwrap_or_default()
                 } else {
-                    cfg.get("components")
-                        .and_then(|c| c.get("kernels"))
-                        .and_then(|m| m.get(name))
-                        .and_then(|e| e.get("cmd"))
-                        .and_then(|c| c.get("win"))
-                        .and_then(|u| u.as_str())
-                        .unwrap_or("")
-                        .to_string()
+                    crate::hw::cmd_for_platform(
+                        cfg.get("components")
+                            .and_then(|c| c.get("kernels"))
+                            .and_then(|m| m.get(name))
+                            .and_then(|e| e.get("cmd")),
+                    )
                 }
             };
             if url.is_empty() && (name == "sage" || name == "sageattention") {
                 // fallback to known URL if setup_config missing sage entry —
                 // post6 is both upstream's pin and the safe build now.
-                url = SAGE_SAFE_WIN_URL.into();
+                url = sage_safe_url().into();
             }
             if url.is_empty() {
                 // Unknown profile kernel (upstream added a component the
@@ -5028,7 +5166,7 @@ async fn sync_kernels_inner(
                 );
                 crate::base::push_log(&m, "setup");
                 let _ = app.emit("launch-log", m);
-                url = SAGE_SAFE_WIN_URL.into();
+                url = sage_safe_url().into();
             }
             // Sage3 is gated, never synced (#2280): Blackwell-only AND
             // py>=3.12 wheels, while managed envs are py3.10/3.11. If
@@ -5047,6 +5185,10 @@ async fn sync_kernels_inner(
             } else {
                 crate::hw::apply_gguf_override_cfg(&url, &cfg)
             };
+            // setup_config templates per-ABI Linux wheels as `{py}` (setup.py
+            // substitutes `cp311` from sys.version_info); pip 404s on the
+            // literal template, so expand it against the env interpreter.
+            let url = expand_py_placeholder(&url, &py);
             // Triton no-downgrade (#2264): a pinned/ceiling spec must not
             // clobber a working newer triton (H3-sol setups). RTX_20/GTX_10
             // are exempt — upstream genuinely needs <3.3 on Turing/Pascal.
@@ -6395,6 +6537,20 @@ fn env_python_version(py: &std::path::Path) -> Option<(u32, u32)> {
     Some((it.next()?, it.next()?))
 }
 
+/// Expand setup_config's `{py}` placeholder to `cp<major><minor>` — exactly
+/// what setup.py does with `sys.version_info`. Linux sage wheels are published
+/// per ABI (`...cg1-cp311-cp311-linux_x86_64.whl`), so passing the template on
+/// unresolved 404s instead of installing.
+pub(crate) fn expand_py_placeholder(url: &str, py: &std::path::Path) -> String {
+    if !url.contains("{py}") {
+        return url.to_string();
+    }
+    match env_python_version(py) {
+        Some((major, minor)) => url.replace("{py}", &format!("cp{major}{minor}")),
+        None => url.to_string(),
+    }
+}
+
 /// Marker-aware pin parse: with `Some((major, minor))`, lines gated by an
 /// environment marker that does NOT apply to this interpreter are dropped,
 /// so multi-branch pins (e.g. onnxruntime-gpu's `python_version < "3.11"`
@@ -6740,7 +6896,13 @@ mod pip_argv_tests {
 
 #[cfg(test)]
 mod triton_component_tests {
-    use super::{pip_install_argv, triton_component_spec};
+    use super::{pip_install_argv, triton_component_spec_on};
+
+    /// The spec table under test is upstream's `win` one; see the note in
+    /// `override_wheels_tests`.
+    fn triton_component_spec(cfg: &serde_json::Value, profile: &str) -> Option<String> {
+        triton_component_spec_on(cfg, profile, true)
+    }
 
     fn cfg_shape() -> serde_json::Value {
         serde_json::json!({
@@ -6806,13 +6968,29 @@ mod triton_component_tests {
             vec!["triton-windows>=3.7.0.post26,<=3.7.1.post27"]
         );
     }
+    #[test]
+    fn a_linux_host_reads_the_linux_table_not_the_windows_one() {
+        // Same config, platform switched: no `linux` entry means no spec, which
+        // is how a Linux install skips the Windows triton wheel entirely.
+        assert_eq!(
+            triton_component_spec_on(&cfg_shape(), "RTX_30", false),
+            None
+        );
+        let mut with_linux = cfg_shape();
+        with_linux["components"]["triton"]["v37"]["cmd"]["linux"] =
+            serde_json::json!("-U \"triton==3.7.1\"");
+        assert_eq!(
+            triton_component_spec_on(&with_linux, "RTX_30", false).as_deref(),
+            Some("triton==3.7.1")
+        );
+    }
 }
 #[cfg(test)]
 mod sync_transcript_tests {
     use super::{
         kernel_cfg_header_line, kernel_skip_line, kernel_spec_version_full,
         kernel_sync_summary_line, kernel_triton_keep_line, kernel_version_matches,
-        sage_needs_safe_swap, SAGE_SAFE_WIN_URL,
+        SAGE_SAFE_WIN_URL,
     };
 
     /// The whole block a healthy box prints, in order, as one golden fixture:
@@ -6857,9 +7035,16 @@ mod sync_transcript_tests {
     /// for the case where upstream moves to a different build.
     #[test]
     fn the_sage_row_of_that_run_is_the_toggle_doing_nothing_on_purpose() {
+        // The captured console is a Windows box, so this asks about a Windows
+        // host; the Linux safe build is a deepbeepmeep wheel and never matches
+        // the toggle's family either.
         assert!(
-            !sage_needs_safe_swap(SAGE_SAFE_WIN_URL, true),
+            !super::sage_needs_safe_swap_on(SAGE_SAFE_WIN_URL, true, true),
             "identical wheels must not trigger a substitution"
+        );
+        assert!(
+            !super::sage_needs_safe_swap_on(super::SAGE_SAFE_LINUX_URL, true, false),
+            "the Linux safe build is already the safe build"
         );
         let want = kernel_spec_version_full(SAGE_SAFE_WIN_URL).unwrap();
         assert!(
@@ -6882,7 +7067,18 @@ mod sync_transcript_tests {
 }
 #[cfg(test)]
 mod override_wheels_tests {
-    use super::post_install_override_urls;
+    use super::{post_install_override_urls_on, OverrideWheels};
+
+    /// These pins come from upstream's `win` table (every URL is a `win_amd64`
+    /// wheel). Pin that table on every host instead of letting the suite only
+    /// pass on Windows; the Linux answer is asserted separately below.
+    fn post_install_override_urls(
+        cfg: &serde_json::Value,
+        profile: &str,
+        sage_safe: bool,
+    ) -> OverrideWheels {
+        post_install_override_urls_on(cfg, profile, sage_safe, true)
+    }
     fn cfg_with(gguf_win: &str, sage_ver: &str, sage_win: &str) -> serde_json::Value {
         serde_json::json!({
             "components": {
@@ -6908,9 +7104,14 @@ mod override_wheels_tests {
         let sage = w.sage.expect("post4 must swap when safe");
         assert!(sage.contains("post6"), "got {sage}");
     }
+    /// These expectations are about upstream's `win` wheels, so the toggle is
+    /// asked about a Windows host on any runner (the Linux answer is asserted
+    /// in `a_linux_host_resolves_no_override_from_a_windows_only_config`).
+    fn sage_needs_safe_swap(url: &str, sage_safe: bool) -> bool {
+        super::sage_needs_safe_swap_on(url, sage_safe, true)
+    }
     #[test]
     fn safe_toggle_only_substitutes_inside_the_wheel_family() {
-        use super::sage_needs_safe_swap;
         // The historic pin and any future build in the same CUDA/torch line
         // both swap — that is what makes the toggle a real choice rather than a
         // one-off for post4.
@@ -6996,6 +7197,20 @@ mod override_wheels_tests {
             gguf.contains("1.0.29") && gguf.contains("torch271cu128py310"),
             "got {gguf}"
         );
+    }
+    #[test]
+    fn a_linux_host_resolves_no_override_from_a_windows_only_config() {
+        // Upstream publishes `cmd.win` for these kernel wheels. A Linux host
+        // finds nothing to substitute, and the loop must stay a no-op rather
+        // than hand pip a `win_amd64` file.
+        let w = post_install_override_urls_on(
+            &cfg_with(GGUF_1014, "v220_cu13", SAGE_POST4),
+            "RTX_30",
+            true,
+            false,
+        );
+        assert!(w.gguf.is_none(), "linux must not swap to a win wheel");
+        assert!(w.sage.is_none());
     }
 }
 #[cfg(test)]
@@ -7299,10 +7514,34 @@ fn refresh_path_from_registry() {
 /// Read-only snapshot for the installer's Prerequisites panel: presence,
 /// resolved path and version for each tool. Never provisions anything (the
 /// uv resolution goes through `existing_uv`, not `uv_command`).
+/// CUDA toolkit entry for the Prerequisites card.
+///
+/// Upstream INSTALLATION.md lists CUDA 13.1 (RTX 20XX-50XX) / 12.8 (GTX 10XX)
+/// as a prerequisite on Linux because SpargeAttn and flash-attn are compiled
+/// from source there — Windows gets wheels and macOS has no CUDA, so the entry
+/// exists only where an NVIDIA driver does. A missing toolkit is not fatal: the
+/// install hook skips exactly those two components.
+#[cfg(target_os = "linux")]
+pub(crate) fn cuda_prereq_entry() -> Option<serde_json::Value> {
+    if !crate::hw::nvidia_present() {
+        return None;
+    }
+    let dir = crate::hw::cuda_toolkit_dir();
+    Some(serde_json::json!({
+        "tool": "cuda",
+        "ready": dir.is_some(),
+        "path": dir.as_ref().map(|d| d.to_string_lossy().to_string()),
+        "version": dir
+            .as_deref()
+            .and_then(crate::hw::cuda_toolkit_version),
+        "managed": false,
+    }))
+}
+
 #[tauri::command]
 pub async fn prerequisite_report() -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let tools = ["git", "uv", "python", "conda"]
+        let base = ["git", "uv", "python", "conda"]
             .iter()
             .map(|tool| {
                 let ready = tool_ready(tool);
@@ -7316,6 +7555,15 @@ pub async fn prerequisite_report() -> Result<serde_json::Value, String> {
                 })
             })
             .collect::<Vec<_>>();
+        // Upstream INSTALLATION.md lists the CUDA toolkit as a prerequisite on
+        // Linux (SpargeAttn and flash-attn are source builds there; Windows
+        // gets wheels, macOS has no CUDA). Missing is not fatal — the installer
+        // skips exactly those two components — so the card marks it optional.
+        #[cfg(target_os = "linux")]
+        let cuda = cuda_prereq_entry();
+        #[cfg(not(target_os = "linux"))]
+        let cuda: Option<serde_json::Value> = None;
+        let tools: Vec<serde_json::Value> = base.into_iter().chain(cuda).collect();
         serde_json::json!({ "tools": tools })
     })
     .await

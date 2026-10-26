@@ -113,3 +113,14 @@ jobs:
           # One `latest.json` covers every platform: each leg merges its own
           # entry into the release asset instead of overwriting it.
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+
+  # GitHub suppresses the `release: published` event when tauri-action publishes
+  # with GITHUB_TOKEN, so the winget/Homebrew submissions are fanned out from
+  # here once every platform leg has attached its assets. A draft is skipped —
+  # there is nothing to submit until someone publishes it (and that publish,
+  # done by a human, fires the `release` trigger instead).
+  package-managers:
+    needs: release
+    if: ${{ github.event_name == 'push' || inputs.draft == false }}
+    uses: ./.github/workflows/package-managers.yml
+    secrets: inherit

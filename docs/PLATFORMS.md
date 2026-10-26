@@ -33,6 +33,7 @@ The renderer reads the same map through `src/services/platform-gate.js`, and
 | Install / update WanGP, launch, stop, logs | — | Working | Ported | Ported |
 | GPU detection | — | Working (nvidia-smi / WMI) | Ported (`nvidia-smi`, `lspci` + `/sys/class/drm`) | Ported (`system_profiler` + `hw.memsize`) |
 | Embedded desktop view | — | Working | Ported | Ported |
+| Desktop renderer | `nativeEmbed` | Working (WebView2 child webview) | Forced to `iframe` (GTK cannot overlay a child webview) | Forced to `iframe` (WKWebView cannot overlay a child webview) |
 | Port owner lookup | — | Working (`netstat`/`tasklist`) | Ported (`ss`, then `lsof`) | Ported (`lsof`) |
 | Desktop shortcut | `desktopShortcut` | Working | Ported (`~/.local/share/applications/*.desktop`) | Hidden |
 | Auto-start on login | `autoStart` | Working (registry) | Ported (`~/.config/autostart/*.desktop`) | Ported (LaunchAgent) |
@@ -40,7 +41,7 @@ The renderer reads the same map through `src/services/platform-gate.js`, and
 | Triton repair / MSVC toolchain | `tritonRepair` | Working | Hidden | Hidden |
 | Windows Task Manager button | `taskManager` | Working | Hidden | Hidden |
 | DLSS 5 runtime | `dlss` | Working | Hidden | Hidden |
-| Self-update (`tauri-plugin-updater`) | — | Working (NSIS/MSI) | AppImage only, untested | Disabled |
+| Self-update (`tauri-plugin-updater`) | — | Working (NSIS/MSI) | AppImage only, untested; `.deb`/`.rpm` get the install command | Disabled — `.dmg` is download-and-drag |
 
 `autoStart` is the only capability every platform claims; DLSS, kernel wheels and
 the MSVC/Triton toolchain are all CUDA/NVIDIA-specific, and macOS has neither.
@@ -68,6 +69,13 @@ Updater signing needs `TAURI_SIGNING_PRIVATE_KEY` and
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the repository secrets (the local
 Windows release script uses the same key).
 
+The launcher knows which of six install kinds it is running as (`appimage`,
+`deb`, `rpm`, `windows`, `macapp`, `source`) and answers accordingly — an in-app
+download+install on Windows, an in-app swap on a signed AppImage, and otherwise
+the download link or the exact command to run. `docs/UPDATING.md` is the
+per-platform page, including the winget and Homebrew Cask lanes that
+`.github/workflows/package-managers.yml` submits on a published release.
+
 ## Installing on Linux
 
 Two bundles, both built on `ubuntu-22.04`; both were installed and started on
@@ -90,6 +98,25 @@ python3`) — or uv fetches the Python build the environment needs. Conda is
 optional. `uv` is the exception: the installer can bootstrap its own copy into
 `~/Wan2GP/.tools` with Astral's `install.sh` (`UV_NO_MODIFY_PATH=1`, so your PATH
 is never touched), which is why uv does not have to be installed first.
+
+**SpargeAttn and flash-attn need a CUDA toolkit on Linux/macOS.** Upstream
+`docs/INSTALLATION.md` names CUDA **13.1** (RTX 20XX-50XX) or **12.8**
+(GTX 10XX) as a prerequisite: those two components are compiled from source here
+(`git+https://github.com/woct0rdho/SpargeAttn`, `flash-attn==2.8.3.post1` sdist)
+while Windows gets prebuilt wheels. The Prerequisites card carries a **CUDA
+toolkit** row on Linux NVIDIA hosts (detected version, marked optional), and the
+wizard's overview marks the two components "skipped — needs the CUDA toolkit
+(nvcc)" when it is absent — everything else (Torch, SageAttention wheel, Triton,
+WGPKernels, nunchaku, GGUF) still installs. To add them later, install the
+toolkit (NVIDIA runfile; the distro package is usually too old), then Manage →
+Reinstall. With a toolkit present the launcher exports `CUDA_HOME` and puts its
+`bin` plus the environment's `bin` on `PATH`, because SpargeAttn's build shells
+out to `nvcc` and `python`. A Windows toolkit mounted under `/mnt/c` is ignored:
+`nvcc.exe` through WSL interop cannot build Linux extensions.
+
+**glibc.** The Linux wheels are built for glibc 2.34+ (WGPKernels) and 2.28+
+(SageAttention, GGUF). On an older distro WanGP's own kernel probe falls back to
+Triton/PyTorch INT8, so nothing breaks — INT8 is just slower.
 
 Where things land:
 

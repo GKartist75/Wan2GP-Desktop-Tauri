@@ -59,6 +59,7 @@ test('capabilitiesFor matches the platform each control needs', () => {
     tritonRepair: true,
     autoStart: true,
     prereqInstall: true,
+    nativeEmbed: true,
   })
   assert.deepStrictEqual(gate.capabilitiesFor('linux'), {
     taskManager: false,
@@ -68,6 +69,7 @@ test('capabilitiesFor matches the platform each control needs', () => {
     tritonRepair: false,
     autoStart: true,
     prereqInstall: false,
+    nativeEmbed: false,
   })
   assert.deepStrictEqual(gate.capabilitiesFor('darwin'), {
     taskManager: false,
@@ -77,6 +79,7 @@ test('capabilitiesFor matches the platform each control needs', () => {
     tritonRepair: false,
     autoStart: true,
     prereqInstall: false,
+    nativeEmbed: false,
   })
 })
 
@@ -195,6 +198,7 @@ test('the JS map is pinned to the Rust adapters', () => {
     TritonRepair: 'tritonRepair',
     AutoStart: 'autoStart',
     PrereqInstall: 'prereqInstall',
+    NativeEmbed: 'nativeEmbed',
   }
   const adapters = [
     ['w', 'win32'],
@@ -252,6 +256,10 @@ test('one-click install is Windows-only; other hosts get a command', () => {
   assert.strictEqual(gate.prereqCommand('git', 'darwin'), 'xcode-select --install')
   assert.strictEqual(gate.prereqCommand('git', 'linux'), 'sudo apt install git')
   assert.strictEqual(gate.prereqCommand('nope', 'linux'), '')
+  // CUDA toolkit: no distro package is new enough (upstream INSTALLATION.md
+  // wants 13.1 / 12.8), so the hint points at NVIDIA; macOS has no CUDA.
+  assert.match(gate.prereqCommand('cuda', 'linux'), /CUDA toolkit .*developer\.nvidia\.com/)
+  assert.strictEqual(gate.prereqCommand('cuda', 'darwin'), '')
 })
 
 test('pathJoin follows the host separator', () => {

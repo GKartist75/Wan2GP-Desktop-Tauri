@@ -1655,40 +1655,82 @@ fn expand_win_env(s: &str) -> String {
     }
     out
 }
-/// Install-location candidates per browser (user-level LocalAppData first,
-/// then system-wide Program Files — Brave/Opera/Vivaldi all support those).
-fn browser_candidates(id: &str) -> &[&str] {
-    match id {
-        "chrome" => &[
-            "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe",
-            "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe",
-            "%LocalAppData%\\Google\\Chrome\\Application\\chrome.exe",
-        ],
-        "edge" => &[
-            "%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe",
-            "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe",
-        ],
-        "firefox" => &[
-            "%ProgramFiles%\\Mozilla Firefox\\firefox.exe",
-            "%ProgramFiles(x86)%\\Mozilla Firefox\\firefox.exe",
-            "%LocalAppData%\\Mozilla Firefox\\firefox.exe",
-        ],
-        "brave" => &[
-            "%LocalAppData%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
-            "%ProgramFiles%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
-            "%ProgramFiles(x86)%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
-        ],
-        "opera" => &[
-            "%LocalAppData%\\Programs\\Opera\\launcher.exe",
-            "%ProgramFiles%\\Opera\\launcher.exe",
-            "%ProgramFiles(x86)%\\Opera\\launcher.exe",
-        ],
-        "vivaldi" => &[
-            "%LocalAppData%\\Vivaldi\\Application\\vivaldi.exe",
-            "%ProgramFiles%\\Vivaldi\\Application\\vivaldi.exe",
-            "%ProgramFiles(x86)%\\Vivaldi\\Application\\vivaldi.exe",
-        ],
-        _ => &[],
+/// Install-location candidates per browser, per OS. The table used to be
+/// Windows-only, so on Linux/macOS the No-GPU probe never found a browser and
+/// the launch buttons stayed disabled even with Chrome or Firefox installed.
+/// Windows keeps `%Var%` entries (expanded by `expand_win_env`); Linux lists
+/// distro/snap paths, macOS the `.app` bundle executables.
+fn browser_candidates(id: &str) -> &'static [&'static str] {
+    if cfg!(windows) {
+        match id {
+            "chrome" => &[
+                "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe",
+                "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe",
+                "%LocalAppData%\\Google\\Chrome\\Application\\chrome.exe",
+            ],
+            "edge" => &[
+                "%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe",
+                "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe",
+            ],
+            "firefox" => &[
+                "%ProgramFiles%\\Mozilla Firefox\\firefox.exe",
+                "%ProgramFiles(x86)%\\Mozilla Firefox\\firefox.exe",
+                "%LocalAppData%\\Mozilla Firefox\\firefox.exe",
+            ],
+            "brave" => &[
+                "%LocalAppData%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+                "%ProgramFiles%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+                "%ProgramFiles(x86)%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+            ],
+            "opera" => &[
+                "%LocalAppData%\\Programs\\Opera\\launcher.exe",
+                "%ProgramFiles%\\Opera\\launcher.exe",
+                "%ProgramFiles(x86)%\\Opera\\launcher.exe",
+            ],
+            "vivaldi" => &[
+                "%LocalAppData%\\Vivaldi\\Application\\vivaldi.exe",
+                "%ProgramFiles%\\Vivaldi\\Application\\vivaldi.exe",
+                "%ProgramFiles(x86)%\\Vivaldi\\Application\\vivaldi.exe",
+            ],
+            _ => &[],
+        }
+    } else if cfg!(target_os = "macos") {
+        match id {
+            "chrome" => &["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
+            "edge" => &["/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"],
+            "firefox" => &["/Applications/Firefox.app/Contents/MacOS/firefox"],
+            "brave" => &["/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
+            "opera" => &[
+                "/Applications/Opera.app/Contents/MacOS/Opera",
+                "/Applications/Opera GX.app/Contents/MacOS/Opera",
+            ],
+            "vivaldi" => &["/Applications/Vivaldi.app/Contents/MacOS/Vivaldi"],
+            _ => &[],
+        }
+    } else {
+        match id {
+            "chrome" => &[
+                "/usr/bin/google-chrome",
+                "/usr/bin/google-chrome-stable",
+                "/usr/bin/chromium",
+                "/usr/bin/chromium-browser",
+                "/snap/bin/chromium",
+            ],
+            "edge" => &[
+                "/usr/bin/microsoft-edge",
+                "/usr/bin/microsoft-edge-stable",
+                "/opt/microsoft/msedge/msedge",
+            ],
+            "firefox" => &[
+                "/usr/bin/firefox",
+                "/snap/bin/firefox",
+                "/usr/lib/firefox/firefox",
+            ],
+            "brave" => &["/usr/bin/brave-browser", "/snap/bin/brave"],
+            "opera" => &["/usr/bin/opera", "/usr/bin/opera-stable"],
+            "vivaldi" => &["/usr/bin/vivaldi", "/usr/bin/vivaldi-stable"],
+            _ => &[],
+        }
     }
 }
 #[tauri::command]
@@ -3061,5 +3103,31 @@ mod batch_tests {
         let exe = "/bin/sh";
         assert!(batch_argv(exe, None, false).unwrap_err().contains(".zip"));
         assert!(batch_argv(env!("CARGO_MANIFEST_DIR"), None, false).is_err());
+    }
+}
+
+#[cfg(test)]
+mod browser_candidate_tests {
+    use super::browser_candidates;
+    #[test]
+    fn candidates_match_the_host_os() {
+        let chrome = browser_candidates("chrome");
+        let firefox = browser_candidates("firefox");
+        assert!(!chrome.is_empty() && !firefox.is_empty());
+        if cfg!(windows) {
+            assert!(chrome[0].ends_with("chrome.exe"), "{chrome:?}");
+        } else if cfg!(target_os = "macos") {
+            assert!(chrome[0].contains(".app/Contents/MacOS/"), "{chrome:?}");
+        } else {
+            // The No-GPU probe never found a browser on Linux while the table
+            // was Windows-only, so the launch buttons stayed disabled.
+            assert!(chrome.contains(&"/usr/bin/google-chrome"), "{chrome:?}");
+            assert!(chrome.contains(&"/usr/bin/chromium"), "{chrome:?}");
+            assert!(firefox.contains(&"/usr/bin/firefox"), "{firefox:?}");
+        }
+    }
+    #[test]
+    fn unknown_browser_has_no_candidates() {
+        assert!(browser_candidates("netscape").is_empty());
     }
 }

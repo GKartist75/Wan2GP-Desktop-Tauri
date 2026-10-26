@@ -330,6 +330,8 @@ pub fn run() {
             updates::check_update,
             updates::download_update,
             updates::install_update,
+            updates::launcher_release_info,
+            updates::relaunch_app,
             system::create_browser_view,
             system::destroy_browser_view,
             system::get_log_history,

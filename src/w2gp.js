@@ -21,6 +21,39 @@ if (!window.__TAURI__) {
         const key = name.replace(/[-:]/g, "_");
         return inv(key, args);
     }
+    /**
+     * Can this host composite the Desktop view as a real child webview?
+     * Windows (WebView2) can; GTK/WKWebView cannot overlay a second webview.
+     */
+    function nativeEmbedAvailable() {
+        try {
+            return !window.platformGate || window.platformGate.has("nativeEmbed");
+        } catch {
+            return false;
+        }
+    }
+
+    /** The persisted renderer setting, coerced to what this host can render. */
+    function effectiveEmbedMode(cfg) {
+        if (!nativeEmbedAvailable()) return "iframe";
+        return cfg && cfg.embedMode === "iframe" ? "iframe" : "native";
+    }
+
+    /** Pin a renderer picker to iframe where native cannot composite. */
+    function gateRendererSelect(sel) {
+        if (!sel) return;
+        const ok = nativeEmbedAvailable();
+        const opt = sel.querySelector && sel.querySelector('option[value="native"]');
+        if (opt) {
+            opt.disabled = !ok;
+            if (!ok && opt.dataset.gated !== "1") {
+                opt.dataset.gated = "1";
+                opt.textContent += " (Windows only)";
+            }
+        }
+        if (!ok) sel.value = "iframe";
+    }
+
     // Tauri event shims: Electron used ipcRenderer.on; Tauri uses listen()
     function listen(event, cb) {
         try {
@@ -294,6 +327,15 @@ if (!window.__TAURI__) {
         // Manage → Launch → "Desktop embed" switch: embedMode=native renders Gradio in a
         // real child Webview (backend owns it, downloads arrive as download-finished
         // events); anything else keeps the iframe path. Backend returns the active mode.
+        // WebView2 composites a child webview over the page, so native is the
+        // right renderer there. GTK and WKWebView put the child in the window's
+        // layout box instead: the launcher page is squeezed into the top half
+        // and the embed fills the bottom half (empty band + console docking to
+        // the wrong edge). Pinned to Platform::supports(NativeEmbed) by
+        // tests/platform-gate.test.js.
+        nativeEmbedAvailable,
+        effectiveEmbedMode,
+        gateRendererSelect,
         createBrowserView: async (url, opts) => {
             const u0 = url || "http://localhost:7861";
             // Match the embedded Gradio page to the launcher theme: Gradio 5
@@ -328,11 +370,11 @@ if (!window.__TAURI__) {
             // Pass the wanted mode explicitly (backend falls back to its config read).
             // If native was wanted but the backend reports iframe, it failed — flag
             // it so app.js can warn instead of silently running the old renderer.
-            let want = "native";
+            let want = "iframe";
             try {
-                const _cfg = await w2gp.configLoad().catch(() => ({}));
-                want =
-                    _cfg && _cfg.embedMode === "iframe" ? "iframe" : "native";
+                want = effectiveEmbedMode(
+                    await w2gp.configLoad().catch(() => ({})),
+                );
             } catch {}
             try {
                 created = await call("create_browser_view", {
@@ -718,6 +760,8 @@ if (!window.__TAURI__) {
         checkUpdate: (o) => call("check_update", { opts: o }),
         downloadUpdate: (o) => call("download_update", { opts: o }),
         installUpdate: () => call("install_update"),
+        launcherReleaseInfo: () => call("launcher_release_info"),
+        relaunchApp: () => call("relaunch_app"),
         getWangpLocalVersion: () => call("get_wangp_local_version"),
         getWangpUpstreamInfo: () => call("get_wangp_upstream_info"),
         wangpContainsCommit: (hash) => call("wangp_contains_commit", { hash }),

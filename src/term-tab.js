@@ -727,7 +727,10 @@ function openSettings() {
       sn.value = cfg.serverName === "127.0.0.1" ? "127.0.0.1" : "localhost";
     // Desktop embed picker: native (default) vs iframe child webview
     const em = $("embedModeSelect");
-    if (em) em.value = cfg.embedMode === "iframe" ? "iframe" : "native";
+    if (em) {
+      em.value = window.w2gp.effectiveEmbedMode(cfg);
+      window.w2gp.gateRendererSelect(em);
+    }
     // Debug flags (cached on window for hot paths — no async in the log call)
     window.__debugBounds = cfg.debugBounds === true;
     const db = $("debugBoundsChk");

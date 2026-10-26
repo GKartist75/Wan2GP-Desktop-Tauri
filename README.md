@@ -419,6 +419,14 @@ Details, per-feature matrix, install steps and the honest gap list:
 - Conda is experimental; venv/uv are the supported env types.
 - No code signature or notarization yet: first launch needs right-click → Open.
 
+### Updating the launcher
+
+Windows and the Linux AppImage update in place from **Dashboard → Check Desktop
+Updates** (or **Manage → Updates**): download, then install & restart. The `.deb`/`.rpm`,
+the macOS `.dmg` and source builds are download-and-install by hand, and the launcher
+shows the exact command instead of running it. Per-platform steps, in-app states, and
+the winget / Homebrew Cask lanes: [**docs/UPDATING.md**](docs/UPDATING.md).
+
 ## Documentation
 
 | Doc | For |
