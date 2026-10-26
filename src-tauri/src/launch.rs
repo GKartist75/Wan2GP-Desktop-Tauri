@@ -1178,6 +1178,15 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             mode == "terminal-nogpu",
         );
     }
+    // `shell_command()` snapshots the environment when the Command is built
+    // (env_clear + child_env), but every launch pin the launcher needs is a
+    // set_var() *after* that line: HF/Civitai/Claude keys from config,
+    // TRITON_CACHE_DIR, PYTHONUNBUFFERED/PYTHONUTF8, TQDM_* and the
+    // WGP_GGUF_* knobs. Windows inherits the live process env at spawn, so
+    // it never noticed; Linux/macOS kept the stale snapshot and silently
+    // dropped all of them (0.10.27 added the env_clear). Re-snapshot here.
+    #[cfg(not(windows))]
+    let cmd = cmd.env_clear().envs(crate::base::child_env());
     let (rx, child) = cmd.spawn().map_err(|e| {
         mutating_done();
         emit(&format!("[LAUNCH ERROR] spawn failed: {e}\n"));

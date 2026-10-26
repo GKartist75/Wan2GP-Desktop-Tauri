@@ -4,6 +4,25 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+## [0.10.29] — 2026-10-26
+
+- **Linux/macOS launches finally receive the launcher's own environment.**
+  0.10.27 made every spawn go through the scrubbed builder, and that builder
+  (`shell_command`) clears the child env and snapshots `child_env()` when the
+  `Command` is *constructed* — but every launch pin is a `set_var()` on the
+  launcher process *after* that line: the HF / Civitai / Claude keys read from
+  Settings, `TRITON_CACHE_DIR`, `PYTHONUNBUFFERED` / `PYTHONUTF8` /
+  `PYTHONIOENCODING`, `TQDM_*` and the `WGP_GGUF_*` knobs. Windows inherits the
+  live process env at spawn, so nothing showed there; on Linux/macOS the stale
+  snapshot won and WanGP ran without any of them. Observable symptom: the
+  launcher logged `Triton JIT cache pinned to <data>/triton-cache` while Triton
+  kept writing `~/.triton/cache` (so each launch recompiled its kernels), and a
+  token configured in Settings never reached a gated model download. The spawn
+  now re-snapshots the live environment. Verified on Ubuntu 26.04 + RTX 3080:
+  the child's `/proc/<pid>/environ` carries `TRITON_CACHE_DIR`,
+  `PYTHONUNBUFFERED`, `PYTHONUTF8` and `TQDM_MININTERVAL`, and a Triton probe
+  honours the pinned folder.
+
 - `docs/PLATFORMS.md`: the WSLg note now includes the llvmpipe override
   (`MESA_LOADER_DRIVER_OVERRIDE`/`GALLIUM_DRIVER`, `GDK_BACKEND=x11`) that
   produces a real window on Ubuntu 26.04 + Mesa 26 — verified with the 0.10.28
