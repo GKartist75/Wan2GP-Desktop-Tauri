@@ -139,7 +139,7 @@ async fn run_capture(
     prog: &str,
     args: &[&str],
 ) -> (bool, String) {
-    let (mut rx, _child) = match app.shell().command(prog).args(args).spawn() {
+    let (mut rx, _child) = match crate::base::shell_command(app, prog).args(args).spawn() {
         Ok(t) => t,
         Err(e) => return (false, e.to_string()),
     };
@@ -7673,13 +7673,15 @@ mod prereq_gate_tests {
 #[cfg(windows)]
 async fn run_live(app: &tauri::AppHandle, prog: &str, args: Vec<String>) -> bool {
     use tauri_plugin_shell::process::CommandEvent;
-    use tauri_plugin_shell::ShellExt;
     let emit = |msg: String| {
         crate::base::push_log(&msg, "setup");
         let _ = app.emit("setup-output", msg);
     };
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (mut rx, _) = match app.shell().command(prog).args(&arg_refs[..]).spawn() {
+    let (mut rx, _) = match crate::base::shell_command(app, prog)
+        .args(&arg_refs[..])
+        .spawn()
+    {
         Ok(t) => t,
         Err(e) => {
             emit(format!("[!] spawn failed ({prog}): {e}\n"));
@@ -10171,7 +10173,10 @@ async fn install_dlss5_windows(
         args.push("-Force".into());
     }
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (mut rx, _) = match app.shell().command("powershell").args(&arg_refs).spawn() {
+    let (mut rx, _) = match crate::base::shell_command(&app, "powershell")
+        .args(&arg_refs)
+        .spawn()
+    {
         Ok(v) => v,
         Err(e) => {
             // Release the mutating guard even when PowerShell never starts;

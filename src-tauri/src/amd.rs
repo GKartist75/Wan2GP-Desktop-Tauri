@@ -147,7 +147,9 @@ fn spawn_bounded(
     timeout: Duration,
 ) -> Result<std::process::Output, String> {
     use std::process::Stdio;
-    let mut child = std::process::Command::new(py)
+    let mut cmd = std::process::Command::new(py);
+    crate::base::sanitize(&mut cmd);
+    let mut child = cmd
         .args(["-c", script])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -807,9 +807,8 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     }
     emit(&format!("[*] Python: {py}\n"));
     emit(&format!("[*] Port: {port}\n"));
-    use tauri_plugin_shell::ShellExt;
     // ponytail: PYTHONUNBUFFERED for streaming logs (tqdm), plus HF_TOKEN/claude key
-    let mut cmd = app.shell().command(&py);
+    let mut cmd = crate::base::shell_command(&app, &py);
     cmd = cmd.args(&args).current_dir(&repo);
     // shell plugin env() — if not available, fallback to std env (child inherits)
     // tauri-plugin-shell 2.x supports .env() — use it when available
@@ -3013,7 +3012,9 @@ pub async fn batch_process(
             .unwrap_or_default()
     ));
     let code = tauri::async_runtime::spawn_blocking(move || {
-        let mut child = std::process::Command::new(&py)
+        let mut cmd = std::process::Command::new(&py);
+        crate::base::sanitize(&mut cmd);
+        let mut child = cmd
             .args(&argv)
             .current_dir(&repo)
             .stdout(std::process::Stdio::piped())

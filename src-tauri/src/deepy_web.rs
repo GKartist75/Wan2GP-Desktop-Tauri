@@ -1262,8 +1262,10 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             std::env::set_var("HF_TOKEN", t);
         }
     }
-    use tauri_plugin_shell::ShellExt;
-    let shell_cmd = app.shell().command(&py).args(&args).current_dir(&repo);
+
+    let shell_cmd = crate::base::shell_command(&app, &py)
+        .args(&args)
+        .current_dir(&repo);
     let shell_cmd = match auth_secret.clone() {
         Some(pw) => shell_cmd.env(auth_env_key(), pw),
         None => shell_cmd,
