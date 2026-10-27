@@ -2224,24 +2224,22 @@ options:\n\
 
     #[test]
     fn model_roots_reads_wgp_config_paths() {
-        let repo = std::env::temp_dir().join(format!(
-            "wan2gp-roots-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(&repo).unwrap();
-        std::fs::write(
-            repo.join("wgp_config.json"),
-            r#"{"checkpoints_paths":["D:\\Models\\Wan2GP","ckpts"],"ckpt_dir":"ignored"}"#,
-        )
-        .unwrap();
+        let repo = temp_dir("roots");
+        // One absolute folder (whatever the platform's volume looks like) and
+        // one checkout-relative path, exactly as Wan2GP writes them. A
+        // hardcoded `D:\...` is relative on macOS/Linux and would be joined to
+        // the repo instead of being kept.
+        let external = temp_dir("roots-external");
+        let cfg = serde_json::json!({
+            "checkpoints_paths": [external.to_string_lossy(), "ckpts"],
+            "ckpt_dir": "ignored"
+        });
+        std::fs::write(repo.join("wgp_config.json"), cfg.to_string()).unwrap();
         let roots = model_roots(&repo);
         assert_eq!(roots.len(), 2, "duplicates collapsed, ckpt_dir unused");
-        assert_eq!(roots[0], PathBuf::from("D:\\Models\\Wan2GP"));
+        assert_eq!(roots[0], external);
         assert_eq!(roots[1], repo.join("ckpts"));
+        let _ = std::fs::remove_dir_all(&external);
         // No config at all → the checkout's own ckpts folder.
         let _ = std::fs::remove_file(repo.join("wgp_config.json"));
         assert_eq!(model_roots(&repo), vec![repo.join("ckpts")]);
