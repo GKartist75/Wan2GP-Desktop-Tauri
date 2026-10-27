@@ -506,4 +506,10 @@ arms of every pair compile; the Unix arm is what the flavor check exercises.
       (branches, gating, markup nesting, write-path guard);
       `node --test` 219/219 incl. deepy-kv-cache; `cargo test deepy`
       60 passed (incl. two new deepy_status tests).
+- [x] v0.10.30 released from master: version bump in package.json,
+      src-tauri/Cargo.toml + Cargo.lock and tauri.conf.json; README What's
+      New row; CHANGELOG [Unreleased] -> [0.10.30]; USER-GUIDE gained the
+      Speculative Decoding paragraph beside the KV cache one. The tag push
+      makes tauri-action publish directly on the four legs, then the
+      checksums job and the winget/Homebrew fan-out run.
 

@@ -4,6 +4,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+## [0.10.30] — 2026-10-27
+
 - **Deepy's speculative decoding gets its Prime row.** Upstream
   `prompt_enhancer_speculative_decoding` (shared/prompt_enhancer/config.py,
   self-seeded `{"method": "auto"}`) had no launcher UI. Inside the combined

@@ -162,6 +162,18 @@ quantized cache — sink pages plus a ring of the most recent tokens, `s1r1024`
 `body:exact`. Both dropdowns preselect from `wgp_config.json`, so a value set in
 WanGP shows as it is.
 
+**Deepy Speculative Decoding** — inside the Prime-local backend picker (local
+Qwen3.8 9B/27B), a dropdown writes `prompt_enhancer_speculative_decoding` to
+`wgp_config.json` the moment you change it: *Auto* (default; MTP drafts only
+while the model still fits in VRAM next to them), *Disabled*, *MTP* (1-8 draft
+tokens, 2 by default), and on the 27B GGUF quants *DSpark* and *DFlash2*
+(1-7, defaults 7 and 5; runtime also wants Triton with FlashAttention 2).
+A second draft-token select appears for methods that count; MTP adds about
+0.5-1 GiB and the drafters about 4-5 GiB near 32k context. The stored value is
+the canonical `{"method", "tokens"}`; your saved value preselects the row
+(legacy plain ints and strings still read exactly as upstream does), and a
+choice that no longer fits the backend falls back to Auto in the UI.
+
 **Prompt enhancement card** (below Active Environment, above Deepy) — *Enhancement UI*:
 *Enhance Prompt button* (default) or *Automatic dropdown* on Wan2GP generation
 forms. Works with or without Deepy, with its own *Apply* (same coherent config
