@@ -28,7 +28,7 @@ const BUNDLED_PLUGINS: &[&str] = &[
 // Install a pinned, known-good tag by default; never float master.
 const COMPANION_PLUGIN_ID: &str = "Wan2GP-finetune-manager";
 const COMPANION_PLUGIN_URL: &str = "https://github.com/GKartist75/Wan2GP-finetune-manager.git";
-const COMPANION_PLUGIN_REF: &str = "v3.7.0";
+const COMPANION_PLUGIN_REF: &str = "v4.0.0";
 
 // repo dir name from a git URL (mirrors shared/utils/plugins.py plugin_id_from_url).
 fn plugin_id_from_url(url: &str) -> String {
