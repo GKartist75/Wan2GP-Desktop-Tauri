@@ -24,12 +24,12 @@ function renderKernelWheels(wheels, kernelProfile, _osKey) {
       hipBtn.style.display = p.indexOf("AMD") === 0 ? "" : "none";
       if (p.indexOf("AMD") === 0 && p !== "AMD_GFX1200" && p !== "AMD_GFX1201") {
         hipBtn.title =
-          "Experimental AMD-only: GGUF 1.0.28 torch213rocm100py312 HIP wheel (upstream targets RDNA4 gfx1200/gfx1201 - installing on " +
+          "Experimental AMD-only: GGUF 1.0.29 torch213rocm100py312 HIP wheel (upstream targets RDNA4 gfx1200/gfx1201 - installing on " +
           p +
           " is unvalidated). Installs in this env's torch 2.13+rocm10 stack; Update GPU Wheels installs it too.";
       } else if (hipBtn.title && hipBtn.title.indexOf("torch213rocm100") === -1) {
         hipBtn.title =
-          "Experimental AMD-only: GGUF 1.0.28 torch213rocm100py312 HIP wheel (RDNA4 gfx1200/gfx1201). Installs in this env's torch 2.13+rocm10 stack; Update GPU Wheels installs it too.";
+          "Experimental AMD-only: GGUF 1.0.29 torch213rocm100py312 HIP wheel (RDNA4 gfx1200/gfx1201). Installs in this env's torch 2.13+rocm10 stack; Update GPU Wheels installs it too.";
       }
     }
   } catch {}

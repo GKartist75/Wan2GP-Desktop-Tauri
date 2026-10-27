@@ -1038,7 +1038,7 @@ pub(crate) fn attention_for_profile(profile_key: &str) -> Option<&'static str> {
 /// silently fall back to slow PyTorch SDPA on Deepy decode (6 tok/s vs 37:
 /// #2274, #2193), hit the Q2_K fallback assert (#2235), or 404 outright on
 /// stale URLs (#2249).
-/// Anything older resolves to the known-good 1.0.28 wheel; the floor,
+/// Anything older resolves to the known-good 1.0.29 wheel; the floor,
 /// newer builds, and unparseable URLs pass through, so the day upstream
 /// flips setup_config forward we follow it with no code change.
 /// HIP gets none of the CUDA-only single-launch win (upstream's

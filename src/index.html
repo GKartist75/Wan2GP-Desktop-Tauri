@@ -348,7 +348,7 @@
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>GGUF CUDA Kernel</h3>
-            <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the weight-multiply policy: <code>fast</code>/<code>low_vram</code> use the packed MMVQ/MMQ kernels, <code>materialized</code> dequantizes and uses cuBLAS. <em>Short-batch mode</em> drives the Q4_K/PTQ1_0 tensor-core path for 2–8 row batches (auto = per-shape). These are the knobs wheel <strong>1.0.28</strong> actually reads — the older Stream-K and BF16→FP16 switches were dropped upstream.</p>
+            <p class="token-hint">Controls for the <code>llamacpp_gguf_cuda</code> wheel (GGUF models). Applies on next launch. <em>Matmul mode</em> picks the weight-multiply policy: <code>fast</code>/<code>low_vram</code> use the packed MMVQ/MMQ kernels, <code>materialized</code> dequantizes and uses cuBLAS. <em>Short-batch mode</em> drives the Q4_K/PTQ1_0 tensor-core path for 2–8 row batches (auto = per-shape). These are the knobs wheel <strong>1.0.29</strong> actually reads — the older Stream-K and BF16→FP16 switches were dropped upstream.</p>
             <label class="toggle-row"><input type="checkbox" id="ggufEnabled"> <span>Enable GGUF CUDA kernels</span></label>
             <div class="token-field" style="margin-top:8px">
               <label class="token-hint" style="display:block;margin-bottom:4px">Matmul mode</label>
@@ -1245,8 +1245,8 @@
             <span class="card-title">GPU Kernel Wheels</span>
             <span class="env-type-tag" id="kernelProfileTag"></span>
             <button class="btn btn-ghost small hide-on-collapse" id="restoreKernelsBtn" title="Reinstall setup_config wheels exactly as published — drops launcher overrides (GGUF floor; sage swap only if setup_config ever lags to post4). Use when a launcher wheel override misbehaves." style="margin-left:auto">Restore GPU Wheels</button>
-                <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.28 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
-                <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only (RDNA4 gfx1200/gfx1201): installs the GGUF 1.0.28 torch213rocm100py312 HIP wheel into this env's torch 2.13+rocm10 stack (Update GPU Wheels installs it too). Replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="syncKernelsBtn" title="Install upstream's wanted wheels plus launcher fixes (sage safe build, GGUF 1.0.29 floor). Takes a few minutes — watch the Console." style="margin-left:8px">↻ Update GPU Wheels</button>
+                <button class="btn btn-ghost small hide-on-collapse" id="installHipGgufBtn" title="Experimental AMD-only (RDNA4 gfx1200/gfx1201): installs the GGUF 1.0.29 torch213rocm100py312 HIP wheel into this env's torch 2.13+rocm10 stack (Update GPU Wheels installs it too). Replaces the CUDA GGUF wheel; validation pending." style="margin-left:8px;display:none">HIP GGUF (exp)</button>
                 <button class="btn btn-ghost small hide-on-collapse" id="installWgpkernelsBtn" title="Optional INT8 fast path (WGPKernels 1.3.0, in setup_config since upstream 17307e5). Installs the wheel matching your torch build (cu130/cu128) for RTX 20/30/40/50 (Turing 7.5+), or the rocm100 build for AMD RDNA4 (gfx1200/gfx1201) right in the installer's torch 2.13+rocm10 env." style="margin-left:8px;display:none">WGPKernels (INT8)</button>
           </div>
           <div class="env-subsection" id="kernelWheelsSubsection" style="margin-top:0;border-top:none;padding-top:0">
@@ -1400,7 +1400,7 @@
             <div class="deepy-cost-note">
               <span class="dot-ok">●</span> <strong>OpenCode</strong> — free, local models, no account.
               <span class="dot-bad">●</span> <strong>Claude Code / Codex</strong> — paid (subscription or API credits).
-              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 9B/27B (local)</strong> — runs on your GPU (needs GGUF kernels 1.0.28 via Sync Kernels); pick model + quantization below. Auto-sets 32k context + Summarize.
+              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 9B/27B (local)</strong> — runs on your GPU (needs GGUF kernels 1.0.29 via Sync Kernels); pick model + quantization below. Auto-sets 32k context + Summarize.
               <br>Prime plans advanced multi-step work and is required for every external LLM (it exposes WanGP's MCP tools). Zero is lightweight and local-only.
             </div>
             <div class="deepy-sub-label">Local engine</div>
@@ -1420,6 +1420,20 @@
                 <option value="6:gguf_q8">9B Heretic — GGUF Q8 (~11 GB, closest to full precision)</option>
               </select>
               <p class="path-hint" id="deepyPrimeBackendHint" style="margin-top:6px"></p>
+              <!-- Speculative decoding for Deepy's own LLM (upstream
+                   prompt_enhancer_speculative_decoding). Options are built by
+                   deepy-tab.js per backend: DSpark/DFlash2 exist only on the
+                   27B GGUF quants, and a draft-token select appears only for
+                   methods that take one. Writes immediately on change. -->
+              <div id="deepySpecWrap" style="display:none;margin-top:10px">
+                <div class="deepy-sub-label">Speculative Decoding</div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px">
+                  <select id="deepySpecSelect" class="input" style="min-width:290px"></select>
+                  <select id="deepySpecTokensSelect" class="input" style="min-width:190px;display:none" title="Draft tokens ahead: more can decode faster but use more VRAM"></select>
+                </div>
+                <p class="path-hint" id="deepySpecHint" style="margin-top:6px"></p>
+                <p class="path-hint" style="margin-top:6px">Written as <code>prompt_enhancer_speculative_decoding</code>; only this local Qwen3.8 engine supports it.</p>
+              </div>
             </div>
             <div class="deepy-sub-label" style="margin-top:8px">Remote engine</div>
             <div id="deepyEngineRemote" class="deepy-engine-options"></div>

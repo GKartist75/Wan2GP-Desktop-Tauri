@@ -1730,9 +1730,13 @@ pub fn deepy_status() -> serde_json::Value {
         .map(std::string::ToString::to_string);
     // Prompt-enhancement UI (upstream `enhancer_mode`: 0 = Manual Button +
     // Automatic on Generation, 1 = Manual Button Only) so the panel can pre-select.
+    // Speculative decoding (upstream `prompt_enhancer_speculative_decoding`,
+    // shared/prompt_enhancer/config.py) — returned raw (a {"method","tokens"}
+    // dict or a legacy int); the panel normalizes like upstream does.
+    let spec_raw = v.get("prompt_enhancer_speculative_decoding").cloned();
     let enhancer_mode = v.get("enhancer_mode").and_then(serde_json::Value::as_i64);
     let kv_cache = kv_cache_value(&v);
-    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "promptEnhancerQuantization": quant, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode, "enhancerMode": enhancer_mode, "kvCacheQuantization": kv_cache})
+    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "promptEnhancerQuantization": quant, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode, "enhancerMode": enhancer_mode, "kvCacheQuantization": kv_cache, "promptEnhancerSpeculativeDecoding": spec_raw})
 }
 /// Deepy KV cache quantization as the panel needs it, straight from the config
 /// (upstream `shared/deepy/config.py`): `""` is BF16 and stays empty — the
@@ -2107,10 +2111,14 @@ pub fn deepy_set(
         v["llm_engines"]["deepy"] = serde_json::json!(eng_str);
         v["llm_engines"]["prompt_enhancer"] = serde_json::json!("same_as_deepy");
         if m == "zero" {
-            // Full Zero preset (mirrors shared/deepy/config.py defaults + tool picks).
+            // Full Zero preset (mirrors shared/deepy/config.py defaults +
+            // tool picks). Context: upstream default since 6f1ebc85
+            // (2026-10-20), which also clamps DEEPY_CONTEXT_TOKENS_MIN =
+            // 20480 ("Zero's system prompt and tools alone take about 12k
+            // tokens") — older seeds clamp up at runtime.
             for (k, val) in [
                 ("deepy_vram_mode", serde_json::json!("unload")),
-                ("deepy_context_tokens", serde_json::json!(16386)),
+                ("deepy_context_tokens", serde_json::json!(20480)),
                 ("deepy_kv_cache_quantization", serde_json::json!("auto")),
                 ("deepy_repetition_penalty", serde_json::json!(true)),
                 ("deepy_compaction_type", serde_json::json!("discard")),
@@ -2777,6 +2785,26 @@ mod deepy_roundtrip_tests {
     /// `enhancer_mode` so the first apply exercises the documented default.
     const SEED_CFG: &str = r#"{"llm_engines":{},"deepy_multi_session":"selectable"}"#;
     #[test]
+    fn deepy_status_surfaces_speculative_decoding_raw() {
+        let td = TestDataDir::new();
+        td.seed_wgp_config(
+            r#"{"deepy_enabled":1,"prompt_enhancer_speculative_decoding":{"method":"mtp","tokens":3}}"#,
+        );
+        let s = deepy_status();
+        assert_eq!(s["ok"], true);
+        assert_eq!(s["promptEnhancerSpeculativeDecoding"]["method"], "mtp");
+        assert_eq!(s["promptEnhancerSpeculativeDecoding"]["tokens"], 3);
+    }
+
+    #[test]
+    fn deepy_status_speculative_absent_is_null() {
+        let td = TestDataDir::new();
+        td.seed_wgp_config(r#"{"deepy_enabled":1}"#);
+        let s = deepy_status();
+        assert!(s["promptEnhancerSpeculativeDecoding"].is_null());
+    }
+
+    #[test]
     fn deepy_set_writes_coherent_config() {
         let td = TestDataDir::new();
         td.seed_wgp_config(SEED_CFG);
@@ -2804,7 +2832,7 @@ mod deepy_roundtrip_tests {
         assert_eq!(c["enhancer_enabled"], 4);
         assert_eq!(c["llm_engines"]["deepy"], "qwen35_9b");
         assert_eq!(c["deepy_vram_mode"], "unload");
-        assert_eq!(c["deepy_context_tokens"], 16386);
+        assert_eq!(c["deepy_context_tokens"], 20480);
         assert_eq!(c["deepy_tool_gen_image"], "Krea 2 Turbo (8 Steps)");
         // Seed had no enhancer_mode and none was passed, so the documented
         // button-only default (1) applies.

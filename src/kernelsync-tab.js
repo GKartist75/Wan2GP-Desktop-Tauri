@@ -52,7 +52,7 @@ $("installHipGgufBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   if (
     !(await askConfirm(
-      "Install experimental HIP GGUF 1.0.28 (torch213rocm100py312) for AMD RDNA4 (RX 9060/9070, gfx1200/gfx1201)?\n\nInstalls in this env's torch 2.13+rocm10 stack - the wheel checks the ROCm torch build at import. Update GPU Wheels installs the same wheel automatically. Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
+      "Install experimental HIP GGUF 1.0.29 (torch213rocm100py312) for AMD RDNA4 (RX 9060/9070, gfx1200/gfx1201)?\n\nInstalls in this env's torch 2.13+rocm10 stack - the wheel checks the ROCm torch build at import. Update GPU Wheels installs the same wheel automatically. Replaces the CUDA GGUF wheel. Validation pending; paged-attention SDPA fallback expected.",
     ))
   )
     return;

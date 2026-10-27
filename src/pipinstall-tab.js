@@ -125,7 +125,7 @@ const DEEPY_PANEL_ENGINES = [
   { id: "opencode", label: "OpenCode", paid: false },
   { id: "claude-code", label: "Claude Code", paid: true },
   { id: "codex", label: "OpenAI Codex", paid: true },
-  // ponytail: b71026f — local Prime runs on Qwen3.8 VL 9B/27B (needs the 9B or 27B model + GGUF 1.0.28; backend auto-raises 32k context + Summarize)
+  // ponytail: b71026f — local Prime runs on Qwen3.8 VL 9B/27B (needs the 9B or 27B model + GGUF kernels (current floor 1.0.29); backend auto-raises 32k context + Summarize)
   { id: "local-qwen38", label: "Qwen3.8 VL 9B/27B (local)", paid: false },
 ];
 
@@ -156,7 +156,7 @@ const DEEPY_QUANT_CHOICES = {
     { id: "gguf", label: "GGUF Q4 (default, highest quality)" },
     { id: "gguf_q3", label: "GGUF IQ3_S (middle, 16 GB VRAM)" },
     { id: "gguf_q2", label: "GGUF Q2 (lowest memory)" },
-    { id: "gguf_ptq1", label: "Bonsai PTQ1 (~10 GB VRAM, needs kernels 1.0.28+)" },
+    { id: "gguf_ptq1", label: "Bonsai PTQ1 (~10 GB VRAM, needs kernels 1.0.29+)" },
   ],
   6: [
     { id: "gguf", label: "GGUF Q4 (~6.5 GB VRAM, default)" },
