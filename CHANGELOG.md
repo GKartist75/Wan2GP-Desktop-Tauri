@@ -4,6 +4,34 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- **Deepy's speculative decoding gets its Prime row.** Upstream
+  `prompt_enhancer_speculative_decoding` (shared/prompt_enhancer/config.py,
+  self-seeded `{"method": "auto"}`) had no launcher UI. Inside the combined
+  Prime-local backend picker the panel grows a "Speculative Decoding" row,
+  rebuilt per backend like upstream's ui_state: Auto and Disabled, MTP
+  (1-8 draft tokens) on the Qwen3.8 backends, plus DSpark and DFlash2
+  (1-7) on the 27B GGUF quants, whose hint says runtime also wants
+  Triton + FlashAttention 2. A change writes the canonical
+  `{"method", "tokens"}` dict to wgp_config.json immediately (the KV cache
+  row's pattern; nothing waits on Apply), labels and VRAM costs mirror
+  upstream, and the hint carries Auto's measured rule: MTP drafts only
+  while the model still fits in VRAM next to them. `deepy_status` returns
+  the raw saved value so the row preselects it; a saved dict passes through
+  with tokens clamped to the method range (upstream raises there), legacy
+  int and string encodings read exactly along upstream's two branches, and
+  a method that no longer qualifies for the chosen backend falls back to
+  Auto in the UI while staying safe on disk.
+- The Zero preset stopped seeding a stale context window: upstream raised
+  `deepy_context_tokens` 16386 → 20480 (2026-10-20) and made 20480 the
+  minimum, so the launcher's seed follows.
+- Ten UI strings still cited GGUF kernels 1.0.28 where the launcher's
+  pinned wheel and floor are 1.0.29 (the same stale-version class caught in
+  docs for 0.10.28). Deepy, Kernels, Sync Kernels and pip-install tabs plus
+  their tooltips now match what is actually installed.
+- New `tests/deepy-speculative.test.js` pins the method set, per-backend
+  gating, every stored shape's split, and the immediate-write path;
+  the round-trip test asserts the 20480 context seed.
+
 ## [0.10.29] — 2026-10-26
 
 - **Linux/macOS launches finally receive the launcher's own environment.**
@@ -241,6 +269,16 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   control, and is now labelled *4 · Server controls*. IDs and handlers are
   unchanged, so the topbar LED, the status line and both flows behave exactly
   as before.
+
+- **Upstream 18.84 / mmgp 4.4.1 audited (2026-10-27): no interface changes.**
+  `2dca0c44`+`97845dc8` tune the vendored mmgp's mixed VRAM/CPU processing
+  (offload re-keyed, new `mmgp/pinned.py`), reroute Deepy Prime's speculative
+  decoding to Auto-by-measured-fit, and touch the MCP job watcher's internals —
+  `--mcp-api-version` choices, Deepy/prompt-enhancer config keys, kernel pins
+  and `setup_config.json` are all unchanged, verified against HEAD `97845dc8`.
+  The vendored mmgp rides the upstream clone: every install built this day
+  (published AppImage, clean first-run `.deb`) already runs 18.84 and passed
+  the launcher's full chain on WSL Ubuntu 26.04.
 
 - **WanGP 18.83 / mmgp 4.4 mapped RAM: guidance, not code.** Upstream's
   `9905f0d` moved the Qwen3.5 prompt-enhancer token table to page-locked RAM

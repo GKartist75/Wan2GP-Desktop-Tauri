@@ -412,4 +412,98 @@ arms of every pair compile; the Unix arm is what the flavor check exercises.
       no strays). Final state kept: one fresh `.deb` install at `~/Wan2GP` +
       empty `~/Wan2GP-Models` skeleton + uv caches; wsl-test scripts live in
       `Temp/opencode/wsl-test/` (git-ignored temp).
+- [x] Upstream audit — deepbeepmeep/WanGP HEAD `97845dc8` (18.84, mmgp 4.4.1):
+      the only commits after the `9905f0d` (18.83) audit are the two
+      "tuned mmgp mixed VRAM/CPU processing" (Oct 26 23:56-23:57 UTC,
+      +1053/-495 across 28 files). Vendored mmgp re-keyed offload hashing by
+      PCIe-VRAM-size, added `mmgp/pinned.py` (193 lines, +470/-274 in
+      offload.py); wgp.py bumped 18.83 → 18.84; Deepy Prime engine internals
+      (lmgp layers, qwen3_5, model_runner) retuned; Deepy speculative-decoding
+      Auto now measures actual VRAM fit (MTP stays on only when it does not
+      evict a fitting model; measured 2.1x faster when both fit, 20% slower
+      when it causes streaming); MCP job watcher gains done()/wait()
+      (threading.Event) — internals only.
+- [x] Launcher contract check against 18.84 — **no code change needed**:
+      `--mcp-api-version` choices unchanged (2.1 default still valid, pinned in
+      mcp-command.js tests); setup.py / setup_config.json / requirements.txt
+      untouched → kernel pin set (sageattention 2.2.0-cg1, WGPKernels 1.4.2,
+      GGUF 1.0.29) still exact; Deepy/prompt-enhancer config keys all still
+      valid (kv_formats presets, assets.py names, qwen35_vl quant values
+      untouched; only prompt_enhancer/config.py logic inside `resolve_…`
+      changed). mmgp stays vendored → rides the clone.
+- [x] Every install this day already ran HEAD: the boots printed
+      "WanGP v18.84 … mmgp 4.4.1" and passed the whole chain, so the new mmgp
+      tuning is live-verified with the launcher's seeded 14 keys, P5 profile
+      and INT8/FP8 backend choices (WSL Ubuntu 26.04, RTX 3080).
+- [x] Extended upstream sweep to close the audit gap: the launcher's audits
+      covered `46005e5`→`ad07926` (v18.02), `5290e89`→`a827cf2` (v18.11),
+      fde3c7e (v18.18), `22d1f261` (v18.19), fdc63bdf/`6f1ebc85`/`06106f69`/
+      `dee66357` (v18.20 incl. the vLLM→lmgp rewrite, fibo2, P0), `60df21b9`+
+      `9d25c601` (v18.21) and the Oct-26 pair (18.84) — but the One-World wave
+      `c4d3efce`+`0ef8f383` (Oct 25, +23.5k lines) and `2c67e50c` (mmgp VRAM
+      estimate fix) fell between audits. Now audited at file level:
+- [x] One-World wave contents: new `models/evoke/` family ("One World
+      Generator" — worlds with a world_bank/world_file), `models/hy_nomas/` 8B
+      world model, `models/flux3/`, Minimax H3 ref2va finetunes ×2, Moss Image
+      edit variants — `defaults/` grew 277 → 283 (+6 ids: evoke_turbo,
+      hy_nomas, minimax_h3_ref2va ×2, moss_image ×2). The guide union
+      (defaults ∪ curated) updates by itself; only curated picks/doc counts
+      are choices. mmgp gained prebuilt vmm_alloc blobs (.so/.dll) — vendored,
+      rides the clone (yesterday's installs already ran mmgp 4.4.1).
+- [x] One-World wave kernel bump: WGPKernels 1.3.0 → 1.4.2, GGUF 1.0.28 →
+      1.0.29 (that is the whole INSTALLATION.md delta). Launcher already
+      current: `WGPKERNELS_VERSION = "1.4.2"` (+ wheel-url builder + tests)
+      and `GGUF_FLOOR = "1.0.29"` + 1.0.29 wheel consts — no pin work needed.
+- [x] One-World wave Deepy keys (new in shared/deepy/config.py since v18.21):
+      `deepy_tool_gen_world` (default "Hy-Nomas World Model 8B"),
+      `deepy_tool_gen_3d` ("TRELLIS.2 4B"), `deepy_gallery_media_viewer`
+      (true), `deepy_python_sandbox` (enabled), `deepy_web_search` (disabled),
+      civitai_api_key/huggingface_token (+ _secure + credential_id, upstream
+      stores them in the OS credential manager) — launcher stays out of
+      secrets; sandbox/search/viewer live in WanGP's own Configuration UI.
+      Deepy.md: MTP Auto's fixed "12 GB / 24 GB" rule replaced by the
+      measure-fit description; plugin-workflow chapters added.
+- [x] Real drift found: upstream raises `DEEPY_CONTEXT_TOKENS_DEFAULT`
+      16386 → 20480 at `6f1ebc85` (Oct 20, "profile 0") and now clamps
+      `DEEPY_CONTEXT_TOKENS_MIN = 20480` ("Zero's system prompt and tools
+      alone take about 12k tokens"). The launcher's Zero preset still seeds
+      16386 (below the min — upstream silently clamps) and its comment
+      claims to mirror config.py defaults → fix the seed to 20480.
+- [x] Coverage gap found: `prompt_enhancer_speculative_decoding` (added
+      upstream Sep 3, b71026fd, re-tuned Oct 26 to measure-fit Auto) has been
+      absent from the launcher all along — no UI row, no seed. Fresh-install
+      config proves upstream self-seeds `{'method': 'auto', 'tokens': None}`.
+      Valid only for enhancer ids 4/5/6 (Qwen3.5-9B, Qwen3.8-9B, Qwen3.8-27B)
+      = exactly the launcher's Prime-local backends (Bonsai 27B, Heretic 9B).
+      Methods: auto / disabled / mtp (1-8 draft tokens) / dspark / dflash2;
+      +VRAM approx 0.5-1 GiB MTP, 4-5 GiB DSpark/DFlash2 at 32k context.
+- [x] Gap 1 closed (context tokens): `features.rs` Zero preset seeds
+      `deepy_context_tokens` 20480 now (comment cites `6f1ebc85` + the
+      `DEEPY_CONTEXT_TOKENS_MIN` clamp), round-trip test updated to 20480,
+      and the stale `1.0.28` kernel copy in the 10 user-facing strings
+      (deepy/kernels/kernelsync/pipinstall tabs, index.html hints, hw.rs
+      fallback comment) now cites 1.0.29 (the actual pinned wheel + floor);
+      history comments/CHANGELOG release entries/test fixtures stay as-is.
+- [x] Gap 2 closed (speculative decoding): a Prime-local-only "Speculative
+      Decoding" row under the combined backend picker (index.html nested in
+      `#deepyPrimeBackendWrap`, built by deepy-tab.js): options rebuilt per
+      backend from upstream's ui_state gating (MTP on ids 4/5/6; DSpark/
+      DFlash2 only on the 27B id 5 on gguf/gguf_q3/gguf_q2/gguf_ptq1, hint
+      says runtime wants Triton + FlashAttention 2 — not probed), labels +
+      VRAM costs copied upstream, per-method draft-token select (mtp 1-8
+      default 2, dspark 1-7 default 7, dflash2 1-7 default 5), preselect
+      from `deepy_status`'s new raw `promptEnhancerSpeculativeDecoding`
+      with upstream's normalize split branch-exact (dict pass-through +
+      clamp; legacy ints keep 2 auto / 3-4 MTP-at-N / truthy->1; strings:
+      only "3"/"4" keep their count, truthy words -> 1, anything else ->
+      disabled), out-of-scope methods fall back to Auto in the UI. Change
+      writes the canonical `{"method","tokens"}` immediately (KV row's
+      writeWgpConfig pattern) — out-of-range tokens clamp where upstream
+      raises (documented divergence) — and rides a new file-global
+      `_specSaved` so later field edits can't repaint tab-open state over
+      a mid-session pick. Never seeded by the launcher (upstream
+      setdefault self-seeds). Tests: new tests/deepy-speculative.test.js
+      (branches, gating, markup nesting, write-path guard);
+      `node --test` 219/219 incl. deepy-kv-cache; `cargo test deepy`
+      60 passed (incl. two new deepy_status tests).
 
