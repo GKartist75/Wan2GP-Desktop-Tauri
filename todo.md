@@ -318,3 +318,98 @@ arms of every pair compile; the Unix arm is what the flavor check exercises.
       kernel run under that var wrote 3 entries into the target dir.
 - [x] Release 0.10.29 published with all assets (NSIS/MSI, `.deb`, AppImage +
       sig, `.dmg`/`.app.tar.gz`, `latest.json`); Windows `cargo check` clean.
+
+## Session 2026-10-27 — 0.10.29 `.deb` and AppImage smoke test on WSL Ubuntu 26.04
+
+- [x] `.deb` from the release (`sha256 673495c0…`; the binary inside is
+      byte-identical to the installed `/usr/bin/wan2gp-desktop-launcher-tauri`,
+      `8b032c47…`): renders on Xvfb `:98` (`GDK_BACKEND=x11`, no EGL at all) and
+      on WSLg through XWayland. Console: *Launcher v0.10.29 ready*, hardware
+      rows (i9-12900K / RTX 3080 / 19 GB / 10240 MB), env_uv / torch
+      2.10.0+cu130 / CUDA 130 / Triton 3.6.0.
+- [x] 0.10.29 launch-env fix re-confirmed on the `.deb`: **Launch Wan2GP in
+      Desktop** → child `env_uv/bin/python …/boot.py wgp.py …` (34 vars) has
+      `TRITON_CACHE_DIR=/home/gerard/Wan2GP/triton-cache`, `PYTHONUNBUFFERED=1`,
+      `PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8`, `TQDM_MININTERVAL=0`,
+      `TQDM_MINITERS=1`; console logs *Triton JIT cache pinned to …*.
+- [x] **The published 0.10.29 AppImage is broken** (`sha256 29125a73…`,
+      82,590,200 bytes — the ubuntu-24.04 CI build, asset timestamp 21:33 UTC):
+      the window opens blank (2.7–4 KB solid dark screenshot) with
+      `Could not create default EGL display: EGL_BAD_PARAMETER. Aborting...`,
+      identically under Xvfb and under WSLg (Wayland and XWayland). It is the
+      WebKitGTK 2.48 abort, exactly the case the release/CI matrix change to
+      `ubuntu-26.04` for the AppImage is meant to fix — that change is still
+      uncommitted, so the 0.10.29 release did not benefit from it.
+- [x] Rebuilt the AppImage locally on Ubuntu 26.04 (`npx tauri build --bundles
+      appimage --config '{"bundle":{"createUpdaterArtifacts":false}}'`,
+      86,501,880 bytes, `sha256 4d63b921…`, bundles `libwebkit2gtk-4.1.so.0`
+      94,782,624 bytes vs the host 2.52.6 at 94,499,504): renders on Xvfb and on
+      WSLg, no EGL abort (only `DRI3` warnings / software fallback), and
+      **Launch** produces the same pinned child env (42 vars, AppImage bundle
+      vars included). So the CI split fixes it; no 26.04-built AppImage is
+      published yet.
+- [x] `ubuntu-26.04` is a real runner image (`actions/runner-images`
+      `images/ubuntu/Ubuntu2604-Readme.md`), and both Linux legs of the matrix
+      are coherent: `.deb` stays on 24.04, AppImage on 26.04, same
+      `x86_64-unknown-linux-gnu` target, one `latest.json` merge.
+- [x] The v0.10.29 release has **no `SHA256SUMS.txt`** (11 assets, none of them
+      the checksum file) while `README.md` line 46 tells users it is there.
+      0.10.26's file was made by hand; nothing in `.github/workflows` generates
+      it. → Fixed: a `checksums` job in `release.yml` now generates and uploads
+      it; 0.10.29 carries the first one (12 assets, `sha256sum -c` passes).
+- [x] Publish a 26.04-built AppImage for 0.10.29 (or ship 0.10.30 with the
+      workflow change) — needs the updater key to re-sign and patch
+      `latest.json`. → Done: rebuilt on Ubuntu 26.04, signed with the same key,
+      re-uploaded to `v0.10.29` (86,501,880 bytes, `4d63b921…`),
+      `latest.json` patched, verified end-to-end (`sha256sum -c` + updater
+      signature + the served AppImage renders and launches on WSL 26.04).
+
+## Session 2026-10-27 — published .deb and AppImage verified on WSL Ubuntu 26.04, then a clean first-run `.deb`
+
+- [x] Published AppImage, fresh download (not the home copy): `sha256sum -c
+      SHA256SUMS.txt` → OK for AppImage/sig/latest.json; the `.sig` asset equals
+      the `latest.json` signature for both `linux-x86_64` entries (timestamp
+      1793084681 = the re-sign). `.sig` files are base64(minisign), so compare the
+      file content itself, not `base64 -w0` of it.
+- [x] Render checks: Xvfb route was silent until the PLATFORMS route-B stack
+      (`dbus-run-session` + three WEBKIT/LIBGL vars) — without it the window maps
+      but never paints (1-color root screenshot, no ready line; app alive, no
+      crash). With it: 902-color wizard screenshot, portal noise only. WSLg
+      route A opened a real window (mapped 1908x999 at 6 s).
+- [x] AppImage full user flow: wizard → fresh clone to `~/wan2gpappimage`
+      (separate from the `.deb` install at `~/Wan2GP`; model paths remain the
+      shared `~/Wan2GP-Models`) → torch 2.10.0+cu130 `cuda=True` → all kernels →
+      config seeded. Verified on disk (venv python, wgp_config.json ckpts row).
+- [x] Cross-bundle state: `.deb` launcher then launched the **AppImage** install
+      (`/home/gerard/wan2gpappimage/env_uv/bin/python`) — by design:
+      `~/.wan2gp-tauri-installed` and `.wan2gp-tauri-data-dir` are per-user and
+      shared; `install.rs` writes the marker on install, `status.rs check_installed`
+      follows it (its `missingPrevious` branch = the AppImage's "Previous install
+      not found" message). Last install wins; delete the install dir and both
+      bundles lose Launch until re-pointed. Documented nowhere in user docs —
+      worth a README sentence when editing releases again.
+- [x] Published `.deb` fresh download: `sha256sum -c` OK, inner binary
+      byte-identical to `/usr/bin/…` (`8b032c47…`), `dpkg -V wan2-gp-desktop-launcher-tauri`
+      clean. Package name `wan2-gp-desktop-launcher-tauri`, binary name without the
+      dash — don't confuse the two when scripting dpkg.
+- [x] Clean first-run `.deb` on 26.04 (the untested flow): wiped both installs
+      (11 GB each), markers and the state dir (backup tar: `Temp/opencode/wsl-test/`)
+      → wizard from zero (no, "unknown files" warning) → default `~/Wan2GP`
+      → uv re-downloaded all wheels (cache did NOT serve them — true cold install)
+      → smoke test `cuda=True` → complete. Launch: child
+      `/home/gerard/Wan2GP/env_uv/bin/python`, 36 vars, all six pins,
+      `TRITON_CACHE_DIR=/home/gerard/Wan2GP/triton-cache` (`/proc`-verified).
+- [x] The `_POSIX_C_SOURCE redefined` TinyCC prattle reappeared exactly once on
+      the fresh triton cache → README Linux runtime note added (warnings never
+      fatal; only `error:` lines matter).
+- [x] Two PLATFORMS.md fixes from evidence: route A gets a private
+      `XDG_RUNTIME_DIR=/tmp/xdg` (WSLg's runtime-dir is mode 0777 and dbus warns
+      "can be written by others" per start — observed, then gone with /tmp/xdg);
+      WSL note that `GStreamer element appsink not found` is normal in WSL
+      (WebKitGTK web-video backend missing; only the embedded `<video>` previews
+      are affected; `gstreamer1.0-plugins-base gstreamer1.0-libav` to enable).
+- [x] Shutdown: launcher closed → child killed by recorded PID (port 7861 free,
+      no strays). Final state kept: one fresh `.deb` install at `~/Wan2GP` +
+      empty `~/Wan2GP-Models` skeleton + uv caches; wsl-test scripts live in
+      `Temp/opencode/wsl-test/` (git-ignored temp).
+

@@ -221,12 +221,15 @@ Build from the repo as usual (cargo needs the Linux target deps: `libwebkit2gtk-
 **Route A — WSLg, native window (what you want for clicking around):**
 
 ```bash
-export DISPLAY=:0 GDK_BACKEND=x11 XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir
+export DISPLAY=:0 GDK_BACKEND=x11 XDG_RUNTIME_DIR=/tmp/xdg
 export LIBGL_ALWAYS_SOFTWARE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1
+mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
 dbus-run-session -- ./src-tauri/target/debug/wan2gp-desktop-launcher-tauri
 ```
 
 The window is an XWayland client but appears like any other Windows window.
+(The private `XDG_RUNTIME_DIR` keeps dbus quiet: WSLg's `/mnt/wslg/runtime-dir`
+is mode 0777 and dbus complains `can be written by others` on every start.)
 
 **Route B — Xvfb (headless, scriptable):**
 
@@ -250,6 +253,14 @@ start ("Wayland sessions are only supported via -rawfb"). For scripted checks us
 `xdotool` (click at coordinates) and `import -window root shot.png`
 (screenshot). Without `dbus-run-session` the WebKit portal warnings flood the log
 and the window may not map.
+
+`GStreamer element appsink not found. Please install it.` is normal under WSL:
+WebKitGTK has no web-media backend there (no base GStreamer plugins installed) and
+prints this once, then keeps working — the launcher UI needs none of it. Only the
+embedded gradio view's HTML `<video>` previews are affected; install
+`gstreamer1.0-plugins-base gstreamer1.0-libav` if you want those inside the app.
+Same page in a normal browser plays as usual. Verified on WSL Ubuntu 26.04 with
+the published AppImage and the `.deb`.
 
 Simulate a GPU without hardware: `WGP_PROBE_NVIDIA_SMI=/tmp/fake-nvidia-smi`
 replaces the `nvidia-smi` probe with your script (executed directly on

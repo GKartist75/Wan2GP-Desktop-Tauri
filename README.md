@@ -469,6 +469,7 @@ and its tooltip lists the `pacman`/`dnf` equivalents. **Python reads
 dot never blocks the install.
 - NVIDIA detection uses `nvidia-smi`; AMD/Intel use `lspci` plus `/sys/class/drm` for VRAM.
 - Port-owner lookup uses `ss` (iproute2) and falls back to `lsof`; with neither, the stop path says so instead of guessing.
+- The first Launch streams Triton's JIT compiles through the console (TinyCC), and C compiler chatter is normal there — most famously `_POSIX_C_SOURCE redefined` + `note: this is the location of the previous definition`, the known collision between Python's headers (200809L) and glibc 2.43+ (202405L). Warnings never fail the compile, and with `TRITON_CACHE_DIR` pinned under the install folder it happens once; only lines starting with `error:` are worth reporting.
 - Controls a platform cannot honour are hidden, not broken: `index.html` marks them with `data-requires`, `src/services/platform-gate.js` applies the platform's capability map, and a test pins that map to the Rust adapters.
 
 ### macOS notes

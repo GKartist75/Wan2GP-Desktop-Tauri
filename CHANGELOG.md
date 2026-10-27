@@ -23,6 +23,18 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   `PYTHONUNBUFFERED`, `PYTHONUTF8` and `TQDM_MININTERVAL`, and a Triton probe
   honours the pinned folder.
 
+- **The published 0.10.29 AppImage was blank.** It came from the `ubuntu-24.04`
+  leg (WebKitGTK 2.48, which aborts instead of falling back without a usable EGL
+  display), even though the README already promised a 26.04 build. The asset was
+  rebuilt on Ubuntu 26.04 (WebKitGTK 2.52) with the same signing key, re-signed,
+  and re-uploaded to `v0.10.29`; `latest.json` now points at the new signature.
+  The uncommitted `release.yml` split (`.deb` on 24.04, AppImage on 26.04) is
+  committed alongside this. Verified on WSL Ubuntu 26.04 under Xvfb and WSLg.
+- Every release now ships `SHA256SUMS.txt` (README line 46 promised it, but
+  nothing generated it). A `checksums` job in `release.yml` runs after all
+  platform legs, downloads the final assets and writes the file. The 0.10.29
+  release carries the first one.
+
 - `docs/PLATFORMS.md`: the WSLg note now includes the llvmpipe override
   (`MESA_LOADER_DRIVER_OVERRIDE`/`GALLIUM_DRIVER`, `GDK_BACKEND=x11`) that
   produces a real window on Ubuntu 26.04 + Mesa 26 — verified with the 0.10.28
