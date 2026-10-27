@@ -34,7 +34,12 @@ jobs:
         include:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-            bundles: appimage,deb
+            bundles: deb
+          # See release.yml: an AppImage carries the builder's WebKitGTK, and
+          # 24.04's 2.48 aborts without an EGL display instead of falling back.
+          - os: ubuntu-26.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage
             artifact: linux-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin

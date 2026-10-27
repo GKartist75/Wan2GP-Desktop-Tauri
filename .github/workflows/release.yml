@@ -50,7 +50,16 @@ jobs:
             bundles: nsis,msi
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-            bundles: appimage,deb
+            bundles: deb
+          # An AppImage bundles the WebKitGTK of whoever builds it, and 24.04's
+          # 2.48 aborts ("Could not create default EGL display") instead of
+          # falling back to software rendering, so a runner-built AppImage is a
+          # blank window on hosts without a usable EGL display. Built on 26.04
+          # (WebKitGTK 2.52, which falls back) at the price of a glibc >= 2.43
+          # floor; the .deb stays on 24.04 for the older distros.
+          - os: ubuntu-26.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage
           # macos-latest is arm64; the Intel build is out of scope (plan.md).
           - os: macos-latest
             target: aarch64-apple-darwin
@@ -113,6 +122,30 @@ jobs:
           # One `latest.json` covers every platform: each leg merges its own
           # entry into the release asset instead of overwriting it.
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+
+  # The README tells users to run `sha256sum -c SHA256SUMS.txt`, so every release
+  # carries one. It runs after every leg has attached its artifacts (a re-upload
+  # of any asset, like the 26.04 AppImage rebuild in 0.10.29, needs a refreshed
+  # file), and it covers whatever the release actually holds rather than a
+  # hand-written list.
+  checksums:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p sums && cd sums
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --clobber
+          rm -f SHA256SUMS.txt
+          sha256sum -- * | LC_ALL=C sort -k2 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
 
   # GitHub suppresses the `release: published` event when tauri-action publishes
   # with GITHUB_TOKEN, so the winget/Homebrew submissions are fanned out from
