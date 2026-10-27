@@ -20,3 +20,4 @@ verify-out.txt
 dist-test/
 .rel/
 .rt/
+/todo.md

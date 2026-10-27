@@ -472,6 +472,7 @@ fn launch_in_terminal(
 pub async fn launch(
     app: tauri::AppHandle,
     mode: Option<String>,
+    safe_config: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let mode = mode.unwrap_or("browser".into());
     let repo = get_repo_dir();
@@ -614,6 +615,36 @@ pub async fn launch(
         crate::base::push_log(msg, "launch");
         let _ = app.emit("launch-log", msg.to_string());
     };
+    // Safe mode (startup-crash triage): run this launch against a fresh, empty
+    // settings folder. `--config FOLDER` is upstream's own switch, so WanGP
+    // writes defaults into it and never reads the saved wgp_config.json — the
+    // one-click proof that a startup crash comes from settings, not the
+    // install. Nothing is moved or deleted: the normal settings file is
+    // untouched and is used again on the next ordinary launch.
+    if safe_config == Some(true) {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let dir = crate::base::get_data_dir().join(format!("safe-settings-{stamp}"));
+        match std::fs::create_dir_all(&dir) {
+            Ok(()) if args.iter().any(|a| a == "--config") => {
+                emit("[!] Safe mode: Extra Launch Args already set --config — keeping that folder instead.\n");
+            }
+            Ok(()) => {
+                let dir_s = dir.to_string_lossy().to_string();
+                args.push("--config".into());
+                args.push(dir_s.clone());
+                emit(&format!(
+                    "[!] Safe mode: fresh settings folder {dir_s} (your saved settings are untouched and return on the next normal launch)\n"
+                ));
+            }
+            Err(e) => emit(&format!(
+                "[!] Safe mode: could not create {} ({e}) — launching with the saved settings.\n",
+                dir.display()
+            )),
+        }
+    }
     emit(&format!("[*] Launching Wan2GP ({mode}) on :{port}…\n"));
     // Prepare the child env. `--gpu` is upstream's own switch: it writes
     // CUDA_VISIBLE_DEVICES itself (shared/default_device.py) and, because the
@@ -684,6 +715,13 @@ pub async fn launch(
         emit(&format!("[*] GPU assignment — Launcher UI: {launcher_gpu} | Generation: {gen_label} (saved: {gpu_device}) | HW: {hw_name} ({hw_vendor}, {hw_vram}) | Detected: {gpu_count}\n"));
     }
     emit(&format!("[*] Args: {}\n", args.join(" ")));
+    // Upstream flag audit (cached per commit): argparse dies before the UI
+    // appears when a flag is renamed, so say so here instead of leaving the
+    // user with a bare exit code. The first launch after an update learns the
+    // flag list in the background — never inline, `--help` costs ~35 s.
+    for warning in crate::troubleshoot::audit_launch_args(&repo, &args) {
+        emit(&warning);
+    }
     // HF_TOKEN / config env (mirrors Electron launchCfg)
     let launch_cfg = load_config_value();
     let hf_token = launch_cfg
@@ -1927,8 +1965,11 @@ pub fn no_gpu_available() -> bool {
 }
 
 #[tauri::command]
-pub async fn launch_webview(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    launch(app, Some("app".into())).await
+pub async fn launch_webview(
+    app: tauri::AppHandle,
+    safe_config: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    launch(app, Some("app".into()), safe_config).await
 }
 /// Pure path derivation for the launcher-pinned Triton JIT cache:
 /// `<data dir>\triton-cache` (e.g. `C:\Wan2GP\triton-cache`). Triton's

@@ -1509,6 +1509,17 @@ async function refreshPrereqTools() {
     status.title = t.path || "";
     const inst = row.querySelector('[data-act="install"]');
     if (!inst) continue; // no one-click install on this platform
+    inst.disabled = false; // a previous "Installed" marker must not stick
+    if (spec.tool === "conda" && t.ready) {
+      // conda owns a mutable base prefix and the Miniconda installer refuses
+      // to install over it (rc 2), so a Reinstall button could only fail.
+      inst.textContent = "Installed";
+      inst.disabled = true;
+      inst.dataset.force = "";
+      inst.title =
+        "conda manages its own base prefix — update with `conda update -n base conda`";
+      continue;
+    }
     inst.textContent = t.ready ? "Reinstall" : "Install";
     inst.dataset.force = t.ready ? "1" : "";
     inst.title = t.ready
@@ -1557,12 +1568,11 @@ async function prereqInstall(spec, btn) {
     );
     refreshTargetVerdict().catch(() => null);
   } else {
-    showToast(
-      "✗ " +
-        spec.label +
-        ": " +
-        ((r && (r.error || r.message)) || "install failed — see console"),
-    );
+    const msg = (r && (r.error || r.message)) || "install failed — see console";
+    // The toast truncates long text; the console keeps the whole actionable
+    // message (e.g. the conda "already installed" remedy).
+    appendLog("[!] " + spec.label + ": " + msg);
+    showToast("✗ " + spec.label + ": " + msg);
   }
   refreshPrereqTools();
 }

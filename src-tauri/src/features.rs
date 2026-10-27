@@ -2,7 +2,7 @@
 use crate::base::*;
 use crate::{
     hw::{get_gpu_info_sync, kernel_profile_key},
-    status::{get_active_env, resolve_env_python},
+    status::get_active_env,
 };
 use std::path::{Path, PathBuf};
 use tauri::Emitter;
@@ -2423,9 +2423,7 @@ fn notifier_saved() -> serde_json::Value {
 fn env_python_bin() -> Option<PathBuf> {
     // Single resolution point for package ops: uv/venv (Scripts\ or bin/)
     // and conda (python at the env root) alike.
-    let env = get_active_env();
-    let raw = env.get("path")?.as_str()?;
-    resolve_env_python(&get_repo_dir(), raw)
+    crate::status::active_env_python()
 }
 /// Build the apprise invocation for the active env.
 /// Prefers the `pip install apprise` console script (Scripts\apprise.exe on

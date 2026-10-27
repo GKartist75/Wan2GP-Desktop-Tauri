@@ -17,6 +17,7 @@ mod status;
 mod system;
 mod troubleshoot;
 mod updates;
+mod upstream_health;
 mod wheels;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,6 +26,67 @@ use tauri::Manager;
 /// worker closes the window when sessions are dead; second X forces out.
 static APP_CLOSING: AtomicBool = AtomicBool::new(false);
 static CLOSE_CONFIRMED: AtomicBool = AtomicBool::new(false);
+
+/// Chromium flag that carries the saved launcher-GPU preference into the
+/// WebView2 runtime. `None` = let the OS decide.
+///
+/// `integrated` must never map to `--disable-gpu`: that tears down the GPU
+/// process and with it the platform (Media Foundation) decoder, so
+/// `canPlayType("hev1"/"hvc1")` turns into "no" and every HEVC clip in the
+/// gallery plays sound over a black frame while H.264 keeps working. Measured
+/// on WebView2 155: `--disable-gpu` → hev1/hvc1 "no"; `--force_low_power_gpu`
+/// and no-flag → "probably" (h264/av1/vp9 stay "probably" in all three).
+/// `--force_low_power_gpu` only *asks* for the low-power adapter, so a runtime
+/// that ignores it still ends up on the OS default — the iGPU on the
+/// switchable-graphics laptops this setting exists for.
+pub(crate) fn launcher_gpu_flag(pref: &str) -> Option<&'static str> {
+    match pref {
+        // SwiftShader: frees the dGPU but loses HEVC previews.
+        "disabled" => Some("--disable-gpu"),
+        "integrated" => Some("--force_low_power_gpu"),
+        "dedicated" => Some("--force_high_performance_gpu"),
+        _ => None,
+    }
+}
+
+/// Saved launcher-GPU preference (`auto|integrated|dedicated|disabled`).
+/// `electronGpu: false` in an old config means the retired Electron launcher's
+/// "run the UI without the GPU", so it maps to `disabled` — the same meaning.
+/// Pure apart from the file read.
+pub(crate) fn launcher_gpu_pref_from(v: &serde_json::Value) -> String {
+    v.get("launcherGpu")
+        .and_then(|x| x.as_str())
+        .unwrap_or_else(|| {
+            if v.get("electronGpu").and_then(serde_json::Value::as_bool) == Some(false) {
+                "disabled"
+            } else {
+                "auto"
+            }
+        })
+        .trim()
+        .to_lowercase()
+}
+
+/// The preference saved in desktop-config.json (`auto` when unreadable).
+pub(crate) fn launcher_gpu_pref() -> String {
+    let cfg_path = crate::base::get_config_file();
+    match std::fs::read_to_string(&cfg_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+    {
+        Some(v) => launcher_gpu_pref_from(&v),
+        None => "auto".into(),
+    }
+}
+
+/// One line for the debug bundle: `integrated (--force_low_power_gpu)`.
+pub(crate) fn launcher_gpu_summary() -> String {
+    let pref = launcher_gpu_pref();
+    match launcher_gpu_flag(&pref) {
+        Some(f) => format!("{pref} ({f})"),
+        None => format!("{pref} (no WebView2 flag)"),
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -43,34 +105,13 @@ pub fn run() {
         if cfg_path.exists() {
             if let Ok(s) = std::fs::read_to_string(&cfg_path) {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
-                    let lg = v
-                        .get("launcherGpu")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or_else(|| {
-                            if v.get("electronGpu").and_then(serde_json::Value::as_bool)
-                                == Some(false)
-                            {
-                                "disabled"
-                            } else {
-                                "auto"
-                            }
-                        })
-                        .trim()
-                        .to_string();
+                    let lg = launcher_gpu_pref_from(&v);
                     // Documented WebView2 variable (the previous
                     // ..._BROWSER_ARGS spelling does not exist, so this whole
                     // setting silently did nothing). Append, never replace:
                     // the runtime may already carry flags.
-                    // --force_low_power_gpu is historically broken on WebView2
-                    // runtimes above v145, so "Integrated" can no longer move the
-                    // launcher UI onto the iGPU; --disable-gpu (SwiftShader) is
-                    // the only reliable way to keep the UI off the dedicated
-                    // card and free that VRAM for generation.
-                    let flag = match lg.as_str() {
-                        "disabled" | "integrated" => Some("--disable-gpu"),
-                        "dedicated" => Some("--force_high_performance_gpu"),
-                        _ => None,
-                    };
+                    //
+                    let flag = launcher_gpu_flag(&lg);
                     if let Some(flag) = flag {
                         const KEY: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
                         let existing = std::env::var(KEY).unwrap_or_default();
@@ -84,14 +125,24 @@ pub fn run() {
                         }
                     }
                     eprintln!(
-                        "[launcher] GPU preference: {} — {}",
+                        "[launcher] GPU preference: {} — {} ({})",
                         lg,
                         match lg.as_str() {
-                            "integrated" => "iGPU (power saving, frees VRAM)",
+                            "integrated" => "iGPU (power saving, keeps video decode)",
                             "dedicated" => "dGPU (high perf)",
-                            "disabled" => "SwiftShader (max VRAM)",
+                            "disabled" => "SwiftShader (max VRAM, no HEVC previews)",
                             _ => "OS decides",
-                        }
+                        },
+                        flag.unwrap_or("no WebView2 flag")
+                    );
+                    // Support sees the effective flag in the console history and
+                    // the troubleshoot bundle instead of guessing from the config.
+                    crate::base::push_log(
+                        &format!(
+                            "[launcher] launcher GPU: {lg} — WebView2: {}",
+                            flag.unwrap_or("(none, OS decides)")
+                        ),
+                        "launcher",
                     );
                 }
             }
@@ -380,6 +431,10 @@ pub fn run() {
             troubleshoot::troubleshoot_known_good,
             troubleshoot::troubleshoot_oom_remedy,
             troubleshoot::troubleshoot_vram_diag,
+            troubleshoot::troubleshoot_flag_audit,
+            troubleshoot::troubleshoot_model_integrity,
+            troubleshoot::troubleshoot_yue2_metadata,
+            troubleshoot::troubleshoot_yue2_quarantine,
             deepy_web::deepy_web_preflight,
             deepy_web::deepy_web_start,
             deepy_web::deepy_web_stop,
@@ -394,4 +449,51 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod launcher_gpu_tests {
+    use super::launcher_gpu_flag;
+
+    #[test]
+    fn integrated_never_disables_the_gpu_process() {
+        // Regression: v0.10.23 mapped this to --disable-gpu, which removed the
+        // platform HEVC decoder — the gallery played HEVC as audio over black.
+        assert_ne!(launcher_gpu_flag("integrated"), Some("--disable-gpu"));
+        assert_eq!(
+            launcher_gpu_flag("integrated"),
+            Some("--force_low_power_gpu")
+        );
+    }
+
+    #[test]
+    fn remaining_preferences_keep_their_flags() {
+        assert_eq!(launcher_gpu_flag("disabled"), Some("--disable-gpu"));
+        assert_eq!(
+            launcher_gpu_flag("dedicated"),
+            Some("--force_high_performance_gpu")
+        );
+        assert_eq!(launcher_gpu_flag("auto"), None);
+        assert_eq!(launcher_gpu_flag(""), None);
+        assert_eq!(launcher_gpu_flag("nonsense"), None);
+    }
+
+    #[test]
+    fn preference_is_read_from_every_config_spelling() {
+        use super::launcher_gpu_pref_from;
+        assert_eq!(
+            launcher_gpu_pref_from(&serde_json::json!({"launcherGpu": " Integrated "})),
+            "integrated"
+        );
+        // Retired Electron launcher's "no GPU" toggle means SwiftShader.
+        assert_eq!(
+            launcher_gpu_pref_from(&serde_json::json!({"electronGpu": false})),
+            "disabled"
+        );
+        assert_eq!(
+            launcher_gpu_pref_from(&serde_json::json!({"electronGpu": true})),
+            "auto"
+        );
+        assert_eq!(launcher_gpu_pref_from(&serde_json::json!({})), "auto");
+    }
 }

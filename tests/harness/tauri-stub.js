@@ -23,6 +23,13 @@
   // ?installer=1 makes the boot probe report "nothing installed", so the
   // first-run installer screen (and its Prerequisites card) renders.
   var forceInstaller = /[?&]installer=1/.test(location.search)
+  // ?update=blocked makes update() return the upstream-health gate payload, so
+  // the "known upstream bug" dialog and the skipped-update states can be seen
+  // without a checkout that is actually behind a listed commit.
+  var blockedUpdate = /[?&]update=blocked/.test(location.search)
+  // ?dialog=ok|cancel is the answer confirm_dialog gives. Default cancel keeps
+  // a destructive path from running just because the harness was opened.
+  var dialogReply = (/[?&]dialog=(ok|cancel)/.exec(location.search) || [])[1] || 'cancel'
   var STATUS = {
     ok: true, installed: true, running: true, mode: 'zero',
     hasActiveEnv: true, envPath: 'C:\\Wan2GP\\envs\\py311',
@@ -83,6 +90,25 @@
     // repo and an env — see app.js:2149. Without this the harness looks like a
     // broken app: the LLM cards never render because nothing ever asks.
     if (name === 'check_installed') return forceInstaller ? { ok: true, repo: false, env: false } : { ok: true, repo: true, env: true }
+    // Native confirmation: the shape the Rust command returns.
+    if (name === 'confirm_dialog') return { ok: true, choice: dialogReply }
+    // Upstream-health gate: blocked unless "Update anyway" (force) is asked.
+    if (name === 'update') {
+      if (blockedUpdate && !(args && args.force))
+        return {
+          ok: true, success: false, blocked: true,
+          target: '2c67e50', current: '97845dc',
+          issues: [
+            {
+              sha: '2c67e50',
+              title: 'SeedVC crashes with ZeroDivisionError in mmgp offload',
+              issue: 2543,
+              advice: 'Stay on the current commit until upstream merges PR #2548 (one-line guard).',
+            },
+          ],
+        }
+      return { ok: true, success: true, updated: true, depCheck: 'ok', drift: [], compat: [] }
+    }
     // Prerequisite gate + panel: mixed state so Install vs Reinstall labels,
     // versions and the missing copy all render in the harness.
     if (name === 'check_command')
@@ -172,11 +198,50 @@
     if (name === 'troubleshoot_known_good')
       return { ok: true, profileKey: 'RTX_30', recipe: { settings: { attention_mode: 'sage2', video_profile: 3, compile: true }, note: 'Needs SageAttention 2.2.0 (Sync GPU Wheels); Tea Cache 2.0 in WanGP' } }
     if (name === 'troubleshoot_oom_remedy') {
-        var REMEDY = { head_split_medium: { attention_head_split: 2 }, lower_reserved_ram: { perc_reserved_mem_max: 25, smart_memory_pinning: true } }
-        var set = REMEDY[(args && args.action) || ''] || {}
+        var REMEDY = { head_split_low: { attention_head_split: 1 }, head_split_medium: { attention_head_split: 2 }, head_split_high: { attention_head_split: 3 }, lower_reserved_ram: { perc_reserved_mem_max: 25, smart_memory_pinning: true } }
+        var action = (args && args.action) || ''
+        if (action === 'no_preload') {
+          // Flag-shaped remedy: no wgp_config keys, only staged launch args.
+          var cur = (CONFIG && CONFIG.launchArgs) || ''
+          var staged = (' ' + cur + ' ').indexOf(' --preload ') === -1
+            ? (cur ? cur + ' --preload 0' : '--preload 0')
+            : cur
+          CONFIG.launchArgs = staged
+          return { ok: true, success: true, remedy: action, launchArgs: staged }
+        }
+        var set = REMEDY[action] || {}
         var r = payload('memory_profile_apply', { settings: set })
-        r.remedy = (args && args.action) || ''
+        r.remedy = action
         return r
+      }
+    if (name === 'troubleshoot_model_integrity')
+      return {
+        ok: true, scanned: 214, badTotal: 2, tookMs: 1431, truncated: false,
+        bad: [
+          { name: 'minimax_h3_t2v_Q4_K_M.gguf', path: 'C:\\Wan2GP\\ckpts\\minimax_h3_t2v_Q4_K_M.gguf', size: 402653184, reason: 'not a GGUF file (magic bytes are not "GGUF")' },
+          { name: 'qwen_image_edit_example.safetensors', path: 'C:\\Wan2GP\\ckpts\\qwen_image_edit_example.safetensors', size: 51200, reason: 'HTML/XML page saved instead of a model' },
+        ],
+      }
+    if (name === 'troubleshoot_yue2_metadata')
+      return {
+        ok: true, scanned: 2170, tookMs: 412, truncated: false,
+        roots: ['C:\\Wan2GP\\outputs'],
+        bad: [
+          { name: 'yue2_song_2026-08-14.wav', path: 'C:\\Wan2GP\\outputs\\yue2_song_2026-08-14.wav', value: 'AV', size: 5242880 },
+        ],
+      }
+    if (name === 'troubleshoot_yue2_quarantine')
+      return {
+        ok: true, dirs: ['C:\\Wan2GP\\outputs\\yue2-quarantine'], failed: [],
+        moved: [
+          { name: 'yue2_song_2026-08-14.wav', value: 'AV', from: 'C:\\Wan2GP\\outputs\\yue2_song_2026-08-14.wav', to: 'C:\\Wan2GP\\outputs\\yue2-quarantine\\yue2_song_2026-08-14.wav' },
+        ],
+      }
+    if (name === 'troubleshoot_flag_audit')
+      return {
+        ok: true, head: '7f3a9c2', learned: true, known: 74,
+        checked: ['--attention', '--teacache', '--preload'],
+        unknown: ['--teacache'],
       }
     if (name === 'troubleshoot_vram_diag')
       return { ok: true, script: (args && args.action) === 'trim' ? 'gputrim.cmd' : 'gpumem.cmd', exit: 0, output: 'PID  Name          MB\n 4828  python.exe   5120\n\n8192 MiB used / 10240 MiB total' }
@@ -187,11 +252,33 @@
       invoke: function (name, args) {
         calls.push(name)
         window.__harnessCalls = calls
+        // Last args per command: tests assert on payloads (e.g. the
+        // startup-crash retry must send safeConfig: true).
+        window.__harnessArgs = window.__harnessArgs || {}
+        window.__harnessArgs[name] = args
         try { return Promise.resolve(payload(name, args)) } catch (e) { return Promise.reject(e) }
       },
     },
-    event: { listen: function () { return Promise.resolve(function () {}) } },
+    event: {
+      listen: function (name, cb) {
+        // Recorded so a test can fire backend events it cannot otherwise
+        // reach (wangp-exit, launch-log) with window.__harnessEmit.
+        window.__harnessListeners = window.__harnessListeners || {}
+        window.__harnessListeners[name] = window.__harnessListeners[name] || []
+        window.__harnessListeners[name].push(cb)
+        return Promise.resolve(function () {})
+      },
+    },
     webviewWindow: { WebviewWindow: { getByLabel: function () { return Promise.resolve(null) } } },
+  }
+  window.__harnessEmit = function (name, payload) {
+    // The real backend sends {event, id, payload}; the renderer callbacks take
+    // the payload, so pass it straight through.
+    var cbs = (window.__harnessListeners || {})[name] || []
+    cbs.forEach(function (cb) {
+      try { cb({ event: name, id: 1, payload: payload }) } catch (e) {}
+    })
+    return cbs.length
   }
   window.__harnessReady = true
 })();

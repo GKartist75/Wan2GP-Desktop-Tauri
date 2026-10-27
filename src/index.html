@@ -307,13 +307,13 @@
             <div class="token-field">
               <select id="launcherGpuSelect" class="input" style="max-width:360px">
                 <option value="auto">Auto (OS decides)</option>
-                <option value="integrated">Integrated — power saving (SwiftShader, frees VRAM)</option>
+                <option value="integrated">Integrated — power saving (iGPU, keeps video decode)</option>
                 <option value="dedicated">Dedicated — high performance</option>
-                <option value="disabled">Disabled — SwiftShader (max VRAM saved)</option>
+                <option value="disabled">Disabled — software rendering (max VRAM, no HEVC previews)</option>
               </select>
               <button class="btn btn-primary small" id="launcherGpuSaveBtn" title="Save which GPU runs the launcher window (needs restart)">Save</button>
             </div>
-            <p class="token-hint">Which GPU runs the launcher window itself (not generation). Integrated and Disabled both run the UI through SwiftShader (--disable-gpu) to free 1–5 GB VRAM for generation — --force_low_power_gpu no longer works on WebView2 v145+, so Integrated now uses the reliable path. Dedicated keeps --force_high_performance_gpu. Requires restart.</p>
+            <p class="token-hint">Which GPU runs the launcher window itself (not generation). <strong>Integrated</strong> asks WebView2 for the low-power adapter (<code>--force_low_power_gpu</code>) and keeps the GPU process, so HEVC/AV1 gallery previews still decode — it frees the dedicated card on switchable-graphics laptops. <strong>Disabled</strong> runs the UI through SwiftShader (<code>--disable-gpu</code>): the most VRAM saved, but Chromium then has no HEVC decoder, so HEVC previews play sound over a black picture (H.264/AV1/VP9 are unaffected). <strong>Dedicated</strong> keeps <code>--force_high_performance_gpu</code>. Requires restart.</p>
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>Desktop Embed (experimental)</h3>
@@ -539,6 +539,34 @@
             <button class="btn btn-ghost small" id="tsDebugCopyBtn" title="Copy GPU, env and error summary as Markdown for Discord/GitHub">Copy debug info</button>
             <span class="token-hint" id="tsDebugStatus" style="margin-left:8px"></span>
           </div>
+          <p class="token-hint" id="tsCodecStatus" style="margin-top:6px"></p>
+        </div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>Model files</h3>
+          <p class="token-hint">Reads the header of every <code>.gguf</code> / <code>.safetensors</code> in your model folders — catches truncated downloads, HTML error pages saved under a model name (upstream <em>"GGUF magic invalid"</em>), empty files and leftover <code>.part</code> downloads. Nothing is deleted or moved.</p>
+          <div class="token-field" style="margin-top:8px">
+            <button class="btn btn-ghost small" id="tsModelCheckBtn" title="Check model file headers (read-only)">Check model files</button>
+            <span class="token-hint" id="tsModelStatus" style="margin-left:8px"></span>
+          </div>
+          <pre id="tsModelBox" class="token-hint" style="margin-top:8px;max-height:220px;overflow:auto;white-space:pre-wrap;display:none"></pre>
+        </div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>YuE2 startup crash</h3>
+          <p class="token-hint">WanGP keeps every output's settings inside the file itself and migrates them on startup, so one stale <code>audio_prompt_type</code> — anything but <code>0</code>, <code>1</code>, <code>12</code>, <code>A</code>, <code>A2</code> — makes it exit with <em>"Choose one of the five YuE2 composition sources"</em> before the UI appears (upstream #2517, launcher #82). Scanning reads WAV/MP3/FLAC metadata only. <em>Quarantine</em> moves the offending files into <code>yue2-quarantine/</code> — nothing is deleted, and moving them back restores the gallery.</p>
+          <div class="token-field" style="margin-top:8px">
+            <button class="btn btn-ghost small" id="tsYue2CheckBtn" title="Scan output audio metadata for a source WanGP rejects (read-only)">Check YuE2 metadata</button>
+            <button class="btn btn-ghost small" id="tsYue2FixBtn" style="margin-left:8px;display:none" title="Move the offending outputs into yue2-quarantine/">Quarantine offenders</button>
+            <span class="token-hint" id="tsYue2Status" style="margin-left:8px"></span>
+          </div>
+          <pre id="tsYue2Box" class="token-hint" style="margin-top:8px;max-height:220px;overflow:auto;white-space:pre-wrap;display:none"></pre>
+        </div>
+        <div class="settings-section" style="margin-top:12px">
+          <h3>Launch args vs this Wan2GP</h3>
+          <p class="token-hint">Upstream renames flags between versions (bare <code>--teacache</code> disappeared in 18.x), and an unknown flag makes Wan2GP exit before its UI appears. This compares your Extra Launch Args with the option list <code>wgp.py --help</code> prints for the installed commit. Learning a version takes ~40 s once; the answer is cached until the commit changes.</p>
+          <div class="token-field" style="margin-top:8px">
+            <button class="btn btn-ghost small" id="tsFlagAuditBtn" title="Compare Extra Launch Args with wgp.py --help (cached per upstream commit)">Check launch args</button>
+            <span class="token-hint" id="tsFlagAuditStatus" style="margin-left:8px"></span>
+          </div>
         </div>
         <div class="settings-section" style="margin-top:12px">
           <h3>Config backups &amp; changelog</h3>
@@ -598,7 +626,10 @@
           <div class="token-field" style="margin-top:8px;flex-direction:column;align-items:stretch;gap:6px">
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
               <span class="token-hint" style="font-weight:600">Out of memory</span>
-              <button class="btn btn-ghost small" id="tsHeadSplitBtn" title="Attention Head Split: Medium. Upstream measures ~2 GB less VRAM for up to ~3% slower steps on MiniMax H3 at 1920x1088 / 362 frames (~4 GB with H3 + Sol, ~2.5 GB with VDN). Quality is the same, but the result is not identical to Off: details, and sometimes the motion, can differ. Applies to the next generation.">Attention Head Split → Medium</button>
+              <button class="btn btn-ghost small" id="tsHeadSplitLowBtn" title="Attention Head Split: Low. Upstream measures about 1 GB less VRAM at 1920x1088 / 362 frames on MiniMax H3, for up to ~3% slower denoising steps. Same quality, not identical results. Applies to the next generation.">Head Split → Low</button>
+              <button class="btn btn-ghost small" id="tsHeadSplitBtn" title="Attention Head Split: Medium. Upstream measures ~2 GB less VRAM for up to ~3% slower steps on MiniMax H3 at 1920x1088 / 362 frames (~4 GB with H3 + Sol, ~2.5 GB with VDN). Quality is the same, but the result is not identical to Off: details, and sometimes the motion, can differ. Applies to the next generation.">Head Split → Medium</button>
+              <button class="btn btn-ghost small" id="tsHeadSplitHighBtn" title="Attention Head Split: High. Same ~2 GB saving as Medium per upstream's guide, for more aggressive head grouping. Applies to the next generation.">Head Split → High</button>
+              <button class="btn btn-ghost small" id="tsNoPreloadBtn" title="Stage --preload 0 into Extra Launch Args: upstream's fix for CUDA out of memory during model loading. Visible and removable in Manage → Launch.">No preload (--preload 0)</button>
               <button class="btn btn-ghost small" id="tsLowerRamBtn" title="Lower Reserved RAM for Pinning to 25% and keep Smart Memory Pinning On — upstream's fix for a PC short of RAM.">Lower Reserved RAM</button>
               <button class="btn btn-ghost small" id="tsPinGpuBtn" title="Pin generation to one GPU. With several GPUs visible, WanGP's device-0 code paths and its device_count() loops can disagree, which shows up as a bare CUDA out of memory while VRAM reads free. Picks the card with the most VRAM; it is remembered as the GPU Device in Settings.">Pin to one GPU</button>
               <button class="btn btn-ghost small" id="tsFailsafeP5Btn" title="Switch every profile to P5 (fail safe). The same action as Failsafe above.">Drop to P5</button>

@@ -148,6 +148,7 @@ window.w2gp.onWangpExit(async (c) => {
   // (partial write after a failed install, or an ancient config after an
   // update). Crashes only — never for a manual Stop, which also exits
   // non-zero when taskkill does the killing.
+  let offeredKeyError = false;
   if (
     !manualStop &&
     code !== 0 &&
@@ -160,11 +161,127 @@ window.w2gp.onWangpExit(async (c) => {
       const m = tail.match(/KeyError:\s*'([^']+)'/);
       if (m && /wgp\.py/.test(tail)) {
         window._configCrashOffered = true;
+        offeredKeyError = true;
         offerConfigReset(m[1], exitMode);
       }
     } catch {}
   }
+  // Startup-crash triage (upstream #2517 class): a non-zero exit before the
+  // server ever answered is a failure on the way up — a settings entry WanGP
+  // cannot migrate, a launch flag this version dropped, a bad model file —
+  // and "process exited (code 1)" names none of them. The one click that
+  // separates "my settings" from "my install" is relaunching against a
+  // throwaway settings folder (--config): it never touches wgp_config.json,
+  // so a successful retry proves the settings are the cause and the user can
+  // then hand them over for repair instead of reinstalling.
+  const launchedAt = window.__wan2gpLaunchAt || 0;
+  const uptime = launchedAt ? Date.now() - launchedAt : 0;
+  if (
+    !offeredKeyError &&
+    !manualStop &&
+    code !== 0 &&
+    code !== "?" &&
+    launchedAt > 0 &&
+    uptime < 180000 &&
+    !window.__wan2gpServed &&
+    !window._startupCrashOffered
+  ) {
+    window._startupCrashOffered = true;
+    let lastErr = "";
+    let tail = "";
+    try {
+      tail = typeof window._getLogTail === "function" ? window._getLogTail() : "";
+      lastErr = (tail.match(/^.*(?:Traceback|Error|Exception|FATAL)[^\n]*$/gm) || [])
+        .slice(-3)
+        .join("\n");
+    } catch {}
+    appendLog(
+      `[!] Wan2GP did not start: process exited ${Math.round(uptime / 1000)}s after launch, before the server answered.`,
+    );
+    showToast("✗ Wan2GP did not start — retry option offered");
+    const clickLaunch = () => {
+      const btn =
+        exitMode === "app"
+          ? $("appBtn")
+          : exitMode === "browser"
+            ? $("browserBtn")
+            : null;
+      if (btn) {
+        // A crashed Wan2GP exists on disk, so the launch button is only
+        // disabled by a stale install probe or the prior attempt — enable it
+        // or the retry click is swallowed.
+        btn.disabled = false;
+        btn.click();
+        return true;
+      }
+      return false;
+    };
+    try {
+      // One cause is identifiable without guesswork: upstream's YuE2 migration
+      // rejects an `audio_prompt_type` embedded in a generated file, and a
+      // temporary settings folder cannot hide it (the value is inside the
+      // media). Scan and, if found, offer the real remedy instead of a retry
+      // that is guaranteed to fail the same way (launcher #82).
+      const yue2Signature =
+        /Choose one of the five YuE2 composition sources/i.test(tail) ||
+        (/yue2/i.test(tail) && /migrate_source/.test(tail));
+      if (yue2Signature && typeof window.w2gpYue2Triage === "function") {
+        if (
+          await window.w2gpYue2Triage(() => {
+            if (!clickLaunch())
+              appendLog(
+                "[!] Quarantined — start Wan2GP again with a launch button; the offending file is out of the gallery.",
+              );
+          })
+        ) {
+          return;
+        }
+        appendLog(
+          "[i] YuE2 crash signature seen, but no output file carries a bad source — continuing with the generic triage.",
+        );
+      }
+    } catch (e) {
+      appendLog("[!] YuE2 triage failed: " + errText(e));
+    }
+    try {
+      const choice = await window.w2gp.confirmDialog({
+        title: "Wan2GP crashed on startup",
+        message: `Wan2GP exited with code ${code} after ${Math.round(uptime / 1000)}s, before its UI came up. That is a startup failure, not a generation error — usually a settings entry Wan2GP cannot migrate, a launch flag this version dropped, or an unreadable model file.`,
+        detail:
+          (lastErr ? "Last error lines:\n" + lastErr + "\n\n" : "") +
+          "Retry once with a temporary, empty settings folder (--config <temp>)? Your saved wgp_config.json and models are not touched: if Wan2GP starts that way, the settings are the cause and can be repaired from Manage → Troubleshooting; if it fails the same way, the cause is not wgp_config.json — it is the install, or a generated file Wan2GP reads at startup (an output with metadata it cannot migrate, which the same Troubleshooting tab scans).",
+      });
+      if (choice === "ok") {
+        window.__safeConfigNextLaunch = true;
+        appendLog(
+          "[*] Retrying with a temporary settings folder (--config) — saved settings stay untouched.",
+        );
+        if (!clickLaunch())
+          appendLog(
+            "[!] Use a launch button to retry — it will start with the temporary settings folder.",
+          );
+      } else {
+        appendLog(
+          "[i] Startup triage dismissed. Manage → Troubleshooting has the debug bundle if you want to report it.",
+        );
+      }
+    } catch (e) {
+      appendLog("[!] Startup triage failed: " + errText(e));
+    }
+  }
 });
+// Startup-crash triage state: "Wan2GP ready on …" is proof the server came
+// up, so a later non-zero exit is a runtime failure (never triaged as a
+// startup crash) and the next launch gets a fresh offer.
+try {
+  window.w2gp.onLaunchLog((line) => {
+    const s = typeof line === "string" ? line : "";
+    if (s.indexOf("Wan2GP ready on") === -1) return;
+    window.__wan2gpServed = true;
+    window._startupCrashOffered = false;
+    window._configCrashOffered = false;
+  });
+} catch {}
 window.w2gp.onDeepyExit(async (c) => {
     const code = c && typeof c === "object" ? (c.code ?? "?") : c;
   appendLog(`[*] Deepy Web stopped (code ${code}).`);

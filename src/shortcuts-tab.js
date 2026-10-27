@@ -33,6 +33,18 @@ document.addEventListener("keydown", (e) => {
     closeWebview();
     return;
   }
+  // Ctrl+R / F5 reloads the embedded Wan2GP page — the recovery path when the
+  // Gradio view hangs (reported: video playing full screen while a queued ACE
+  // audio job finishes behind it). Scoped to the open view so the launcher's
+  // own screens keep the keys.
+  if (
+    $("dashBody").style.display === "none" &&
+    ((e.ctrlKey && (e.key === "r" || e.key === "R")) || e.key === "F5")
+  ) {
+    e.preventDefault();
+    if (typeof reloadWan2gpView === "function") reloadWan2gpView();
+    return;
+  }
   // Ctrl+W closes the webview/BrowserView
   if (
     e.ctrlKey &&

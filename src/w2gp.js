@@ -199,7 +199,46 @@ if (!window.__TAURI__) {
         install: (envType) => call("install", { envType }),
         reinstall: (opts) => call("reinstall", { options: opts ?? null }),
         uninstall: (opts) => call("uninstall", { options: opts ?? null }),
-        update: () => call("update"),
+        // Update with the upstream health gate in front of it: the backend
+        // fetches first and refuses to reset when the incoming range contains
+        // a known-bad commit (upstream_health::KNOWN_BAD). Returning the
+        // blocked payload lets this one place ask the question, so every
+        // Update button (Dashboard, Manage) gets the same protection.
+        update: async (opts) => {
+            const r = await call("update", opts);
+            if (r && r.blocked) {
+                const issues = Array.isArray(r.issues) ? r.issues : [];
+                const lines = issues.map(
+                    (i) =>
+                        "• " +
+                        i.sha +
+                        " — " +
+                        i.title +
+                        " (upstream #" +
+                        i.issue +
+                        ")\n  " +
+                        i.advice,
+                );
+                const choice = await w2gp.confirmDialog({
+                    title: "Upstream has a known bug",
+                    message:
+                        "Upstream " +
+                        (r.target || "main") +
+                        " brings in " +
+                        issues.length +
+                        " commit(s) with a known, still-unfixed bug. Nothing was changed yet.",
+                    detail:
+                        lines.join("\n\n") +
+                        "\n\nUpdate anyway? Staying on " +
+                        (r.current || "the current commit") +
+                        " is the safe choice — the fix usually merges within a day.",
+                });
+                if (choice === "ok")
+                    return call("update", Object.assign({}, opts || {}, { force: true }));
+                return r;
+            }
+            return r;
+        },
         depCheck: () => call("dep_check"),
         verifyWangpFiles: () => call("verify_wangp_files"),
         repairWangpFiles: () => call("repair_wangp_files"),
@@ -313,14 +352,42 @@ if (!window.__TAURI__) {
         getModelPaths: () => call("get_model_paths"),
         repairSettings: () => call("repair_settings"),
         getStatus: () => call("get_status"),
-        launch: (mode) => call("launch", { mode }),
+        // Launch also arms the startup-crash triage in resetui-tab.js: the
+        // exit handler compares this timestamp with the "Wan2GP ready" log
+        // line, so a non-zero exit before the server ever answered is treated
+        // as a startup failure (offer a clean-settings retry) instead of a
+        // generation error. `__safeConfigNextLaunch` is the retry's one-shot.
+        launch: async (mode, opts) => {
+            const safe =
+                !!opts && opts.safeConfig === true
+                    ? true
+                    : window.__safeConfigNextLaunch === true;
+            window.__safeConfigNextLaunch = false;
+            window.__wan2gpLaunchAt = Date.now();
+            window.__wan2gpServed = false;
+            const r = await call("launch", { mode, safeConfig: safe });
+            // An already-running server means it did come up: no triage.
+            if (r && r.fresh === false) window.__wan2gpServed = true;
+            return r;
+        },
         batchProcess: (queue, outputDir, dryRun) =>
             call("batch_process", {
                 queue,
                 outputDir: outputDir || null,
                 dryRun: !!dryRun,
             }),
-        launchWebview: () => call("launch_webview"),
+        // Same startup-crash triage arming as launch(), for the embedded app
+        // path: `launch_webview` is a separate command, so a retry that only
+        // consumed the one-shot here would silently reuse the bad settings.
+        launchWebview: async () => {
+            const safe = window.__safeConfigNextLaunch === true;
+            window.__safeConfigNextLaunch = false;
+            window.__wan2gpLaunchAt = Date.now();
+            window.__wan2gpServed = false;
+            const r = await call("launch_webview", { safeConfig: safe });
+            if (r && r.fresh === false) window.__wan2gpServed = true;
+            return r;
+        },
         stopWangp: () => call("stop_wangp"),
         stopAllServers: () => call("stop_all_servers"),
         // ponytail: BrowserView → embedded iframe in webviewContainer (Tauri) — simple, no separate window.
@@ -699,6 +766,10 @@ if (!window.__TAURI__) {
         tsLongPathsStatus: () => call("troubleshoot_long_paths_status"),
         tsLongPathsEnable: () => call("troubleshoot_long_paths_enable"),
         tsDebugBundle: () => call("troubleshoot_debug_bundle"),
+        tsFlagAudit: (force) => call("troubleshoot_flag_audit", { force: !!force }),
+        tsModelIntegrity: () => call("troubleshoot_model_integrity"),
+        tsYue2Metadata: () => call("troubleshoot_yue2_metadata"),
+        tsYue2Quarantine: () => call("troubleshoot_yue2_quarantine"),
         tsTritonTest: () => call("troubleshoot_triton_test"),
         tsTritonRepair: (v) => call("troubleshoot_triton_repair", { version: v ?? null }),
         setTritonCompiler: (m) => call("set_triton_compiler", { mode: m }),

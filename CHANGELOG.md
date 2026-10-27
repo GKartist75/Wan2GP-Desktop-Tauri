@@ -4,6 +4,126 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+## [0.10.31] — 2026-10-27
+
+- **A YuE2 settings crash is now diagnosed and repaired instead of retried.**
+  Launcher #82 (same upstream bug as #2517): WanGP embeds each output's
+  settings in the file itself and migrates them at startup, so a single stale
+  `audio_prompt_type` (`"AV"` written by an older version) aborts the UI with
+  `ValueError: Choose one of the five YuE2 composition sources.` — before the
+  first paint, on every launch, whatever the settings folder says. The generic
+  startup triage could not help (its `--config` retry only moves
+  `wgp_config.json`), and the only published workaround was an upstream source
+  edit after every update. Two new commands read the metadata instead:
+  `troubleshoot_yue2_metadata` walks the configured output folders
+  (`save_path` / `image_save_path` / `audio_save_path`), reads the `json` RIFF
+  chunk of WAVs (chunk headers only, so a 4 GB file costs a few seeks) and the
+  first metadata block of MP3/FLAC, and reports every audio file whose
+  `audio_prompt_type` is not one of upstream's five sources.
+  `troubleshoot_yue2_quarantine` moves them into `yue2-quarantine/` beside the
+  file — nothing is deleted, collisions get a numeric suffix, and moving them
+  back restores the gallery. Surfaced as Manage → Troubleshooting → *Check YuE2
+  metadata* with a *Quarantine offenders* action, and automatically from the
+  startup-crash triage when the log carries the YuE2 signature (which then
+  skips the pointless `--config` retry and relaunches after the move).
+  Verified against a real 46 MB WanGP YuE2 WAV rewritten with upstream's own
+  `write_wav_text_chunk`: detected, quarantined, rescan clean.
+- **Updates stop before a known-broken upstream commit lands.** `install::update`
+  resets the checkout to `FETCH_HEAD` with no stash, so a broken `main` became
+  every launcher user's problem the moment they pressed Update, with a manual
+  rollback as the only recovery. The fetch now happens first and the incoming
+  range (`HEAD..FETCH_HEAD`) is checked against `upstream_health::KNOWN_BAD`;
+  on a hit nothing is touched and the payload carries `blocked: true` plus the
+  issue, advice and target/current commits, which `w2gp.update` turns into one
+  dialog whose "Update anyway" re-invokes with `force`. Seeded with `2c67e50`
+  (SeedVC `ZeroDivisionError` in mmgp offload, upstream #2543, fix PR #2548
+  still unmerged) after reproducing it on a Desktop install. Both Update
+  buttons report "Update skipped — stayed on …" instead of "update finished".
+- **A crash on the way up is triaged, not just printed.** `process exited
+  (code 1)` was the same line for a generation failure and for a settings file
+  Wan2GP could not migrate (upstream #2517: one bad YuE2 entry blocked every
+  start, and the reporter's fix was to edit upstream source after each update).
+  `launch`/`launch_webview` now stamp the launch time and the `[✓] Wan2GP
+  ready on …` log line marks the server as served; an unrequested non-zero exit
+  inside 3 minutes without that line offers one retry against a throwaway
+  settings folder (`--config <temp>`), which never touches `wgp_config.json`:
+  if it starts, the settings are the cause and Repair Settings can fix them; if
+  it fails identically, the install is. One offer per crash streak, re-armed
+  by a successful boot; the KeyError-specific settings-reset offer still wins
+  when its signature is in the log. `launch_webview` gained the `safeConfig`
+  parameter it was missing, so the embedded path honours the same retry.
+- **Model files are checked for the failure modes that only surface deep
+  inside WanGP.** New Manage → Troubleshooting → *Check model files* walks the
+  configured checkpoint roots (read-only, header only) and reports truncated
+  `safetensors` (header longer than the file), `.gguf` without the `GGUF`
+  magic, HTML/XML saved under a model name (the "GGUF magic invalid" class),
+  0-byte files and leftover `.part` downloads, with the full path and size.
+  `classify_model_file` and the scanner are unit-tested against each shape.
+- **Extra Launch Args are validated against the installed commit.**
+  `wgp.py --help` costs ~35 s (argparse is reached after torch), so the option
+  list is parsed once per commit, cached in `upstream-flags.json`, refreshed in
+  the background after an update and on the first launch that finds the cache
+  stale, and surfaced two ways: a `[!] Launch arg(s) this Wan2GP version does
+  not list …` line before the server spawns (argparse exits before the UI when
+  a flag is renamed) and a *Check launch args* button. argparse accepts
+  unambiguous prefixes, so a prefix of a real flag is not reported.
+- **Diagnostics can now answer the three questions every report needs**:
+  which upstream commit and vendored mmgp actually run (`HEAD` short hash +
+  `mmgp/pyproject.toml` version), what the launcher window's own GPU mode is,
+  and whether this WebView can decode the previews it is asked to play
+  (`canPlayType` for H.264/HEVC/AV1/VP9 plus the launcher GPU preference) —
+  the HEVC-over-black-picture report is now one glance instead of a probe.
+- **OOM row covers upstream's whole memory guide**: Attention Head Split
+  *Low* and *High* next to *Medium* (all three validated against the Apply
+  allowlist) and *No preload* which stages `--preload 0` into Extra Launch
+  Args through the same read-modify-write path, shows the resulting string,
+  and refreshes the Launch field.
+- **Renderer harness can now fire backend events** (`window.__harnessEmit`,
+  `window.__harnessArgs`), which is how the triage was driven end to end:
+  crash → dialog → retry with `safeConfig: true`, plus the ready-line,
+  manual-stop and late-crash negatives. `tests/startup-crash-triage.test.js`
+  runs the real `onWangpExit` handler in a vm for the same matrix.
+
+- **Ctrl+R / F5 reload the Wan2GP view.** A user report: a video playing in
+  the desktop embed while a queued ACE audio job finished behind it left the
+  Gradio page unresponsive, and the only escape was the topbar reload button.
+  The button's logic is now the named `reloadWan2gpView()` and the view-scoped
+  keydown handler calls it, so the same recovery is one keystroke — native
+  embed takes the `bvNavigate("reload")` path, iframe mode resets the frame
+  src, and neither fires while the launcher's own screens are up. Verified in
+  the renderer harness (both paths, plus that Escape/Ctrl+W still close the
+  view); `tests/view-reload-shortcut.test.js` runs the real handler.
+- **Conda install works on profiles with a space, and stops pretending to
+  reinstall.** Two verified failures, both in the one-click Miniconda path: NSIS
+  takes `/D=<path>` as a raw trailing token, but the spawn layer quotes any
+  argument containing a space, so `C:\Users\John Smith\Miniconda3` was ignored
+  and the installer aborted in a recorded prefix (`rc 2`, "Directory … is not
+  empty", nothing installed). Miniconda now runs from a one-line `cmd` script
+  (exe quoted, `/D=` bare and last, `exit /b %errorlevel%` so a failure is not
+  read as success) — verified end to end into `…\spaced dir\mincondaE`, rc 0,
+  `Scripts\conda.exe` present, while the argv form still fails on the same
+  target. The same installer refuses *any* non-empty prefix, so **Reinstall**
+  on a live Miniconda could never work: the button now reads **Installed**
+  (disabled) once conda is ready, and the backend returns the actionable path
+  (`conda update -n base conda`, or uninstall then Install) instead of trying
+  winget `--force` and a download that both fail. `features.rs::env_python_bin`
+  now delegates to `status::active_env_python` (one resolution point for
+  uv/venv/conda interpreters), which also clears its dead-code warning.
+- **HEVC gallery previews play again on iGPU.** v0.10.23 mapped *Integrated —
+  power saving* to `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--disable-gpu`, which
+  tears down the GPU process and with it the platform (Media Foundation)
+  decoder. Measured on WebView2 155: `--disable-gpu` → `canPlayType("hev1")` /
+  `("hvc1")` = **no** (h264/av1/vp9 stay "probably"), i.e. every HEVC clip in
+  the gallery played sound over a black picture while H.264 played fine — the
+  discord report after v18.81, whose iGPU users traced it to the launcher.
+  *Integrated* now sends `--force_low_power_gpu` (same probe: hev1/hvc1
+  "probably") so the UI still asks for the low-power adapter without losing the
+  decoder; *Disabled* keeps SwiftShader and the option/hint now says HEVC
+  previews will not decode. The effective WebView2 flag is logged
+  (`[launcher] launcher GPU: … — WebView2: …`) so support can read it from the
+  console instead of guessing, and `launcher_gpu_flag()` is unit-tested against
+  the regression (`integrated ≠ --disable-gpu`).
+
 ## [0.10.30] — 2026-10-27
 
 - **Deepy's speculative decoding gets its Prime row.** Upstream

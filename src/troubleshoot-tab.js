@@ -453,6 +453,20 @@ async function tsApplyRemedy(action, label) {
   try {
     const r = await window.w2gp.tsOomRemedy(action);
     if (r && r.ok) {
+      // Flag-shaped remedies (`--preload 0`) come back as launchArgs, not as
+      // wgp_config keys: show what was staged and refresh the Launch field.
+      if (typeof r.launchArgs === "string") {
+        tsStatus(
+          "tsOomStatus",
+          "✓ " + label + " — Extra Launch Args: " + (r.launchArgs || "(empty)") + ". Takes effect on the next launch.",
+        );
+        appendLog("[✓] " + label + " → launch args: " + r.launchArgs);
+        try {
+          tsRefreshLaunchArgs();
+        } catch {}
+        showToast("✓ " + label);
+        return;
+      }
       const keys = (r.applied || []).join(", ") || "(nothing to change)";
       tsStatus("tsOomStatus", "✓ " + label + " — wrote " + keys + ". Relaunch WanGP if the setting needs a restart.");
       appendLog("[✓] " + label + " → " + keys);
@@ -629,3 +643,317 @@ $("tsVerboseChk")?.addEventListener("change", async function () {
     if ($("tsVerboseChk")) $("tsVerboseChk").checked = cfg.verboseLogging === true;
   } catch {}
 })();
+
+// ── Head Split levels + no-preload (upstream's memory guide) ──
+$("tsHeadSplitLowBtn")?.addEventListener("click", () =>
+  tsApplyRemedy("head_split_low", "Attention Head Split → Low"),
+);
+$("tsHeadSplitHighBtn")?.addEventListener("click", () =>
+  tsApplyRemedy("head_split_high", "Attention Head Split → High"),
+);
+$("tsNoPreloadBtn")?.addEventListener("click", () =>
+  tsApplyRemedy("no_preload", "--preload 0 in Extra Launch Args"),
+);
+
+// ── Model-file integrity (upstream #2549 class: a bad download that only
+// surfaces as a deep ValueError inside WanGP) ──
+$("tsModelCheckBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  this.disabled = true;
+  const box = $("tsModelBox");
+  tsStatus("tsModelStatus", "Reading model headers…");
+  if (box) {
+    box.style.display = "none";
+    box.textContent = "";
+  }
+  try {
+    const r = await window.w2gp.tsModelIntegrity();
+    if (!r || !r.ok) {
+      tsStatus(
+        "tsModelStatus",
+        "✗ " +
+          ((r && r.error) ||
+            "no model folder found — set one in Wan2GP's Configuration"),
+      );
+      return;
+    }
+    const bad = Array.isArray(r.bad) ? r.bad : [];
+    const scanned = r.scanned || 0;
+    if (bad.length === 0) {
+      tsStatus(
+        "tsModelStatus",
+        "✓ " +
+          scanned +
+          " model file(s) checked in " +
+          (r.tookMs || 0) +
+          " ms — headers all valid" +
+          (r.truncated ? " (scan capped: very large folder)" : ""),
+      );
+      appendLog("[✓] Model integrity: " + scanned + " file(s) OK");
+      return;
+    }
+    tsStatus(
+      "tsModelStatus",
+      "⚠ " + bad.length + " unusable file(s) of " + scanned + " checked",
+    );
+    appendLog("[!] Model integrity: " + bad.length + " bad file(s)");
+    if (box) {
+      box.style.display = "block";
+      box.textContent = bad
+        .map(
+          (b) =>
+            "• " +
+            b.name +
+            " — " +
+            b.reason +
+            " (" +
+            Math.round((b.size || 0) / 1024) +
+            " KB)\n  " +
+            b.path,
+        )
+        .join("\n");
+    }
+    showToast("⚠ " + bad.length + " model file(s) look broken — see Manage → Troubleshooting");
+  } catch (e) {
+    tsStatus("tsModelStatus", "✗ " + escHtml(errText(e)));
+  } finally {
+    this.disabled = false;
+  }
+});
+
+// ── YuE2 startup crash (launcher #82 = upstream #2517): one stale
+// `audio_prompt_type` embedded in an output file makes WanGP raise
+// `ValueError: Choose one of the five YuE2 composition sources.` while it
+// migrates the gallery, before the UI paints. The scan is read-only; the fix
+// moves the offender into `yue2-quarantine/` so nothing is destroyed.
+function yue2Render(r) {
+  const box = $("tsYue2Box");
+  const bad = r && Array.isArray(r.bad) ? r.bad : [];
+  if (box) {
+    box.style.display = bad.length ? "block" : "none";
+    box.textContent = bad
+      .map(
+        (b) =>
+          "• " +
+          b.name +
+          ' — audio_prompt_type "' +
+          b.value +
+          '" (' +
+          Math.round((b.size || 0) / 1024) +
+          " KB)\n  " +
+          b.path,
+      )
+      .join("\n");
+  }
+  if ($("tsYue2FixBtn")) $("tsYue2FixBtn").style.display = bad.length ? "" : "none";
+  return bad;
+}
+
+async function yue2Scan() {
+  const r = await window.w2gp.tsYue2Metadata();
+  if (!r || !r.ok) return null;
+  const bad = yue2Render(r);
+  tsStatus(
+    "tsYue2Status",
+    bad.length
+      ? "⚠ " + bad.length + " file(s) carry a source WanGP rejects, of " + (r.scanned || 0) + " audio file(s) read"
+      : "✓ " + (r.scanned || 0) + " audio file(s) read in " + (r.tookMs || 0) + " ms — no bad YuE2 source" + (r.truncated ? " (scan capped: very large folder)" : ""),
+  );
+  return { ...r, bad };
+}
+
+$("tsYue2CheckBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  this.disabled = true;
+  tsStatus("tsYue2Status", "Reading output metadata…");
+  try {
+    const r = await yue2Scan();
+    if (!r) {
+      tsStatus("tsYue2Status", "✗ no output folder found — set one in Wan2GP's Configuration");
+      return;
+    }
+    appendLog(
+      r.bad.length
+        ? "[!] YuE2 metadata: " + r.bad.length + " bad output(s) of " + (r.scanned || 0) + " scanned"
+        : "[✓] YuE2 metadata: " + (r.scanned || 0) + " output(s) OK",
+    );
+  } catch (e) {
+    tsStatus("tsYue2Status", "✗ " + escHtml(errText(e)));
+  } finally {
+    this.disabled = false;
+  }
+});
+
+async function yue2Quarantine() {
+  const r = await window.w2gp.tsYue2Quarantine();
+  const moved = Array.isArray(r && r.moved) ? r.moved : [];
+  const failed = Array.isArray(r && r.failed) ? r.failed : [];
+  if (moved.length === 0) {
+    showToast(
+      failed.length
+        ? "✗ " + (r.error || "could not move the files")
+        : "Nothing left to move — rescan",
+    );
+    return null;
+  }
+  appendLog(
+    "[✓] Moved " +
+      moved.length +
+      " file(s) to " +
+      (r.dirs || []).join(", ") +
+      "\n" +
+      moved.map((m) => "    " + m.name).join("\n"),
+  );
+  if (failed.length)
+    appendLog(
+      "[!] " +
+        failed.length +
+        " file(s) stayed in place: " +
+        failed.map((f) => f.name + " (" + f.error + ")").join(", "),
+    );
+  return r;
+}
+
+$("tsYue2FixBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  const choice = await window.w2gp.confirmDialog({
+    title: "Quarantine the offending outputs?",
+    message:
+      "Moves the listed files into yue2-quarantine/ next to your outputs so WanGP can start. Nothing is deleted — move them back to restore them once upstream fixes the migration.",
+  });
+  if (choice !== "ok" && choice !== 0) {
+    tsStatus("tsYue2Status", "Cancelled.");
+    return;
+  }
+  this.disabled = true;
+  try {
+    const r = await yue2Quarantine();
+    if (r) {
+      const moved = Array.isArray(r.moved) ? r.moved : [];
+      showToast("✓ Quarantined " + moved.length + " file(s)");
+      await yue2Scan();
+      tsStatus(
+        "tsYue2Status",
+        "✓ moved " + moved.length + " file(s) to yue2-quarantine/ — launch Wan2GP again",
+      );
+    }
+  } catch (e) {
+    tsStatus("tsYue2Status", "✗ " + escHtml(errText(e)));
+  } finally {
+    this.disabled = false;
+  }
+});
+
+// Startup triage hook: called when Wan2GP died before serving. Returns true
+// when this specific cause was found and handled, so the caller skips its
+// generic "retry with a temporary settings folder" dialog — a throwaway
+// settings folder cannot help, the value lives inside the media file.
+window.w2gpYue2Triage = async function (relaunch) {
+  const r = await yue2Scan();
+  if (!r || r.bad.length === 0) return false;
+  const names = r.bad.slice(0, 5).map((b) => "• " + b.name + ' ("' + b.value + '")');
+  if (r.bad.length > 5) names.push("… and " + (r.bad.length - 5) + " more");
+  const choice = await window.w2gp.confirmDialog({
+    title: "WanGP cannot start: a YuE2 source in your output files",
+    message:
+      "WanGP exited while migrating the settings stored inside your generated audio, and " +
+      r.bad.length +
+      " file(s) in your output folder carry an audio_prompt_type this version rejects. That is upstream bug #2517, not a launcher or install problem.",
+    detail:
+      names.join("\n") +
+      "\n\nQuarantine moves them into yue2-quarantine/ next to your outputs (nothing is deleted) and restarts Wan2GP. Move the files back any time.",
+  });
+  if (choice !== "ok" && choice !== 0) {
+    appendLog("[i] YuE2 triage dismissed — the files are still in your output folder.");
+    return true;
+  }
+  const q = await yue2Quarantine();
+  if (q) {
+    const moved = Array.isArray(q.moved) ? q.moved : [];
+    showToast("✓ Quarantined " + moved.length + " file(s)");
+    if (typeof relaunch === "function") relaunch();
+  }
+  return true;
+};
+
+// ── Extra Launch Args vs `wgp.py --help` for the installed commit ──
+$("tsFlagAuditBtn")?.addEventListener("click", async function () {
+  if (this.disabled) return;
+  this.disabled = true;
+  tsStatus("tsFlagAuditStatus", "Comparing with wgp.py --help (first run per commit takes ~40 s)…");
+  try {
+    const r = await window.w2gp.tsFlagAudit(false);
+    if (!r || !r.ok) {
+      tsStatus("tsFlagAuditStatus", "✗ " + ((r && r.error) || "audit failed"));
+      return;
+    }
+    const unknown = Array.isArray(r.unknown) ? r.unknown : [];
+    if (unknown.length === 0) {
+      tsStatus(
+        "tsFlagAuditStatus",
+        "✓ " +
+          (r.checked || []).length +
+          " launch arg(s) known to WanGP " +
+          (r.head || "") +
+          " (" +
+          (r.known || 0) +
+          " options listed)",
+      );
+      appendLog("[✓] Launch args match WanGP " + (r.head || "") + " (wgp.py --help)");
+    } else {
+      tsStatus(
+        "tsFlagAuditStatus",
+        "⚠ Unknown to WanGP " + (r.head || "") + ": " + unknown.join(" "),
+      );
+      appendLog(
+        "[!] Launch arg(s) not listed by this WanGP version: " + unknown.join(" ") +
+          " — remove them in Manage → Launch → Extra Launch Args or Wan2GP will refuse to start.",
+      );
+      showToast("⚠ Unknown launch args — see Troubleshooting");
+    }
+  } catch (e) {
+    tsStatus("tsFlagAuditStatus", "✗ " + escHtml(errText(e)));
+  } finally {
+    this.disabled = false;
+  }
+});
+
+// ── Preview decoders (the HEVC gallery regression's permanent sensor) ──
+// Runs in the same WebView2 process with the same browser arguments as the
+// Wan2GP window, so "Audio only + black frame" reports become one glance:
+// HEVC "no" here means the platform decoder is gone (SwiftShader mode).
+async function tsShowPreviewCodecs() {
+  const el = $("tsCodecStatus");
+  if (!el) return;
+  const v = document.createElement("video");
+  const probe = (t) => {
+    try {
+      return v.canPlayType(t) === "" ? "no" : "yes";
+    } catch {
+      return "?";
+    }
+  };
+  const hevc = probe('video/mp4; codecs="hev1.1.6.L93.B0"') === "yes" ||
+    probe('video/mp4; codecs="hvc1"') === "yes";
+  const rows = [
+    "H.264 " + probe('video/mp4; codecs="avc1.42E01E"'),
+    "HEVC " + (hevc ? "yes" : "no"),
+    "AV1 " + probe('video/mp4; codecs="av01.0.05M.08"'),
+    "VP9 " + probe('video/webm; codecs="vp9"'),
+  ];
+  let mode = "";
+  try {
+    const cfg = await window.w2gp.configLoad();
+    mode = cfg.launcherGpu || "auto";
+  } catch {}
+  el.textContent =
+    "Preview decoders in this window: " +
+    rows.join(" · ") +
+    " — launcher GPU: " +
+    mode +
+    (hevc
+      ? ""
+      : " (HEVC previews will play sound over a black picture; switch Launcher GPU away from Disabled)") +
+    ".";
+}
+tsShowPreviewCodecs();

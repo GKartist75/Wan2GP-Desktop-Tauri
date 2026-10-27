@@ -93,7 +93,7 @@ The home screen. Top to bottom:
 | --- | --- |
 | ← Back to Dashboard | Leaves the Viewer, back to this screen |
 | ⊞ Console | Toggles the floating terminal console |
-| ⟳ (reload icon) | Reloads the Wan2GP view |
+| ⟳ (reload icon) | Reloads the Wan2GP view (also **Ctrl+R** / **F5** while it is open) |
 | ⏹ Stop All | Stops Wan2GP + OpenCode servers (also kills the port listener) |
 | Task Manager | Opens Windows Task Manager |
 | ☀/☾ | Toggles dark / light theme |
@@ -319,11 +319,24 @@ flowchart TD
    the full version + resolved path, and **Reinstall** asks for confirmation
    before replacing the current copy (uv is wiped from the launcher tools dir
    and installed fresh; other tools reinstall through winget/their installer).
+   Conda is the exception: once Miniconda is ready the button reads
+   **Installed** and is disabled, because the Miniconda installer refuses any
+   non-empty prefix (`rc 2`) — re-downloading cannot replace a live base
+   environment. Update it with `conda update -n base conda`, or run the
+   Miniconda uninstaller and press **Install** again.
 2. **Environment** — pick `uv` (fast, recommended), `venv` (standard Python;
    uses the profile's Python version and provisions it when missing) or `conda`
    (needs Miniconda — one-click install; its terms are accepted automatically
    during setup). All three use the same Python minor and torch stack, and end
-   with the same smoke test.
+   with the same smoke test. The launcher never calls `conda activate`: a conda
+   environment is created by path (`env_conda`), and install, launch and the
+   Terminal mode all run that environment's `python.exe` directly. So
+   `CondaError: Run 'conda init' before 'conda activate'` never comes from the
+   launcher — it is a shell that was never initialised for conda, usually while
+   following upstream's `INSTALLATION.md` by hand (`conda create -n wan2gp` +
+   `conda activate wan2gp`). Fix the shell with `conda init cmd.exe` (or
+   `conda init powershell`), reopen it, or skip activation entirely with
+   `conda run -n <name> python …`. Nothing in the launcher needs that shell.
 3. **Install location + model folders** — repo/env/settings folder plus
    Checkpoints, LoRAs and Output folders, each with Browse / reset-to-default.
    Bare drive roots auto-resolve to `<root>\Wan2GP`.
@@ -358,7 +371,14 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - New gallery arrivals pop a **Save / Save As…** prompt — Save keeps the file in
   Downloads, Save As… opens the native dialog with the real file-type filter
   (`*.zip`/`*.json`/… — issue #29) and reopens at the last-used folder.
-- Reload, zoom 25–200%, hide/show keeps the session alive.
+- Reload, zoom 25–200%, hide/show keeps the session alive. **Ctrl+R** (or
+  **F5**) does the same reload while the view has focus — the quickest way out
+  of a hung page. A known case: the Gradio page can stop responding when a
+  video is playing while a queued job (an ACE audio track, for example)
+  finishes behind it; reloading revives it with the finished job still in the
+  queue/history. If it keeps happening, switch the renderer to `iframe`
+  (Manage → Launch) or use **Browser** mode and see whether it follows the
+  page or the embed.
 - **Renderer** — `native` (a real WebView2 child webview, exact Save-As
   downloads) exists on **Windows only**. GTK and WKWebView cannot composite a
   second webview over the page: `add_child` puts both webviews in the window's
@@ -415,7 +435,7 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **Extra Launch Args** — appended to `wgp.py` verbatim.
 - **Server Port** — default 7861 (side-by-side with the retired Electron launcher's 7860).
 - **GPU Device** — which card runs generation. *Auto* picks the card with the most VRAM; *All GPUs visible* passes no flag (advanced multi-GPU); a detected card pins its UUID. At launch the pick becomes `--gpu cuda:N` (nvidia-smi index, with `CUDA_DEVICE_ORDER=PCI_BUS_ID`), the same switch as choosing a device inside Wan2GP. Auto-Tune and the hardware profile are sized from that card.
-- **Launcher GPU** — which GPU the launcher UI itself prefers. Integrated and Disabled now both use `--disable-gpu` (SwiftShader), since `--force_low_power_gpu` is broken on WebView2 v145+; Dedicated keeps `--force_high_performance_gpu`. Requires restart.
+- **Launcher GPU** — which GPU the launcher UI itself prefers. *Integrated* asks WebView2 for the low-power adapter (`--force_low_power_gpu`) and keeps the GPU process, so gallery previews keep hardware decode (HEVC included) while the dedicated card stays free on switchable-graphics laptops. *Disabled* runs the UI through SwiftShader (`--disable-gpu`): frees the most VRAM, but Chromium loses the platform HEVC decoder, so HEVC previews play sound over a black picture — H.264/AV1/VP9 still play. *Dedicated* keeps `--force_high_performance_gpu`. Requires restart. (v0.10.23–0.10.30 mapped *Integrated* to `--disable-gpu`; that is the HEVC gallery regression reported on Discord.)
 - **SageAttention wheel** — which Sage build to use: *Safe* prefers the launcher's
   known-good build; *Upstream* installs `setup_config.json` exactly as published.
   They resolve to the same `post6` wheel today, so the choice only starts to
@@ -451,6 +471,40 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   actually *import*, naming the broken dist — run after AV restores, driver
   updates, or env surgery), GPU report, emergency fallback torch probe.
   Links out to upstream `TROUBLESHOOTING.md` (plus `INSTALLATION.md`).
+- **Check model files** — reads the header of every `.gguf` / `.safetensors` in
+  your model folders and lists the ones WanGP cannot load: truncated
+  downloads, an HTML error page saved under a model name, 0-byte files and
+  leftover `.part` downloads, each with its path and size. Read-only; nothing
+  is deleted or moved. If WanGP dies with a deep model error, start here.
+- **Check launch args** — compares your *Extra Launch Args* with the option
+  list `wgp.py --help` prints for the installed commit (learned once per
+  commit, cached; the first check after an update takes ~40 s). A renamed flag
+  makes argparse exit before the UI appears, so the launcher also prints the
+  same warning in the console before starting WanGP. Unambiguous prefixes
+  (`--prof` for `--profile`) count as valid, exactly as argparse treats them.
+- **Check YuE2 metadata** — WanGP stores every output's settings *inside the
+  file* and migrates them at startup, so one stale `audio_prompt_type` (anything
+  but `0`, `1`, `12`, `A`, `A2`) kills the UI with *"Choose one of the five YuE2
+  composition sources"* before it paints (upstream #2517). The scan reads
+  WAV/MP3/FLAC metadata only and lists the offending files; *Quarantine
+  offenders* moves them into `yue2-quarantine/` beside your outputs — nothing is
+  deleted, and moving them back restores the gallery. The launcher also runs this
+  scan automatically when a startup crash carries that signature, because the
+  *temporary settings folder* retry cannot help: the bad value is in the media,
+  not in `wgp_config.json`.
+- **Preview decoders** — one line above *Copy debug info* showing whether this
+  window can decode H.264 / HEVC / AV1 / VP9 plus the launcher GPU mode. HEVC
+  "no" with *Launcher GPU: disabled* explains a gallery that plays sound over
+  a black picture; switch the GPU mode away from *Disabled*.
+- **Out of memory row** — one-click remedies that write a single validated
+  setting instead of sending you into Configuration: Attention Head Split
+  *Low* / *Medium* / *High* (upstream measures ~1 GB / ~2 GB less VRAM for
+  ≤3% slower steps; same quality, not identical output), *Lower Reserved RAM*
+  (25% with Smart Memory Pinning on, upstream's fix for a PC short of RAM) and
+  *No preload* (`--preload 0`, upstream's fix for OOM *during model loading*;
+  it is staged into Extra Launch Args, shown there, and removable). *Pin to one
+  GPU* covers the multi-GPU variant, where a bare OOM appears while VRAM reads
+  free.
 - **Repair Settings** — resets out-of-range dropdown values in
   `models/_settings.json` + all `*_settings.json` files (originals backed up
   as `*.bak-repair`); fixes the *"Value: N is not in the list of choices"*

@@ -19,7 +19,16 @@ $("updateBtn").addEventListener("click", async () => {
     // must not restate them — it only does what a log line cannot: toasts,
     // the drift banner, and a dashboard refresh. Printing them here too was
     // the source of the doubled "update complete" / "reinstalled" lines.
-    if (
+    if (r && r.blocked) {
+      // The gate dialog (w2gp.update) already explained the bug and offered
+      // "Update anyway"; user declined, so name the outcome instead of
+      // running the drift/banner logic for an update that never happened.
+      showToast("Update skipped — upstream has a known bug");
+      notifyUser(
+        "Update skipped: kept " + (r.current || "the current commit"),
+      );
+      refreshDashboard();
+    } else if (
       r &&
       r.depCheck === "drift" &&
       Array.isArray(r.drift) &&

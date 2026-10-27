@@ -788,14 +788,17 @@ let _launchInstalled = false;
 // Back/Forward can't work on a cross-origin iframe (Gradio history is
 // unreachable) — only Reload is offered. Zoom is real: CSS zoom on the iframe
 // embed, compositor zoom (bv_set_zoom) on the native child embed.
-$("wvReloadBtn").addEventListener("click", () => {
+// Named so the keyboard path (Ctrl+R / F5, shortcuts-tab.js) is the same code
+// as the topbar button: a hung Gradio page is recovered without hunting for it.
+function reloadWan2gpView() {
   if (window.w2gp.isNativeEmbed && window.w2gp.isNativeEmbed()) {
     window.w2gp.bvNavigate("reload");
     return;
   }
   const f = document.querySelector("#tauri-browser-view iframe");
   if (f) f.src = f.src;
-});
+}
+$("wvReloadBtn").addEventListener("click", reloadWan2gpView);
 let _zoomDebounce = null;
 $("zoomSlider").addEventListener("input", () => {
   const pct = parseInt($("zoomSlider").value);
@@ -1678,9 +1681,13 @@ $("manageUpdateWan2gpBtn")?.addEventListener("click", async function () {
     if (s)
       s.textContent = !r
         ? "✗ Update failed"
-        : r.updated === false
-          ? "✓ Already up to date — nothing to update"
-          : "✓ Update finished — check Dashboard log";
+        : r.blocked
+          ? "Update skipped — stayed on " +
+            (r.current || "the current commit") +
+            " (known upstream bug, see dialog)"
+          : r.updated === false
+            ? "✓ Already up to date — nothing to update"
+            : "✓ Update finished — check Dashboard log";
   } catch (e) {
     if (s) s.textContent = "✗ " + (e.message || e);
   } finally {

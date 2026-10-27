@@ -599,10 +599,20 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
             note = pin.note.map(|n| format!(" ({n})")).unwrap_or_default(),
         )
     };
+    // Identity of the code that actually runs: the checkout being reported on,
+    // the vendored mmgp (pip cannot tell you), and the launcher UI's own GPU
+    // mode — three questions every SeedVC/HEVC/codec report currently needs.
+    let upstream_line = format!(
+        "\n**Upstream** {} | mmgp {} | launcher UI {}",
+        crate::install::short_rev(&repo, "HEAD"),
+        crate::status::vendored_mmgp_label(&repo).unwrap_or_else(|| "(none vendored)".into()),
+        crate::launcher_gpu_summary(),
+    );
     let md = format!(
-        "**Launcher** v{ver} ({os}/{arch})\n**GPU** {gpu} ({vendor}, {vram} MB VRAM){gpu_pin_line}\n**Python** {py}\n**Torch** {torch} + CUDA {cuda_v} (cuda_available={cuda_ok}){amd}\n**Launch** port={port} server={server} share={share} gpu={gpudev} verbose={verbose} args=`{args}`\n**Profiles** video={vp} image={ip} audio={ap} quant={q}{v17}\n**Log tail**\n```\n{tail}\n```",
+        "**Launcher** v{ver} ({os}/{arch}){upstream}\n**GPU** {gpu} ({vendor}, {vram} MB VRAM){gpu_pin_line}\n**Python** {py}\n**Torch** {torch} + CUDA {cuda_v} (cuda_available={cuda_ok}){amd}\n**Launch** port={port} server={server} share={share} gpu={gpudev} verbose={verbose} args=`{args}`\n**Profiles** video={vp} image={ip} audio={ap} quant={q}{v17}\n**Log tail**\n```\n{tail}\n```",
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
+        upstream = upstream_line,
         gpu = gpu.get("name").and_then(|v| v.as_str()).unwrap_or("?"),
         vendor = gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or("?"),
         vram = gpu.get("vramMB").and_then(|v| v.as_str()).unwrap_or("?"),
@@ -1100,7 +1110,9 @@ pub fn troubleshoot_known_good() -> serde_json::Value {
 /// RAM". P5 stays on the existing failsafe button. Pure + unit-tested.
 pub(crate) fn oom_remedy_settings(action: &str) -> Option<serde_json::Value> {
     match action {
+        "head_split_low" => Some(serde_json::json!({"attention_head_split": 1})),
         "head_split_medium" => Some(serde_json::json!({"attention_head_split": 2})),
+        "head_split_high" => Some(serde_json::json!({"attention_head_split": 3})),
         "lower_reserved_ram" => Some(serde_json::json!({
             "perc_reserved_mem_max": 25,
             "smart_memory_pinning": true,
@@ -1114,6 +1126,29 @@ pub(crate) fn oom_remedy_settings(action: &str) -> Option<serde_json::Value> {
 #[tauri::command]
 pub fn troubleshoot_oom_remedy(action: Option<String>) -> serde_json::Value {
     let a = action.unwrap_or_default();
+    // `--preload 0` is a launch flag, not a wgp_config value: upstream's
+    // "CUDA out of memory during model loading" fix. Stage it into Extra
+    // Launch Args through the same read-modify-atomic-write path the failsafe
+    // uses, so it applies to the next launch and is visible in Manage → Launch
+    // (and removable there).
+    if a == "no_preload" {
+        let mut dc = load_config_value();
+        let prev = dc
+            .get("launchArgs")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let merged = merge_launch_flags(&prev, &[("--preload", Some("0"))]);
+        dc["launchArgs"] = serde_json::json!(merged);
+        let dp = get_config_file();
+        if let Err(e) = atomic_write(
+            &dp,
+            &serde_json::to_string_pretty(&dc).unwrap_or_else(|_| "{}".into()),
+        ) {
+            return serde_json::json!({"ok": false, "error": e.to_string()});
+        }
+        return serde_json::json!({"ok": true, "success": true, "remedy": a, "launchArgs": merged});
+    }
     let Some(settings) = oom_remedy_settings(&a) else {
         return serde_json::json!({"ok": false, "error": format!("unknown remedy '{a}'")});
     };
@@ -1171,6 +1206,680 @@ pub fn troubleshoot_vram_diag(action: Option<String>) -> serde_json::Value {
         }
         Err(e) => serde_json::json!({"ok": false, "script": script, "error": e.to_string()}),
     }
+}
+
+// ── Upstream flag audit ───────────────────────────────────────────────
+// `wgp.py --help` costs ~35 s here because argparse is reached after torch is
+// imported, so the flag list is learned ONCE per upstream commit in the
+// background and cached; launches from then on get an instant verdict, and the
+// Diagnostics button can force a synchronous refresh. This is what catches the
+// next upstream flag removal without shipping a launcher update: an unknown
+// flag makes argparse exit before the UI appears.
+
+static FLAG_PROBE_RUNNING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+const FLAG_CACHE_FILE: &str = "upstream-flags.json";
+
+/// Long options in argparse's help text: lines that begin with an option
+/// (`--gpu DEVICE`, `-h, --help`) contribute their long form; values and
+/// wrapped description lines do not. Pure.
+pub(crate) fn flags_from_help(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let t = line.trim_start();
+        if !t.starts_with('-') {
+            continue;
+        }
+        // `-h, --help  show …` → the first `--` token on the line.
+        let Some(name) = t
+            .split(|c: char| c.is_whitespace() || c == ',')
+            .find(|tok| tok.starts_with("--"))
+        else {
+            continue;
+        };
+        let name = name.split('=').next().unwrap_or(name);
+        if name.len() > 2
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            out.push(name.to_string());
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn flag_cache_path() -> PathBuf {
+    get_data_dir().join(FLAG_CACHE_FILE)
+}
+
+/// `(head, flags)` from the cache, `None` when absent/unreadable.
+pub(crate) fn read_flag_cache() -> Option<(String, Vec<String>)> {
+    let s = std::fs::read_to_string(flag_cache_path()).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&s).ok()?;
+    let head = v.get("head")?.as_str()?.to_string();
+    let flags = v
+        .get("flags")?
+        .as_array()?
+        .iter()
+        .filter_map(|x| x.as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    (!flags.is_empty()).then_some((head, flags))
+}
+
+fn write_flag_cache(head: &str, flags: &[String]) {
+    let path = flag_cache_path();
+    let body = serde_json::json!({ "head": head, "flags": flags }).to_string();
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, body).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
+}
+
+/// Run `wgp.py --help` and parse the option list. `None` when the probe fails
+/// or returns something that is clearly not argparse's help.
+fn probe_help_flags(py: &std::path::Path, repo: &std::path::Path) -> Option<Vec<String>> {
+    let out = silent_command(py.as_os_str())
+        .args(["-s", "wgp.py", "--help"])
+        .current_dir(repo)
+        .output()
+        .ok()?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let flags = flags_from_help(&text);
+    // A real WanGP help lists dozens of options; a short list means the
+    // interpreter printed a traceback instead (bad env, broken checkout).
+    (flags.len() >= 10).then_some(flags)
+}
+
+/// Resolve Python + HEAD and learn the flag set in a detached thread. Cheap to
+/// call on every launch: it no-ops when a probe is already running.
+pub(crate) fn learn_upstream_flags_async(repo: PathBuf) {
+    use std::sync::atomic::Ordering;
+    if FLAG_PROBE_RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let head = crate::install::short_rev(&repo, "HEAD");
+        if head == "?" {
+            FLAG_PROBE_RUNNING.store(false, Ordering::SeqCst);
+            return;
+        }
+        if let Some(flags) = active_python().and_then(|py| probe_help_flags(&py, &repo)) {
+            write_flag_cache(&head, &flags);
+        }
+        FLAG_PROBE_RUNNING.store(false, Ordering::SeqCst);
+    });
+}
+
+/// Flags a launch is about to pass, in the order they appear, values dropped.
+/// `--flag=value` keeps just `--flag`. Pure.
+pub(crate) fn launch_flags(args: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for a in args {
+        if !a.starts_with("--") {
+            continue;
+        }
+        let f = a.split('=').next().unwrap_or(a).to_string();
+        if !out.contains(&f) {
+            out.push(f);
+        }
+    }
+    out
+}
+
+/// Warning lines for launch args this checkout's argparse does not list.
+/// Empty when everything is known or the flag set has not been learned yet
+/// (a stale cache starts the background probe). Never blocks a launch.
+pub fn audit_launch_args(repo: &std::path::Path, args: &[String]) -> Vec<String> {
+    let want = launch_flags(args);
+    if want.is_empty() {
+        return Vec::new();
+    }
+    let head = crate::install::short_rev(repo, "HEAD");
+    let Some((cached_head, flags)) = read_flag_cache() else {
+        learn_upstream_flags_async(repo.to_path_buf());
+        return Vec::new();
+    };
+    if cached_head != head {
+        learn_upstream_flags_async(repo.to_path_buf());
+        return Vec::new();
+    }
+    let unknown: Vec<&String> = want
+        .iter()
+        // argparse accepts unambiguous prefixes (`--prof`), so a prefix of a
+        // real flag is not a false claim about this version.
+        .filter(|f| !flags.contains(f) && !flags.iter().any(|known| known.starts_with(f.as_str())))
+        .collect();
+    if unknown.is_empty() {
+        Vec::new()
+    } else {
+        vec![format!(
+            "[!] Launch arg(s) this Wan2GP version ({head}) does not list: {} — upstream renamed or removed them, so Wan2GP may refuse to start. Check Manage → Launch → Extra Launch Args.\n",
+            unknown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" ")
+        )]
+    }
+}
+
+/// Diagnostics: force/read the flag audit for the saved Extra Launch Args.
+#[tauri::command]
+pub fn troubleshoot_flag_audit(force: Option<bool>) -> serde_json::Value {
+    let repo = get_repo_dir();
+    let head = crate::install::short_rev(&repo, "HEAD");
+    if head == "?" {
+        return serde_json::json!({"ok": false, "error": "not a git checkout — cannot tell which WanGP version this is"});
+    }
+    let mut cached = read_flag_cache();
+    let mut fresh = cached.as_ref().is_some_and(|(h, _)| h == &head);
+    if force == Some(true) || !fresh {
+        let Some(py) = active_python() else {
+            return serde_json::json!({"ok": false, "error": "no Python environment installed — run Install first"});
+        };
+        let Some(flags) = probe_help_flags(&py, &repo) else {
+            return serde_json::json!({"ok": false, "error": "wgp.py --help printed no option list (broken checkout or Python env?)"});
+        };
+        write_flag_cache(&head, &flags);
+        cached = Some((head.clone(), flags));
+        fresh = true;
+    }
+    let (_, flags) = cached.unwrap_or_default();
+    let dc = load_config_value();
+    let saved = dc
+        .get("launchArgs")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let want = launch_flags(&split_args(&saved));
+    let unknown: Vec<String> = want
+        .iter()
+        .filter(|f| !flags.contains(f) && !flags.iter().any(|known| known.starts_with(f.as_str())))
+        .cloned()
+        .collect();
+    serde_json::json!({
+        "ok": true,
+        "head": head,
+        "learned": fresh,
+        "known": flags.len(),
+        "checked": want,
+        "unknown": unknown,
+    })
+}
+
+// ── Model-file integrity ──────────────────────────────────────────────
+// The failure this exists for: a partially downloaded or HTML-error-page
+// `.gguf` makes WanGP die deep inside the prompt enhancer with
+// `ValueError: GGUF magic invalid` (upstream #2549), and a 0-byte
+// `.safetensors` looks to the model manager like an installed model. Both are
+// invisible from the launcher UI today, and both are one file-read away from
+// being obvious.
+
+/// Model extensions worth opening. Anything else (json, txt, images) is skipped.
+fn is_model_file(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.ends_with(".gguf")
+        || n.ends_with(".safetensors")
+        || n.ends_with(".sft")
+        || n.ends_with(".part")
+        || n.ends_with(".incomplete")
+        || n.ends_with(".download")
+}
+
+/// Why a model file cannot be used, if it cannot. Pure — the tests are the
+/// specification of what the scanner reports.
+pub(crate) fn classify_model_file(name: &str, head: &[u8], size: u64) -> Option<&'static str> {
+    if !is_model_file(name) {
+        return None;
+    }
+    if size == 0 {
+        return Some("empty file (0 bytes)");
+    }
+    if head.starts_with(b"<!DOCTYPE") || head.starts_with(b"<html") || head.starts_with(b"<?xml") {
+        return Some("HTML/XML page saved instead of a model");
+    }
+    let n = name.to_ascii_lowercase();
+    if n.ends_with(".gguf") {
+        return (head.len() < 4 || &head[..4] != b"GGUF")
+            .then_some("missing GGUF magic (not a GGUF file)");
+    }
+    if n.ends_with(".safetensors") || n.ends_with(".sft") {
+        if head.len() < 8 {
+            return Some("shorter than a safetensors header");
+        }
+        let mut n8 = [0u8; 8];
+        n8.copy_from_slice(&head[..8]);
+        let hdr = u64::from_le_bytes(n8);
+        // Real headers are a few KB to a few MB; 100 MB is already nonsense.
+        if hdr == 0 || hdr > 100 * 1024 * 1024 {
+            return Some("implausible safetensors header length");
+        }
+        if size < 8 + hdr {
+            return Some("truncated safetensors (header runs past the end of the file)");
+        }
+        return None;
+    }
+    if n.ends_with(".part") || n.ends_with(".incomplete") || n.ends_with(".download") {
+        return Some("unfinished download left on disk");
+    }
+    None
+}
+
+/// Model roots from `wgp_config.json` (`checkpoints_paths` / `checkpointsPaths`
+/// / `ckpt_dir`, each a string or a list), falling back to `<repo>/ckpts`.
+fn model_roots(repo: &std::path::Path) -> Vec<PathBuf> {
+    let wgp: serde_json::Value = std::fs::read_to_string(repo.join("wgp_config.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let mut out: Vec<PathBuf> = Vec::new();
+    for key in ["checkpoints_paths", "checkpointsPaths", "ckpt_dir"] {
+        let Some(v) = wgp.get(key) else { continue };
+        let items: Vec<&serde_json::Value> = match v {
+            serde_json::Value::Array(a) => a.iter().collect(),
+            other => vec![other],
+        };
+        for item in items {
+            let Some(s) = item.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            let p = PathBuf::from(s);
+            let p = if p.is_absolute() { p } else { repo.join(p) };
+            if !out.contains(&p) {
+                out.push(p);
+            }
+        }
+        // Wan2GP writes one of these spellings; a stale leftover from an older
+        // version must not add a second root.
+        if !out.is_empty() {
+            break;
+        }
+    }
+    if out.is_empty() {
+        out.push(repo.join("ckpts"));
+    }
+    out
+}
+
+/// Read the first bytes of a file plus its length; `None` when unreadable.
+fn head_and_len(path: &std::path::Path) -> Option<(Vec<u8>, u64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut buf = [0u8; 16];
+    let n = f.read(&mut buf).ok()?;
+    Some((buf[..n].to_vec(), meta.len()))
+}
+
+/// One entry per problem file, capped so a pathological folder cannot flood
+/// the response.
+fn scan_model_roots(roots: &[PathBuf]) -> (usize, Vec<serde_json::Value>, bool) {
+    const MAX_ENTRIES: usize = 20000;
+    const MAX_BAD: usize = 50;
+    const MAX_DEPTH: usize = 6;
+    const MAX_SECS: u64 = 20;
+    let started = std::time::Instant::now();
+    let mut queue: Vec<(PathBuf, usize)> = roots
+        .iter()
+        .filter(|p| p.exists())
+        .map(|p| (p.clone(), 0))
+        .collect();
+    let mut scanned = 0usize;
+    let mut bad: Vec<serde_json::Value> = Vec::new();
+    let mut seen = 0usize;
+    while let Some((dir, depth)) = queue.pop() {
+        if seen >= MAX_ENTRIES || started.elapsed().as_secs() > MAX_SECS {
+            return (scanned, bad, true);
+        }
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            seen += 1;
+            if seen >= MAX_ENTRIES || started.elapsed().as_secs() > MAX_SECS {
+                return (scanned, bad, true);
+            }
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            let meta = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if meta.is_dir() {
+                if depth < MAX_DEPTH && !name.starts_with('.') {
+                    queue.push((path, depth + 1));
+                }
+                continue;
+            }
+            if !is_model_file(&name) {
+                continue;
+            }
+            scanned += 1;
+            let Some((head, len)) = head_and_len(&path) else {
+                continue;
+            };
+            if let Some(reason) = classify_model_file(&name, &head, len) {
+                if bad.len() < MAX_BAD {
+                    bad.push(serde_json::json!({
+                        "path": path.to_string_lossy(),
+                        "name": name,
+                        "reason": reason,
+                        "size": len,
+                    }));
+                }
+            }
+        }
+    }
+    (scanned, bad, false)
+}
+
+/// Diagnostics: are the model files on disk actually usable?
+#[tauri::command]
+pub fn troubleshoot_model_integrity() -> serde_json::Value {
+    let repo = get_repo_dir();
+    let roots = model_roots(&repo);
+    let started = std::time::Instant::now();
+    let (scanned, bad, truncated) = scan_model_roots(&roots);
+    serde_json::json!({
+        "ok": !roots.iter().all(|p| !p.exists()),
+        "roots": roots.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "scanned": scanned,
+        "bad": bad,
+        "truncated": truncated,
+        "tookMs": started.elapsed().as_millis() as u64,
+    })
+}
+
+// ── YuE2 startup crash: a bad `audio_prompt_type` inside output metadata ──
+//
+// WanGP stores every output's settings *inside the media file* (a `json` RIFF
+// chunk for WAV, an ID3 `TXXX:WanGP` frame for MP3, a Vorbis comment for FLAC).
+// At startup it walks the gallery and runs the model handler's `fix_settings`
+// on each entry, so a single stale value aborts the UI before it paints:
+// upstream's YuE2 migration raises
+// `ValueError: Choose one of the five YuE2 composition sources.`
+// when `audio_prompt_type` is not one of the five sources (upstream #2517,
+// launcher #82). The launcher can find that file without a Python runtime —
+// read the metadata, compare the value, offer to move the file out of the
+// gallery — which is exactly what the reporter had to do by hand.
+
+/// Sources upstream's `resolve_source()` accepts, verbatim (case-sensitive).
+const YUE2_SOURCES: [&str; 5] = ["0", "1", "12", "A", "A2"];
+
+fn is_audio_file(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.ends_with(".wav") || n.ends_with(".mp3") || n.ends_with(".flac")
+}
+
+/// `audio_prompt_type` from an embedded settings blob. Handles the JSON
+/// spellings WanGP has written (`"A"`, `12`); unquoted values stop at the
+/// first non-alphanumeric byte. Pure.
+pub(crate) fn audio_prompt_type_in(text: &str) -> Option<String> {
+    const KEY: &str = "\"audio_prompt_type\"";
+    let rest = text.get(text.find(KEY)? + KEY.len()..)?.trim_start();
+    let rest = rest.strip_prefix(':')?.trim_start();
+    if let Some(after) = rest.strip_prefix('"') {
+        let end = after.find('"')?;
+        return Some(after[..end].to_string());
+    }
+    let end = rest
+        .find(|c: char| !c.is_ascii_alphanumeric())
+        .unwrap_or(rest.len());
+    (end > 0).then(|| rest[..end].to_string())
+}
+
+/// A value upstream would reject. Empty is *not* rejected upstream — it falls
+/// back to "0"/"1" — so only non-empty unknown values count.
+pub(crate) fn yue2_source_invalid(value: &str) -> bool {
+    let v = value.trim();
+    !v.is_empty() && !YUE2_SOURCES.contains(&v)
+}
+
+/// Payload of a WAV `json` chunk. Walks chunk headers only, so a 4 GB WAV
+/// costs a handful of seeks. `None` for non-RIFF files, missing chunks and
+/// corrupt sizes (never a panic: a user file is untrusted input).
+pub(crate) fn wav_json_chunk(path: &std::path::Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    let mut hdr = [0u8; 12];
+    f.read_exact(&mut hdr).ok()?;
+    if &hdr[..4] != b"RIFF" || &hdr[8..12] != b"WAVE" {
+        return None;
+    }
+    let mut pos = 12u64;
+    while pos + 8 <= len {
+        f.seek(SeekFrom::Start(pos)).ok()?;
+        let mut ch = [0u8; 8];
+        f.read_exact(&mut ch).ok()?;
+        let size = u32::from_le_bytes([ch[4], ch[5], ch[6], ch[7]]) as u64;
+        let body = pos + 8;
+        if body.saturating_add(size) > len {
+            return None;
+        }
+        if &ch[..4] == b"json" {
+            if size > 32 * 1024 * 1024 {
+                return None;
+            }
+            let mut buf = vec![0u8; size as usize];
+            f.seek(SeekFrom::Start(body)).ok()?;
+            f.read_exact(&mut buf).ok()?;
+            return Some(String::from_utf8_lossy(&buf).to_string());
+        }
+        pos = body + size + (size & 1);
+    }
+    None
+}
+
+/// Settings text embedded in an audio file. MP3/FLAC keep their tags in the
+/// first metadata block, so a bounded read is enough; anything without the key
+/// is skipped without a second read.
+fn embedded_settings_text(path: &std::path::Path, name: &str) -> Option<String> {
+    use std::io::Read;
+    if name.to_ascii_lowercase().ends_with(".wav") {
+        return wav_json_chunk(path).filter(|s| s.contains("audio_prompt_type"));
+    }
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut buf = vec![0u8; 512 * 1024];
+    let got = f.read(&mut buf).ok()?;
+    buf.truncate(got);
+    let text = String::from_utf8_lossy(&buf).to_string();
+    text.contains("audio_prompt_type").then_some(text)
+}
+
+/// Output folders the gallery reads: configured save paths first, then the
+/// repo defaults.
+fn yue2_output_roots(repo: &std::path::Path) -> Vec<PathBuf> {
+    let cfg: serde_json::Value = std::fs::read_to_string(repo.join("wgp_config.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(serde_json::Value::Null);
+    crate::deepy_web::outputs_candidates(&cfg, repo)
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
+}
+
+/// One entry per output whose embedded `audio_prompt_type` upstream's YuE2
+/// migration would reject. Capped like the model scanner.
+fn scan_yue2_metadata(roots: &[PathBuf]) -> (usize, Vec<serde_json::Value>, bool) {
+    const MAX_ENTRIES: usize = 20000;
+    const MAX_BAD: usize = 50;
+    const MAX_DEPTH: usize = 6;
+    const MAX_SECS: u64 = 20;
+    let started = std::time::Instant::now();
+    let mut queue: Vec<(PathBuf, usize)> = roots
+        .iter()
+        .filter(|p| p.exists())
+        .map(|p| (p.clone(), 0))
+        .collect();
+    let mut scanned = 0usize;
+    let mut bad: Vec<serde_json::Value> = Vec::new();
+    let mut seen = 0usize;
+    while let Some((dir, depth)) = queue.pop() {
+        if seen >= MAX_ENTRIES || started.elapsed().as_secs() > MAX_SECS {
+            return (scanned, bad, true);
+        }
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            seen += 1;
+            if seen >= MAX_ENTRIES || started.elapsed().as_secs() > MAX_SECS {
+                return (scanned, bad, true);
+            }
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            let meta = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if meta.is_dir() {
+                if depth < MAX_DEPTH && !name.starts_with('.') && name != "yue2-quarantine" {
+                    queue.push((path, depth + 1));
+                }
+                continue;
+            }
+            if !is_audio_file(&name) {
+                continue;
+            }
+            scanned += 1;
+            let Some(text) = embedded_settings_text(&path, &name) else {
+                continue;
+            };
+            let Some(value) = audio_prompt_type_in(&text) else {
+                continue;
+            };
+            if !yue2_source_invalid(&value) {
+                continue;
+            }
+            if bad.len() < MAX_BAD {
+                bad.push(serde_json::json!({
+                    "path": path.to_string_lossy(),
+                    "name": name,
+                    "value": value,
+                    "size": meta.len(),
+                }));
+            }
+        }
+    }
+    (scanned, bad, false)
+}
+
+/// Diagnostics body, with the checkout passed in so the tests can drive it.
+pub(crate) fn yue2_report(repo: &std::path::Path) -> serde_json::Value {
+    let roots = yue2_output_roots(repo);
+    let started = std::time::Instant::now();
+    let (scanned, bad, truncated) = scan_yue2_metadata(&roots);
+    serde_json::json!({
+        "ok": !roots.iter().all(|p| !p.exists()),
+        "roots": roots.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "scanned": scanned,
+        "bad": bad,
+        "truncated": truncated,
+        "tookMs": started.elapsed().as_millis() as u64,
+    })
+}
+
+/// Quarantine body: rescan, then move what the scan found.
+pub(crate) fn yue2_quarantine(repo: &std::path::Path) -> serde_json::Value {
+    let roots = yue2_output_roots(repo);
+    let (_, bad, _) = scan_yue2_metadata(&roots);
+    let (dirs, moved, failed) = quarantine_bad(&bad);
+    serde_json::json!({
+        "ok": failed.is_empty() && !moved.is_empty(),
+        "error": failed.first().map(|f| f["error"].clone()),
+        "dirs": dirs,
+        "moved": moved,
+        "failed": failed,
+    })
+}
+
+/// Diagnostics: does any generated audio carry settings WanGP cannot migrate?
+/// Read-only — nothing is written, moved or deleted.
+#[tauri::command]
+pub fn troubleshoot_yue2_metadata() -> serde_json::Value {
+    yue2_report(&get_repo_dir())
+}
+
+/// Move `bad` (as returned by the scan) into `<home>/yue2-quarantine/`.
+/// Returns the quarantine folder plus what moved and what could not.
+pub(crate) fn quarantine_bad(
+    bad: &[serde_json::Value],
+) -> (Vec<String>, Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    let mut dirs: Vec<String> = Vec::new();
+    let mut moved = Vec::new();
+    let mut failed = Vec::new();
+    for item in bad {
+        let from = PathBuf::from(item["path"].as_str().unwrap_or_default());
+        let name = match from.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        // Beside the file it came from: a custom save_path is not the repo's
+        // `outputs`, and a rename stays on one volume this way.
+        let Some(parent) = from.parent() else {
+            continue;
+        };
+        let dir = parent.join("yue2-quarantine");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            failed.push(serde_json::json!({
+                "name": name,
+                "error": format!("cannot create {}: {e}", dir.display()),
+            }));
+            continue;
+        }
+        let dir_s = dir.to_string_lossy().to_string();
+        if !dirs.contains(&dir_s) {
+            dirs.push(dir_s);
+        }
+        let mut target = dir.join(&name);
+        let mut i = 1;
+        while target.exists() {
+            let stem = from
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("output");
+            let ext = from.extension().and_then(|s| s.to_str()).unwrap_or("");
+            let candidate = if ext.is_empty() {
+                format!("{stem}-{i}")
+            } else {
+                format!("{stem}-{i}.{ext}")
+            };
+            target = dir.join(candidate);
+            i += 1;
+        }
+        match std::fs::rename(&from, &target) {
+            Ok(_) => moved.push(serde_json::json!({
+                "from": from.to_string_lossy(),
+                "to": target.to_string_lossy(),
+                "name": name,
+                "value": item["value"],
+            })),
+            Err(e) => failed.push(serde_json::json!({
+                "name": name,
+                "error": e.to_string(),
+            })),
+        }
+    }
+    (dirs, moved, failed)
+}
+
+/// Move the offending outputs out of the gallery so WanGP can start. Never
+/// deletes: the files keep their bytes and their names (numeric suffix on
+/// collision), and moving them back restores the gallery.
+#[tauri::command]
+pub fn troubleshoot_yue2_quarantine() -> serde_json::Value {
+    yue2_quarantine(&get_repo_dir())
 }
 
 #[cfg(test)]
@@ -1357,7 +2066,12 @@ mod troubleshoot_tests {
 
     #[test]
     fn oom_remedies_are_valid_and_writable() {
-        for action in ["head_split_medium", "lower_reserved_ram"] {
+        for action in [
+            "head_split_low",
+            "head_split_medium",
+            "head_split_high",
+            "lower_reserved_ram",
+        ] {
             let s = oom_remedy_settings(action).unwrap();
             for (k, v) in s.as_object().unwrap() {
                 assert!(
@@ -1394,5 +2108,326 @@ mod troubleshoot_tests {
             ],
         );
         assert_eq!(m2, "--attention sdpa --profile 4 --fp16");
+    }
+
+    /// argparse help: options are indented, values follow on the same line, and
+    /// wrapped description lines must not become "flags".
+    #[test]
+    fn flags_from_help_keeps_only_long_options() {
+        let help = "usage: wgp.py [-h] [--gpu DEVICE]\n\n\
+options:\n\
+  -h, --help            show this help message and exit\n\
+  --gpu DEVICE          Run on specific GPU device\n\
+  --preload NUMBER      Preload N MB\n\
+                        of the model (wrapped description)\n\
+  --no-prevent-power-throttling\n\
+  --server-port PORT, --server_port PORT\n\
+  --gpu DEVICE\n";
+        let flags = flags_from_help(help);
+        assert_eq!(
+            flags,
+            vec![
+                "--gpu".to_string(),
+                "--help".to_string(),
+                "--no-prevent-power-throttling".to_string(),
+                "--preload".to_string(),
+                "--server-port".to_string(),
+            ]
+        );
+        // A traceback (no options) must not look like a learned flag set.
+        assert!(flags_from_help("Traceback (most recent call last):\nValueError").is_empty());
+    }
+
+    #[test]
+    fn launch_flags_drops_values_and_dedupes() {
+        let args: Vec<String> = [
+            "wgp.py",
+            "--server-port",
+            "7861",
+            "--gpu",
+            "cuda:0",
+            "--attention=sdpa",
+            "--advanced",
+            "--advanced",
+            "value-not-a-flag",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            launch_flags(&args),
+            vec!["--server-port", "--gpu", "--attention", "--advanced"]
+        );
+    }
+
+    #[test]
+    fn classify_model_file_catches_the_reported_failure_modes() {
+        let gguf_ok = b"GGUFxxxx";
+        assert_eq!(classify_model_file("m.gguf", gguf_ok, 1000), None);
+        // Upstream #2549: the prompt enhancer dies with "GGUF magic invalid".
+        assert_eq!(
+            classify_model_file("mtp.gguf", b"NOPEzzzz", 1000),
+            Some("missing GGUF magic (not a GGUF file)")
+        );
+        // A 404/HTML page saved under a model name.
+        assert_eq!(
+            classify_model_file("m.safetensors", b"<!DOCTYPE html>", 512),
+            Some("HTML/XML page saved instead of a model")
+        );
+        assert_eq!(
+            classify_model_file("m.gguf", b"", 0),
+            Some("empty file (0 bytes)")
+        );
+        // Valid safetensors: 8-byte LE header length, then the JSON header.
+        let mut st = Vec::new();
+        st.extend_from_slice(&16u64.to_le_bytes());
+        st.extend_from_slice(b"{\"a\":1}         ");
+        assert_eq!(classify_model_file("m.safetensors", &st, 24), None);
+        // Header claims more than the file holds → truncated download.
+        let mut st = Vec::new();
+        st.extend_from_slice(&1024u64.to_le_bytes());
+        st.extend_from_slice(b"{\"a\":1}");
+        assert_eq!(
+            classify_model_file("m.safetensors", &st, 16),
+            Some("truncated safetensors (header runs past the end of the file)")
+        );
+        assert_eq!(
+            classify_model_file("m.part", b"GGUF", 1000),
+            Some("unfinished download left on disk")
+        );
+        // Non-model files are never flagged even when the bytes look odd.
+        assert_eq!(classify_model_file("notes.txt", b"<html>", 10), None);
+    }
+
+    #[test]
+    fn scan_reports_bad_files_and_skips_good_ones() {
+        let dir = std::env::temp_dir().join(format!(
+            "wan2gp-integrity-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("good.gguf"), b"GGUF0000000000000").unwrap();
+        std::fs::write(dir.join("sub/bad.gguf"), b"not a gguf at all").unwrap();
+        std::fs::write(dir.join("notes.txt"), b"<html>").unwrap();
+        let (scanned, bad, truncated) = scan_model_roots(std::slice::from_ref(&dir));
+        assert_eq!(scanned, 2, "only model files are counted");
+        assert!(!truncated);
+        assert_eq!(bad.len(), 1);
+        assert!(bad[0]["name"].as_str().unwrap().ends_with("bad.gguf"));
+        assert!(bad[0]["reason"].as_str().unwrap().contains("GGUF magic"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn model_roots_reads_wgp_config_paths() {
+        let repo = std::env::temp_dir().join(format!(
+            "wan2gp-roots-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(
+            repo.join("wgp_config.json"),
+            r#"{"checkpoints_paths":["D:\\Models\\Wan2GP","ckpts"],"ckpt_dir":"ignored"}"#,
+        )
+        .unwrap();
+        let roots = model_roots(&repo);
+        assert_eq!(roots.len(), 2, "duplicates collapsed, ckpt_dir unused");
+        assert_eq!(roots[0], PathBuf::from("D:\\Models\\Wan2GP"));
+        assert_eq!(roots[1], repo.join("ckpts"));
+        // No config at all → the checkout's own ckpts folder.
+        let _ = std::fs::remove_file(repo.join("wgp_config.json"));
+        assert_eq!(model_roots(&repo), vec![repo.join("ckpts")]);
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    // ── YuE2 metadata scan (launcher #82 = upstream #2517) ──
+
+    /// Minimal RIFF/WAVE with a `fmt ` chunk, a `data` chunk and `payload`
+    /// stored in WanGP's `json` chunk (`write_wav_text_chunk`).
+    fn wav_with_json(payload: &[u8]) -> Vec<u8> {
+        let mut body = b"WAVE".to_vec();
+        for (id, data) in [
+            (b"fmt ", vec![0u8; 16]),
+            (b"data", vec![0u8; 8]),
+            (b"json", payload.to_vec()),
+        ] {
+            body.extend_from_slice(id);
+            body.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            body.extend_from_slice(&data);
+            if data.len() % 2 == 1 {
+                body.push(0);
+            }
+        }
+        let mut out = b"RIFF".to_vec();
+        out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        out.extend_from_slice(&body);
+        out
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "wan2gp-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn yue2_source_value_is_read_and_validated_like_upstream() {
+        assert_eq!(
+            audio_prompt_type_in(r#"{"audio_prompt_type": "AV"}"#).as_deref(),
+            Some("AV")
+        );
+        assert_eq!(
+            audio_prompt_type_in(r#"{"audio_model":"yue2","audio_prompt_type":"A2"}"#).as_deref(),
+            Some("A2")
+        );
+        // Old versions wrote the source as a number.
+        assert_eq!(
+            audio_prompt_type_in(r#"{"audio_prompt_type": 12}"#).as_deref(),
+            Some("12")
+        );
+        // Nothing to read: no key, or no value after it.
+        assert_eq!(audio_prompt_type_in(r#"{"audio_model":"yue2"}"#), None);
+        assert_eq!(audio_prompt_type_in(r#"{"audio_prompt_type": }"#), None);
+        // The five upstream sources pass; anything else is what aborts startup.
+        for ok in YUE2_SOURCES {
+            assert!(!yue2_source_invalid(ok), "{ok}");
+        }
+        for bad in ["AV", "av", "A1", "continue", "2"] {
+            assert!(yue2_source_invalid(bad), "{bad}");
+        }
+        // Empty falls back to "0"/"1" upstream, so it is not a blocker.
+        assert!(!yue2_source_invalid(""));
+        assert!(!yue2_source_invalid("  "));
+    }
+
+    #[test]
+    fn wav_json_chunk_reads_only_the_chunk_and_survives_corruption() {
+        let dir = temp_dir("wav-json");
+        let good = dir.join("a.wav");
+        std::fs::write(&good, wav_with_json(br#"{"audio_prompt_type":"AV"}"#)).unwrap();
+        assert_eq!(
+            wav_json_chunk(&good).as_deref(),
+            Some(r#"{"audio_prompt_type":"AV"}"#)
+        );
+        // A WAV without the chunk, a non-RIFF file and a truncated chunk all
+        // return None instead of panicking on user data.
+        let plain = dir.join("plain.wav");
+        std::fs::write(&plain, wav_with_json(b"")).unwrap();
+        assert_eq!(wav_json_chunk(&plain).as_deref(), Some(""));
+        let not_wav = dir.join("b.wav");
+        std::fs::write(&not_wav, b"ID3 not a riff file").unwrap();
+        assert_eq!(wav_json_chunk(&not_wav), None);
+        let corrupt = dir.join("c.wav");
+        let mut bytes = wav_with_json(br#"{"audio_prompt_type":"AV"}"#);
+        // Inflate the `data` chunk size past EOF: the walk must stop, not read.
+        bytes[40..44].copy_from_slice(&u32::MAX.to_le_bytes());
+        std::fs::write(&corrupt, bytes).unwrap();
+        assert_eq!(wav_json_chunk(&corrupt), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn yue2_scan_finds_the_one_bad_output_and_quarantines_it() {
+        let root = temp_dir("yue2-scan");
+        std::fs::write(
+            root.join("good.wav"),
+            wav_with_json(br#"{"audio_prompt_type":"A"}"#),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("bad.wav"),
+            wav_with_json(br#"{"audio_prompt_type":"AV"}"#),
+        )
+        .unwrap();
+        // Not audio → never opened.
+        std::fs::write(root.join("preview.png"), b"\x89PNG").unwrap();
+        let (scanned, bad, truncated) = scan_yue2_metadata(std::slice::from_ref(&root));
+        assert_eq!(scanned, 2, "only audio files are read");
+        assert!(!truncated);
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        assert_eq!(bad[0]["value"], "AV");
+        assert!(bad[0]["name"].as_str().unwrap().ends_with("bad.wav"));
+
+        let (dirs, moved, failed) = quarantine_bad(&bad);
+        assert!(failed.is_empty(), "{failed:?}");
+        assert_eq!(moved.len(), 1);
+        assert_eq!(
+            dirs,
+            vec![root.join("yue2-quarantine").to_string_lossy().to_string()]
+        );
+        let dir = PathBuf::from(&dirs[0]);
+        assert!(!root.join("bad.wav").exists(), "moved out of the gallery");
+        assert!(dir.join("bad.wav").exists(), "bytes kept, not deleted");
+        assert!(root.join("good.wav").exists(), "only the offender moves");
+
+        // The same name again lands beside the first one instead of overwriting.
+        std::fs::write(
+            root.join("bad.wav"),
+            wav_with_json(br#"{"audio_prompt_type":"AV"}"#),
+        )
+        .unwrap();
+        let (_, bad2, _) = scan_yue2_metadata(std::slice::from_ref(&root));
+        assert_eq!(bad2.len(), 1, "the quarantined copy is out of the scan");
+        let (_, moved2, failed2) = quarantine_bad(&bad2);
+        assert!(failed2.is_empty(), "{failed2:?}");
+        assert_eq!(moved2.len(), 1);
+        assert!(dir.join("bad-1.wav").exists(), "{moved2:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn yue2_report_reads_the_configured_save_path() {
+        let repo = temp_dir("yue2-repo");
+        // A custom save_path outside `outputs/` is where WanGP writes, so that
+        // is where the offender lives — the repo defaults must not hide it.
+        std::fs::write(
+            repo.join("wgp_config.json"),
+            format!(
+                r#"{{"save_path":"{}"}}"#,
+                repo.join("my-out").to_string_lossy().replace('\\', "\\\\")
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(repo.join("my-out").join("deep")).unwrap();
+        std::fs::write(
+            repo.join("my-out").join("deep").join("song.wav"),
+            wav_with_json(br#"{"audio_prompt_type":"AV"}"#),
+        )
+        .unwrap();
+        let r = yue2_report(&repo);
+        assert_eq!(r["ok"], true);
+        assert_eq!(r["scanned"], 1);
+        assert_eq!(r["bad"][0]["name"], "song.wav");
+        // Nothing written by a read-only report.
+        assert!(repo.join("my-out").join("deep").join("song.wav").exists());
+
+        let q = yue2_quarantine(&repo);
+        assert_eq!(q["ok"], true, "{q}");
+        assert_eq!(q["moved"].as_array().unwrap().len(), 1);
+        assert!(repo
+            .join("my-out")
+            .join("deep")
+            .join("yue2-quarantine")
+            .join("song.wav")
+            .exists());
+        assert_eq!(yue2_report(&repo)["bad"].as_array().unwrap().len(), 0);
+        // Second pass finds nothing to move and says so.
+        assert_eq!(yue2_quarantine(&repo)["ok"], false);
+        let _ = std::fs::remove_dir_all(&repo);
     }
 }

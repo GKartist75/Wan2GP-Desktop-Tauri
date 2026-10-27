@@ -512,6 +512,22 @@ pub(crate) fn py_shim_script(uvpy: &str, minor: &str) -> String {
     format!("@echo off\r\nsetlocal enabledelayedexpansion\r\nset \"args=%*\"\r\nset \"args=!args:-{minor} =!\"\r\nif \"!args!\"==\"%*\" set \"args=!args:-{minor}=!\"\r\n\"{uvpy}\" !args!\r\nexit /b %errorlevel%\r\n")
 }
 
+/// Actionable text for a missing `pythonX.Y` on Linux/macOS venv installs
+/// (upstream creates the env with `pythonX.Y -m venv`). Pure + unit-tested so
+/// the per-OS commands can't rot silently.
+#[cfg_attr(windows, allow(dead_code))]
+pub(crate) fn venv_missing_interpreter_msg(minor: &str) -> String {
+    let pin = pinned_python_wanted();
+    format!(
+        "The venv environment type builds its interpreter with `python{minor} -m venv`, and no runnable `python{minor}` was found on PATH. Install that exact minor, then retry:\n\
+  • Debian/Ubuntu: `sudo apt install python{minor} python{minor}-venv`\n\
+  • Fedora: `sudo dnf install python{minor}`\n\
+  • Arch: `sudo pacman -S python`\n\
+  • macOS: `brew install python@{minor}`\n\
+Or pick the uv environment type — it provisions its own Python {pin} and needs nothing preinstalled."
+    )
+}
+
 /// Execute the generated shim the way setup.py will (`py -3.X ...` through
 /// a shell) — a content check cannot prove the selector was stripped.
 #[cfg(windows)]
@@ -555,6 +571,40 @@ fn python_usable(prog: &str) -> bool {
     {
         runs_python(prog)
     }
+}
+
+/// Prepend `dir` to this process's PATH so child processes can spawn a tool
+/// by bare name (setup.py shells out to `uv` / `conda` / `py`). Returns the
+/// previous PATH when the entry was added (caller restores it after setup),
+/// None when it was already present.
+fn path_with_dir_prepended(dir: &Path) -> Option<String> {
+    let old = std::env::var("PATH").unwrap_or_default();
+    let new = path_value_with_dir(&old, dir)?;
+    std::env::set_var("PATH", &new);
+    Some(old)
+}
+
+/// Pure: `cur` with `dir` first, or None when it is already there. Split and
+/// join use the host separator (`;` on Windows, `:` elsewhere), so the same
+/// code works for both layouts; Windows comparisons fold case.
+pub(crate) fn path_value_with_dir(cur: &str, dir: &Path) -> Option<String> {
+    fn same(a: &Path, b: &Path) -> bool {
+        #[cfg(windows)]
+        {
+            a.to_string_lossy()
+                .eq_ignore_ascii_case(&b.to_string_lossy())
+        }
+        #[cfg(not(windows))]
+        {
+            a == b
+        }
+    }
+    if std::env::split_paths(cur).any(|p| same(&p, dir)) {
+        return None;
+    }
+    std::env::join_paths(std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(cur)))
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 /// Map a `where conda` hit (`condabin\conda.bat`, `Scripts\conda.bat`, or
@@ -601,19 +651,42 @@ fn conda_exe_path() -> Option<String> {
     known_tool_path("conda")
 }
 
-/// Base interpreter of the detected conda install (`<root>\python.exe`) —
-/// can drive setup.py when no system Python is on PATH.
-#[cfg(windows)]
+/// Absolute conda entry point when one can be resolved: PATH first (that is
+/// the install the user activates), then stock locations. Bare "conda" means
+/// only a PATH name is known — resolve it through the platform's own lookup
+/// so callers always get a spawnable path (setup.py needs `conda` by name,
+/// and the ToS accept needs an executable).
+fn conda_binary() -> Option<String> {
+    let p = tool_path("conda");
+    if Path::new(&p).is_absolute() {
+        return Some(p);
+    }
+    crate::platform::current().lookup_on_path("conda")
+}
+
+/// Base interpreter of the detected conda install — can drive setup.py when
+/// no system Python is on PATH. `conda` lives in `<root>\Scripts\conda.exe`
+/// on Windows and `<root>/bin/conda` elsewhere, so the interpreter is two
+/// levels up: `<root>\python.exe` / `<root>/bin/python`.
 fn conda_base_python() -> Option<String> {
-    let exe = PathBuf::from(conda_exe_path()?);
-    let root = exe.parent()?.parent()?;
-    [
+    let root = PathBuf::from(conda_binary()?)
+        .parent()?
+        .parent()?
+        .to_path_buf();
+    #[cfg(windows)]
+    let cands = [
         root.join("python.exe"),
         root.join("Scripts").join("python.exe"),
-    ]
-    .into_iter()
-    .find(|p| p.is_file())
-    .map(|p| p.to_string_lossy().to_string())
+    ];
+    #[cfg(not(windows))]
+    let cands = [
+        root.join("bin").join("python"),
+        root.join("bin").join("python3"),
+    ];
+    cands
+        .into_iter()
+        .find(|p| p.is_file())
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 /// Official one-click installer for the profile's Python minor. Versions are
@@ -1261,13 +1334,12 @@ pub fn classify_target() -> serde_json::Value {
         if !base.exists() {
             continue;
         }
-        #[cfg(windows)]
-        let py = base.join("Scripts\\python.exe");
-        #[cfg(not(windows))]
-        let py = base.join("bin/python");
+        // Layout per type (conda keeps python at the env root): resolving
+        // `Scripts\python.exe` here marked every healthy conda env broken.
+        let healthy = resolve_env_python(&repo, &base.to_string_lossy()).is_some();
         envs.insert(
             ed.into(),
-            serde_json::json!({"exists": true, "healthy": py.exists()}),
+            serde_json::json!({"exists": true, "healthy": healthy}),
         );
     }
     let any_healthy = envs
@@ -1413,6 +1485,14 @@ fn install_failure_hint(tail: &str) -> String {
 /// unit-tested; the caller removes the dir and logs what was done.
 pub(crate) fn env_missing_pyvenv(env_path: &Path) -> bool {
     env_path.is_dir() && !env_path.join("pyvenv.cfg").is_file()
+}
+
+/// Stale-env shape for THIS env type: uv/venv dirs carry pyvenv.cfg, conda
+/// prefixes carry conda-meta instead — applying the pyvenv probe to conda
+/// labelled every healthy prefix "stale" (and its removal-failure error
+/// pointed at a file that never exists there). Pure + unit-tested.
+pub(crate) fn env_stale_pyvenv(env_type: &str, env_path: &Path) -> bool {
+    env_type != "conda" && env_missing_pyvenv(env_path)
 }
 
 /// Actionable text for a setup.py exit-106 (stale env, missing pyvenv.cfg).
@@ -2285,16 +2365,16 @@ pub(crate) fn run_preflight_checks(
     }
     // 5. stale completion marker (removed/failed env) — install rebuilds.
     if let Ok(s) = std::fs::read_to_string(repo.join(".wan2gp-install-ok")) {
-        let env_dir = match s.split_whitespace().next().unwrap_or("") {
+        let marked = s.split_whitespace().next().unwrap_or("");
+        let env_dir = match marked {
             "uv" => repo.join("env_uv"),
             "venv" => repo.join("env_venv"),
             "conda" => repo.join("env_conda"),
             _ => repo.join(".none"),
         };
-        #[cfg(windows)]
-        let py_gone = !env_dir.join("Scripts\\python.exe").exists();
-        #[cfg(not(windows))]
-        let py_gone = !env_dir.join("bin/python").exists() && !env_dir.join("bin/python3").exists();
+        // Type-agnostic: conda keeps its interpreter at the env root, so the
+        // old Scripts\bin probe called every healthy conda install stale.
+        let py_gone = resolve_env_python(repo, &env_dir.to_string_lossy()).is_none();
         if py_gone {
             checks.push(PreflightCheck { id: "stale-marker", level: "info", msg: "stale install marker points at a removed env — installing fresh (models/settings kept).".into() });
         }
@@ -2707,18 +2787,26 @@ pub async fn install(
     } else if env_path.exists() {
         // Exit-106 guard (issue #15 follow-up): name the stale shape
         // (dir without pyvenv.cfg) so the log shows WHY it was removed.
-        if env_missing_pyvenv(&env_path) {
+        // A conda env never has pyvenv.cfg — the same probe would libel
+        // every conda prefix, so the marker check is uv/venv only.
+        if env_stale_pyvenv(&env, &env_path) {
             emit("[*] Removing stale env dir without pyvenv.cfg (would confuse uv venv/pip --python → setup.py exit 106)…\n");
         } else {
             emit("[*] Removing incomplete env from a failed/interrupted install (setup.py can't resume into it)…\n");
         }
         let _ = std::fs::remove_dir_all(&env_path);
         // Best-effort removal can leave locked residue behind (running
-        // python, open terminal, AV handle) — a surviving dir without
-        // pyvenv.cfg IS the exit-106 crash, so verify instead of hoping.
-        if env_missing_pyvenv(&env_path) {
+        // python, open terminal, AV handle). For uv/venv a surviving dir
+        // without pyvenv.cfg IS the exit-106 crash. For conda only a still
+        // resolvable interpreter is fatal (an empty residue does not stop
+        // `conda create`).
+        if env_stale_pyvenv(&env, &env_path) {
             mutating_done();
             return Err(format!("Stale Python environment at {} (missing pyvenv.cfg — setup.py would exit 106). The launcher could not remove it (locked files: close every Python/terminal using the install folder, exclude it from antivirus, then retry).", env_path.display()));
+        }
+        if env == "conda" && resolve_env_python(&repo, &env_path.to_string_lossy()).is_some() {
+            mutating_done();
+            return Err(format!("Could not remove the existing conda environment at {} (locked files: close every Python/terminal/app using it, exclude the install folder from antivirus, then retry). setup.py cannot rebuild into a live prefix.", env_path.display()));
         }
     }
     // fix: hardlink warning when cache (C:) and target (D:) differ → move cache to repo/.uv-cache on same drive so hardlink works (fast)
@@ -2804,6 +2892,23 @@ pub async fn install(
                     return Err(e);
                 }
             }
+        }
+    }
+    // venv mode off Windows: setup.py creates the env with `python{X.Y} -m
+    // venv` (no py launcher, no shim), so an interpreter of exactly that
+    // minor must be runnable. Ubuntu 24.04 ships 3.12 only, Homebrew its own
+    // minor — without this the install dies one second into [1/3] with
+    // "setup.py exited with code 1" and no hint (same shape as upstream
+    // issue #2536). Fail here with the per-OS command instead.
+    #[cfg(not(windows))]
+    if env == "venv" {
+        let minor = py_minor(&pinned_python_wanted());
+        let prog = format!("python{minor}");
+        if python_usable(&prog) {
+            emit(&format!("[*] venv will be built by `{prog} -m venv`\n"));
+        } else {
+            mutating_done();
+            return Err(venv_missing_interpreter_msg(&minor));
         }
     }
     // AMD TheRock torch (doc-leading): patch the cloned setup_config.json so
@@ -2965,14 +3070,14 @@ pub async fn install(
             // --accept-package-agreements); old condas lack `tos` → ignored.
             // Acceptance persists in conda config, so one pass covers the
             // whole install regardless of fresh/existing env.
-            let conda_bin = tool_path("conda");
-            if conda_bin != "conda" {
+            let conda_bin = conda_binary();
+            if let Some(bin) = &conda_bin {
                 for ch in [
                     "https://repo.anaconda.com/pkgs/main",
                     "https://repo.anaconda.com/pkgs/r",
                     "https://repo.anaconda.com/pkgs/msys2",
                 ] {
-                    let ok = silent_command(conda_bin.as_str())
+                    let ok = silent_command(bin.as_str())
                         .args(["tos", "accept", "--override-channels", "--channel", ch])
                         .output()
                         .is_ok_and(|o| o.status.success());
@@ -2983,15 +3088,36 @@ pub async fn install(
                     }
                 }
             }
-            if resolve_env_python(&repo, &env_path.to_string_lossy()).is_some() {
-                // Existing env: run through it.
+            // setup.py shells out to `conda` BY NAME for `conda create`
+            // (cmd /c on Windows, sh -c elsewhere), and detection covers
+            // stock install locations that were never PATH-registered —
+            // the normal Miniconda case, and on Linux/macOS the only case
+            // for a launcher started from the desktop. Put the detected
+            // install's own dir on PATH for the child; restored after setup.
+            // (Was Windows-only: on Linux a detected-but-not-on-PATH conda
+            // died in step 1/3 with "conda: not found".)
+            if let Some(bin) = &conda_bin {
+                if let Some(dir) = Path::new(bin).parent() {
+                    if let Some(old) = path_with_dir_prepended(dir) {
+                        emit(&format!(
+                            "[*] conda on PATH for setup.py: {}\n",
+                            dir.display()
+                        ));
+                        saved_path.get_or_insert(old);
+                    }
+                }
+            }
+            if let Some(existing) = resolve_env_python(&repo, &env_path.to_string_lossy()) {
+                // An interpreter survived the removal above (locked files).
+                // Drive setup.py through it directly, like the fresh path and
+                // upstream's own `run` template: `conda run -p` adds nothing
+                // here and costs plenty — it captures the child's entire
+                // output until exit (no live log for a multi-minute install)
+                // and re-quotes arguments on Windows.
+                emit("[*] Existing conda interpreter survived the cleanup — driving setup.py through it.\n");
                 (
-                    tool_path("conda"),
+                    existing.to_string_lossy().to_string(),
                     vec![
-                        "run".into(),
-                        "-p".into(),
-                        env_path.to_string_lossy().to_string(),
-                        "python".into(),
                         "setup.py".into(),
                         "install".into(),
                         "--env".into(),
@@ -3003,31 +3129,13 @@ pub async fn install(
                 // Fresh conda install: env_conda doesn't exist yet (setup.py
                 // creates it in step 1/3) — `conda run -p` would die with
                 // EnvironmentLocationNotFound. Drive setup.py with system
-                // python instead, and put `conda` itself on PATH (scoped,
-                // restored after via saved_path) so setup.py's own
-                // `conda create` finds it even without PATH registration.
-                #[cfg(windows)]
-                {
-                    let conda_bin = tool_path("conda");
-                    if conda_bin != "conda" {
-                        if let Some(dir) = std::path::Path::new(&conda_bin).parent() {
-                            let add = dir.to_string_lossy().to_string();
-                            let old = std::env::var("PATH").unwrap_or_default();
-                            if !old.split(';').any(|p| p.eq_ignore_ascii_case(&add)) {
-                                std::env::set_var("PATH", format!("{add};{old}"));
-                                saved_path = Some(old);
-                            }
-                        }
-                    }
-                }
-                #[cfg_attr(not(windows), allow(unused_mut))]
+                // python instead; `conda` itself is on PATH from the prepend
+                // above so setup.py's own `conda create` finds it.
                 let mut syspy = tool_path("python");
-                #[cfg_attr(not(windows), allow(unused_mut))]
                 let mut runs = python_usable(&syspy);
                 // No system Python? The detected conda install has its own
                 // base interpreter — use it instead of demanding a separate
                 // python.org install before a conda env even exists.
-                #[cfg(windows)]
                 if !runs {
                     if let Some(base) = conda_base_python() {
                         if runs_python(&base) {
@@ -5909,8 +6017,43 @@ pub(crate) fn base_version(v: &str) -> String {
         .to_string()
 }
 
+/// Full commit hashes in a rev range (`HEAD..FETCH_HEAD`), newest first.
+/// Empty on any git error: a broken probe must never block an update.
+fn commit_range(repo: &std::path::Path, range: &str) -> Vec<String> {
+    silent_command("git")
+        .args(["rev-list", range])
+        .current_dir(repo)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Short hash of a rev, `?` when git cannot resolve it.
+pub(crate) fn short_rev(repo: &std::path::Path, rev: &str) -> String {
+    silent_command("git")
+        .args(["rev-parse", "--short", rev])
+        .current_dir(repo)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "?".into())
+}
+
 #[tauri::command]
-pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+pub async fn update(
+    app: tauri::AppHandle,
+    force: Option<bool>,
+) -> Result<serde_json::Value, String> {
     mutating_try("update")?;
     let repo = get_repo_dir();
     if !repo.join(".git").exists() {
@@ -5939,6 +6082,47 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
     if !run_logged(&app, "git", &["fetch", "origin"], Some(&repo), emit).await {
         mutating_done();
         return Err("git fetch failed — offline? See console output above.".into());
+    }
+    // ── Upstream health gate ─────────────────────────────────────────────
+    // This update resets the tree to FETCH_HEAD with no stash, so a broken
+    // upstream commit becomes the user's problem the moment they press
+    // Update. Check the incoming range against the curated table in
+    // `upstream_health` and stop BEFORE touching anything; the UI turns this
+    // payload into a dialog whose "Update anyway" re-invokes with force.
+    // `force == Some(true)` skips the gate by design.
+    if force != Some(true) {
+        let hits = crate::upstream_health::known_bad_in(&commit_range(&repo, "HEAD..FETCH_HEAD"));
+        if !hits.is_empty() {
+            let target = short_rev(&repo, "FETCH_HEAD");
+            let current = wangp_head_short(&repo).unwrap_or_else(|| "?".into());
+            emit(&format!(
+                "[!] Update blocked — upstream {target} brings in {} commit(s) with a known, still-unfixed bug:\n",
+                hits.len()
+            ));
+            for bad in &hits {
+                emit(&format!(
+                    "    • {} — {} (deepbeepmeep/WanGP#{})\n      {}\n",
+                    bad.sha, bad.title, bad.issue, bad.advice
+                ));
+            }
+            emit("[i] Nothing was changed. Press Update again and choose \"Update anyway\" to take it regardless.\n");
+            mutating_done();
+            let issues: Vec<serde_json::Value> = hits
+                .iter()
+                .map(|bad| {
+                    serde_json::json!({
+                        "sha": bad.sha,
+                        "title": bad.title,
+                        "issue": bad.issue,
+                        "advice": bad.advice,
+                    })
+                })
+                .collect();
+            return Ok(serde_json::json!({
+                "ok": true, "success": false, "blocked": true,
+                "target": target, "current": current, "issues": issues,
+            }));
+        }
     }
     let incoming = changed_file_count(&repo);
     let dirty = git_tracked_dirty(&repo);
@@ -6170,6 +6354,13 @@ pub async fn update(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
     // rollback point. Best-effort — a record failure never fails update.
     if record_wangp_pin(&repo) {
         emit("[*] Recorded this upstream commit as the rollback point.\n");
+    }
+    // Flags change with the commit, so learn the new `wgp.py --help` list now,
+    // while no server is running: the first launch after this update then has
+    // a cached verdict and can warn about a renamed flag before argparse kills
+    // the process. Detached thread, no-op if a probe is already in flight.
+    if pip_ok {
+        crate::troubleshoot::learn_upstream_flags_async(repo.clone());
     }
     mutating_done();
     let mut result = serde_json::json!({"ok": true, "success": pip_ok, "requirements": requirements, "pinDiff": pin_diff, "depCheck": dep_check, "drift": drift, "compat": compat});
@@ -7952,26 +8143,157 @@ async fn official_fallback(app: &tauri::AppHandle, tool: &str) -> bool {
             // freezing a version that would rot. TLS-only — same trust as setup.py itself.
             let url = "https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe";
             let dest = format!("{tmp}\\Miniconda3-latest-Windows-x86_64.exe");
-            let home = std::env::var("USERPROFILE").unwrap_or("C:\\Users\\Default".into());
+            let target = conda_install_target();
+            if dir_has_entries(&target) {
+                // The silent installer refuses non-empty prefixes (rc 2) — say so
+                // here instead of letting it fail with a hidden reason.
+                emit(format!(
+                    "[!] {} already exists and is not empty — the Miniconda installer will not install over it. Update with `conda update -n base conda` or uninstall it first.\n",
+                    target.display()
+                ));
+                return false;
+            }
             emit("[*] Downloading Miniconda (~90 MB)…\n".into());
             if !run_live(app, "powershell", download(url, &dest)).await {
                 return false;
             }
             emit("[*] Installing silently — a few minutes…\n".into());
-            run_live(
+            run_nsis_installer(
                 app,
                 &dest,
-                vec![
-                    "/InstallationType=JustMe".into(),
-                    "/RegisterPython=0".into(),
-                    "/S".into(),
-                    format!("/D={home}\\Miniconda3"),
-                ],
+                &["/InstallationType=JustMe", "/RegisterPython=0", "/S"],
+                &target.to_string_lossy(),
             )
             .await
         }
         _ => false,
     }
+}
+
+/// Where the launcher's own Miniconda install lands (and where the silent
+/// installer's default points on a clean profile).
+#[cfg(windows)]
+fn conda_install_target() -> std::path::PathBuf {
+    let home = std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users\\Default".into());
+    std::path::Path::new(&home).join("Miniconda3")
+}
+
+/// True when `dir` exists and holds at least one entry.
+#[cfg(windows)]
+fn dir_has_entries(dir: &std::path::Path) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|mut d| d.next().is_some())
+}
+
+#[cfg(all(test, windows))]
+mod nsis_line_tests {
+    use super::{nsis_bat_script, nsis_raw_line_ok};
+
+    #[test]
+    fn bat_leaves_d_unquoted_so_nsis_keeps_it() {
+        let line = nsis_bat_script(
+            "C:\\Users\\John Smith\\AppData\\Local\\Temp\\Miniconda3.exe",
+            &["/InstallationType=JustMe", "/RegisterPython=0", "/S"],
+            "C:\\Users\\John Smith\\Miniconda3",
+        );
+        // A quoted /D= is ignored by NSIS (proven: rc 2, wrong prefix).
+        assert!(line.contains(" /D=C:\\Users\\John Smith\\Miniconda3\r\n"));
+        assert!(!line.contains("\"/D="));
+        // The exe path still has to be quoted, or cmd splits it at "John".
+        assert!(line.starts_with("@echo off\r\n\"C:\\Users\\John Smith"));
+        // The batch exit code becomes cmd's, so a failed install is not "ok".
+        assert!(line.ends_with("exit /b %errorlevel%\r\n"));
+    }
+
+    #[test]
+    fn raw_line_rejects_cmd_metacharacters_only() {
+        assert!(nsis_raw_line_ok(
+            "C:\\tmp\\a b.exe",
+            "C:\\Users\\A B\\Miniconda3"
+        ));
+        for bad in ['%', '^', '&', '|', '<', '>', '"'] {
+            assert!(!nsis_raw_line_ok(
+                "C:\\tmp\\a b.exe",
+                &format!("C:\\x{bad}y")
+            ));
+            assert!(!nsis_raw_line_ok(
+                &format!("C:\\x{bad}y\\a.exe"),
+                "C:\\Miniconda3"
+            ));
+        }
+    }
+}
+
+/// True when both paths survive a raw `cmd` command line. `%` expands,
+/// `^`/`&`/`|`/`<`/`>` split or redirect, `"` ends the token — spaces are fine
+/// (that is the whole point of the .bat hop).
+#[cfg(windows)]
+fn nsis_raw_line_ok(exe: &str, target: &str) -> bool {
+    let bad = ['%', '^', '&', '|', '<', '>', '"'];
+    !exe.contains(bad) && !target.contains(bad)
+}
+
+/// The one-line installer script. The exe is quoted (its path may have
+/// spaces); `/D=` is left bare and last, which is exactly what NSIS requires.
+#[cfg(windows)]
+fn nsis_bat_script(exe: &str, switches: &[&str], target: &str) -> String {
+    format!(
+        "@echo off\r\n\"{exe}\" {} /D={target}\r\nexit /b %errorlevel%\r\n",
+        switches.join(" ")
+    )
+}
+
+/// NSIS installers (Miniconda) take `/D=<path>` as a RAW trailing token and
+/// everything after it verbatim. A quoted value is not recognised: NSIS then
+/// falls back to its recorded/default prefix and aborts with "Directory … is
+/// not empty" (verified against Miniconda3-latest: rc 2, nothing installed).
+/// The typed-argv spawn layer quotes any argument containing a space, so a
+/// profile like `C:\Users\John Smith` — or any target with a space — broke
+/// every conda install. Run such installers from a one-line .bat instead:
+/// `cmd` parses the line, so `/D=` reaches NSIS unquoted.
+#[cfg(windows)]
+async fn run_nsis_installer(
+    app: &tauri::AppHandle,
+    exe: &str,
+    switches: &[&str],
+    target: &str,
+) -> bool {
+    let emit = |msg: String| {
+        crate::base::push_log(&msg, "setup");
+        let _ = app.emit("setup-output", msg);
+    };
+    let argv = || {
+        switches
+            .iter()
+            .map(|s| s.to_string())
+            .chain(std::iter::once(format!("/D={target}")))
+            .collect::<Vec<_>>()
+    };
+    if !nsis_raw_line_ok(exe, target) {
+        emit("[!] Installer path contains characters a raw command line cannot carry — passing /D as a normal argument; the installer may ignore it.\n".into());
+        return run_live(app, exe, argv()).await;
+    }
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let bat = std::env::temp_dir().join(format!("wan2gp-nsis-{millis}.bat"));
+    if let Err(e) = std::fs::write(&bat, nsis_bat_script(exe, switches, target)) {
+        emit(format!(
+            "[!] Could not stage the installer script ({e}) — falling back to argv mode.\n"
+        ));
+        return run_live(app, exe, argv()).await;
+    }
+    // COMSPEC resolves even when PATH lacks System32; the batch itself then
+    // carries the raw installer line.
+    let shell = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into());
+    let ok = run_live(
+        app,
+        &shell,
+        vec!["/d".into(), "/c".into(), bat.to_string_lossy().to_string()],
+    )
+    .await;
+    let _ = std::fs::remove_file(&bat);
+    ok
 }
 
 /// Re-probe with short delays after a successful installer: PATH/registry
@@ -8046,6 +8368,22 @@ async fn install_prerequisite_windows(
     if !force && probe_tool(&tool) {
         emit(&format!("[*] {tool} is already installed.\n"));
         return Ok(serde_json::json!({"ok": true, "success": true, "ready": true}));
+    }
+    // conda owns a mutable base prefix, and Miniconda's silent installer
+    // refuses ANY non-empty target (verified: rc 2, "Directory … is not
+    // empty"). Re-downloading therefore cannot reinstall it — the old flow
+    // tried winget --force and then the fallback, failing twice and showing
+    // only "conda install failed". Say what actually works instead.
+    if tool == "conda" {
+        let target = conda_install_target();
+        let at = known_tool_path("conda")
+            .or_else(|| dir_has_entries(&target).then(|| target.to_string_lossy().to_string()))
+            .or_else(|| probe_tool("conda").then(|| tool_path("conda")));
+        if let Some(at) = at {
+            return Err(format!(
+                "Miniconda is already installed ({at}). The Miniconda installer refuses to install over an existing prefix, so re-downloading cannot reinstall it. Update it instead: `conda update -n base conda` in an admin terminal — or run the Miniconda uninstaller, then press Install again."
+            ));
+        }
     }
     emit(&format!(
         "[*] {} {tool} via winget (silent, a few minutes)…\n",

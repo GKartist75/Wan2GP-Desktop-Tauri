@@ -312,28 +312,38 @@ pub(crate) fn apply_vendored_mmgp(
     versions: &mut serde_json::Map<String, serde_json::Value>,
     repo: &std::path::Path,
 ) {
-    let toml =
-        std::fs::read_to_string(repo.join("mmgp").join("pyproject.toml")).unwrap_or_default();
-    match pyproject_version(&toml) {
-        Some(v) => {
-            // v17.01 rebuilt the allocator (mmgp/allocator/vmm_alloc.cpp +59/-11
-            // and a new DLL) WITHOUT bumping pyproject.toml, so "4.0.0" alone
-            // cannot tell you which allocator you are running. The DLL is ~94 KB,
-            // so a content hash of the binaries costs less than any probe — append it so two
-            // v17.17 (6479db3) adds a SECOND prebuilt library for the RAM
-            // allocator and rebuilds the VRAM one under the same version, so
-            // allocator_build_id folds both in.
-            // builds of the same version stay distinguishable in bug reports.
-            let shown = match allocator_build_id(&repo.join("mmgp").join("allocator")) {
-                Some(id) => format!("{v} (alloc {id})"),
-                None => v,
-            };
-            versions.insert("mmgp".into(), serde_json::Value::String(shown));
+    match vendored_mmgp_label(repo) {
+        Some(label) => {
+            versions.insert("mmgp".into(), serde_json::Value::String(label));
         }
         None => {
             versions.remove("mmgp");
         }
     }
+}
+
+/// `4.4.1 (alloc 3f2a91)` for the in-repo `mmgp/` folder, `None` on a pre-v17
+/// checkout that has no vendored mmgp. The allocator id is folded in because
+/// upstream rebuilds the prebuilt allocators without bumping the version, so
+/// the version alone cannot identify the binary that produced a crash.
+pub(crate) fn vendored_mmgp_label(repo: &std::path::Path) -> Option<String> {
+    let toml =
+        std::fs::read_to_string(repo.join("mmgp").join("pyproject.toml")).unwrap_or_default();
+    let v = pyproject_version(&toml)?;
+    // v17.01 rebuilt the allocator (mmgp/allocator/vmm_alloc.cpp +59/-11
+    // and a new DLL) WITHOUT bumping pyproject.toml, so "4.0.0" alone
+    // cannot tell you which allocator you are running. The DLL is ~94 KB,
+    // so a content hash of the binaries costs less than any probe — append it so two
+    // v17.17 (6479db3) adds a SECOND prebuilt library for the RAM
+    // allocator and rebuilds the VRAM one under the same version, so
+    // allocator_build_id folds both in.
+    // builds of the same version stay distinguishable in bug reports.
+    Some(
+        match allocator_build_id(&repo.join("mmgp").join("allocator")) {
+            Some(id) => format!("{v} (alloc {id})"),
+            None => v,
+        },
+    )
 }
 
 /// Short build id of the vendored prebuilt allocators: FNV-1a over the
@@ -519,6 +529,20 @@ pub(crate) fn resolve_env_python(repo: &std::path::Path, raw: &str) -> Option<Pa
         base.join("python"),
     ];
     cands.into_iter().find(|p| p.is_file())
+}
+
+/// Interpreter of the env registered as active in envs.json, resolved
+/// type-agnostically (uv/venv: `Scripts\`/`bin/`; conda: the env ROOT).
+/// None when no env is active or the folder/interpreter is gone. Every
+/// package/wheel path must use this instead of re-deriving `Scripts\
+/// python.exe`: that layout silently broke every conda env.
+pub(crate) fn active_env_python() -> Option<PathBuf> {
+    let env = get_active_env();
+    let raw = env.get("path")?.as_str()?;
+    if raw.is_empty() {
+        return None;
+    }
+    resolve_env_python(&get_repo_dir(), raw)
 }
 
 pub(crate) fn get_active_env() -> serde_json::Value {
