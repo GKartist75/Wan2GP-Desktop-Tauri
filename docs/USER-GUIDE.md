@@ -137,11 +137,12 @@ RDNA 1–3.5 cards have **no** WGPKernels/HIP wheel. Upstream's own HIP validati
 | ↻ Check Updates | Checks PyPI for package updates for this env |
 
 **Deepy card** — the WanGP assistant. Modes: Disabled / Deepy Zero (local Qwen model)
- / Deepy Prime (remote LLM or local Qwen3.8 27B). *Local model (Prompt Enhancer)*
- offers all five local models — Florence 2 + Llama variants and Qwen3.5 4B/9B +
- Qwen3.8 27B — in both Disabled and Zero (the enhancer runs standalone without
+ / Deepy Prime (remote LLM or local Qwen3.8 9B/27B). *Local model (Prompt Enhancer)*
+ offers all six local models — Florence 2 + Llama variants and Qwen3.5 4B/9B +
+ Qwen3.8 9B/27B — in both Disabled and Zero (the enhancer runs standalone without
  Deepy); Qwen engines show a *Quantization* picker (GGUF Q4 / IQ3_S / Q2 /
- Bonsai PTQ1 for 27B, Quanto Int8 / GGUF Q4 for 3.5; Bonsai also sets INT8 KV
+ Bonsai PTQ1 for 27B, GGUF Q4 / Q8 for 9B, Quanto Int8 / GGUF Q4 for 3.5;
+ Bonsai also sets INT8 KV
  cache). *LLM Engines* lists backends (Claude Code CLI,
 OpenCode, …) with *↻ Refresh* to re-check status; pick one and press *Apply*.
 *Sessions* below it mirrors Ask Deepy → Settings → Sessions: multisessions mode
@@ -161,6 +162,20 @@ quantized cache — sink pages plus a ring of the most recent tokens, `s1r1024`
 (default) / `s1r256` / `s0r1024` / `s0r0` — and the pair is written as
 `body:exact`. Both dropdowns preselect from `wgp_config.json`, so a value set in
 WanGP shows as it is.
+
+**Deepy performance & context** — for local Deepy (Zero, or Prime + local
+Qwen3.8) the card exposes upstream's Configuration → Deepy values, written to
+`wgp_config.json` as soon as you change one: *VRAM loading mode* (`unload`,
+`unload_on_request`, `always_loaded`; upstream recommends Unload ASAP),
+*Context window tokens* (20 480–256 000), *When context is full*
+(Discard / Summarize / Summarize with Thinking) and *Repetition penalty*
+(on by default). Context and compaction are clamped as a pair — Summarize
+raises the window to at least 32K, Summarize with Thinking to at least 48K —
+and local Prime can't pick Discard (upstream requires Summarize). Prime also
+shows *Speed* and *Model size* (`deepy_model_speed` / `deepy_model_size`), the
+preferences Prime uses when choosing models you left unspecified. Pressing
+*Apply* seeds missing keys only, so values you tuned here or inside WanGP are
+not reset.
 
 **Deepy Speculative Decoding** — inside the Prime-local backend picker (local
 Qwen3.8 9B/27B), a dropdown writes `prompt_enhancer_speculative_decoding` to

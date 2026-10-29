@@ -47,6 +47,7 @@ vm.runInContext(
     extractFn('specSplit'),
     extractFn('specJoin'),
     extractFn('specMethods'),
+    extractFn('specMaxTokens'),
   ].join('\n'),
   ctx,
 )
@@ -118,6 +119,17 @@ test('method choices follow upstream gating', () => {
   // 4B (id 3) and Qwen3.5-9B (id 4) keep MTP only where upstream allows it.
   assert.deepStrictEqual([...ctx.specMethods('3:gguf')], ['auto', 'disabled'])
   assert.deepStrictEqual([...ctx.specMethods('4:gguf')], ['auto', 'disabled', 'mtp'])
+})
+
+test('draft-token ceiling follows the drafter, not just the method', () => {
+  // Upstream caps the Bonsai drafter at 5 (block_draft_spec(bonsai=True)).
+  assert.strictEqual(ctx.specMaxTokens('dflash2', '5:gguf_ptq1'), 5)
+  assert.strictEqual(ctx.specMaxTokens('dflash2', '5:gguf'), 7)
+  assert.strictEqual(ctx.specMaxTokens('dspark', '5:gguf_ptq1'), 7)
+  assert.strictEqual(ctx.specMaxTokens('mtp', '6:gguf'), 8)
+  // Auto and Disabled have no token control at all.
+  assert.strictEqual(ctx.specMaxTokens('auto', '5:gguf'), 0)
+  assert.strictEqual(ctx.specMaxTokens('disabled', '5:gguf'), 0)
 })
 
 test('the panel markup carries the row and the upstream key', () => {

@@ -1443,12 +1443,69 @@
             </div>
             <p class="path-hint" style="margin-top:6px">Quantized KV cache for Deepy. Auto lets WanGP decide: INT8 with GGUF kernels 1.0.13+, BF16 without. The second dropdown is the exact-precision overlay the mixed layouts keep. Written as <code>deepy_kv_cache_quantization</code>.</p>
           </div>
+          <!-- Performance & context (local Deepy only: Zero or Prime + local
+               Qwen3.8). Upstream's Configuration → Deepy values, written
+               immediately; hidden for Disabled and remote Prime where the
+               local model never loads. Context and compaction are clamped as
+               one pair so the config can't be saved invalid. -->
+          <div id="deepyPerfWrap" style="margin-top:10px; display:none">
+            <div class="deepy-sub-label">Performance &amp; context</div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px">
+              <label class="path-hint">VRAM loading mode<br>
+                <select id="deepyVramModeSelect" class="input" style="min-width:270px;margin-top:4px">
+                  <option value="unload">Unload ASAP (safest, recommended default)</option>
+                  <option value="unload_on_request">Unload when VRAM is needed (balanced)</option>
+                  <option value="always_loaded">Always loaded (fastest, uses VRAM)</option>
+                </select>
+              </label>
+              <label class="path-hint">Context window tokens<br>
+                <input id="deepyContextInput" class="input" type="number" min="20480" max="256000" step="1024" style="width:150px;margin-top:4px">
+              </label>
+              <label class="path-hint">When context is full<br>
+                <select id="deepyCompactionSelect" class="input" style="min-width:270px;margin-top:4px">
+                  <option value="discard">Discard oldest entries</option>
+                  <option value="summarize">Summarize (needs ≥32K)</option>
+                  <option value="thinking">Summarize with Thinking (needs ≥48K)</option>
+                </select>
+              </label>
+              <label class="path-hint">Repetition penalty<br>
+                <select id="deepyRepPenaltySelect" class="input" style="min-width:200px;margin-top:4px">
+                  <option value="true">Enabled (recommended)</option>
+                  <option value="false">Disabled</option>
+                </select>
+              </label>
+            </div>
+            <p class="path-hint" id="deepyPerfHint" style="margin-top:6px"></p>
+          </div>
           <div id="deepyPrimeOnly" style="display:none">
             <div class="deepy-cost-note">
               <span class="dot-ok">●</span> <strong>OpenCode</strong> — free, local models, no account.
               <span class="dot-bad">●</span> <strong>Claude Code / Codex</strong> — paid (subscription or API credits).
               <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 9B/27B (local)</strong> — runs on your GPU (needs GGUF kernels 1.0.29 via Sync Kernels); pick model + quantization below. Auto-sets 32k context + Summarize.
               <br>Prime plans advanced multi-step work and is required for every external LLM (it exposes WanGP's MCP tools). Zero is lightweight and local-only.
+            </div>
+            <!-- Prime model preferences (upstream deepy_model_speed /
+                 deepy_model_size): how Prime picks beyond configured templates.
+                 Applies to remote and local engines alike. -->
+            <div id="deepyPrimePrefsWrap" style="margin-top:10px">
+              <div class="deepy-sub-label">Model preferences</div>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px">
+                <label class="path-hint">Speed<br>
+                  <select id="deepyModelSpeedSelect" class="input" style="min-width:220px;margin-top:4px">
+                    <option value="fast">Fast (recommended)</option>
+                    <option value="standard">Standard</option>
+                    <option value="any">No preference</option>
+                  </select>
+                </label>
+                <label class="path-hint">Model size<br>
+                  <select id="deepyModelSizeSelect" class="input" style="min-width:220px;margin-top:4px">
+                    <option value="smaller">Smaller (recommended)</option>
+                    <option value="larger">Larger</option>
+                    <option value="any">No preference</option>
+                  </select>
+                </label>
+              </div>
+              <p class="path-hint" style="margin-top:6px">Used when Prime chooses models the user left unspecified. Written as <code>deepy_model_speed</code> / <code>deepy_model_size</code>.</p>
             </div>
             <div class="deepy-sub-label">Local engine</div>
             <div id="deepyEngineLocal" class="deepy-engine-options"></div>
@@ -1459,7 +1516,7 @@
             <div id="deepyPrimeBackendWrap" style="display:none;margin:10px 0 8px">
               <div class="deepy-sub-label">Local Prime model + quantization</div>
               <select id="deepyPrimeBackendSelect" class="input" style="margin-top:4px;min-width:260px">
-                <option value="5:gguf">27B — GGUF Q4 (default, highest quality)</option>
+                <option value="5:gguf">27B — GGUF Q4 (highest quality, usually 24 GB VRAM)</option>
                 <option value="5:gguf_q3">27B — GGUF IQ3_S (middle, ~16 GB VRAM)</option>
                 <option value="5:gguf_q2">27B — GGUF Q2 (lowest memory)</option>
                 <option value="5:gguf_ptq1">27B — Bonsai PTQ1 (~10 GB VRAM, sets INT8 KV cache)</option>

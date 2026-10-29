@@ -2,6 +2,44 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [Unreleased]
+
+- **Guide refreshed for WanGP 18.888 (no launcher code change needed).** The
+  upstream commits after `2e16ef7d` only add model assets, profiles and kernel
+  internals — no `setup_config.json`, wheel pin, requirement, CLI or config-key
+  changes, so *Update WanGP* / *Sync Kernels* need nothing new. The Guide now
+  points H3 FL2VA users at the new **Pika H3 Flex FL2VA 6 Steps** profile
+  (6 steps, guidance 1, `pika_renoise`; Pika LoRA downloads on first use),
+  lists the **Singularity V2** Ref2VA defaults (33B + pruned 20B), and notes
+  the new Pika Deepy templates. The seeded Deepy defaults stay the PDD 8-step
+  templates because upstream still defaults to them.
+- **Deepy's performance and context settings are in the card, and Apply no
+  longer resets them.** Local Deepy (Zero, or Prime + local Qwen3.8) now
+  exposes upstream's Configuration → Deepy values — VRAM loading mode, context
+  window tokens (20 480–256 000), compaction (Discard / Summarize / Summarize
+  with Thinking) and repetition penalty — plus Prime's Speed / Model size
+  preferences, each written immediately. Context and compaction are clamped as
+  a pair (Summarize ≥32K, Summarize with Thinking ≥48K; local Prime can't pick
+  Discard), matching upstream's validation. The presets now use setdefault
+  semantics: pressing *Apply* seeds missing keys instead of overwriting tuned
+  context, VRAM mode, KV cache, templates, guidance, filesystem grants, MCP
+  servers or Speed/Size.
+- **Deepy's seeded "best settings" follow current upstream again.** The Zero
+  preset still wrote the retired tool picks (`Krea 2 Turbo (8 Steps)`,
+  `Flux Klein 9B`, `LTX-2 2.5 Distilled`); it now seeds upstream's current
+  defaults — Qwen Image 2.1 Turbo 8 Steps for `gen_image`/`edit_image`,
+  MiniMax H3 FL2VA Pruned PDD 8 Steps (+ *With Sound*, Ref2VA) for video —
+  and adds the missing `gen_video_with_refs`, `gen_world`, `gen_3d` and
+  `texture_3d` defaults. The Prime preset wrote upstream's *retired* system
+  prompt (upstream normalizes it away on load); it now writes the Speed /
+  Model Size guidance plus its `fast` / `smaller` defaults. The Prime backend
+  hints carry upstream's VRAM advice (27B Q4 usually wants 24 GB, IQ3_S/Q2
+  fit 16 GB), the Auto speculative-decoding hint matches today's rule (8 GB
+  floor, 12 GB for non-GGUF Qwen3.5 9B, streaming still pays), and the
+  Bonsai PTQ1 DFlash2 row offers 1–5 draft tokens instead of 7. Guide fixes:
+  Zero's context floor is 20K (was 16K), Prime-local lists 9B as well as 27B,
+  and the sessions note says which mode the launcher seeds.
+
 ## [0.10.33] — 2026-10-29
 
 - **Conda envs: *Update GPU Wheels* / kernel installs no longer fail with

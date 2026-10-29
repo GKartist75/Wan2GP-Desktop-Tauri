@@ -36,11 +36,17 @@ function renderDeepyQuant(enhancerId, savedQuant, primeBackend) {
       beHint.textContent =
         primeBackend === "5:gguf_ptq1"
           ? "Bonsai PTQ1 runs Prime on ~10 GB VRAM. Weights download on first WanGP launch. Apply also sets INT8 KV cache."
-          : primeBackend === "6:gguf"
-            ? "Heretic Q4 runs Prime on ~6.5 GB VRAM — the fit for 8–12 GB GPUs. Weights download on first WanGP launch."
-            : primeBackend === "6:gguf_q8"
-              ? "Heretic Q8 (~11 GB VRAM) stays closest to full precision. Weights download on first WanGP launch."
-              : "Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels).";
+          : primeBackend === "5:gguf"
+            ? "GGUF Q4 is the highest-quality 27B and usually wants a 24 GB GPU. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
+            : primeBackend === "5:gguf_q3"
+              ? "IQ3_S is the balanced 27B choice and usually fits a 16 GB GPU. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
+              : primeBackend === "5:gguf_q2"
+                ? "Q2 is the leanest 27B — 16 GB is enough and leaves room to grow the context window, at the largest quality loss. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
+                : primeBackend === "6:gguf"
+                  ? "Heretic Q4 runs Prime on ~6.5 GB VRAM — the fit for 8–12 GB GPUs. Weights download on first WanGP launch."
+                  : primeBackend === "6:gguf_q8"
+                    ? "Heretic Q8 (~11 GB VRAM) stays closest to full precision. Weights download on first WanGP launch."
+                    : "Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels).";
     return;
   }
   if (beWrap) beWrap.style.display = "none";
@@ -91,6 +97,18 @@ function updateDeepyQuantHint(value, enhancerId) {
 // tab-open state over the user's mid-session pick.
 let _specSaved = null;
 
+// Draft-token ceiling for a method on a backend pick. Stored values keep
+// upstream's 1..7 range, but the Bonsai PTQ1 drafter only takes 5
+// (block_draft_spec(bonsai=True)["drafts"]), so the row must not offer more.
+function specMaxTokens(method, backendPick) {
+  const max = SPEC_MAX_TOKENS[method] || 0;
+  if (!max) return 0;
+  const [id, quant] = String(backendPick || "").split(":");
+  if (method === "dflash2" && Number(id) === 5 && quant === "gguf_ptq1")
+    return Math.min(max, 5);
+  return max;
+}
+
 // Speculative Decoding row — Prime-local only (`#deepySpecWrap` lives inside
 // the backend block in index.html). Rebuilds options per backend pick like
 // the quant selector rebuilds per engine context; preselects the saved key
@@ -120,7 +138,7 @@ function renderDeepySpec(backendPick, savedSpec) {
     sel.append(o);
   }
   sel.value = method;
-  const max = SPEC_MAX_TOKENS[method] || 0;
+  const max = specMaxTokens(method, backendPick);
   if (tok) {
     tok.textContent = "";
     if (max) {
@@ -146,7 +164,7 @@ function updateDeepySpecHint() {
   if (!sel || !hint) return;
   hint.textContent =
     sel.value === "auto"
-      ? "MTP drafts only while they speed Deepy up: the model (or enough of it, when it streams from RAM) fits in VRAM next to them. Upstream's measured rule keeps a ~512 MB slack; when MTP would just cause streaming it stays off."
+      ? "Auto turns MTP on only when it pays: the model still fits in VRAM beside the drafts, or part of the model already streams from RAM (MTP then predicts several tokens per pass). It stays off when MTP would push a fitting model partly out, and on GPUs with 8 GB or less. For non-GGUF Qwen3.5 9B it needs 12 GB+. The console reports the choice."
       : sel.value === "disabled"
         ? "No draft model — plain autoregressive decoding (0 GiB extra)."
         : sel.value === "mtp"
@@ -193,6 +211,31 @@ function kvSplit(raw) {
 function kvJoin(body, exact) {
   if (!KV_MIXED.includes(body)) return body;
   return body + ":" + (exact || "s1r1024");
+}
+
+// Upstream `deepy_context_tokens` / `deepy_compaction_type` /
+// `deepy_compaction_thinking` (shared/deepy/config.py). The context window is
+// clamped to [20480, 256000]; Summarize needs >= 32K and Summarize with
+// Thinking >= 48K, so the panel raises the context when that pair is picked.
+// `summarize_thinking` is the legacy type encoding, still read by upstream.
+const DEEPY_CONTEXT_MIN = 20480;
+const DEEPY_CONTEXT_MAX = 256000;
+const DEEPY_COMPACTION_MIN = {
+  discard: DEEPY_CONTEXT_MIN,
+  summarize: 32000,
+  thinking: 48000,
+};
+function deepyCompactionChoice(type, thinking) {
+  const t = String(type == null ? "" : type).trim().toLowerCase();
+  if (t === "summarize_thinking" || (t === "summarize" && thinking === true))
+    return "thinking";
+  return t === "summarize" ? "summarize" : "discard";
+}
+function deepyClampContext(value, choice) {
+  const min = DEEPY_COMPACTION_MIN[choice] || DEEPY_CONTEXT_MIN;
+  const n = Math.trunc(Number(value));
+  const v = Number.isFinite(n) ? n : DEEPY_CONTEXT_MIN;
+  return Math.min(DEEPY_CONTEXT_MAX, Math.max(min, v));
 }
 
 // Upstream `prompt_enhancer_speculative_decoding`
@@ -502,6 +545,10 @@ async function refreshDeepy() {
     primeOnly.style.display = mode === "prime" ? "block" : "none";
     enhancerWrap.style.display =
       mode === "disabled" || mode === "zero" ? "block" : "none";
+    renderDeepyPerf(
+      mode,
+      mode === "prime" && deepyEngineChecked().value === "local-qwen38",
+    );
     let ok = true;
     let title = "";
     if (mode === "prime") {
@@ -613,6 +660,134 @@ async function refreshDeepy() {
     specBind.dataset.specBound = "1";
     specBind.addEventListener("change", deepySpecWrite);
     $("deepySpecTokensSelect")?.addEventListener("change", deepySpecWrite);
+  }
+
+  // Performance & context + Prime model preferences. Both write immediately
+  // (one atomic config write) and are bound once across refreshes. Context and
+  // compaction are clamped as a pair so WanGP never loads an invalid combo.
+  function renderDeepyPerf(mode, primeLocal) {
+    const wrap = $("deepyPerfWrap");
+    if (wrap) wrap.style.display = mode === "zero" || (mode === "prime" && primeLocal) ? "block" : "none";
+    const prefs = $("deepyPrimePrefsWrap");
+    if (prefs) prefs.style.display = mode === "prime" ? "block" : "none";
+    const speed = $("deepyModelSpeedSelect");
+    const size = $("deepyModelSizeSelect");
+    if (speed)
+      speed.value = ["fast", "standard", "any"].includes(status.modelSpeed)
+        ? status.modelSpeed
+        : "fast";
+    if (size)
+      size.value = ["smaller", "larger", "any"].includes(status.modelSize)
+        ? status.modelSize
+        : "smaller";
+    if (!wrap || wrap.style.display === "none") return;
+    const vram = $("deepyVramModeSelect");
+    const ctx = $("deepyContextInput");
+    const comp = $("deepyCompactionSelect");
+    const rep = $("deepyRepPenaltySelect");
+    const choice = deepyCompactionChoice(
+      status.compactionType,
+      status.compactionThinking,
+    );
+    if (vram)
+      vram.value = ["unload", "unload_on_request", "always_loaded"].includes(
+        status.vramMode,
+      )
+        ? status.vramMode
+        : "unload";
+    if (comp) {
+      for (const o of comp.options)
+        if (o.value === "discard") o.disabled = mode === "prime";
+      comp.value = mode === "prime" && choice === "discard" ? "summarize" : choice;
+    }
+    if (ctx) ctx.value = deepyClampContext(status.contextTokens, choice);
+    if (rep) rep.value = status.repetitionPenalty === false ? "false" : "true";
+    const hint = $("deepyPerfHint");
+    if (hint)
+      hint.textContent =
+        mode === "prime"
+          ? "Local Prime requires Summarize compaction and at least 32K context — the launcher raises both when needed. Always loaded is fastest; Unload ASAP frees VRAM for media models."
+          : "Unload ASAP frees VRAM for media models; Always loaded is fastest when you switch to Deepy often. Use 20K context for short chats and Summarize (32K+) for long sessions.";
+  }
+
+  const perfVram = $("deepyVramModeSelect");
+  if (perfVram && !perfVram.dataset.perfBound) {
+    perfVram.dataset.perfBound = "1";
+    const perfWrite = async () => {
+      const comp = $("deepyCompactionSelect");
+      const choice = comp ? comp.value : "discard";
+      const ctxEl = $("deepyContextInput");
+      const ctx = deepyClampContext(ctxEl && ctxEl.value, choice);
+      if (ctxEl && String(ctxEl.value) !== String(ctx))
+        ctxEl.value = ctx;
+      const rep = $("deepyRepPenaltySelect");
+      const patch = {
+        deepy_vram_mode: perfVram.value,
+        deepy_context_tokens: ctx,
+        deepy_compaction_type: choice === "discard" ? "discard" : "summarize",
+        deepy_compaction_thinking: choice === "thinking",
+        deepy_repetition_penalty: !rep || rep.value !== "false",
+      };
+      try {
+        await window.w2gp.writeWgpConfig(patch);
+        Object.assign(status, {
+          vramMode: patch.deepy_vram_mode,
+          contextTokens: ctx,
+          compactionType: patch.deepy_compaction_type,
+          compactionThinking: patch.deepy_compaction_thinking,
+          repetitionPenalty: patch.deepy_repetition_penalty,
+        });
+        showToast(
+          "✓ Deepy: " +
+            (patch.deepy_vram_mode === "always_loaded"
+              ? "always loaded"
+              : patch.deepy_vram_mode === "unload_on_request"
+                ? "unload on request"
+                : "unload ASAP") +
+            ", " +
+            ctx +
+            " context tokens, " +
+            (choice === "thinking"
+              ? "Summarize with Thinking"
+              : choice === "summarize"
+                ? "Summarize"
+                : "Discard oldest"),
+        );
+      } catch (err) {
+        showToast("✗ " + (err?.message || err));
+      }
+    };
+    for (const el of [
+      perfVram,
+      $("deepyContextInput"),
+      $("deepyCompactionSelect"),
+      $("deepyRepPenaltySelect"),
+    ])
+      if (el) el.addEventListener("change", perfWrite);
+  }
+
+  const prefSpeed = $("deepyModelSpeedSelect");
+  const prefSize = $("deepyModelSizeSelect");
+  if (prefSpeed && !prefSpeed.dataset.prefBound) {
+    prefSpeed.dataset.prefBound = "1";
+    const prefWrite = async () => {
+      const patch = {
+        deepy_model_speed: prefSpeed.value,
+        deepy_model_size: prefSize ? prefSize.value : "smaller",
+      };
+      try {
+        await window.w2gp.writeWgpConfig(patch);
+        Object.assign(status, {
+          modelSpeed: patch.deepy_model_speed,
+          modelSize: patch.deepy_model_size,
+        });
+        showToast("✓ Deepy model preferences saved");
+      } catch (err) {
+        showToast("✗ " + (err?.message || err));
+      }
+    };
+    prefSpeed.addEventListener("change", prefWrite);
+    if (prefSize) prefSize.addEventListener("change", prefWrite);
   }
 
   // One shared write for both cards: reads the whole panel state and applies

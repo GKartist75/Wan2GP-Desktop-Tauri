@@ -176,6 +176,9 @@ Starter pick ★ `minimax_h3_fasth3_omni` — 8-step FastVideo-distilled video +
 synced audio from text and ordered image/video/audio references (124 frames,
 8 steps, guidance 1); distilled with references, so give it at least one image
 or video reference — the NVFP4 variant is 13 GB and fastest on RTX 50xx.
+For the FL2VA path, 18.888 adds the **Pika H3 Flex FL2VA 6 Steps** profile:
+pick it in the toolbar instead of setting steps by hand (6 steps, guidance 1,
+`flow_shift 12`, `pika_renoise` sampler; the Pika LoRA downloads on first use).
 For stills instead of motion, ★ `fibo2_dev` is the launcher's image starter:
 unified text-to-image plus reference and masked editing from plain-language or
 structured captions (0 frames, 50 steps, guidance 5) — Fibo 2.0 Edit Turbo does
@@ -265,11 +268,14 @@ WanGP owns **model, prompt, generation, LoRA pick, control, post**.
 
 ---
 
-## Models reference — inventory by family (287 `defaults/*.json` at WanGP 18.88)
+## Models reference — inventory by family (289 `defaults/*.json` at WanGP 18.888)
 
-Reconciled live against upstream `defaults/` (287 files + `ReadMe.txt`, WanGP v18.88);
+Reconciled live against upstream `defaults/` (289 files + `ReadMe.txt`, WanGP v18.888);
 the 18.21 pass counted 276, and the families below list the variants that change
-the pick rather than every sibling id. The 18.88 pass is the 3D redesign: TRELLIS.2
+the pick rather than every sibling id. The 18.888 pass adds only the two H3
+**Singularity V2** Ref2VA defaults (full 33B + pruned 20B) and the **Pika H3 Flex**
+6-step accelerator profiles, so the 18.88 inventory below still stands. The 18.88
+pass is the 3D redesign: TRELLIS.2
 and Hunyuan3D 2.1 became **shape** models with Texturer presets (`trellis2_shape`,
 `trellis2_texture`, `hunyuan3d_21_shape`, `hunyuan3d_21_paint`), joined by Pixal3D
 and the SUPRA-Tex Texturer and Hi3D Refiner, while the Waypoint world handler was
@@ -323,7 +329,8 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 | `ltx2_22B` ★, `ltx2_22B_1_1`, `ltx2_22B_distilled` ★, `ltx2_22B_distilled_1_1` ★, `ltx2_22B_nvfp4`, `ltx2_22B_msr`, `ltx2_22B_msr_v2`, `ltx2_22B_edit_anything` (+distilled/edit variants, GGUF) | ★ `ltx2_22B_distilled_1_1` fast general; Dev for control; MSR/MSR-v2 2-5 refs; Ingredients; edit-anything |
 | `ltx2_25_22B`, `ltx2_25_22B_distilled` ★, `ltx2_25_22B_distilled_nvfp4`, `ltx2_25_22B_msr`, `ltx2_25_22B_alpha_gen`, `ltx2_25_22B_layout_to_render` | ★ 2.5 Distilled (native audio-video, IC-LoRA, Ingredients, unblur/uncompress); Alpha Gen (soft alpha matte from any video, optional selection mask → transparent PNG frames ZIP / ProRes 4444); Layout to Render (playblast + appearance ref → finished shot) |
 | `joyai_echo`, `joyai_echo_surgical` ★ | ★ Surgical: connected multi-shot stories, reusable memories (`[/store_mem]`/`[/load_mem]`/`[/drop_mem]`) |
-| `minimax_h3_fl2va` ★, `..._pruned` ★, `..._pdd`, `..._pruned_pdd`, `..._veda`, `..._pruned_veda` | ★ `minimax_h3_fl2va_pruned` (video+soundtrack, start/end, inject `KFI`+`frames_positions`, control, outpaint, 2-phase+tiling, Spectrum/First-Block-Cache, Sol-Attn); `_veda` variants use learned sparse attention (up to 2× faster at high res/longer videos, same settings+LoRAs); `_pdd` variants are locked to 8 steps + Euler with two-phase off and **accept base-model LoRAs** — their output-layer change reaches every PDD head |
+| `minimax_h3_fl2va` ★, `..._pruned` ★, `..._pdd`, `..._pruned_pdd`, `..._veda`, `..._pruned_veda` | ★ `minimax_h3_fl2va_pruned` (video+soundtrack, start/end, inject `KFI`+`frames_positions`, control, outpaint, 2-phase+tiling, Spectrum/First-Block-Cache, Sol-Attn); `_veda` variants use learned sparse attention (up to 2× faster at high res/longer videos, same settings+LoRAs); `_pdd` variants are locked to 8 steps + Euler with two-phase off and **accept base-model LoRAs** — their output-layer change reaches every PDD head. 18.888 adds the **Pika H3 Flex FL2VA 6 Steps** profile (6 steps, guidance 1, `flow_shift 12`, `pika_renoise`, Pika LoRA auto-download; upstream reports better aesthetics, anatomy, prompt following and audio than vanilla H3's 50-step run) |
+| `minimax_h3_singularity_v2`, `..._pruned` | **Singularity V2** Ref2VA fine-tune (18.888), full 33B / pruned 20B: clearer fast action, sharper distant faces and less glossy skin than vanilla H3; V2 focuses combat, fantasy effects and stronger prompt/style control. Same Ref2VA inputs as the base model |
 | `minimax_h3_control`, `..._pruned` | ControlNet-Union 2.0 branch on FL2VA (33B / pruned 20B): pose, depth, edge, shape and recoloring controls, plus inpainting and spatial outpainting |
 | `minimax_h3_ref2va`, `..._pruned` ★, `..._pdd`, `..._pruned_pdd`, `..._veda`, `..._pruned_veda` | ★ pruned (refs guide result, ref pixel budget 50-400%, persists across windows); `_veda` = Veda sparse attention; `_pdd` = 8 steps + Euler, two-phase off, base-model LoRAs apply (all PDD heads) |
 | `minimax_h3_ref2va_pruned` (FastH3 Omni) | ★ `minimax_h3_fasth3_omni` — MiniMax H3 FastH3 Omni 8-Step 20B: FastVideo distillation + sparse video attention (VSA), 8 steps, `guidance_phases 1` (no CFG), `flow_shift 12`, `video_prompt_type "I"`; same Ref2VA inputs (ordered images/videos/audio clips, start/end images, frame injection, reference or control video, soundtracks, continuation), faster than Ref2VA PDD at the same VRAM, distilled with references so best with ≥1 image/video reference; `minimax_h3_fasth3_omni_nvfp4` — MiniMax H3 FastH3 Omni NVFP4 QAD 8-Step 20B: same settings, 13 GB (smallest FastH3 Omni, lowest VRAM), NVFP4 weights trained for 4-bit inference, fastest on RTX 50xx FP4 tensor cores, slower on RTX 30xx/40xx |
@@ -733,11 +740,11 @@ Apply via Settings dropdown -> Apply; missing LoRAs auto-download on first gen; 
 
 * Zero = fast single tasks, small Qwen OK. Prime = multi-step plans, needs Qwen3.8-9B/27B local or Codex/Claude/OpenCode remote (remote needs Prime).
 * Shared engine for Deepy + Enhancer + visual inspect. Remote saves VRAM, sends prompts/images/frames off-machine.
-* Local Qwen quant: 3.5 `Quanto Int8` (quality) vs `GGUF Q4` (lean); 27B `Q4` (best) / `IQ3_S` (balanced) / `Q2` (leanest) / Bonsai PTQ1 (~10 GB + INT8 KV); 9B Heretic `Q4` (~6.5 GB) / `Q8` (~11 GB, closest to full precision). Prime + local shows one combined model+quantization list.
+* Local Qwen quant: 3.5 `Quanto Int8` (quality) vs `GGUF Q4` (lean); 27B `Q4` (best, usually a 24 GB GPU) / `IQ3_S` (balanced, 16 GB) / `Q2` (leanest, 16 GB with room to grow context) / Bonsai PTQ1 (~10 GB + INT8 KV); 9B Heretic `Q4` (~6.5 GB — the local-Prime fit for 8–12 GB GPUs) / `Q8` (~11 GB, closest to full precision). Prime + local shows one combined model+quantization list.
 * VRAM mode: `unload ASAP` (safest) / `unload if needed` (balanced) / `always loaded` (fastest Deepy). Since v18.88 `always loaded` no longer blocks generations: they take the parts of Deepy they need, and its conversation memory only when nothing else is left (saved to RAM, restored on its next answer). That partial release needs the MMGP VRAM allocator (default `vmm_spill`); with PyTorch's allocator Deepy is released whole.
-* Context 16K Zero / 32K Prime / 48K+ long Prime; `Summarize` (>=32K) / `Summarize+Thinking` (>=48K).
-* Sessions: Disabled (temp) / selectable Workspace (share) / dedicated Workspace (self-contained, robot icon). Gallery media: keep-links (lean) vs copy-into-session (portable).
-* Upstream v18.20 ships Deepy settings presets for the new models: `gen_image/Fibo 2.0 Dev`, `edit_image/Fibo 2.0 Dev`, `edit_image/Fibo 2.0 Edit Turbo`, `gen_video_with_refs/MiniMax H3 FastH3 Omni 8 Steps` and `.../MiniMax H3 FastH3 Omni NVFP4 QAD 8 Steps`.
+* Context 20K Zero (the upstream minimum) / 32K Prime / 48K+ long Prime; `Summarize` (>=32K) / `Summarize+Thinking` (>=48K).
+* Sessions: Disabled (temp) / selectable Workspace (share media collections) / dedicated Workspace (self-contained project, robot icon). Gallery media: keep-links (lean) vs copy-into-session (portable). The launcher seeds `selectable`; upstream's own default is `disabled`.
+* Deepy tool defaults (current upstream): `gen_image` / `edit_image` **Qwen Image 2.1 Turbo 8 Steps**, video **MiniMax H3 FL2VA Pruned PDD 8 Steps** (+ *With Sound*, Ref2VA PDD), 3D **TRELLIS.2 + SUPRA-Tex PBR 4B + 2.1B** / **SUPRA-Tex**, world **Hy-Nomas World Model 8B**. 18.888 also ships Pika H3 Flex 6-step templates (`gen_video` FL2VA, `gen_video_with_refs` Ref2VA, `gen_video_with_speech` *With Audio References*); the launcher keeps seeding the PDD 8-step templates because upstream still defaults to them. v18.20 had also shipped presets for `Fibo 2.0 Dev`, `Fibo 2.0 Edit Turbo` and the two `MiniMax H3 FastH3 Omni` 8-Step templates.
 * v18.88 Deepy tools follow the 3D redesign: the `gen_3d` default template is **TRELLIS.2 + SUPRA-Tex PBR 4B + 2.1B** (`TRELLIS.2 4B` migrates to it) and a new **`texture_3d`** template (`deepy_tool_texture_3d`, default `SUPRA-Tex`) textures a mesh from the 3D gallery given as `custom_guide`.
 * **App Development (Advanced)** (v18.88, `wgp_config["python_apps"]["development"]` = `off`/`apps`/`plugins`; always off while the Python sandbox is off) lets Deepy Prime and MCP agents build web apps you play in WanGP's Apps gallery. WanGP's Configuration → Prompt Enhancer / Deepy → Python tab owns it; the launcher card does not write it. Apps run in an isolated frame — no WanGP controls, files or network.
 * Launcher cards write the same `wgp_config.json` (`deepy_*`, `llm_engines`, `enhancer_*`, `prompt_enhancer_*`); Apply with backup.
@@ -928,7 +935,8 @@ Still stuck: export launcher diagnostics (GPU/VRAM, torch/CUDA, triton, versions
 `boot.log`, redacted config) + exact command + full error -> Discord
 `discord.gg/g7efUW9jGV`. Minimal repro beats screenshots.
 
-Upstream docs (all 26 files in `deepbeepmeep/WanGP/docs`, read at `2e16ef7d`):
+Upstream docs (all 26 files in `deepbeepmeep/WanGP/docs`, read at `2e16ef7d`
+and re-checked at `d951836`, WanGP 18.888):
 `AMD-INSTALLATION`, `API`, `APPS`, `AUDIO_PROCESSORS`, `AUTHENTICATION`, `CHANGELOG`, `CLI`,
 `DEEPY`, `DLSS5`, `FINETUNES`, `GETTING_STARTED`, `INSTALLATION`, `LORAS`, `MODELS`,
 `OVERVIEW`, `PLUGINS`, `PREVIEWS`, `PROCESSING`, `PROMPTS`, `REMOTE_LLMS`, `SETTINGS`,
@@ -939,9 +947,10 @@ What's new: upstream `docs/CHANGELOG.md` (latest entry 26 Aug 2026, WanGP
 U1.5, Deepy Prime via Codex/Claude, remote notifications) + launcher
 `CHANGELOG.md`. The upstream changelog still lags the code: the 18.21 wave
 (`profile 0`, vllm rewrite + Fibo 2, FastH3 Omni, LTX2 VAE Turing optimization,
-Fused Kernels, FlashVSR+ Turbo) and the 18.88 wave (`checkpoint charly` +
-`are you game` + `fixes`, 2026-10-29: the 3D redesign with Hi3D/SUPRA-Tex/Pixal3D
-and the TRELLIS.2 + Hunyuan3D 2.1 shape/texture split, `--max-vram`/`--max-ram`/
-`--ram-stress`, the Deepy Apps gallery, post-processing parameter dictionaries)
-are described here instead — this guide's model, processor and kernel tables
-are the reconciled truth.
+`Fused Kernels, FlashVSR+ Turbo) and the 18.88/18.888 wave (`checkpoint charly` +
+`are you game` + `fixes` + `added H3 Pika & Singularity`, 2026-10-29: the 3D
+redesign with Hi3D/SUPRA-Tex/Pixal3D and the TRELLIS.2 + Hunyuan3D 2.1
+shape/texture split, `--max-vram`/`--max-ram`/`--ram-stress`, the Deepy Apps
+gallery, post-processing parameter dictionaries, then the 6-step Pika H3 Flex
+profiles and Singularity V2 Ref2VA 33B/20B) are described here instead — this
+guide's model, processor and kernel tables are the reconciled truth.

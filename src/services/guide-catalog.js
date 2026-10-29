@@ -3,9 +3,10 @@
  *
  * Pure, side-effect-free data module (no Tauri, no Node, no DOM). Mirrors the
  * starters in docs/WAN2GP-GUIDE.md; every model_type must exist in WanGP's
- * defaults/*.json (verified 2026-10-29 against upstream v18.88 / `2e16ef7d`:
+ * defaults/*.json (verified 2026-10-29 against upstream v18.888 / `d951836`:
  * all picks present — the 3D goal follows the 3D redesign, where `trellis2` and
- * `hunyuan3d_21` were retired into shape/texture stage models).
+ * `hunyuan3d_21` were retired into shape/texture stage models; H3 Singularity
+ * V2 added the full 33B and pruned 20B Ref2VA defaults in 18.888).
  *
  * Shape per goal: { id, label, picks: [{ model, why, frames, steps, guidance, tip }] }
  * Frames/steps/guidance are starters, not rules — the per-model form owns truth.
@@ -28,9 +29,10 @@ const GUIDE_GOALS = [
     label: 'Animate a photo (image → video)',
     picks: [
       { model: 'i2v_2_2', why: 'Mature general image-to-video.', frames: 49, steps: 20, guidance: 5, tip: 'Start Image holds the subject — prompt only motion/camera: "she smiles, turns toward the window, camera pushes in".' },
-      { model: 'minimax_h3_fl2va_pruned', why: 'Realistic motion + synced audio in one pass.', frames: 124, steps: 15, guidance: 5, tip: 'Needs 15-20 steps minimum (no distilled ckpt yet).' },
+      { model: 'minimax_h3_fl2va_pruned', why: 'Realistic motion + synced audio in one pass.', frames: 124, steps: 15, guidance: 5, tip: 'Vanilla PDD needs 15-20 steps. Faster and cleaner since 18.888: pick the Pika H3 Flex FL2VA 6 Steps profile (6 steps, guidance 1, flow_shift 12, sampler pika_renoise; the Pika LoRA downloads on first use).' },
       { model: 'minimax_h3_fl2va_pruned_veda', why: 'Same settings/LoRAs as pruned FL2VA, up to 2x faster on long/high-res gens.', frames: 124, steps: 15, guidance: 5, tip: 'Needs Triton and a CC 8.0+ NVIDIA GPU; compare fine detail against the standard variant first.' },
-      { model: 'minimax_h3_fasth3_omni', why: 'FastH3 Omni (v18.20): 8-step FastVideo-distilled video + synced audio from text and ordered image/video/audio references.', frames: 124, steps: 8, guidance: 1, tip: 'Distilled with references — give it at least one image or video reference. No CFG (guidance 1), flow_shift 12; the NVFP4 variant is 13 GB and fastest on RTX 50xx, slower on RTX 30xx/40xx.' }
+      { model: 'minimax_h3_fasth3_omni', why: 'FastH3 Omni (v18.20): 8-step FastVideo-distilled video + synced audio from text and ordered image/video/audio references.', frames: 124, steps: 8, guidance: 1, tip: 'Distilled with references — give it at least one image or video reference. No CFG (guidance 1), flow_shift 12; the NVFP4 variant is 13 GB and fastest on RTX 50xx, slower on RTX 30xx/40xx.' },
+      { model: 'minimax_h3_singularity_v2_pruned', why: 'Singularity V2 (18.888) pruned 20B: clearer fast action, sharper distant faces and less glossy skin than vanilla H3; Ref2VA inputs.', frames: 124, steps: 15, guidance: 5, tip: 'Ref2VA starters; use the model defaults first. V2 focuses combat, fantasy effects and stronger prompt/style control. The full 33B variant is minimax_h3_singularity_v2 and needs more VRAM.' }
     ]
   },
   {
@@ -212,6 +214,8 @@ const MODEL_NAMES = {
   worldmirror_2: 'WorldMirror 2.0 1.2B',
   minimax_h3_fasth3_omni: 'MiniMax H3 FastH3 Omni 8-Step 20B',
   minimax_h3_fasth3_omni_nvfp4: 'MiniMax H3 FastH3 Omni NVFP4 QAD 8-Step 20B',
+  minimax_h3_singularity_v2: 'MiniMax H3 Singularity V2 Ref2VA 33B',
+  minimax_h3_singularity_v2_pruned: 'MiniMax H3 Singularity V2 Ref2VA Pruned 20B',
   fibo2_dev: 'Fibo 2.0 Dev',
   fibo2_edit_turbo: 'Fibo 2.0 Edit Turbo'
 }

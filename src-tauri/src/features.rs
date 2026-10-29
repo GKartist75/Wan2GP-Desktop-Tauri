@@ -1736,7 +1736,50 @@ pub fn deepy_status() -> serde_json::Value {
     let spec_raw = v.get("prompt_enhancer_speculative_decoding").cloned();
     let enhancer_mode = v.get("enhancer_mode").and_then(serde_json::Value::as_i64);
     let kv_cache = kv_cache_value(&v);
-    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "promptEnhancerQuantization": quant, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode, "enhancerMode": enhancer_mode, "kvCacheQuantization": kv_cache, "promptEnhancerSpeculativeDecoding": spec_raw})
+    // Performance/context keys (upstream shared/deepy/config.py). Normalized
+    // with upstream defaults so the panel pre-selects a valid combination:
+    // `summarize_thinking` is a legacy compaction_type value that upstream
+    // maps to summarize + thinking.
+    let vram_mode = match v.get("deepy_vram_mode").and_then(|x| x.as_str()) {
+        Some("always_loaded") => "always_loaded",
+        Some("unload_on_request") => "unload_on_request",
+        _ => "unload",
+    };
+    let context_tokens = v
+        .get("deepy_context_tokens")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(20480)
+        .clamp(20480, 256000);
+    let compaction_raw = v
+        .get("deepy_compaction_type")
+        .and_then(|x| x.as_str())
+        .unwrap_or("discard");
+    let compaction_thinking = v
+        .get("deepy_compaction_thinking")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+        || compaction_raw == "summarize_thinking";
+    let compaction_type = if compaction_raw == "summarize" || compaction_raw == "summarize_thinking"
+    {
+        "summarize"
+    } else {
+        "discard"
+    };
+    let repetition_penalty = v
+        .get("deepy_repetition_penalty")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    let model_speed = match v.get("deepy_model_speed").and_then(|x| x.as_str()) {
+        Some("standard") => "standard",
+        Some("any") => "any",
+        _ => "fast",
+    };
+    let model_size = match v.get("deepy_model_size").and_then(|x| x.as_str()) {
+        Some("larger") => "larger",
+        Some("any") => "any",
+        _ => "smaller",
+    };
+    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "promptEnhancerQuantization": quant, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode, "enhancerMode": enhancer_mode, "kvCacheQuantization": kv_cache, "promptEnhancerSpeculativeDecoding": spec_raw, "vramMode": vram_mode, "contextTokens": context_tokens, "compactionType": compaction_type, "compactionThinking": compaction_thinking, "repetitionPenalty": repetition_penalty, "modelSpeed": model_speed, "modelSize": model_size})
 }
 /// Deepy KV cache quantization as the panel needs it, straight from the config
 /// (upstream `shared/deepy/config.py`): `""` is BF16 and stays empty — the
@@ -2070,7 +2113,9 @@ pub fn deepy_set(
                 v["deepy_context_tokens"] = serde_json::json!(32000);
             }
             v["deepy_compaction_type"] = serde_json::json!("summarize");
-            v["deepy_repetition_penalty"] = serde_json::json!(true);
+            if v.get("deepy_repetition_penalty").is_none() {
+                v["deepy_repetition_penalty"] = serde_json::json!(true);
+            }
         } else {
             let profile = eng_map(&eid);
             let exe = exe_map(&eid);
@@ -2089,22 +2134,33 @@ pub fn deepy_set(
             }
         }
         // Full Prime preset (mirrors shared/deepy/config.py defaults + guidance).
-        for (k, val) in [
-            ("deepy_prime_custom_system_prompt", serde_json::json!("When several models can satisfy the request, prefer the highest-quality base or full model unless the user explicitly prioritizes speed or names another model.")),
-            ("deepy_prime_mcp_servers", serde_json::json!({})),
-            ("deepy_mcp_auto_discover_paths", serde_json::json!(false)),
-            ("deepy_allow_read_file_system", serde_json::json!(false)),
-            ("deepy_file_system_paths", serde_json::json!([])),
-            ("deepy_read_everywhere", serde_json::json!(false)),
-            ("deepy_auto_cancel_queue_tasks", serde_json::json!(true)),
-            ("deepy_separate_requests_with_empty_line", serde_json::json!(true)),
-            // v12.72 sessions feature — resolved above (explicit choice >
-            // existing config > launcher default) so pre-existing configs
-            // can't skew-missing when wgp.py expects the keys.
-            ("deepy_session_reset_mode", serde_json::json!(reset)),
-            ("deepy_session_gallery_media_mode", serde_json::json!(gallery)),
-            ("deepy_multi_session", serde_json::json!(multi)),
-        ] { v[k] = val; }
+        // Setdefault semantics: a value the user tuned in WanGP (guidance,
+        // filesystem grants, MCP servers, speed/size) must survive an Apply.
+        if let Some(o) = v.as_object_mut() {
+            for (k, val) in [
+                // Upstream replaced the old "prefer the highest-quality base"
+                // guidance with the Speed / Model Size pair below; seeding the
+                // retired string would just be normalized back on load.
+                ("deepy_prime_custom_system_prompt", serde_json::json!("Use the current Speed and Model Size preferences for choices left unspecified by the user when selecting beyond configured templates.")),
+                ("deepy_model_speed", serde_json::json!("fast")),
+                ("deepy_model_size", serde_json::json!("smaller")),
+                ("deepy_prime_mcp_servers", serde_json::json!({})),
+                ("deepy_mcp_auto_discover_paths", serde_json::json!(false)),
+                ("deepy_allow_read_file_system", serde_json::json!(false)),
+                ("deepy_file_system_paths", serde_json::json!([])),
+                ("deepy_read_everywhere", serde_json::json!(false)),
+                ("deepy_auto_cancel_queue_tasks", serde_json::json!(true)),
+                ("deepy_separate_requests_with_empty_line", serde_json::json!(true)),
+            ] {
+                o.entry(k.to_string()).or_insert(val);
+            }
+        }
+        // v12.72 sessions feature — resolved above (explicit choice >
+        // existing config > launcher default) so pre-existing configs
+        // can't skew-missing when wgp.py expects the keys.
+        v["deepy_session_reset_mode"] = serde_json::json!(reset);
+        v["deepy_session_gallery_media_mode"] = serde_json::json!(gallery);
+        v["deepy_multi_session"] = serde_json::json!(multi);
     } else {
         let eid = enh_id.unwrap_or(1);
         let eng_str = enh_to_engine(eid);
@@ -2116,53 +2172,74 @@ pub fn deepy_set(
             // (2026-10-20), which also clamps DEEPY_CONTEXT_TOKENS_MIN =
             // 20480 ("Zero's system prompt and tools alone take about 12k
             // tokens") — older seeds clamp up at runtime.
-            for (k, val) in [
-                ("deepy_vram_mode", serde_json::json!("unload")),
-                ("deepy_context_tokens", serde_json::json!(20480)),
-                ("deepy_kv_cache_quantization", serde_json::json!("auto")),
-                ("deepy_repetition_penalty", serde_json::json!(true)),
-                ("deepy_compaction_type", serde_json::json!("discard")),
-                (
-                    "deepy_tool_gen_image",
-                    serde_json::json!("Krea 2 Turbo (8 Steps)"),
-                ),
-                ("deepy_tool_edit_image", serde_json::json!("Flux Klein 9B")),
-                (
-                    "deepy_tool_gen_video",
-                    serde_json::json!("LTX-2 2.5 Distilled"),
-                ),
-                (
-                    "deepy_tool_gen_video_with_speech",
-                    serde_json::json!("LTX-2.5 Distilled With Sound"),
-                ),
-                (
-                    "deepy_tool_gen_song",
-                    serde_json::json!("ACE-Step 1.5 Turbo LM 1.7B"),
-                ),
-                (
-                    "deepy_tool_gen_speech_from_description",
-                    serde_json::json!("Qwen3 1.7B"),
-                ),
-                (
-                    "deepy_tool_gen_speech_from_sample",
-                    serde_json::json!("Index TTS 2"),
-                ),
-                ("deepy_zero_custom_system_prompt", serde_json::json!("")),
-                ("deepy_auto_cancel_queue_tasks", serde_json::json!(true)),
-                (
-                    "deepy_separate_requests_with_empty_line",
-                    serde_json::json!(true),
-                ),
-                // v12.72 sessions feature — same resolution as Prime preset.
-                ("deepy_session_reset_mode", serde_json::json!(reset)),
-                (
-                    "deepy_session_gallery_media_mode",
-                    serde_json::json!(gallery),
-                ),
-                ("deepy_multi_session", serde_json::json!(multi)),
-            ] {
-                v[k] = val;
+            // Tool templates follow current upstream defaults (Qwen Image 2.1
+            // for stills, MiniMax H3 for video, TRELLIS.2 + SUPRA-Tex for 3D).
+            // The old Krea 2 Turbo / Flux Klein 9B / LTX-2 2.5 files still
+            // exist upstream; they simply are no longer the defaults.
+            // Setdefault semantics: context, VRAM mode, KV cache, compaction
+            // and templates the user tuned (here or in WanGP) survive Apply.
+            if let Some(o) = v.as_object_mut() {
+                for (k, val) in [
+                    ("deepy_vram_mode", serde_json::json!("unload")),
+                    ("deepy_context_tokens", serde_json::json!(20480)),
+                    ("deepy_kv_cache_quantization", serde_json::json!("auto")),
+                    ("deepy_repetition_penalty", serde_json::json!(true)),
+                    ("deepy_compaction_type", serde_json::json!("discard")),
+                    (
+                        "deepy_tool_gen_image",
+                        serde_json::json!("Qwen Image 2.1 Turbo 8 Steps"),
+                    ),
+                    (
+                        "deepy_tool_edit_image",
+                        serde_json::json!("Qwen Image 2.1 Turbo 8 Steps"),
+                    ),
+                    (
+                        "deepy_tool_gen_video",
+                        serde_json::json!("MiniMax H3 FL2VA Pruned PDD 8 Steps"),
+                    ),
+                    (
+                        "deepy_tool_gen_video_with_speech",
+                        serde_json::json!("MiniMax H3 FL2VA Pruned PDD 8 Steps With Sound"),
+                    ),
+                    (
+                        "deepy_tool_gen_video_with_refs",
+                        serde_json::json!("MiniMax H3 Ref2VA Pruned PDD 8 Steps"),
+                    ),
+                    (
+                        "deepy_tool_gen_song",
+                        serde_json::json!("ACE-Step 1.5 Turbo LM 1.7B"),
+                    ),
+                    (
+                        "deepy_tool_gen_speech_from_description",
+                        serde_json::json!("Qwen3 1.7B"),
+                    ),
+                    (
+                        "deepy_tool_gen_speech_from_sample",
+                        serde_json::json!("Index TTS 2"),
+                    ),
+                    (
+                        "deepy_tool_gen_world",
+                        serde_json::json!("Hy-Nomas World Model 8B"),
+                    ),
+                    (
+                        "deepy_tool_gen_3d",
+                        serde_json::json!("TRELLIS.2 + SUPRA-Tex PBR 4B + 2.1B"),
+                    ),
+                    ("deepy_tool_texture_3d", serde_json::json!("SUPRA-Tex")),
+                    ("deepy_zero_custom_system_prompt", serde_json::json!("")),
+                    ("deepy_auto_cancel_queue_tasks", serde_json::json!(true)),
+                    (
+                        "deepy_separate_requests_with_empty_line",
+                        serde_json::json!(true),
+                    ),
+                ] {
+                    o.entry(k.to_string()).or_insert(val);
+                }
             }
+            // v12.72 sessions feature — same resolution as Prime preset.
+            v["deepy_session_reset_mode"] = serde_json::json!(reset);
+            v["deepy_session_gallery_media_mode"] = serde_json::json!(gallery);
+            v["deepy_multi_session"] = serde_json::json!(multi);
         }
     }
     if atomic_write(&p, &serde_json::to_string_pretty(&v).unwrap_or_default()).is_err() {
@@ -2803,6 +2880,71 @@ mod deepy_roundtrip_tests {
     }
 
     #[test]
+    fn deepy_status_normalizes_performance_keys() {
+        let td = TestDataDir::new();
+        td.seed_wgp_config(
+            r#"{"deepy_enabled":1,"deepy_vram_mode":"always_loaded","deepy_context_tokens":1234,"deepy_compaction_type":"summarize_thinking","deepy_repetition_penalty":false,"deepy_model_speed":"standard","deepy_model_size":"larger"}"#,
+        );
+        let s = deepy_status();
+        assert_eq!(s["vramMode"], "always_loaded");
+        // Below upstream's 20480 floor clamps up in the panel.
+        assert_eq!(s["contextTokens"], 20480);
+        assert_eq!(s["compactionType"], "summarize");
+        assert_eq!(s["compactionThinking"], true);
+        assert_eq!(s["repetitionPenalty"], false);
+        assert_eq!(s["modelSpeed"], "standard");
+        assert_eq!(s["modelSize"], "larger");
+        // Missing/unknown values fall back to upstream defaults.
+        td.seed_wgp_config(r#"{"deepy_enabled":1,"deepy_vram_mode":"bogus"}"#);
+        let s = deepy_status();
+        assert_eq!(s["vramMode"], "unload");
+        assert_eq!(s["contextTokens"], 20480);
+        assert_eq!(s["compactionType"], "discard");
+        assert_eq!(s["compactionThinking"], false);
+        assert_eq!(s["repetitionPenalty"], true);
+        assert_eq!(s["modelSpeed"], "fast");
+        assert_eq!(s["modelSize"], "smaller");
+    }
+
+    #[test]
+    fn deepy_set_preserves_tuned_performance_and_prefs() {
+        let td = TestDataDir::new();
+        td.seed_wgp_config(
+            r#"{"llm_engines":{},"deepy_multi_session":"selectable","deepy_vram_mode":"always_loaded","deepy_context_tokens":48000,"deepy_kv_cache_quantization":"q4","deepy_repetition_penalty":false,"deepy_compaction_type":"summarize","deepy_compaction_thinking":true,"deepy_tool_gen_image":"My Template","deepy_model_speed":"standard","deepy_model_size":"larger"}"#,
+        );
+        let r = deepy_set(
+            "zero".into(),
+            None,
+            Some(serde_json::json!(4)),
+            None,
+            Some("gguf".into()),
+            None,
+        );
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap(), "{r}");
+        let c = td.read_wgp_config();
+        assert_eq!(c["deepy_vram_mode"], "always_loaded");
+        assert_eq!(c["deepy_context_tokens"], 48000);
+        assert_eq!(c["deepy_kv_cache_quantization"], "q4");
+        assert_eq!(c["deepy_repetition_penalty"], false);
+        assert_eq!(c["deepy_compaction_type"], "summarize");
+        assert_eq!(c["deepy_compaction_thinking"], true);
+        assert_eq!(c["deepy_tool_gen_image"], "My Template");
+        // Switching to Prime keeps the user's Speed/Size preference.
+        let r = deepy_set(
+            "prime".into(),
+            Some("opencode".into()),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap(), "{r}");
+        let c = td.read_wgp_config();
+        assert_eq!(c["deepy_model_speed"], "standard");
+        assert_eq!(c["deepy_model_size"], "larger");
+    }
+
+    #[test]
     fn deepy_set_writes_coherent_config() {
         let td = TestDataDir::new();
         td.seed_wgp_config(SEED_CFG);
@@ -2831,7 +2973,11 @@ mod deepy_roundtrip_tests {
         assert_eq!(c["llm_engines"]["deepy"], "qwen35_9b");
         assert_eq!(c["deepy_vram_mode"], "unload");
         assert_eq!(c["deepy_context_tokens"], 20480);
-        assert_eq!(c["deepy_tool_gen_image"], "Krea 2 Turbo (8 Steps)");
+        assert_eq!(c["deepy_tool_gen_image"], "Qwen Image 2.1 Turbo 8 Steps");
+        assert_eq!(
+            c["deepy_tool_gen_video_with_refs"],
+            "MiniMax H3 Ref2VA Pruned PDD 8 Steps"
+        );
         // Seed had no enhancer_mode and none was passed, so the documented
         // button-only default (1) applies.
         assert_eq!(c["enhancer_mode"], 1);
@@ -2894,6 +3040,12 @@ mod deepy_roundtrip_tests {
         assert_eq!(c["llm_engines"]["deepy"], "codex");
         assert_eq!(c["llm_engines"]["profiles"]["codex"]["executable"], "codex");
         assert!(c.get("deepy_prime_mcp_servers").is_some());
+        assert_eq!(
+            c["deepy_prime_custom_system_prompt"],
+            "Use the current Speed and Model Size preferences for choices left unspecified by the user when selecting beyond configured templates."
+        );
+        assert_eq!(c["deepy_model_speed"], "fast");
+        assert_eq!(c["deepy_model_size"], "smaller");
         // sessions=None preserves the existing session prefs
         assert_eq!(c["deepy_session_reset_mode"], "reset_session");
         assert_eq!(c["deepy_session_gallery_media_mode"], "copy");
