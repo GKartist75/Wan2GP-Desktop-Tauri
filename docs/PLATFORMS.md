@@ -333,6 +333,19 @@ Uninstall: drag the app to the Bin; if auto-start was enabled,
 
 - GPU work runs on **MPS**; there are no CUDA or ROCm paths, so the DLSS card,
   the GPU kernel-wheels card and the Triton/MSVC toolchain are hidden.
+- **MPS failures are upstream bugs, not install problems.** Manage →
+  Troubleshooting shows an *Apple Silicon (MPS) — known upstream bugs* card on
+  macOS (hidden elsewhere) mapping the console line to its upstream issue:
+  `cudaHostRegister` / `L2_cache_size` / `/proc/self/smaps` / Metal command
+  buffer / no-error black frames → #2554, #2552, #2545, #2014, #2496. The
+  startup-crash triage recognises the same signatures and says so instead of
+  offering a settings retry; *Report an issue…* carries the accelerator line
+  (`MPS (mps_available=true, cuda_available=false)`), not `CUDA ?`.
+- The GPU probes are backend-aware: *Verify GPU compute* runs a float32 GEMM on
+  MPS and reports `mode mps` (it used to run the CUDA kernel probe, which
+  reported every wheel as missing). The NVIDIA arch gate — a wheel whose
+  `get_arch_list()` cannot run this card — is NVIDIA-only: ROCm reports gfx
+  tags in the same field and Apple Silicon has no kernel wheels.
 - The launcher reports **unified memory** as VRAM (`sysctl -n hw.memsize`), since
   the GPU addresses the same pool as the CPU. Falls back to 8 GB if `sysctl`
   cannot be read.

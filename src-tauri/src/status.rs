@@ -292,7 +292,19 @@ except Exception as e:
             }
         }
     }
-    let out = serde_json::json!({"env": env, "versions": serde_json::Value::Object(versions), "kernelWheels": out_wheels, "kernelProfile": profile, "profile": profile_obj, "spike": false});
+    // Kernel wheels that the profile cannot run (e.g. WGPKernels on a GTX 10).
+    // Upstream probes WGPKernels at startup and its FP8 probe has no
+    // capability guard, so a stray install can kill the process before the UI
+    // — surface it here with the versions the panel already shows.
+    let installed_kernel_wheels: Vec<String> =
+        ["wgpkernels", "nunchaku", "flash_attn", "sageattention"]
+            .iter()
+            .filter(|k| versions.contains_key(**k))
+            .map(|k| k.to_string())
+            .collect();
+    let unsupported_kernels =
+        crate::hw::unsupported_kernel_wheels(&profile, &installed_kernel_wheels);
+    let out = serde_json::json!({"env": env, "versions": serde_json::Value::Object(versions), "kernelWheels": out_wheels, "kernelProfile": profile, "profile": profile_obj, "unsupportedKernels": unsupported_kernels, "spike": false});
     // cache for 5s (mtime-keyed: pip changes invalidate instantly)
     if let Ok(mut g) = LAST_STATUS.lock() {
         *g = Some((std::time::Instant::now(), sp_mtime, out.clone()));

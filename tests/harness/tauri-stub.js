@@ -30,15 +30,22 @@
   // ?dialog=ok|cancel is the answer confirm_dialog gives. Default cancel keeps
   // a destructive path from running just because the harness was opened.
   var dialogReply = (/[?&]dialog=(ok|cancel)/.exec(location.search) || [])[1] || 'cancel'
+  // ?unsupported=1 fakes a GTX 10 with a stray WGPKernels install, so the
+  // dashboard's "this wheel cannot run here" row and its Remove button render.
+  var unsupported = /[?&]unsupported=1/.test(location.search)
   var STATUS = {
     ok: true, installed: true, running: true, mode: 'zero',
     hasActiveEnv: true, envPath: 'C:\\Wan2GP\\envs\\py311',
+    // The active-env branch reads status.env.name/type; without it the
+    // dashboard falls back to the "no active environment" layout.
+    env: { name: 'py311', type: 'uv', path: 'C:\\Wan2GP\\envs\\py311' },
     deepyEnabled: true, deepyType: 'zero', enhancerEnabled: 4,
     enhancerMode: 1, currentEngine: 'qwen35_9b',
     promptEnhancer: true, promptEnhancerQuantization: 'gguf',
     sessionMode: 'selectable', sessionResetMode: 'reset_session',
     sessionGalleryMediaMode: 'copy', engines: [], profiles: {},
-    kernelProfile: 'RTX_50',
+    kernelProfile: unsupported ? 'GTX_10' : 'RTX_50',
+    unsupportedKernels: unsupported ? ['wgpkernels'] : [],
     gpu: { vendor: 'NVIDIA', name: 'NVIDIA GeForce RTX 5090', vramGb: 32 },
     versions: { 'claude-agent-sdk': '0.1.66', torch: '2.10.0', wan2gp: '1.3.5' },
     wheels: [
@@ -125,6 +132,10 @@
     if (name === 'install_prerequisite')
       return { ok: true, success: true, ready: true }
     if (name === 'get_status' || name === 'status') return STATUS
+    // Kernel-wheel removal (dashboard "cannot run here" row, startup triage).
+    if (name === 'uninstall_package') return { ok: true, success: true }
+    if (name === 'manage_list')
+      return [{ name: 'py311', type: 'uv', active: true }]
     // memory_profile_apply returns success/applied, NOT just ok — the callers
     // branch on r.success, so a stub without it makes every save look failed.
     if (name === 'memory_profile_apply')

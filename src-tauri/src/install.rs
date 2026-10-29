@@ -1544,27 +1544,131 @@ pub(crate) fn amd_collect_env(py: &Path, repo: &Path) -> Option<String> {
     }
 }
 
-/// Full env verification: torch imports AND (on NVIDIA) the GPU is visible.
-/// Ok(torch_line) on success; Err(message) otherwise. Shared by the
-/// pre-install reuse check and the post-install gate so both judge by the
-/// same rule. A cuda=False Err contains "cuda=False" (driver gap —
-/// reinstalling won't fix it); any other Err means a broken env.
+/// Probe body for `smoke_verify`: everything the gate needs in one JSON line.
+/// `import torch` alone is not proof — a cu128 wheel without sm_61 SASS
+/// imports fine, reports cuda=True, and dies at the first kernel launch
+/// (launcher #84 class, PyTorch 2.8+ dropped Maxwell/Pascal from cu128).
+const SMOKE_PROBE: &str = r#"import json, torch
+d = {"torch": torch.__version__, "cuda": torch.cuda.is_available()}
+try:
+    d["mps"] = bool(torch.backends.mps.is_available())
+except Exception:
+    d["mps"] = False
+if d["cuda"]:
+    try:
+        d["cc"] = list(torch.cuda.get_device_capability(0))
+    except Exception:
+        d["cc"] = None
+    try:
+        d["arch"] = torch.cuda.get_arch_list()
+    except Exception:
+        d["arch"] = None
+print(json.dumps(d))"#;
+
+/// Full env verification: torch imports AND the GPU is visible AND (on
+/// NVIDIA/ROCm) the wheel carries kernels for this card. Ok(summary) on
+/// success; Err(message) otherwise. Shared by the pre-install reuse check
+/// and the post-install gate so both judge by the same rule. A cuda=False
+/// Err contains "cuda=False" (driver gap — reinstalling won't fix it); any
+/// other Err means a broken env.
 fn smoke_verify(py: &Path, repo: &Path) -> Result<String, String> {
-    let out = silent_command(py).args(["-c", "import torch; print('torch ' + torch.__version__ + ' cuda=' + str(torch.cuda.is_available()))"]).current_dir(repo).output()
+    let out = silent_command(py)
+        .args(["-c", SMOKE_PROBE])
+        .current_dir(repo)
+        .output()
         .map_err(|e| format!("`import torch` failed to spawn ({e})"))?;
     if !out.status.success() {
         return Err("`import torch` fails in the environment".into());
     }
-    let line = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let vendor = get_gpu_info_sync()
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let probe: serde_json::Value = stdout
+        .lines()
+        .rev()
+        .find(|l| l.trim_start().starts_with('{'))
+        .and_then(|l| serde_json::from_str(l).ok())
+        .ok_or("torch probe printed no result JSON")?;
+    let torch_ver = probe
+        .get("torch")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?")
+        .to_string();
+    let cuda = probe.get("cuda").and_then(|v| v.as_bool()).unwrap_or(false);
+    let mps = probe.get("mps").and_then(|v| v.as_bool()).unwrap_or(false);
+    let cc = probe.get("cc").and_then(|c| c.as_array()).and_then(|a| {
+        Some((
+            u32::try_from(a.first()?.as_u64()?).ok()?,
+            u32::try_from(a.get(1)?.as_u64()?).ok()?,
+        ))
+    });
+    let arch: Vec<String> = probe
+        .get("arch")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| e.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let info = get_gpu_info_sync();
+    let vendor = info
         .get("vendor")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_uppercase();
-    if vendor == "NVIDIA" && !line.contains("cuda=True") {
-        return Err("torch can't see the NVIDIA GPU (cuda=False) — likely a driver/CUDA mismatch. Update to NVIDIA R580+, reboot, then repair the environment.".into());
+    let name = info.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let profile = crate::hw::kernel_profile_key(&vendor, name);
+    let line = format!(
+        "torch {torch_ver} cuda={cuda} mps={mps}{}",
+        if cuda && !arch.is_empty() {
+            format!(" arch=[{}]", arch.join(" "))
+        } else {
+            String::new()
+        }
+    );
+
+    if vendor == "NVIDIA" && !cuda {
+        let hint = if profile == "GTX_10" {
+            "GTX 10 (Pascal) needs the proprietary R580 branch: driver 590 and the \
+             open kernel modules no longer support Pascal (Arch/CachyOS: install \
+             nvidia-580xx-utils + nvidia-580xx-dkms instead of nvidia/nvidia-open)"
+        } else {
+            "update to NVIDIA R580+ (or the newest branch your card still supports)"
+        };
+        return Err(format!(
+            "torch can't see the NVIDIA GPU (cuda=False) — likely a driver/CUDA mismatch. {hint}, reboot, then repair the environment."
+        ));
     }
-    if vendor == "AMD" && !line.contains("cuda=True") {
+    // A wheel that imports, sees the GPU, and still has no SASS for it fails
+    // exactly like a broken install only later — at the first kernel launch.
+    // NVIDIA only: ROCm reports gfx tags in the same field, and hipcc wheels
+    // legitimately carry just the one target. Empty arch list = "cannot
+    // verify" (CPU-only build or an unusual torch fork); don't fail what we
+    // cannot judge.
+    if vendor == "NVIDIA" && cuda {
+        if let Some(cc) = cc {
+            if !arch.is_empty() && !crate::hw::arch_list_supports_cc(&arch, cc) {
+                let tag = crate::hw::cc_sm_tag(cc);
+                return Err(format!(
+                    "torch {torch_ver} has no CUDA kernels for {tag}: its arch list is [{}]. \
+                     Every kernel launch will fail with \"no kernel image is available for \
+                     execution on the device\". PyTorch dropped Maxwell/Pascal from cu128 \
+                     builds starting with 2.8 — 2.7.1+cu128 is the last one that carries them. \
+                     Install a torch build that includes {tag}, then repair the environment.",
+                    arch.join(" ")
+                ));
+            }
+        }
+    }
+    if vendor == "APPLE" && !mps {
+        return Err(
+            "This Mac can't run MPS: torch is installed, but torch.backends.mps.is_available() \
+             is False. Apple Silicon needs an arm64 Python (not Rosetta/x86_64) and a torch \
+             build with MPS — reinstall the environment; Intel Macs are not supported."
+                .into(),
+        );
+    }
+    if vendor == "AMD" && !cuda {
         let env = amd_collect_env(py, repo).unwrap_or_default();
         let suffix = if env.is_empty() {
             String::new()

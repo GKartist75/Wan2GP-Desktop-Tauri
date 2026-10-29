@@ -136,6 +136,10 @@ async function refreshDashboard() {
           status.kernelProfile,
           status.osKey,
         );
+        renderUnsupportedKernels(
+          status.unsupportedKernels,
+          status.kernelProfile,
+        );
       } else {
         const kwCard = $("kernelWheelsSubsection");
         if (kwCard) kwCard.style.display = "none";
@@ -302,6 +306,10 @@ async function refreshDashboard() {
         status.kernelWheels,
         status.kernelProfile,
         status.osKey,
+      );
+      renderUnsupportedKernels(
+        status.unsupportedKernels,
+        status.kernelProfile,
       );
       // Sparge Attn comes from the expected GPU profile (not a detected version),
       // so it's surfaced here to avoid a separate duplicate "GPU Profile Overview".

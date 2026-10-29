@@ -4,6 +4,43 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- **macOS/Apple Silicon failures now name the upstream bug instead of guessing.**
+  WanGP's MPS shim still carries CUDA-isms that fail in ways a Windows report
+  never sees (upstream #2545 `L2_cache_size`, #2552/#2554 `torch.cuda.cudart()`
+  is None, #2554 `/proc/self/smaps`, #2014 Metal command-buffer abort, #2496
+  no-op CUDA events → noise/black frames). Both GPU probes were CUDA-only, so
+  the launcher reported a broken install for a working one: *Test torch* said
+  `torch 2.14.1 + CUDA ? — cuda_available=false`, *Verify GPU compute* went
+  through the CUDA kernel probe (every wheel reported missing), and the
+  bundled report had no MPS line at all. The torch probe now reports
+  `mps_available` and `get_arch_list()`, the report's accelerator line reads
+  `MPS (mps_available=true, cuda_available=false)` or `CPU only`, *Verify GPU
+  compute* passes on a real MPS float32 GEMM (`mode mps`), and the startup
+  crash triage recognises the five signatures above and links the tracker
+  instead of offering a settings retry that cannot help. Manage →
+  Troubleshooting gained an *Apple Silicon (MPS) — known upstream bugs* card
+  (macOS only) with the exact console line → issue mapping.
+- **A kernel wheel with no code for this GPU is caught before it kills startup,
+  and can be removed in one click.** Upstream probes installed kernel wheels
+  at startup and its FP8 probe has no compute-capability guard, so a stray
+  `wgpkernels` on a GTX 10 (upstream #2410's profile-substring class of bug)
+  aborts the process with `no kernel image is available for execution on the
+  device` — the signature launcher #84 shipped a manual workaround for.
+  `hw::arch_list_supports_cc` now decides compatibility the way the driver
+  does: exact SASS, SASS forward within one major, PTX at or below the card
+  (JIT). Install's smoke verify and *Verify GPU compute* both fail early with
+  the arch list and the fix, the dashboard lists
+  `unsupportedKernels` with a *Remove* button next to the kernel-wheels card,
+  and the startup triage offers the uninstall (plus the stale
+  `spas_sage_attn`-without-`sageattention` import) instead of the pointless
+  `--config` retry.
+- **The dashboard's error note was invisible by construction.** `style.css` set
+  `display: none` on `.env-detail-error` while every caller revealed it with
+  `style.display = ""` — an inline empty value falls back to the stylesheet, so
+  "Could not read environment status" and "Package scan failed" never appeared.
+  The rule no longer sets `display`; the two notes stay hidden until their
+  code shows them, and the new kernel-wheel note reuses the same element class.
+
 ## [0.10.31] — 2026-10-27
 
 - **A YuE2 settings crash is now diagnosed and repaired instead of retried.**

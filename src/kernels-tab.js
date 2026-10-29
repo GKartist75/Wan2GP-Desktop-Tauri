@@ -4,6 +4,61 @@
 // defined by app.js, and top-level statements here only register listeners,
 // so loading this file after app.js is safe.
 
+// ── Installed kernel wheels this GPU cannot run ──
+// Upstream probes installed kernel wheels at startup and its FP8 probe has no
+// compute-capability guard, so a stray WGPKernels on a GTX 10 aborts the
+// process with "no kernel image is available for execution on the device"
+// (launcher #84). The wheel is inert without kernels and is not part of the
+// profile, so the fix is a one-click uninstall — offered here, where the user
+// sees it before the crash, and by the startup-crash triage after it.
+function renderUnsupportedKernels(list, kernelProfile) {
+  const el = $("envUnsupportedKernels");
+  if (!el) return;
+  const pkgs = Array.isArray(list) ? list : [];
+  el.textContent = "";
+  if (!pkgs.length) {
+    el.style.display = "none";
+    return;
+  }
+  el.style.display = "";
+  el.append(
+    document.createTextNode(
+      pkgs.join(", ") +
+        " is installed, but " +
+        (kernelProfile || "this GPU") +
+        " cannot run it — it can crash startup. ",
+    ),
+  );
+  pkgs.forEach(function (pkg) {
+    const btn = document.createElement("button");
+    btn.className = "btn btn-ghost small";
+    btn.textContent = "Remove " + pkg;
+    btn.title = "pip uninstall " + pkg + " in the active environment";
+    btn.addEventListener("click", async function (ev) {
+      ev.stopPropagation();
+      btn.disabled = true;
+      btn.textContent = "Removing…";
+      let res = null;
+      try {
+        res = await window.w2gp.uninstallPackage(pkg);
+      } catch (e) {
+        res = { error: String((e && e.message) || e) };
+      }
+      if (res && res.success) {
+        showToast("✓ Removed " + pkg);
+        setTimeout(refreshDashboard, 1500);
+      } else {
+        btn.disabled = false;
+        btn.textContent = "Remove " + pkg;
+        showToast(
+          "✗ Remove failed: " + ((res && res.error) || "unknown"),
+        );
+      }
+    });
+    el.append(btn);
+  });
+}
+
 // ── GPU Kernel Wheels (profile-driven, subsection of Active Environment) ──
 // Renders the wheels resolved from setup_config.json for the active GPU:
 // each row shows ✓ (current) / ⚠ (installed, mismatch) / ✗ (not installed).

@@ -243,6 +243,122 @@ window.w2gp.onWangpExit(async (c) => {
     } catch (e) {
       appendLog("[!] YuE2 triage failed: " + errText(e));
     }
+    // Kernel-package crashes (launcher #84 class): an optional wheel whose
+    // kernels were never built for this GPU dies at the first kernel launch,
+    // and upstream's FP8 probe has no capability guard, so the sticky CUDA
+    // error can escape as an uncaught RuntimeError. A clean settings folder
+    // cannot fix this — the wheel can, by leaving.
+    try {
+      const wheelCrashes = [
+        {
+          re: /no kernel image is available for execution on the device/i,
+          pkg: "wgpkernels",
+          what: "it carries no CUDA kernels for this GPU (compute capability mismatch)",
+        },
+        {
+          re: /No package metadata was found for sageattention/i,
+          pkg: "spas_sage_attn",
+          what:
+            "upstream's startup import needs SageAttention package metadata when SpargeAttn is installed",
+        },
+      ];
+      for (const k of wheelCrashes) {
+        if (!k.re.test(tail)) continue;
+        const choice = await window.w2gp.confirmDialog({
+          title: "Installed kernel wheel does not match this GPU",
+          message:
+            "Wan2GP died at startup because " +
+            k.pkg +
+            " is installed and " +
+            k.what +
+            ".",
+          detail:
+            (lastErr ? "Last error lines:\n" + lastErr + "\n\n" : "") +
+            "A temporary settings folder cannot help — this is the environment, not wgp_config.json. Remove " +
+            k.pkg +
+            " from the active environment and relaunch? No supported setup on this GPU needs it.",
+        });
+        if (choice === "ok") {
+          appendLog("[*] Removing " + k.pkg + " from the active environment…");
+          let res = null;
+          // uninstall_package rejects on a failed pip run; report that as the
+          // removal result rather than as "triage failed".
+          try {
+            res = await window.w2gp.uninstallPackage(k.pkg);
+          } catch (e) {
+            res = { error: errText(e) };
+          }
+          if (res && res.success) {
+            appendLog("[✓] Removed " + k.pkg + " — relaunching.");
+            if (!clickLaunch())
+              appendLog("[!] Use a launch button to start Wan2GP again.");
+          } else {
+            appendLog(
+              "[!] Could not remove " +
+                k.pkg +
+                ": " +
+                ((res && res.error) || "unknown"),
+            );
+          }
+          return;
+        }
+        appendLog(
+          "[i] Kept " +
+            k.pkg +
+            " — continuing with the generic startup triage.",
+        );
+        break;
+      }
+    } catch (e) {
+      appendLog("[!] Kernel-wheel triage failed: " + errText(e));
+    }
+    // Apple Silicon: the v17 MPS blockers are upstream bugs that read like a
+    // broken install. Name them and link the tracker instead of offering a
+    // retry that cannot work.
+    try {
+      const hostOs =
+        typeof document !== "undefined" &&
+        document.body &&
+        document.body.dataset &&
+        document.body.dataset.platform;
+      // w2gp.js writes "darwin"; older builds wrote "macos".
+      const isMac = hostOs === "darwin" || hostOs === "macos";
+      if (isMac) {
+        const mpsKnown = [
+          [
+            /cudaHostRegister/,
+            "mmgp pins RAM through torch.cuda.cudart(), which is None on Apple Silicon — upstream #2554 / #2552",
+          ],
+          [
+            /L2_cache_size/,
+            "the MPS shim has no L2_cache_size, so the first denoising step dies — upstream #2545",
+          ],
+          [
+            /\/proc\/self\/smaps/,
+            "upstream reads a Linux-only /proc file on macOS — upstream #2554",
+          ],
+          [
+            /commit an already committed command buffer/,
+            "Metal aborts the command buffer — upstream #2014",
+          ],
+        ];
+        for (const [re, line] of mpsKnown) {
+          if (!re.test(tail)) continue;
+          await window.w2gp.confirmDialog({
+            title: "Known Apple Silicon (MPS) issue",
+            message:
+              "This is an upstream WanGP bug, not a broken install: " + line + ".",
+            detail:
+              (lastErr ? "Last error lines:\n" + lastErr + "\n\n" : "") +
+              "No settings reset, repair, or reinstall can fix it — the launcher ships the same code. Follow the upstream issue (deepbeepmeep/WanGP) for the fix; System → Troubleshooting → Report an issue… attaches the details if you want to add a report.",
+          });
+          appendLog("[i] Apple Silicon MPS bug: " + line);
+          return;
+        }
+      }
+    } catch (e) {
+      appendLog("[!] MPS triage failed: " + errText(e));
+    }
     try {
       const choice = await window.w2gp.confirmDialog({
         title: "Wan2GP crashed on startup",

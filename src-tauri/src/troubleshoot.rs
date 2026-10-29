@@ -166,7 +166,13 @@ pub fn troubleshoot_cuda_check() -> serde_json::Value {
     let Some(py) = active_python() else {
         return serde_json::json!({"ok": false, "error": "No Python environment installed — run Install first"});
     };
-    let probe = "import torch, json; print(json.dumps({\"torch\": torch.__version__, \"cuda\": torch.version.cuda, \"available\": torch.cuda.is_available(), \"devices\": torch.cuda.device_count(), \"name\": (torch.cuda.get_device_name(0) if torch.cuda.is_available() and torch.cuda.device_count()>0 else None)}))";
+    let probe = r#"import json, torch
+d = {"torch": torch.__version__, "cuda": torch.version.cuda, "available": torch.cuda.is_available(), "devices": torch.cuda.device_count(), "name": (torch.cuda.get_device_name(0) if torch.cuda.is_available() and torch.cuda.device_count() > 0 else None), "arch": torch.cuda.get_arch_list()}
+try:
+    d["mps"] = bool(torch.backends.mps.is_available())
+except Exception:
+    d["mps"] = False
+print(json.dumps(d))"#;
     match silent_command(&py).args(["-c", probe]).output() {
         Ok(o) if o.status.success() => {
             let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
@@ -203,7 +209,37 @@ pub fn troubleshoot_gpu_compute() -> serde_json::Value {
     let profile = kernel_profile_key(vendor, name);
     if !profile.starts_with("AMD") {
         return match crate::amd::run_compute_probe(&py, None) {
-            Ok(p) => verify_kernels(&py, p.torch, p.device, "native", false, None),
+            // Apple Silicon: MPS has no kernel wheels to import, and the
+            // CUDA-only kernel probe would report every wheel as broken.
+            Ok(p) if p.backend == "mps" => serde_json::json!({
+                "ok": true,
+                "torch": p.torch,
+                "device": p.device,
+                "mode": "mps",
+                "recorded": false
+            }),
+            Ok(p) => {
+                // Same arch gate as install: a wheel without SASS for this
+                // card computes nothing (launcher #84 class).
+                if let Some(cc) = p.cc {
+                    if !p.arch.is_empty() && !crate::hw::arch_list_supports_cc(&p.arch, cc) {
+                        return serde_json::json!({
+                            "ok": false,
+                            "torch": p.torch,
+                            "device": p.device,
+                            "mode": "native",
+                            "error": format!(
+                                "torch {} has no CUDA kernels for {}: arch list is [{}]. Every kernel launch fails with \"no kernel image is available\". Install a torch build that includes {}, then repair the environment.",
+                                p.torch,
+                                crate::hw::cc_sm_tag(cc),
+                                p.arch.join(" "),
+                                crate::hw::cc_sm_tag(cc)
+                            )
+                        });
+                    }
+                }
+                verify_kernels(&py, p.torch, p.device, "native", false, None)
+            }
             Err(e) => serde_json::json!({"ok": false, "error": e}),
         };
     }
@@ -497,6 +533,38 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
         .get("available")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
+    // macOS has no CUDA at all: reporting "CUDA ? / cuda_available=false" as
+    // the only accelerator line reads like a broken install. Name the backend
+    // that actually exists, and include the arch list on CUDA so a
+    // "no kernel image" report can be judged from the bundle alone.
+    let mps_ok = cuda
+        .get("mps")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let arch_list = cuda
+        .get("arch")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| e.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default();
+    let accel_line = if cuda_ok {
+        format!(
+            "CUDA {cuda_v} (cuda_available=true{})",
+            if arch_list.is_empty() {
+                String::new()
+            } else {
+                format!(", arch=[{arch_list}]")
+            }
+        )
+    } else if mps_ok {
+        "MPS (mps_available=true, cuda_available=false)".to_string()
+    } else {
+        format!("CPU only (cuda_available=false, mps_available={mps_ok})")
+    };
     let py_ver = silent_command(
         active_python()
             .map(|p| p.to_string_lossy().to_string())
@@ -609,10 +677,11 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
         crate::launcher_gpu_summary(),
     );
     let md = format!(
-        "**Launcher** v{ver} ({os}/{arch}){upstream}\n**GPU** {gpu} ({vendor}, {vram} MB VRAM){gpu_pin_line}\n**Python** {py}\n**Torch** {torch} + CUDA {cuda_v} (cuda_available={cuda_ok}){amd}\n**Launch** port={port} server={server} share={share} gpu={gpudev} verbose={verbose} args=`{args}`\n**Profiles** video={vp} image={ip} audio={ap} quant={q}{v17}\n**Log tail**\n```\n{tail}\n```",
+        "**Launcher** v{ver} ({os}/{arch}){upstream}\n**GPU** {gpu} ({vendor}, {vram} MB VRAM){gpu_pin_line}\n**Python** {py}\n**Torch** {torch} + {accel}{amd}\n**Launch** port={port} server={server} share={share} gpu={gpudev} verbose={verbose} args=`{args}`\n**Profiles** video={vp} image={ip} audio={ap} quant={q}{v17}\n**Log tail**\n```\n{tail}\n```",
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
         upstream = upstream_line,
+        accel = accel_line,
         gpu = gpu.get("name").and_then(|v| v.as_str()).unwrap_or("?"),
         vendor = gpu.get("vendor").and_then(|v| v.as_str()).unwrap_or("?"),
         vram = gpu.get("vramMB").and_then(|v| v.as_str()).unwrap_or("?"),

@@ -514,6 +514,18 @@
             <span class="token-hint" id="tsFailsafeStatus" style="margin-left:8px"></span>
           </div>
         </div>
+        <div class="settings-section" id="macosMpsCard" style="display:none">
+          <h3>Apple Silicon (MPS) — known upstream bugs</h3>
+          <p class="token-hint">macOS runs through WanGP's MPS shim, which still has open upstream blockers. These are <strong>not</strong> launcher or environment problems — a settings reset, repair or reinstall changes none of them. If generation fails or the output is black/noisy, check which line matches your console:</p>
+          <ul class="token-hint" style="margin:6px 0 0 18px">
+            <li><code>'NoneType' object has no attribute 'cudaHostRegister'</code> — mmgp pins RAM through <code>torch.cuda.cudart()</code>, which is None on MPS (<a href="https://github.com/deepbeepmeep/WanGP/issues/2554" style="color:var(--accent)">#2554</a>, <a href="https://github.com/deepbeepmeep/WanGP/issues/2552" style="color:var(--accent)">#2552</a>)</li>
+            <li><code>'_CudaDeviceProperties' object has no attribute 'L2_cache_size'</code> — dies at the first denoising step (<a href="https://github.com/deepbeepmeep/WanGP/issues/2545" style="color:var(--accent)">#2545</a>)</li>
+            <li><code>No such file or directory: '/proc/self/smaps'</code> — a Linux-only path in <code>ram_debug.py</code> (<a href="https://github.com/deepbeepmeep/WanGP/issues/2554" style="color:var(--accent)">#2554</a>)</li>
+            <li><code>commit an already committed command buffer</code> / <code>Abort trap: 6</code> — Metal aborts at step 1 (<a href="https://github.com/deepbeepmeep/WanGP/issues/2014" style="color:var(--accent)">#2014</a>)</li>
+            <li>Black frames or blocky noise with <em>no</em> error — no-op CUDA events let mmgp overwrite staging slots mid-copy (<a href="https://github.com/deepbeepmeep/WanGP/issues/2496" style="color:var(--accent)">#2496</a>, <a href="https://github.com/deepbeepmeep/WanGP/issues/2545" style="color:var(--accent)">#2545</a>)</li>
+          </ul>
+          <p class="token-hint" style="margin-top:6px">With those patches applied, a 1.3B clip completes on an M5 Max — the shim fixes are tracked in <a href="https://github.com/deepbeepmeep/WanGP/issues/2501" style="color:var(--accent)">#2501</a> and <a href="https://github.com/deepbeepmeep/WanGP/issues/2552" style="color:var(--accent)">#2552</a>.</p>
+        </div>
         <div class="settings-section" style="margin-top:12px">
           <h3>Port conflict</h3>
           <p class="token-hint">Fixes “Port 7860 is already in use”. Check who owns the port, kill only a Python owner, or move to the next free port.</p>
@@ -1335,6 +1347,7 @@
               <div class="spec-row"><span class="spec-label">chumpy</span><span class="spec-dot" id="dotChumpy"></span><span class="spec-value" id="specChumpy">—</span></div>
               <div class="spec-row"><span class="spec-label">smplfitter</span><span class="spec-dot" id="dotSmplfitter"></span><span class="spec-value" id="specSmplfitter">—</span></div>
             </div>
+            <div class="env-detail-error" id="envUnsupportedKernels" style="display:none"></div>
           </div>
         </div>
         <div class="env-list" id="envList" style="margin-top:6px"></div>

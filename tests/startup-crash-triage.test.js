@@ -23,9 +23,16 @@ const SRC = fs.readFileSync(
 );
 
 /** Boot resetui-tab.js with stub globals; returns the captured exit handler. */
-function load({ choice = "cancel", tail = "", yue2 = null } = {}) {
+function load({
+  choice = "cancel",
+  tail = "",
+  yue2 = null,
+  platform = "win32",
+  uninstallOk = true,
+} = {}) {
   const log = [];
   const dialogs = [];
+  const removed = [];
   const clicks = { browser: 0 };
   const browserBtn = {
     disabled: true,
@@ -48,15 +55,26 @@ function load({ choice = "cancel", tail = "", yue2 = null } = {}) {
         handlers.exit = cb;
       },
       destroyBrowserView: () => Promise.resolve(),
+      uninstallPackage: async (pkg) => {
+        removed.push(pkg);
+        // The Rust command rejects on a failed pip run (Err), so both shapes
+        // are real and both must be reported, not thrown.
+        if (uninstallOk === "throws")
+          throw new Error("pip uninstall wgpkernels failed");
+        return uninstallOk
+          ? { ok: true, success: true }
+          : { ok: false, success: false, error: "pip said no" };
+      },
       confirmDialog: async (o) => {
         dialogs.push(o);
-        return choice;
+        return typeof choice === "function" ? choice(o) : choice;
       },
     },
     _getLogTail: () => tail,
   };
   const ctx = {
     window,
+    document: { body: { dataset: { platform } } },
     $: (id) => (id === "browserBtn" ? browserBtn : null),
     appendLog: (m) => log.push(String(m)),
     showToast: () => {},
@@ -66,7 +84,8 @@ function load({ choice = "cancel", tail = "", yue2 = null } = {}) {
     refreshMainLan: () => {},
     hideBrowserRunningUI: () => {},
     resetBrowserLaunchUI: () => {},
-    errText: (e) => String(e),
+    // app.js: the message, not "Error: " + message.
+    errText: (e) => (e && e.message) || (e == null ? "unknown error" : String(e)),
     serverMode: "browser",
     _expectServerExit: false,
     _expectServerExitTimer: null,
@@ -78,7 +97,7 @@ function load({ choice = "cancel", tail = "", yue2 = null } = {}) {
   vm.createContext(ctx);
   vm.runInContext(SRC, ctx, { filename: "resetui-tab.js" });
   const emitLog = (line) => handlers.launchLog.forEach((cb) => cb(line));
-  return { ctx, log, dialogs, clicks, exit: handlers.exit, emitLog };
+  return { ctx, log, dialogs, clicks, removed, exit: handlers.exit, emitLog };
 }
 
 /** Arm the state a launch arms, then fire the exit payload. */
@@ -225,4 +244,111 @@ test("an unrelated crash never scans the outputs", async () => {
   await crash(ctx, exit);
   assert.equal(called, 0);
   assert.equal(dialogs.length, 1, "normal startup triage is untouched");
+});
+
+// ── Kernel-wheel crashes (launcher #84 class) ──
+// An optional wheel built for another compute capability kills the process at
+// the first kernel launch. A throwaway settings folder cannot help, so the
+// triage offers the uninstall instead of --config.
+const NO_KERNEL_TAIL = [
+  "Traceback (most recent call last):",
+  '  File "/home/mk/Wan2GP/wgp.py", line 44, in <module>',
+  "RuntimeError: CUDA error: no kernel image is available for execution on the device",
+].join("\n");
+
+test("a no-kernel-image crash offers to remove WGPKernels and relaunch", async () => {
+  const { ctx, dialogs, exit, removed, clicks, log } = load({
+    choice: "ok",
+    tail: NO_KERNEL_TAIL,
+  });
+  await crash(ctx, exit);
+  assert.equal(dialogs.length, 1);
+  assert.match(dialogs[0].title, /kernel wheel does not match/i);
+  assert.match(dialogs[0].message, /wgpkernels/);
+  assert.deepEqual(removed, ["wgpkernels"]);
+  assert.equal(clicks.browser, 1, "removal is followed by a relaunch");
+  assert.ok(log.some((l) => /Removed wgpkernels/.test(l)));
+  // The empty-settings retry is the wrong tool: it must stay unarmed.
+  assert.notEqual(ctx.window.__safeConfigNextLaunch, true);
+});
+
+test("a stale SpargeAttn import offers to remove spas_sage_attn", async () => {
+  const { ctx, dialogs, exit, removed } = load({
+    choice: "ok",
+    tail:
+      "importlib.metadata.PackageNotFoundError: No package metadata was found for sageattention",
+  });
+  await crash(ctx, exit);
+  assert.equal(dialogs.length, 1);
+  assert.deepEqual(removed, ["spas_sage_attn"]);
+});
+
+test("declining the removal falls back to the generic startup triage", async () => {
+  const { ctx, dialogs, exit, removed } = load({
+    tail: NO_KERNEL_TAIL,
+    // Decline the uninstall, accept the settings retry.
+    choice: (o) => (/kernel wheel/i.test(o.title) ? "cancel" : "ok"),
+  });
+  await crash(ctx, exit);
+  assert.equal(removed.length, 0);
+  assert.equal(dialogs.length, 2, "wheel offer, then the settings-retry offer");
+  assert.match(dialogs[1].title, /crashed on startup/i);
+  assert.equal(ctx.window.__safeConfigNextLaunch, true);
+});
+
+test("a failed uninstall is reported instead of pretending a relaunch fixed it", async () => {
+  const { ctx, dialogs, exit, removed, clicks, log } = load({
+    choice: "ok",
+    tail: NO_KERNEL_TAIL,
+    uninstallOk: false,
+  });
+  await crash(ctx, exit);
+  assert.equal(dialogs.length, 1);
+  assert.deepEqual(removed, ["wgpkernels"]);
+  assert.equal(clicks.browser, 0, "no blind relaunch after a failed removal");
+  assert.ok(log.some((l) => /Could not remove wgpkernels/.test(l)));
+});
+
+// ── Apple Silicon MPS blockers (upstream #2545/#2552/#2554/#2014) ──
+const MPS_TAIL = [
+  "Traceback (most recent call last):",
+  '  File "/Users/m/Wan2GP/mmgp/pinned.py", line 55, in register',
+  "AttributeError: 'NoneType' object has no attribute 'cudaHostRegister'",
+].join("\n");
+
+test("an MPS-only crash names the upstream bug and offers no repair", async () => {
+  const { ctx, dialogs, exit, removed, log } = load({
+    choice: "ok",
+    tail: MPS_TAIL,
+    platform: "darwin",
+  });
+  await crash(ctx, exit);
+  assert.equal(dialogs.length, 1);
+  assert.match(dialogs[0].title, /Apple Silicon/i);
+  assert.match(dialogs[0].message, /#2554/);
+  assert.match(dialogs[0].detail, /No settings reset, repair, or reinstall/);
+  assert.equal(removed.length, 0);
+  assert.equal(ctx.window.__safeConfigNextLaunch, undefined);
+  assert.ok(log.some((l) => /Apple Silicon MPS bug/.test(l)));
+});
+
+test("the MPS signatures stay inert off macOS", async () => {
+  const { ctx, dialogs, exit } = load({ tail: MPS_TAIL, platform: "win32" });
+  await crash(ctx, exit);
+  assert.equal(dialogs.length, 1);
+  assert.match(dialogs[0].title, /crashed on startup/i);
+});
+
+test("a rejected pip uninstall is reported, not swallowed as a triage failure", async () => {
+  const { ctx, dialogs, exit, removed, clicks, log } = load({
+    choice: "ok",
+    tail: NO_KERNEL_TAIL,
+    uninstallOk: "throws",
+  });
+  await crash(ctx, exit);
+  assert.equal(dialogs.length, 1);
+  assert.deepEqual(removed, ["wgpkernels"]);
+  assert.equal(clicks.browser, 0);
+  assert.ok(log.some((l) => /Could not remove wgpkernels: pip uninstall wgpkernels failed/.test(l)));
+  assert.ok(!log.some((l) => /triage failed/.test(l)), "a pip failure is not a triage bug");
 });

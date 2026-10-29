@@ -12,11 +12,28 @@ use std::time::{Duration, Instant};
 
 /// Real-GPU workload probe. Prints one JSON line on stdout; ~10-60s cold
 /// (HIP init dominates). 256-wide keeps it fast on weak GPUs while still
-/// exercising the kernels that failed on gfx1201.
+/// exercising the kernels that failed on gfx1201. On macOS the same probe
+/// runs a float32 GEMM through MPS instead (bf16 needs macOS 14+ and is not
+/// what WanGP's MPS path uses for this check), and both backends report
+/// `get_arch_list()`/compute capability so the caller can prove the wheel
+/// actually carries code for this card.
 pub(crate) const COMPUTE_PROBE: &str = r#"import json, torch
-out = {"torch": torch.__version__, "cuda_available": torch.cuda.is_available(), "device": None, "gemm": None, "int8_broadcast": None, "quanto_qbytes_mm": None}
+out = {"torch": torch.__version__, "cuda_available": torch.cuda.is_available(), "mps_available": False, "backend": None, "device": None, "cc": None, "arch_list": None, "gemm": None, "int8_broadcast": None, "quanto_qbytes_mm": None}
+try:
+    out["mps_available"] = bool(torch.backends.mps.is_available())
+except Exception:
+    out["mps_available"] = False
 if torch.cuda.is_available():
+    out["backend"] = "cuda"
     out["device"] = torch.cuda.get_device_name(0)
+    try:
+        out["cc"] = list(torch.cuda.get_device_capability(0))
+    except Exception:
+        out["cc"] = None
+    try:
+        out["arch_list"] = torch.cuda.get_arch_list()
+    except Exception:
+        out["arch_list"] = None
     x = torch.randn(256, 256, device="cuda", dtype=torch.bfloat16)
     y = torch.randn(256, 256, device="cuda", dtype=torch.bfloat16)
     out["gemm"] = float((x @ y).sum().item())
@@ -40,6 +57,11 @@ if torch.cuda.is_available():
         except Exception as e:
             out["quanto_qbytes_mm"] = "fail: " + type(e).__name__
             raise
+elif out["mps_available"]:
+    out["backend"] = "mps"
+    out["device"] = "MPS"
+    x = torch.randn(256, 256, device="mps")
+    out["gemm"] = float((x @ x).sum().item())
 print(json.dumps(out))"#;
 
 pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(300);
@@ -102,6 +124,12 @@ pub(crate) fn profile_hsa_version(repo: &Path, profile: &str) -> Option<String> 
 pub(crate) struct ComputeProbe {
     pub torch: String,
     pub device: String,
+    /// `"cuda"` (also covers ROCm — same API) or `"mps"`.
+    pub backend: String,
+    /// Compute capability of device 0, when the backend reports one.
+    pub cc: Option<(u32, u32)>,
+    /// `torch.cuda.get_arch_list()` — the SASS/PTX the wheel actually carries.
+    pub arch: Vec<String>,
 }
 
 /// Run the compute probe with the given HSA handling (Some = forced
@@ -375,9 +403,31 @@ pub(crate) fn parse_probe_json(stdout: &str) -> Option<ComputeProbe> {
         .rev()
         .find(|l| l.trim_start().starts_with('{'))?;
     let v: serde_json::Value = serde_json::from_str(line).ok()?;
-    if v.get("cuda_available").and_then(|b| b.as_bool()) != Some(true) {
+    let cuda = v.get("cuda_available").and_then(|b| b.as_bool()) == Some(true);
+    let mps = v.get("mps_available").and_then(|b| b.as_bool()) == Some(true);
+    if !cuda && !mps {
         return None;
     }
+    let backend = v
+        .get("backend")
+        .and_then(|b| b.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| if cuda { "cuda".into() } else { "mps".into() });
+    let cc = v.get("cc").and_then(|c| c.as_array()).and_then(|a| {
+        Some((
+            u32::try_from(a.first()?.as_u64()?).ok()?,
+            u32::try_from(a.get(1)?.as_u64()?).ok()?,
+        ))
+    });
+    let arch = v
+        .get("arch_list")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| e.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
     Some(ComputeProbe {
         torch: v
             .get("torch")
@@ -389,6 +439,9 @@ pub(crate) fn parse_probe_json(stdout: &str) -> Option<ComputeProbe> {
             .and_then(|d| d.as_str())
             .unwrap_or("?")
             .to_string(),
+        backend,
+        cc,
+        arch,
     })
 }
 
@@ -446,12 +499,25 @@ mod probe_tests {
     }
     #[test]
     fn parses_probe_json() {
-        let good = "torch warning: blah\n{\"torch\": \"2.12.0+rocm7.15\", \"cuda_available\": true, \"device\": \"AMD Radeon AI PRO R9700\", \"gemm\": 1.5, \"int8_broadcast\": 2.5}\n";
+        let good = "torch warning: blah\n{\"torch\": \"2.12.0+rocm7.15\", \"cuda_available\": true, \"device\": \"AMD Radeon AI PRO R9700\", \"cc\": [12, 1], \"arch_list\": [\"gfx1201\"], \"gemm\": 1.5, \"int8_broadcast\": 2.5}\n";
         let p = parse_probe_json(good).expect("should parse");
         assert_eq!(p.torch, "2.12.0+rocm7.15");
         assert_eq!(p.device, "AMD Radeon AI PRO R9700");
+        assert_eq!(p.backend, "cuda");
+        assert_eq!(p.cc, Some((12, 1)));
+        assert_eq!(p.arch, vec!["gfx1201".to_string()]);
+        // macOS: no CUDA at all, MPS carries the pass.
+        let mac = "{\"torch\": \"2.14.1\", \"cuda_available\": false, \"mps_available\": true, \"backend\": \"mps\", \"device\": \"MPS\", \"gemm\": 12.5}";
+        let m = parse_probe_json(mac).expect("MPS probe should parse");
+        assert_eq!(m.backend, "mps");
+        assert_eq!(m.cc, None);
+        assert!(m.arch.is_empty());
         // cuda unavailable → None (honest fail, not a pass).
         assert!(parse_probe_json("{\"torch\": \"x\", \"cuda_available\": false}").is_none());
+        assert!(parse_probe_json(
+            "{\"torch\": \"x\", \"cuda_available\": false, \"mps_available\": false}"
+        )
+        .is_none());
         assert!(parse_probe_json("no json here").is_none());
     }
     #[test]

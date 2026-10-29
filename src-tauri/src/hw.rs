@@ -1458,6 +1458,138 @@ pub(crate) fn wgpkernels_supported_profile(profile_key: &str) -> bool {
     )
 }
 
+/// CUDA's arch tag for a compute capability: `(6, 1)` → `sm_61`, `(12, 0)`
+/// → `sm_120`. Matches the spelling `torch.cuda.get_arch_list()` uses.
+pub(crate) fn cc_sm_tag(cc: (u32, u32)) -> String {
+    format!("sm_{}{}", cc.0, cc.1)
+}
+
+/// Does a `torch.cuda.get_arch_list()` carry code for this compute
+/// capability? Entries are `sm_61`, `sm_90a`, `compute_90` (PTX). Three
+/// acceptance rules, all from CUDA's own compatibility contract:
+///
+/// - exact match (`sm_120` on 12.0);
+/// - SASS for the same major with a lower minor (`sm_86` cubin on 8.9 —
+///   binary compatibility runs forward one major, never backwards);
+/// - PTX at or below the card (`compute_90` on 12.0 — the driver JITs it).
+///
+/// A bare prefix test would accept `sm_6` for 6.0 or `sm_90` for 9.0 by luck,
+/// so digits are compared whole; a trailing architecture suffix (`sm_120a`)
+/// still counts. Empty list → false: the caller decides whether "cannot
+/// verify" is a failure. Pure + unit-tested.
+pub(crate) fn arch_list_supports_cc(arch: &[String], cc: (u32, u32)) -> bool {
+    arch.iter().any(|entry| {
+        let a = entry.trim().to_ascii_lowercase();
+        let (ptx, rest) = match a.strip_prefix("sm_") {
+            Some(r) => (false, r),
+            None => match a.strip_prefix("compute_") {
+                Some(r) => (true, r),
+                None => return false,
+            },
+        };
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        // "61" → (6, 1); "120" → (12, 0): the last digit is always the minor.
+        if digits.len() < 2 {
+            return false;
+        }
+        let (major, minor) = digits.split_at(digits.len() - 1);
+        let (Ok(major), Ok(minor)) = (major.parse::<u32>(), minor.parse::<u32>()) else {
+            return false;
+        };
+        if (major, minor) == cc {
+            return true;
+        }
+        if ptx {
+            (major, minor) < cc
+        } else {
+            major == cc.0 && minor < cc.1
+        }
+    })
+}
+
+/// Kernel wheels present in the env that this GPU profile cannot run. Today
+/// only WGPKernels has a documented support matrix (Turing 7.5+/RDNA4), and
+/// it is the one wheel whose kernels are probed at WanGP startup — on a
+/// GTX 10 the probe can kill the process with "no kernel image is available"
+/// (upstream fp8_backend has no capability guard). Pure + unit-tested.
+pub(crate) fn unsupported_kernel_wheels(profile_key: &str, installed: &[String]) -> Vec<String> {
+    installed
+        .iter()
+        .filter(|dist| dist.as_str() == "wgpkernels" && !wgpkernels_supported_profile(profile_key))
+        .cloned()
+        .collect()
+}
+
+#[cfg(test)]
+mod arch_guard_tests {
+    use super::{arch_list_supports_cc, cc_sm_tag, unsupported_kernel_wheels};
+
+    fn list(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn sm_tag_matches_torch_spelling() {
+        assert_eq!(cc_sm_tag((6, 1)), "sm_61");
+        assert_eq!(cc_sm_tag((8, 6)), "sm_86");
+        assert_eq!(cc_sm_tag((12, 0)), "sm_120");
+    }
+
+    #[test]
+    fn arch_list_must_contain_the_card_whole() {
+        let torch_28_cu128 = list(&["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120"]);
+        assert!(
+            !arch_list_supports_cc(&torch_28_cu128, (6, 1)),
+            "Pascal dropped"
+        );
+        assert!(
+            !arch_list_supports_cc(&torch_28_cu128, (7, 0)),
+            "Volta dropped"
+        );
+        assert!(arch_list_supports_cc(&torch_28_cu128, (7, 5)));
+        assert!(arch_list_supports_cc(&torch_28_cu128, (12, 0)));
+
+        let torch_27_cu128 = list(&["sm_50", "sm_60", "sm_61", "sm_70", "sm_80", "sm_90"]);
+        assert!(arch_list_supports_cc(&torch_27_cu128, (6, 1)));
+        assert!(arch_list_supports_cc(&torch_27_cu128, (6, 0)));
+        // CUDA runs SASS forward one major: a 6.1 cubin is fine on a 6.2 part.
+        assert!(arch_list_supports_cc(&torch_27_cu128, (6, 2)));
+        // Never backwards, never across majors.
+        assert!(!arch_list_supports_cc(&list(&["sm_86"]), (8, 0)));
+        assert!(!arch_list_supports_cc(&list(&["sm_89"]), (9, 0)));
+        // The launcher #84 case: an old wheel on a Blackwell card.
+        assert!(!arch_list_supports_cc(&torch_27_cu128, (12, 0)));
+    }
+
+    #[test]
+    fn suffixes_and_ptx_count_but_prefixes_do_not() {
+        assert!(arch_list_supports_cc(&list(&["sm_120a"]), (12, 0)));
+        assert!(arch_list_supports_cc(&list(&["compute_61"]), (6, 1)));
+        // PTX is JITed forward: a wheel that only carries compute_90 still
+        // runs on a 12.0 card (slower first launch, but it runs).
+        assert!(arch_list_supports_cc(&list(&["compute_90"]), (12, 0)));
+        assert!(!arch_list_supports_cc(&list(&["compute_120"]), (9, 0)));
+        // "sm_6" must not satisfy 6.0 by prefix, "sm_90" must not satisfy 9.0.
+        assert!(!arch_list_supports_cc(&list(&["sm_6"]), (6, 0)));
+        assert!(!arch_list_supports_cc(&list(&["sm_9"]), (9, 0)));
+        assert!(!arch_list_supports_cc(&[], (6, 1)));
+        assert!(!arch_list_supports_cc(&list(&["gfx1201"]), (6, 1)));
+    }
+
+    #[test]
+    fn only_wgpkernels_is_flagged_and_only_below_its_floor() {
+        let installed = list(&["wgpkernels", "nunchaku", "flash_attn"]);
+        assert_eq!(
+            unsupported_kernel_wheels("GTX_10", &installed),
+            vec!["wgpkernels".to_string()]
+        );
+        assert!(unsupported_kernel_wheels("MPS", &installed).len() == 1);
+        assert!(unsupported_kernel_wheels("RTX_40", &installed).is_empty());
+        assert!(unsupported_kernel_wheels("GTX_10", &list(&["nunchaku"])).is_empty());
+        assert!(unsupported_kernel_wheels("AMD_GFX1201", &installed).is_empty());
+    }
+}
+
 #[cfg(test)]
 mod wgpkernels_tests {
     use super::{wgpkernels_supported_profile, wgpkernels_wheel_url, WGPKERNELS_VERSION};

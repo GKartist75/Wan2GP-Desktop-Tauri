@@ -1132,10 +1132,11 @@ html[data-theme="dark"][data-accent="rose"],
 #kernelWheelsCard.wheels-update #syncKernelsBtn {
  box-shadow: 0 0 0 1px #4ade80;
 }
-/* Visible error note so the env-detail panel is never silently blank */
+/* Visible error note so the env-detail panel is never silently blank.
+   Hidden via inline `style="display:none"` in index.html — the callers reveal
+   it with style.display = "" — so the rule itself must NOT set display. */
 .env-detail-error {
- display: none;
- background: rgba(239, 68, 68, 0.12);
+  background: rgba(239, 68, 68, 0.12);
  color: #f87171;
  border: 1px solid rgba(239, 68, 68, 0.4);
  border-radius: 6px;

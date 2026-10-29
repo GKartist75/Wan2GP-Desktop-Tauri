@@ -55,19 +55,19 @@ $("tsCudaBtn")?.addEventListener("click", async function () {
   try {
     const r = await window.w2gp.tsCudaCheck();
     if (r && r.ok) {
-      const msg =
-        "torch " +
-        r.torch +
-        " + CUDA " +
-        (r.cuda || "?") +
-        " — cuda_available=" +
-        r.available +
-        " (" +
-        (r.devices || 0) +
-        " device(s)" +
-        (r.name ? ": " + r.name : "") +
-        ")";
-      appendLog("[✓] CUDA check: " + msg);
+      const accelerator = r.available
+        ? "CUDA " +
+          (r.cuda || "?") +
+          " — cuda_available=true (" +
+          (r.devices || 0) +
+          " device(s)" +
+          (r.name ? ": " + r.name : "") +
+          ")"
+        : r.mps
+          ? "MPS — mps_available=true, cuda_available=false (no CUDA on Apple Silicon)"
+          : "no accelerator — cuda_available=false, mps_available=false (CPU only)";
+      const msg = "torch " + r.torch + " + " + accelerator;
+      appendLog("[✓] GPU check: " + msg);
       tsStatus("tsFailsafeStatus", "✓ " + msg);
     } else {
       tsStatus("tsFailsafeStatus", "✗ " + ((r && r.error) || "probe failed"));
@@ -84,7 +84,7 @@ $("tsComputeBtn")?.addEventListener("click", async function () {
   this.disabled = true;
   tsStatus(
     "tsFailsafeStatus",
-    "Running GPU compute (import + kernels, ~1 min on cold HIP)…",
+    "Running GPU compute (import + kernels — cold start can take a minute)…",
   );
   try {
     const r = await window.w2gp.tsGpuCompute();
@@ -957,3 +957,22 @@ async function tsShowPreviewCodecs() {
     ".";
 }
 tsShowPreviewCodecs();
+
+// ── macOS (MPS) known-issue card ──
+// The v17 Apple Silicon blockers are upstream bugs: no launcher control fixes
+// them, so the card stays hidden off macOS and links out to the tracker.
+(function tsMacosCard() {
+  const platform =
+    (document.body && document.body.dataset && document.body.dataset.platform) ||
+    "";
+  if (platform !== "darwin" && platform !== "macos") return;
+  const card = $("macosMpsCard");
+  if (!card) return;
+  card.style.display = "";
+  card.addEventListener("click", async (ev) => {
+    const a = ev.target && ev.target.closest ? ev.target.closest("a[href^='https://']") : null;
+    if (!a) return;
+    ev.preventDefault();
+    await window.w2gp.openExternal(a.href);
+  });
+})();
