@@ -4450,6 +4450,41 @@ pub async fn restore_kernels(app: tauri::AppHandle) -> Result<serde_json::Value,
 /// wheels (single source of truth).
 use crate::hw::GGUF_1029_WIN_PY312_HIP as HIP_GGUF_WHEEL_URL;
 
+/// Interpreter for the commands pip-ed into the active env (wheel installs,
+/// kernel sync).
+///
+/// uv/venv keep it under `Scripts\` (Windows) or `bin/` (unix); a conda env
+/// keeps `python.exe` at the env ROOT. These commands used to guess
+/// `Scripts\python.exe` only, so a healthy `env_conda` failed *Update GPU
+/// Wheels* with "python not found for active env" (launcher #83) — the same
+/// layout miss `resolve_env_python` already fixed for launches.
+///
+/// `raw` is the env path from envs.json (relative or absolute); empty means no
+/// env is registered yet, where the legacy repo-root guess is kept so error
+/// messages stay identical. Pure + unit-tested.
+fn wheel_env_python(repo: &std::path::Path, raw: &str) -> PathBuf {
+    if !raw.is_empty() {
+        if let Some(py) = resolve_env_python(repo, raw) {
+            return py;
+        }
+    }
+    let base = if raw.is_empty() {
+        repo.to_path_buf()
+    } else if std::path::Path::new(raw).is_absolute() {
+        PathBuf::from(raw)
+    } else {
+        repo.join(raw.trim_start_matches(".\\").trim_start_matches("./"))
+    };
+    #[cfg(windows)]
+    {
+        base.join("Scripts\\python.exe")
+    }
+    #[cfg(not(windows))]
+    {
+        base.join("bin/python3")
+    }
+}
+
 #[tauri::command]
 pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     mutating_try("install-hip-gguf")?;
@@ -4478,16 +4513,7 @@ pub async fn install_hip_gguf_wheel(app: tauri::AppHandle) -> Result<serde_json:
     let repo = get_repo_dir();
     let env = get_active_env();
     let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
-    let base = if std::path::Path::new(raw).is_absolute() {
-        PathBuf::from(raw)
-    } else {
-        repo.join(raw.trim_start_matches(".\\").trim_start_matches("./"))
-    };
-    let py = if cfg!(windows) {
-        base.join("Scripts\\python.exe")
-    } else {
-        base.join("bin/python3")
-    };
+    let py = wheel_env_python(&repo, raw);
     if !py.exists() {
         mutating_done();
         return Err("python not found for active env".into());
@@ -4605,16 +4631,7 @@ pub async fn install_wgpkernels_wheel(app: tauri::AppHandle) -> Result<serde_jso
     let repo = get_repo_dir();
     let env = get_active_env();
     let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
-    let base = if std::path::Path::new(raw).is_absolute() {
-        PathBuf::from(raw)
-    } else {
-        repo.join(raw.trim_start_matches(".\\").trim_start_matches("./"))
-    };
-    let py = if cfg!(windows) {
-        base.join("Scripts\\python.exe")
-    } else {
-        base.join("bin/python3")
-    };
+    let py = wheel_env_python(&repo, raw);
     if !py.exists() {
         mutating_done();
         return Err("python not found for active env".into());
@@ -4907,16 +4924,7 @@ async fn sync_post_install_overrides(app: &tauri::AppHandle, repo: &std::path::P
     }
     let env = get_active_env();
     let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
-    let base = if std::path::Path::new(raw).is_absolute() {
-        PathBuf::from(raw)
-    } else {
-        repo.join(raw.trim_start_matches(".\\").trim_start_matches("./"))
-    };
-    let py = if cfg!(windows) {
-        base.join("Scripts\\python.exe")
-    } else {
-        base.join("bin/python3")
-    };
+    let py = wheel_env_python(repo, raw);
     if !py.exists() {
         emit_log("[!] post-install wheel sync skipped — env python not found (run Update GPU Wheels manually)\n");
         return;
@@ -4995,16 +5003,7 @@ async fn sync_kernels_inner(
     let cfg_path = repo.join("setup_config.json");
     let env = get_active_env();
     let raw = env.get("path").and_then(|p| p.as_str()).unwrap_or("");
-    let base = if std::path::Path::new(raw).is_absolute() {
-        PathBuf::from(raw)
-    } else {
-        repo.join(raw.trim_start_matches(".\\").trim_start_matches("./"))
-    };
-    let py = if cfg!(windows) {
-        base.join("Scripts\\python.exe")
-    } else {
-        base.join("bin/python3")
-    };
+    let py = wheel_env_python(&repo, raw);
     if !py.exists() {
         mutating_done();
         return Err("python not found for active env".into());
@@ -11688,5 +11687,92 @@ mod prereq_tests {
         // Not a conda launcher / not a scripts dir: no invention.
         assert_eq!(conda_exe_from_hit(Path::new("C:\\x\\bin\\conda")), None);
         assert_eq!(conda_exe_from_hit(Path::new("C:\\x\\conda.bat")), None);
+    }
+}
+
+#[cfg(test)]
+mod wheel_env_python_tests {
+    //! Launcher #83: wheel installs and kernel sync guessed `Scripts\python.exe`
+    //! only, so a healthy `env_conda` (interpreter at the env root) failed every
+    //! action with "python not found for active env".
+    use super::wheel_env_python;
+    use std::fs;
+    use std::path::Path;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("wgp-wheel-py-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn touch(p: &Path) {
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, b"").unwrap();
+    }
+
+    fn root_python(env: &Path) -> std::path::PathBuf {
+        env.join(if cfg!(windows) {
+            "python.exe"
+        } else {
+            "python"
+        })
+    }
+
+    fn uv_python(env: &Path) -> std::path::PathBuf {
+        env.join(if cfg!(windows) {
+            "Scripts\\python.exe"
+        } else {
+            "bin/python"
+        })
+    }
+
+    #[test]
+    fn conda_root_interpreter_is_found() {
+        let repo = scratch("conda");
+        let env = repo.join("env_conda");
+        touch(&root_python(&env));
+        assert_eq!(wheel_env_python(&repo, "./env_conda"), root_python(&env));
+        assert_eq!(wheel_env_python(&repo, ".\\env_conda"), root_python(&env));
+        let abs = env.to_string_lossy().to_string();
+        assert_eq!(wheel_env_python(&repo, &abs), root_python(&env));
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn uv_layout_still_resolves() {
+        let repo = scratch("uv");
+        let env = repo.join("env_uv");
+        touch(&uv_python(&env));
+        assert_eq!(wheel_env_python(&repo, "env_uv"), uv_python(&env));
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn no_registered_env_keeps_the_legacy_guess() {
+        // Fresh install, no envs.json entry: callers still get the old path so
+        // the "python not found for active env" message stays identical.
+        let repo = scratch("none");
+        let expected = if cfg!(windows) {
+            repo.join("Scripts\\python.exe")
+        } else {
+            repo.join("bin/python3")
+        };
+        assert_eq!(wheel_env_python(&repo, ""), expected);
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn broken_registered_env_degrades_to_the_legacy_guess() {
+        let repo = scratch("broken");
+        let env = repo.join("env_conda");
+        fs::create_dir_all(&env).unwrap();
+        let expected = env.join(if cfg!(windows) {
+            "Scripts\\python.exe"
+        } else {
+            "bin/python3"
+        });
+        assert_eq!(wheel_env_python(&repo, "./env_conda"), expected);
+        let _ = fs::remove_dir_all(&repo);
     }
 }

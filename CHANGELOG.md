@@ -2,6 +2,19 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
+## [0.10.33] — 2026-10-29
+
+- **Conda envs: *Update GPU Wheels* / kernel installs no longer fail with
+  "python not found for active env" (launcher #83).** A conda env keeps
+  `python.exe` at the env ROOT, but the wheel commands (WGPKernels, HIP GGUF,
+  post-install override sync, *Update GPU Wheels*) guessed
+  `Scripts\python.exe` only, so on a healthy `env_conda` every one of them
+  aborted before pip started — the same layout miss `resolve_env_python` had
+  already fixed for launching and for the env preflight. All four commands and
+  the install validator now resolve the interpreter through that helper
+  (`Scripts\`, `bin/`, env root), and an unregistered/broken env still reports
+  the identical old error.
+
 ## [0.10.32] — 2026-10-29
 
 - **Guide reconciled with WanGP 18.88 (`2e16ef7d`).** Upstream's 3D redesign

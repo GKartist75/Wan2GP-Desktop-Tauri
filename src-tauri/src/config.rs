@@ -2,7 +2,7 @@
 use crate::base::*;
 use crate::{
     hw::{build_install_plan, get_gpu_info_sync},
-    status::get_active_env,
+    status::{get_active_env, resolve_env_python},
 };
 use std::path::{Path, PathBuf};
 
@@ -936,26 +936,20 @@ pub fn validate_install() -> serde_json::Value {
         };
         if !base.exists() {
             errors.push(format!("env folder missing on disk: {}", base.display()));
-        } else {
-            #[cfg(windows)]
-            let py = base.join("Scripts\\python.exe");
-            #[cfg(not(windows))]
-            let py = base.join("bin/python");
-            if !py.exists() {
-                errors.push(format!(
-                    "env python missing ({} broken) — repair the environment",
-                    base.display()
-                ));
-            } else {
-                let runs = silent_command(&py)
-                    .arg("-c")
-                    .arg("import sys")
-                    .output()
-                    .is_ok_and(|o| o.status.success());
-                if !runs {
-                    errors.push("env python won't start — reinstall/repair the environment".into());
-                }
+        } else if let Some(py) = resolve_env_python(&repo, raw) {
+            let runs = silent_command(&py)
+                .arg("-c")
+                .arg("import sys")
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if !runs {
+                errors.push("env python won't start — reinstall/repair the environment".into());
             }
+        } else {
+            errors.push(format!(
+                "env python missing ({} broken) — repair the environment",
+                base.display()
+            ));
         }
     }
     serde_json::json!({"ok": errors.is_empty(), "errors": errors})
