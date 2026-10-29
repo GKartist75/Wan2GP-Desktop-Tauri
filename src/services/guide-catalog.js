@@ -3,8 +3,9 @@
  *
  * Pure, side-effect-free data module (no Tauri, no Node, no DOM). Mirrors the
  * starters in docs/WAN2GP-GUIDE.md; every model_type must exist in WanGP's
- * defaults/*.json (verified 2026-10-22 against upstream v18.21 / `9d25c601`:
- * 38/38 present — 18.21 adds no defaults entry, so the picks are unchanged).
+ * defaults/*.json (verified 2026-10-29 against upstream v18.88 / `2e16ef7d`:
+ * all picks present — the 3D goal follows the 3D redesign, where `trellis2` and
+ * `hunyuan3d_21` were retired into shape/texture stage models).
  *
  * Shape per goal: { id, label, picks: [{ model, why, frames, steps, guidance, tip }] }
  * Frames/steps/guidance are starters, not rules — the per-model form owns truth.
@@ -134,11 +135,14 @@ const GUIDE_GOALS = [
   },
   {
     id: 'object-3d',
-    label: '3D asset from a photo (v18)',
+    label: '3D asset from a photo (v18.88)',
     picks: [
-      { model: 'trellis2', why: 'GLB mesh with PBR textures (colour, metallic, roughness) from one image.', tip: 'One whole uncropped object on a plain background, three-quarter view, even light. Start with 1024 Cascade; hidden sides are inferred.' },
-      { model: 'hunyuan3d_21', why: 'Shape + PBR texture, shape only, or texture your own mesh from a reference image.', tip: 'Texturing replaces the mesh UVs/materials. To start from text, generate an image first, then use it as the 3D reference.' },
-      { model: 'worldmirror_2', why: 'Photos and/or a reference video to Gaussian splats or a point cloud with cameras.', tip: 'Overlapping views around a static scene; areas no view shows stay empty. Open results in the 3D gallery to inspect, then save a view as a video start image.' }
+      { model: 'trellis2_shape', why: 'Untextured GLB that keeps thin, intricate parts; its presets add a Texturer in the same run (SUPRA-Tex PBR, Hunyuan3D 2.1 Paint PBR or TRELLIS.2 Texture PBR).', tip: 'One whole uncropped object on a plain background, three-quarter view, even light. 1024 Cascade balances shape and detail (512 faster, 1536 finer); hidden sides are inferred.' },
+      { model: 'pixal3d', why: 'Builds the mesh in the picture\'s own camera, so it fits the image exactly; preset SUPRA-Tex PBR adds PBR textures that keep the picture\'s colours and print.', tip: 'Closest fit to the photo. SUPRA-Tex reuses Qwen Image 2.1 to read materials — non-commercial use only.' },
+      { model: 'hunyuan3d_21_shape', why: 'Untextured GLB; preset Hunyuan3D 2.1 Paint PBR paints all around and tolerates a picture that differs from the mesh.', tip: 'To texture a mesh you already have, pick Hunyuan3D 2.1 Paint from the Texture goal. Texturing replaces the mesh UVs and materials.' },
+      { model: 'hi3d', why: 'Refines a coarse mesh into high-resolution geometry (seams, buttons, scales) from a picture of the same object; presets add SUPRA-Tex PBR in the same run.', tip: 'Send a shape result here with To Input Mesh plus its picture. 1024 adds strong detail, 1536 about twice the time. The mesh alone has no textures — refine first, then texture.' },
+      { model: 'supratex_texture', why: 'Textures a mesh from the 3D gallery (To Input Mesh) with a picture of the same object: colours, print and patterns stay on the visible side.', tip: 'Front or three-quarter view, not steeply from above. Qwen Image 2.1 material stage = non-commercial. Hunyuan3D 2.1 Paint is the tolerant alternative.' },
+      { model: 'worldmirror_2', why: 'Photos and/or a reference video to Gaussian splats or a point cloud with cameras.', tip: 'Overlapping views around a static scene; areas no view shows stay empty. Open results in the 3D gallery, save a view, reuse it as a video start image.' }
     ]
   },
   {
@@ -155,9 +159,11 @@ const GUIDE_GOALS = [
  * matches these — copying the id (e.g. t2v_2_2) is useless there, so the UI
  * copies the full name. Verified 2026-09-21; the three vfx-alpha entries
  * re-verified against upstream v17.10 (ec9566a) on 2026-10-06; the four Veda
- * entries against upstream v18 (46005e5) on 2026-10-12. k6/prism/camera
- * picks intentionally unmapped until their defaults names are verified —
- * pickName falls back to the id.
+ * entries against upstream v18 (46005e5) on 2026-10-12; the 3D entries against
+ * upstream v18.88 (2e16ef7d) on 2026-10-29, where TRELLIS.2 and Hunyuan3D 2.1
+ * became shape models plus Texturers. k6/prism/camera picks intentionally
+ * unmapped until their defaults names are verified — pickName falls back to
+ * the id.
  */
 const MODEL_NAMES = {
   't2v_1.3B': 'Wan2.1 Text2video 1.3B',
@@ -196,6 +202,14 @@ const MODEL_NAMES = {
   flux3_klein_base_nvfp4: 'Flux 3 Klein Base NVFP4 5.6B',
   fish_drama3: 'TTS Fish Audio Drama 3',
   fish_drama3_int4: 'TTS Fish Audio Drama 3 INT4 Experts',
+  trellis2_shape: 'TRELLIS.2 Shape 4B',
+  trellis2_texture: 'TRELLIS.2 Texture 2.6B',
+  pixal3d: 'Pixal3D Shape 3x1.3B',
+  hunyuan3d_21_shape: 'Hunyuan3D 2.1 Shape 3B',
+  hunyuan3d_21_paint: 'Hunyuan3D 2.1 Paint 2B',
+  hi3d: 'Hi3D v1.0 Mesh Refiner 2x1.8B',
+  supratex_texture: 'SUPRA-Tex Texturer 2.1B',
+  worldmirror_2: 'WorldMirror 2.0 1.2B',
   minimax_h3_fasth3_omni: 'MiniMax H3 FastH3 Omni 8-Step 20B',
   minimax_h3_fasth3_omni_nvfp4: 'MiniMax H3 FastH3 Omni NVFP4 QAD 8-Step 20B',
   fibo2_dev: 'Fibo 2.0 Dev',

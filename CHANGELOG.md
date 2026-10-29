@@ -2,8 +2,26 @@
 
 All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
-## [Unreleased]
+## [0.10.32] — 2026-10-29
 
+- **Guide reconciled with WanGP 18.88 (`2e16ef7d`).** Upstream's 3D redesign
+  retired `trellis2` and `hunyuan3d_21` in favour of stage models, so the Guide
+  tab's 3D goal now recommends `trellis2_shape`, `hunyuan3d_21_shape` (plus the
+  new `pixal3d`, `hi3d`, `supratex_texture`, `worldmirror_2`) — all 41 picks
+  re-verified against upstream `defaults/` (287 files, up from 276). The guide
+  gains the refiner/texturer split (a textured mesh cannot be refined, a
+  self-texturing model takes no Texturer, Object Image comes from
+  `postprocessing_reference_images`), the 30 profile folders including the four
+  3D preset folders, settings 2.82 (119 keys, per-slot
+  `spatial/temporal_postprocessing_parameters` dicts replacing the
+  `spatial_upsampler_*` keys), the moved processor/plugin registration modules,
+  the `texture_3d` Deepy tool and the App Development level, and the new
+  `--max-vram` / `--max-ram` / `--ram-stress` launch flags (also in the launch
+  args help). The launcher itself needs nothing: `setup_config.json` keeps the
+  same wheel tags (WGPKernels 1.4.2 and GGUF 1.0.29 were already pinned), the
+  Triton and torch pins and the existing CLI names are unchanged, and *Update
+  WanGP* reinstalls `requirements.txt` because it changed (Deepy's `ddgs`,
+  `pypdf`, `playwright`).
 - **macOS/Apple Silicon failures now name the upstream bug instead of guessing.**
   WanGP's MPS shim still carries CUDA-isms that fail in ways a Windows report
   never sees (upstream #2545 `L2_cache_size`, #2552/#2554 `torch.cuda.cudart()`

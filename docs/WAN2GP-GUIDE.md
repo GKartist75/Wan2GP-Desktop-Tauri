@@ -265,11 +265,16 @@ WanGP owns **model, prompt, generation, LoRA pick, control, post**.
 
 ---
 
-## Models reference — inventory by family (282 `defaults/*.json` at WanGP 18.83)
+## Models reference — inventory by family (287 `defaults/*.json` at WanGP 18.88)
 
-Reconciled live against upstream `defaults/` (282 files + `ReadMe.txt`, WanGP v18.83);
+Reconciled live against upstream `defaults/` (287 files + `ReadMe.txt`, WanGP v18.88);
 the 18.21 pass counted 276, and the families below list the variants that change
-the pick rather than every sibling id. The 18.21 commits were kernel and
+the pick rather than every sibling id. The 18.88 pass is the 3D redesign: TRELLIS.2
+and Hunyuan3D 2.1 became **shape** models with Texturer presets (`trellis2_shape`,
+`trellis2_texture`, `hunyuan3d_21_shape`, `hunyuan3d_21_paint`), joined by Pixal3D
+and the SUPRA-Tex Texturer and Hi3D Refiner, while the Waypoint world handler was
+removed (`hy_nomas` is the world model); it also adds `flux2_klein_9b_kv` and
+`profiles/` preset folders for the 3D stage models. The 18.21 commits were kernel and
 model-internals work plus the new **FlashVSR+ Turbo**
 extension model, which is a `postprocessing/` handler and not a `model_type`; the
 v18.20 reconciliation added Fibo 2.0 Dev, Fibo 2.0 Edit Turbo and the two MiniMax
@@ -335,7 +340,7 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 | Architecture ids | Model_type ids |
 | --- | --- |
 | `flux`, `flux_schnell`, `flux_chroma`, `flux_chroma_radiance`, `flux_krea`, `flux_srpo`, `flux_srpo_uso`, `flux_dev_kontext` ★, `flux_dev_kontext_dreamomni2`, `flux_dev_umo`, `flux_dev_uso` | Schnell/Dev/Kontext (instruction edit)/Krea/Chroma/SRPO/USO |
-| `flux2_dev`, `flux2_dev_nvfp4`, `flux2_klein_4b`, `flux2_klein_9b`, `flux2_klein_base_4b`, `flux2_klein_base_9b`, `pi_flux2`, `pi_flux2_nvfp4` | Flux 2 + Klein 4B/9B (+base), Pi VAE variants |
+| `flux2_dev`, `flux2_dev_nvfp4`, `flux2_klein_4b`, `flux2_klein_9b`, `flux2_klein_9b_kv`, `flux2_klein_base_4b`, `flux2_klein_base_9b`, `pi_flux2`, `pi_flux2_nvfp4` | Flux 2 Dev + Klein 4B/9B (distilled, four steps) and Base (non-distilled, more diverse); `flux2_klein_9b_kv` (v18.88) reuses reference information so multi-image edits run faster — text-only generation gains nothing from it; `pi_flux2` (pi-FLUX.2 Dev 32B) is FLUX.2-dev distilled to four steps with the pi-Flow method (Gaussian-mixture velocity field, shares the `flux2_dev` weights + a 4-step LoRA) |
 | `flux3_klein` ★, `flux3_klein_base`, `flux3_klein_nvfp4`, `flux3_klein_base_nvfp4` | ★ Flux 3 Klein 5.6B distilled (16 steps, no CFG) + Base (50 steps, CFG); up to 10 ordered references; NVFP4 variants |
 | `fibo2_dev` ★ | ★ Fibo 2.0 Dev (Bria AI): unified text-to-image plus reference and masked editing from plain-language or structured Fibo captions; 1024x1024, 50 steps, guidance 5.0, bf16 + int8_convrot |
 | `fibo2_edit_turbo` ★ | ★ Fibo 2.0 Edit Turbo: four-step instruction editing with 1–4 references or a masked source image; editing only, no CFG (guidance 1.0), 1024x1024, `video_prompt_type "KI"` (needs a reference) |
@@ -351,21 +356,49 @@ Nunchaku/pruned variants). Full catalogue truth = WanGP model selector + toolbar
 
 ### 3D / world reconstruction
 
+The model selector starts with the goal — **Create** (`image_to_3d`), **Texture**
+(`texture_mesh`), **Refine** (`refine_mesh`), **Split** (`mesh_parts`), **Animate**
+(`animate_mesh`), **Reconstruct** (`recon3d`) — then lists that goal's models.
+
 | Architecture ids | Model_type ids |
 | --- | --- |
-| `hunyuan3d_21` ★, `hunyuan3d_21_shape` | ★ Hunyuan3D 2.1: one object photo → 3D asset with PBR textures (base colour + metallic-roughness), or PBR texturing of an existing mesh; Shape variant = mesh only (GLB) |
-| `trellis2` | TRELLIS.2 (Microsoft, 4B): one image → textured GLB with PBR materials (sparse-voxel + mesh decode) |
-| `triposg` | TripoSG (VAST, 1.5B): one image → detailed mesh (GLB, geometry only) |
+| `trellis2_shape` ★ | ★ TRELLIS.2 Shape 4B (Microsoft): one image → untextured GLB that keeps thin, intricate structures (sparse-voxel + mesh decode); presets add a Texturer in the same run — `SUPRA-Tex PBR`, `Hunyuan3D 2.1 Paint PBR`, `TRELLIS.2 Texture PBR` |
+| `trellis2_texture` | TRELLIS.2 Texture 2.6B: several times faster than the other Texturers; plausible materials whose colours only approximate the picture and change with the seed (no print/patterns) |
+| `hunyuan3d_21_shape` ★ | ★ Hunyuan3D 2.1 Shape 3B: one object photo → untextured GLB; preset `Hunyuan3D 2.1 Paint PBR` adds PBR textures (base colour + metallic-roughness) in the same generation |
+| `hunyuan3d_21_paint` | Hunyuan3D 2.1 Paint 2B: paints **all around** a mesh you supply from generated views — the tolerant choice when the picture and the mesh differ (fine print blurs) |
+| `pixal3d` | Pixal3D Shape 3x1.3B: builds the mesh in the picture's own camera, so it fits the image exactly; preset `SUPRA-Tex PBR` textures it |
+| `supratex_texture` | SUPRA-Tex Texturer 2.1B: PBR textures that keep the picture's colours, print and patterns on the visible side, the hidden side completed to match. The picture must line up with the mesh; its material stage reuses Qwen Image 2.1 — **non-commercial use only** (Qwen Research License) |
+| `hi3d` | Hi3D v1.0 Mesh Refiner 2x1.8B: refines a coarse mesh into high-resolution geometry (seams, buttons, scales, engravings) from a picture of the same object; `512` quick, `1024` strong detail, `1536` finest for ~2× the time. Keeps position/scale, **drops textures** |
+| `triposg` | TripoSG (VAST, 1.5B): one image → detailed mesh (GLB, geometry only); presets pair it with the 3D Refiner and Texturers |
 | `triposplat` | TripoSplat: one image → Gaussian splats (PLY, up to 262K Gaussians) |
 | `partcrafter` | PartCrafter (built on TripoSG): one image → one mesh per part (GLB, one coloured node per part) |
-| `worldmirror_2` | WorldMirror 2.0 (Tencent, 1.2B): several photos or a video → static 3D scene (Gaussian splats or point cloud) with estimated cameras, in one pass |
+| `worldmirror_2` | WorldMirror 2.0 1.2B (Tencent): several photos or a video → static 3D scene (Gaussian splats or point cloud) with estimated cameras, in one pass |
 | `mapanything` | MapAnything (Meta): several photos or video frames → merged metric point cloud shown as splats, with every camera pose |
 | `da3_points` | Depth Anything 3 (the checkpoint behind WanGP's depth preprocessor): photos or video frames → merged point cloud scene |
 | `moge2` | MoGe-2 (Microsoft): one photo → visible geometry in metres (splats or textured mesh, normals + camera FOV) |
 | `geosam2` | GeoSAM2 (VAST): splits an existing mesh into its parts, automatically or from point prompts on rendered views (one GLB node per part) |
 | `animate_any_mesh` | AnimateAnyMesh: animates a static 3D mesh from a text motion description (16 frames of vertex trajectories, no rig) |
 
-3D assets open in the new **3D Viewer**: rotate, snap any view at the resolution you want and reuse it as a start image, or send generated images/videos to 3D.
+**3D post-processing** (Post Processing tab of every untextured shape model —
+Hunyuan3D Shape, TripoSG, TRELLIS.2 Shape, Pixal3D, Hi3D) runs two steps on each
+generated mesh with the generation's object image: a **3D Refiner** (`hi3d_refiner`,
+geometry first) and a **Texturer** (`supratex`, `hunyuan3d_paint`, `trellis2_texture`).
+Presets combine them (`SUPRA-Tex PBR`, `Hi3D + SUPRA-Tex PBR`, …). Rules upstream
+enforces: a model that already textures its meshes takes no Texturer, and a textured
+mesh cannot be refined (refining replaces the geometry and drops its textures).
+Late post-processing takes a mesh from the gallery plus its **Object Image**
+(`postprocessing_reference_images`, one field used by both steps); with **Embed
+Source Images** on, new 3D assets keep the object image inside the GLB.
+
+Requirements and licences: one whole uncropped object on a plain or transparent
+background, three-quarter view, even light; backgrounds are removed automatically
+with BiRefNet (~1 GB one-time download — `rembg`, Windows/Linux only). Hidden sides
+are inferred. SUPRA-Tex's material stage is non-commercial (Qwen Image 2.1).
+
+3D assets open in the **3D gallery**: rotate, zoom, save any view at the resolution
+you want and reuse it as a start image; compatible meshes become inputs of the
+Texture/Refine/Split/Animate goals with **To Input Mesh**, or of generated
+images/videos sent to 3D.
 
 ### Audio / TTS / music
 
@@ -445,26 +478,27 @@ Essentials (names as in `docs/SETTINGS.md` / Export Settings JSON):
 | `overrides` | Per-task config replacements as `name=value` pairs, comma-separated (`attention_mode='sage2', memory_profile=4`) | empty = global config |
 | `sliding_window_size/overlap` | Long-video chunking | test short first |
 
-### Complete settings key list (118 keys, `models/_settings.json`)
+### Complete settings key list (119 keys, `models/_settings.json`, `settings_version` 2.82)
 
 Model handlers show/hide per model; Export Settings JSON is the per-model truth.
-Groups follow `docs/SETTINGS.md` (the `spatial_upsampler_*` names come from
-`docs/SPATIAL_UPSAMPLERS.md`); `model_type`/`settings_version` are UI/export
+Groups follow `docs/SETTINGS.md`; the post-processing inputs are the per-slot
+parameter dictionaries of `postprocessing/parameter_ui.py` (settings 2.82 replaced
+the old `spatial_upsampler_*` keys); `model_type`/`settings_version` are UI/export
 labels, not stored keys:
 
 * Model/identity: `client_id`, `model_mode`, `config`
 * Prompt: `prompt`, `negative_prompt`, `alt_prompt`, `prompt_enhancer`, `multi_prompts_gen_type`, `multi_images_gen_type`, `custom_settings`
 * Shape: `image_mode`, `resolution`, `batch_size`, `video_length`, `duration_seconds`, `pause_seconds`, `force_fps`, `repeat_generation`, `output_filename`
-* Sampling: `seed`, `num_inference_steps`, `num_inference_steps2`, `sample_solver`, `flow_shift`, `temperature`, `top_p`, `top_k`
+* Sampling: `seed`, `num_inference_steps`, `num_inference_steps2`, `custom_sigmas` (explicit sigma schedule; empty = the model's), `sample_solver`, `flow_shift`, `temperature`, `top_p`, `top_k`
 * Guidance: `guidance_phases`, `model_switch_phase`, `switch_threshold`, `switch_threshold2`, `guidance_scale`, `guidance2_scale`, `guidance3_scale`, `audio_guidance_scale`, `embedded_guidance_scale`, `alt_guidance_scale`, `alt_scale`, `audio_scale`, `control_net_weight`, `control_net_weight2`, `control_net_weight_alt`
 * Image/video inputs: `image_prompt_type`, `image_start`, `image_end`, `image_refs`, `image_refs_relative_size`, `remove_background_images_ref`, `frames_positions`, `image_guide`, `image_mask`, `video_source`, `keep_frames_video_source`, `input_video_strength`, `video_prompt_type`, `video_guide`, `video_guide2`, `video_guide3`, `keep_frames_video_guide`, `denoising_strength`, `masking_strength`, `video_mask`, `mask_expand`, `custom_guide`, `video_guide_outpainting`, `video_guide_outpainting_ratio`, `min_frames_if_references`
 * Audio inputs: `audio_prompt_type`, `audio_guide`, `audio_guide2`, `audio_guide3`, `audio_source`, `speakers_locations`, `replace_voice_method`, `replace_voice_sample`, `replace_voice_sample2`
-* Accel/cache: `skip_steps_cache_type` (`tea/mag/spectrum…`), `skip_steps_multiplier`, `skip_steps_start_step_perc`, `RIFLEx_setting`, `overrides` (replaces the old `override_profile`/`override_attention`/`override_compile` trio), `temporal_upsampling`, `spatial_upsampling`, `film_grain_intensity`, `film_grain_saturation`, `attention_sparsity`
+* Accel/cache: `skip_steps_cache_type` (`tea/mag/spectrum…`), `skip_steps_multiplier`, `skip_steps_start_step_perc`, `RIFLEx_setting`, `overrides` (replaces the old `override_profile`/`override_attention`/`override_compile` trio), `film_grain_intensity`, `film_grain_saturation`, `attention_sparsity`
+* Post-processing slots: `spatial_upsampling` / `temporal_upsampling` pick the method (on meshes they are the **3D Refiner** and the **Texturer**); each slot keeps its own values in `spatial_postprocessing_parameters` / `temporal_postprocessing_parameters` (dicts keyed by the method's `method_parameters`, e.g. `prompt`, `face_count`, `hi3d_level`, `texture_size`; a slot's values reset to the new method's defaults when the selection changes, except normalized ids like `prompt`), and both slots share `postprocessing_reference_images` (a 3D refiner/texturer's Object Image)
 * Audio post: `postprocess_audio`, `postprocess_audio_prompt`, `postprocess_audio_neg_prompt`
 * Advanced sampling: `perturbation_switch/layers/start_perc/end_perc`, `apg_switch`, `cfg_star_switch`, `cfg_zero_step`, `NAG_scale/tau/alpha`, `self_refiner_setting/plan/f_uncertainty/certain_percentage`, `motion_amplitude`
 * Sliding windows: `sliding_window_size/overlap/color_correction_strength/overlap_noise/discard_last_frames/trim_first_frames`, `sub_parallel_window_size/overlap`
 * LoRAs: `activated_loras`, `loras_multipliers`
-* Spatial params: `spatial_upsampler_param/param2/prompt/reference_images`
 
 Flag strings (`image/video/audio_prompt_type`, `prompt_enhancer`, `multi_prompts_gen_type`) are model-defined letter codes — always pick from the model's exposed choices, never hand-compose.
 
@@ -591,11 +625,21 @@ short window, keep originals before multi-pass post.
 | Spatial (generation + late) | Lanczos, DLSS5, FlashVSR (v1.1 / +Turbo), SeedVR2, PiD (1.5/1.x, incl. Qwen/Flux VAE plug), H3 Face Refiner, Chain-of-Zoom (to x16), LTX2 (2.3/2.5 x2 video), Wan VAE 2x | `lanczos*2`, `vae*2`, `dlss5*1…*3`, `flashvsr*…`, `seedvr2*…`, `pid*…`, `coz*4…`, refiners bare id (no Scale control) |
 | Temporal (video only) | RIFE v4.26, DLSS Frame Generation | `rife*2/*3/*4`, `dlssg*2…*6` (x5/x6 RTX 50) |
 | Audio | custom soundtrack, MMAudio, PrismAudio, SeedVC 1-/2-speaker, background/music removal, vocal removal | `custom`, `mmaudio`, `prismaudio`, `seedvc_one_speaker`, `seedvc_two_speakers`, `remove_background` (Remove Music / Background noise), `remove_vocals` (Remove Vocals — same `audio_background_removal` handler, `audio_edit` type) (+ legacy `seedvc/seedvc2` normalized) |
+| 3D Refiner (spatial slot, `media 3d`, category `refiner`) | Hi3D v1.0 (`postprocessing/hi3d_refiner`) | `hi3d` — level `512/1024/1536`, face budget; runs on meshes only, keeps position/scale, drops textures |
+| Texturer (temporal slot, `media 3d`, category `texturer`) | SUPRA-Tex (`supratex`), Hunyuan3D 2.1 Paint (`hunyuan3d_paint`), TRELLIS.2 Texture (`trellis2_texture`) | `supratex`, `hunyuan3d_paint`, `trellis2_texture` — Object Image comes from `postprocessing_reference_images`; Gaussian splats are refused (meshes only) |
 | Misc | Film grain, control-track reuse | `film_grain_intensity/saturation`, pseudo-method `control` (do not register) |
 
-Plugin authors: new spatial/temporal/audio handlers via `plugin_info.json`
+Plugin authors: new handlers still via `plugin_info.json`
 (`spatial_upsampler_handlers` / `temporal_upsampler_handlers` / `audio_processors`)
-+ `configs` under `wgp_config["spatial_upsamplers"/"temporal_upsamplers"/"audio_processors"]`.
++ `configs` under `wgp_config["spatial_upsamplers"/"temporal_upsamplers"/"audio_processors"]`,
+but the registration modules moved in v18.88: `postprocessing/spatial_upsamplers.py`,
+`postprocessing/temporal_upsamplers.py`, `postprocessing/audio_processors.py`
+(`shared/spatial_upsampler_handlers.py`, `shared/temporal_upsampler_handlers.py` and
+`shared/spatial_upsamplers.py` are gone; `postprocessing.upsamplers` is aliased for
+older plugins). A handler declares each method's inputs and UI contexts in
+`method_parameters` (rendered from `postprocessing/parameter_ui.py`) and a
+`postprocessing_category` (`upsampler`/`refiner`, `interpolator`/`texturer`); the
+slot stores them in `spatial_postprocessing_parameters` / `temporal_postprocessing_parameters`.
 H3 Face Refiner detects/tracks ≤5 faces; SeedVR2 `window_size 0=auto/-1=off`;
 LTX windows default 81f/17 overlap (`8n+1` cadence, 9–481).
 
@@ -666,14 +710,22 @@ LTX windows default 81f/17 overlap (`8n+1` cadence, 9–481).
   18.21 (`C:\Wan2GP` `git log`: `9d25c601`) — an install still on `dee66357`
   shows the two old decoder modes until *Update Wan2GP* runs.
 
-### Accelerator profile folders (all 25, `profiles/`)
+### Accelerator and 3D profile folders (all 30, `profiles/`)
 
-`flux`, `hunyuan_1_5`, `ideogram4_presets`, `krea2_presets`, `ltx2_25_dev_accelerators`,
+The 3D stage models got their own preset folders in v18.88: `trellis2_shape_presets`,
+`hunyuan3d_21_shape_presets`, `pixal3d_presets`, `triposg_presets` hold the
+`SUPRA-Tex PBR` / `Hi3D + SUPRA-Tex PBR` / `Hunyuan3D 2.1 Paint PBR` /
+`TRELLIS.2 Texture PBR` combinations, and `minimax_h3_presets` holds the H3 phase
+presets.
+
+`flux`, `hunyuan3d_21_shape_presets`, `hunyuan_1_5`, `ideogram4_presets`, `krea2_presets`, `ltx2_25_dev_accelerators`,
 `ltx2_dev_accelerators`, `ltx2_distilled_presets`, `ltx2_presets`, `minimax_h3`,
-`minimax_h3_fl2va`, `minimax_h3_ref2va`, `minimax_h3_tts`, `minimax_h3_vdn`, `qwen`,
-`qwen21`, `sensenova_u1_5_8b_mot`, `viggle_animate`, `wan`, `wan_1.3B`, `wan_2_2`,
+`minimax_h3_presets`,
+`minimax_h3_fl2va`, `minimax_h3_ref2va`, `minimax_h3_tts`, `minimax_h3_vdn`, `pixal3d_presets`, `qwen`,
+`qwen21`, `sensenova_u1_5_8b_mot`, `trellis2_shape_presets`, `triposg_presets`, `viggle_animate`, `wan`, `wan_1.3B`, `wan_2_2`,
 `wan_2_2_5B`, `wan_2_2_ovi`, `wan_alpha`, `wan_chrono_edit`, `wan_i2v`.
-Apply via Settings dropdown -> Apply; missing LoRAs auto-download on first gen.
+Apply via Settings dropdown -> Apply; missing LoRAs auto-download on first gen; the
+3D preset folders apply the Refiner/Texturer combinations above.
 
 ---
 
@@ -682,10 +734,12 @@ Apply via Settings dropdown -> Apply; missing LoRAs auto-download on first gen.
 * Zero = fast single tasks, small Qwen OK. Prime = multi-step plans, needs Qwen3.8-9B/27B local or Codex/Claude/OpenCode remote (remote needs Prime).
 * Shared engine for Deepy + Enhancer + visual inspect. Remote saves VRAM, sends prompts/images/frames off-machine.
 * Local Qwen quant: 3.5 `Quanto Int8` (quality) vs `GGUF Q4` (lean); 27B `Q4` (best) / `IQ3_S` (balanced) / `Q2` (leanest) / Bonsai PTQ1 (~10 GB + INT8 KV); 9B Heretic `Q4` (~6.5 GB) / `Q8` (~11 GB, closest to full precision). Prime + local shows one combined model+quantization list.
-* VRAM mode: `unload ASAP` (safest) / `unload if needed` (balanced) / `always loaded` (fast Deepy, less gen VRAM).
+* VRAM mode: `unload ASAP` (safest) / `unload if needed` (balanced) / `always loaded` (fastest Deepy). Since v18.88 `always loaded` no longer blocks generations: they take the parts of Deepy they need, and its conversation memory only when nothing else is left (saved to RAM, restored on its next answer). That partial release needs the MMGP VRAM allocator (default `vmm_spill`); with PyTorch's allocator Deepy is released whole.
 * Context 16K Zero / 32K Prime / 48K+ long Prime; `Summarize` (>=32K) / `Summarize+Thinking` (>=48K).
 * Sessions: Disabled (temp) / selectable Workspace (share) / dedicated Workspace (self-contained, robot icon). Gallery media: keep-links (lean) vs copy-into-session (portable).
 * Upstream v18.20 ships Deepy settings presets for the new models: `gen_image/Fibo 2.0 Dev`, `edit_image/Fibo 2.0 Dev`, `edit_image/Fibo 2.0 Edit Turbo`, `gen_video_with_refs/MiniMax H3 FastH3 Omni 8 Steps` and `.../MiniMax H3 FastH3 Omni NVFP4 QAD 8 Steps`.
+* v18.88 Deepy tools follow the 3D redesign: the `gen_3d` default template is **TRELLIS.2 + SUPRA-Tex PBR 4B + 2.1B** (`TRELLIS.2 4B` migrates to it) and a new **`texture_3d`** template (`deepy_tool_texture_3d`, default `SUPRA-Tex`) textures a mesh from the 3D gallery given as `custom_guide`.
+* **App Development (Advanced)** (v18.88, `wgp_config["python_apps"]["development"]` = `off`/`apps`/`plugins`; always off while the Python sandbox is off) lets Deepy Prime and MCP agents build web apps you play in WanGP's Apps gallery. WanGP's Configuration → Prompt Enhancer / Deepy → Python tab owns it; the launcher card does not write it. Apps run in an isolated frame — no WanGP controls, files or network.
 * Launcher cards write the same `wgp_config.json` (`deepy_*`, `llm_engines`, `enhancer_*`, `prompt_enhancer_*`); Apply with backup.
 
 > Code notes (`src-tauri/src/features.rs` — `deepy_set` / `deepy_activate`):
@@ -806,6 +860,9 @@ From `shared/cli_args.py` (launcher exposes the useful subset):
 | `--profile 0-5` | 0 no permanent Reserved RAM (like P4 + Dynamic Preload) … 1 all-VRAM+RAM-cache … 4 default flexible … 5 min RAM (`--profile` overrides all three config profiles) |
 | `--vae-config` | VAE mode override (default Auto) |
 | `--compile`, `--preload MB`, `--fp16/--bf16`, `--perc-reserved-mem-max`, `--vram-safety-coefficient`, `--gpu` | Speed/memory levers (`--vram-safety-coefficient` default 0.85) |
+| `--max-vram GB` | v18.88: behave as on a GPU with that much VRAM (every VRAM figure is the emulated card's; at most `GB − 1.2` is reserved). Use it to check a workflow fits a smaller card — Auto-Tune in the launcher still recommends for the real one |
+| `--max-ram GB` | v18.88: a RAM planning budget (Reserved RAM, free-RAM margin, page drops stay within it); a budget, not a hard limit |
+| `--ram-stress GB` | v18.88: simulate a PC with that much RAM under real pressure — a helper process locks the rest (≈6 GB left to the system, 2 GB on Linux, needs `ulimit -l`). Startup is slower by a few seconds per 10 GB; stress test only, remove it before saving the launch args |
 | `--steps/--frames/--seed`, `--advanced` | Default gen values + advanced UI |
 | `--save-quantized`, `--convrot` (+`--save-quantized`) | Build INT8 Quanto / ConvRot ckpt on load |
 | `--test`, `--betatest`, `--debug-gen-form`, `--verbose 0-2`, `--debug-deepy`, `--llm-io` | Test/debug/transcripts |
@@ -871,8 +928,8 @@ Still stuck: export launcher diagnostics (GPU/VRAM, torch/CUDA, triton, versions
 `boot.log`, redacted config) + exact command + full error -> Discord
 `discord.gg/g7efUW9jGV`. Minimal repro beats screenshots.
 
-Upstream docs (all 25 files in `deepbeepmeep/Wan2GP/docs`, read at `9d25c601`):
-`AMD-INSTALLATION`, `API`, `AUDIO_PROCESSORS`, `AUTHENTICATION`, `CHANGELOG`, `CLI`,
+Upstream docs (all 26 files in `deepbeepmeep/WanGP/docs`, read at `2e16ef7d`):
+`AMD-INSTALLATION`, `API`, `APPS`, `AUDIO_PROCESSORS`, `AUTHENTICATION`, `CHANGELOG`, `CLI`,
 `DEEPY`, `DLSS5`, `FINETUNES`, `GETTING_STARTED`, `INSTALLATION`, `LORAS`, `MODELS`,
 `OVERVIEW`, `PLUGINS`, `PREVIEWS`, `PROCESSING`, `PROMPTS`, `REMOTE_LLMS`, `SETTINGS`,
 `SPATIAL_UPSAMPLERS`, `TEMPORAL_UPSAMPLERS`, `TROUBLESHOOTING`, `VACE`, `WORKSPACES`.
@@ -880,9 +937,11 @@ Launcher screens: `USER-GUIDE.md`.
 What's new: upstream `docs/CHANGELOG.md` (latest entry 26 Aug 2026, WanGP
 12.643–12.645: H3 two-phase/tiling, H3 Face Refiner, H3 PDD LoRA, SenseNova
 U1.5, Deepy Prime via Codex/Claude, remote notifications) + launcher
-`CHANGELOG.md`. The six upstream commits since the previous pin are not in
-that changelog yet — `profile 0`, `vllm rewrite, added fibo2`,
-`added FastH3 Omni, LTX2 VAE turing optimization`, `fixed audio continuity`,
-`Fused Kernels optimisations` and `Bumped version to 18.21`; their
-user-visible effects are in this guide's model, processor and kernel tables
-(v18.21 = FlashVSR+ Turbo, H3 PDD LoRAs, faster kernels, 18.21 label).
+`CHANGELOG.md`. The upstream changelog still lags the code: the 18.21 wave
+(`profile 0`, vllm rewrite + Fibo 2, FastH3 Omni, LTX2 VAE Turing optimization,
+Fused Kernels, FlashVSR+ Turbo) and the 18.88 wave (`checkpoint charly` +
+`are you game` + `fixes`, 2026-10-29: the 3D redesign with Hi3D/SUPRA-Tex/Pixal3D
+and the TRELLIS.2 + Hunyuan3D 2.1 shape/texture split, `--max-vram`/`--max-ram`/
+`--ram-stress`, the Deepy Apps gallery, post-processing parameter dictionaries)
+are described here instead — this guide's model, processor and kernel tables
+are the reconciled truth.

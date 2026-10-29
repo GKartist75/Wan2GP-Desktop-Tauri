@@ -444,6 +444,9 @@
               <tr><td><code>--compile</code></td><td>Force PyTorch transformer compilation (deprecated upstream, very slow first compile; CUDA Graph mode is config-only — set it in Performance Settings)</td></tr>
               <tr><td><code>--fp16</code></td><td>Force fp16 instead of bf16</td></tr>
               <tr><td><code>--perc-reserved-mem-max 0.3</code></td><td>% RAM for model swap cache (0-0.5)</td></tr>
+              <tr><td><code>--max-vram 8</code></td><td>Behave as on an 8 GB card (try a workflow on a smaller GPU; Auto-Tune still recommends for your real card)</td></tr>
+              <tr><td><code>--max-ram 24</code></td><td>RAM budget for WanGP's planning (a budget, not a hard limit)</td></tr>
+              <tr><td><code>--ram-stress 32</code></td><td>Simulate a 32 GB PC under pressure: locks the rest of RAM (slow start). Stress test only — remove it before saving</td></tr>
               <tr><td><code>--preload 2000</code></td><td>MB of model to keep in VRAM</td></tr>
               <tr><td><code>--listen</code></td><td>Accessible on local network</td></tr>
               <tr><td><code>--share</code></td><td>HuggingFace share URL</td></tr>

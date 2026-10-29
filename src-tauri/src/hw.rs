@@ -1409,10 +1409,10 @@ pub(crate) fn apply_gguf_override_with(url: &str, floor: &str) -> String {
 /// Since upstream 17307e5 (v1.1.2) the wheels are listed in WanGP's
 /// `setup_config.json` (`components.kernels.wgpkernels*`), so Sync installs
 /// them — the dashboard button stays as the explicit opt-in / reinstall path.
-/// Upstream v18.20 (2026-10-21) moves to v1.3.0 and puts `wgpkernels` in the
-/// RTX_20 profile too ("RTX 20XX Gets a Second Wind"): Turing is supported
-/// from 1.3.0 on, and upstream checks the kernels on the actual GPU before
-/// using them.
+/// Upstream v18.20 (2026-10-21) moved to v1.3.0 and put `wgpkernels` in the
+/// RTX_20 profile too ("RTX 20XX Gets a Second Wind"); v18.88 (2026-10-29)
+/// moves to v1.4.2 with the same wheel tags. Turing is supported from 1.3.0
+/// on, and upstream checks the kernels on the actual GPU before using them.
 ///
 /// v1.1.1 assets were deleted upstream (404). `rocm100` (ROCm 10, RDNA4)
 /// replaces the retired Windows-only `rocm714` and ships win+linux.
