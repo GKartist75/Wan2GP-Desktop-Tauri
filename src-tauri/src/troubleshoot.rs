@@ -169,6 +169,10 @@ pub fn troubleshoot_cuda_check() -> serde_json::Value {
     let probe = r#"import json, torch
 d = {"torch": torch.__version__, "cuda": torch.version.cuda, "available": torch.cuda.is_available(), "devices": torch.cuda.device_count(), "name": (torch.cuda.get_device_name(0) if torch.cuda.is_available() and torch.cuda.device_count() > 0 else None), "arch": torch.cuda.get_arch_list()}
 try:
+    d["cc"] = list(torch.cuda.get_device_capability(0)) if torch.cuda.is_available() and torch.cuda.device_count() > 0 else None
+except Exception:
+    d["cc"] = None
+try:
     d["mps"] = bool(torch.backends.mps.is_available())
 except Exception:
     d["mps"] = False

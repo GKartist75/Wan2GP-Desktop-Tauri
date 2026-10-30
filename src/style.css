@@ -587,10 +587,39 @@ html[data-theme="dark"][data-accent="rose"],
  -webkit-app-region: no-drag;
 }
 .topbar-spacer {
- flex: 1;
+  flex: 1;
 }
 
-/* ── Buttons ── */
+/* Auto-hide topbar: take it out of the dashboard flex row so content gets the
+   height back, then reveal it from the top edge. Pinned mode is the default and
+   keeps the normal in-flow bar. */
+.topbar-reveal-zone {
+  display: none;
+}
+#dashboard.topbar-autohide .topbar-reveal-zone {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  z-index: 59;
+}
+#dashboard.topbar-autohide .topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  transform: translateY(-100%);
+  transition: transform 160ms ease;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22);
+}
+#dashboard.topbar-autohide.topbar-revealed .topbar {
+  transform: translateY(0);
+}
+
+/* -- Buttons -- */
 .btn {
  padding: 6px 14px;
  border: none;
@@ -625,8 +654,15 @@ html[data-theme="dark"][data-accent="rose"],
  background: var(--surface-hover);
  color: var(--text-primary);
 }
+#topbarPinBtn {
+  color: var(--text-tertiary);
+}
+#topbarPinBtn.is-pinned {
+  color: var(--accent);
+  background: var(--surface-hover);
+}
 #stopAllBtn {
- color: #ef4444;
+  color: #ef4444;
 }
 #stopAllBtn:hover {
  background: rgba(239, 68, 68, 0.14);

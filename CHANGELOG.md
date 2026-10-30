@@ -4,6 +4,29 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+## [0.10.35] — 2026-10-31
+
+- **The topbar can be pinned or auto-hidden.** *Manage → Appearance → Topbar*
+  now offers **Pinned** (the existing always-visible row, default) and
+  **Auto-hide**: the bar leaves the dashboard flex row, the content reclaims the
+  44px, and an 8px strip at the top reveals it on hover (the strip is a real DOM
+  element, so it also works above an iframe or native child). The bar also has
+  a pin button that toggles the mode without opening Manage, and auto-hide
+  re-hides on mouse-out even when a clicked button still owns focus (an open
+  select keeps the bar up), and an OS cursor poll hides it as soon as the
+  pointer crosses into the native child without a parent `mouseleave` (an idle
+  watchdog is the fallback). Persisted as `topbarMode` in
+  `desktop-config.json`; native-view bounds keep the reveal strip reachable and
+  shrink the child while the bar is shown.
+
+- **A `no kernel image` crash no longer blames WGPKernels when it is absent.**
+  The startup triage used the traceback alone and offered to uninstall a wheel
+  that was not installed (launcher #85, GTX 1080 + torch 2.7.1+cu128). It now
+  probes the active environment first; when the wheel is missing it reports
+  torch's own `arch` list and compute capability, and points at *Troubleshooting
+  → Verify GPU compute* / *Repair environment* instead of a pip uninstall that
+  cannot help. The CUDA probe now returns `cc` for that diagnosis.
+
 - **Gradio's loopback probe no longer aborts startup on large UIs.** WanGP
   can exit with `ValueError: When localhost is not accessible, a shareable
   link must be created` even though the server is listening: Gradio's

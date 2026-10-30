@@ -362,6 +362,7 @@ pub fn run() {
             features::set_theme_follow_system,
             features::set_notifications_enabled,
             features::set_window_mode,
+            features::cursor_info,
             updates::check_update,
             updates::download_update,
             updates::install_update,

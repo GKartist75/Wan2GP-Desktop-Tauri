@@ -84,7 +84,13 @@ const APPEAR_LABELS = {
   cyber: "Cyber",
   matrix: "Matrix",
 };
-const _appearMem = { accent: "mono", ui: 100, term: 100, custom: {} };
+const _appearMem = {
+  accent: "mono",
+  ui: 100,
+  term: 100,
+  topbar: "pinned",
+  custom: {},
+};
 function _themeDef(name) {
   const over = (_appearMem.custom || {})[name];
   if (_validCustomDef(over)) return over;
@@ -208,6 +214,7 @@ function _appearStore() {
     localStorage.setItem("w2gp.accent", _appearMem.accent);
     localStorage.setItem("w2gp.uiScale", String(_appearMem.ui));
     localStorage.setItem("w2gp.termScale", String(_appearMem.term));
+    localStorage.setItem("w2gp.topbarMode", _appearMem.topbar);
     // Prune retired slots on every store so old profiles self-clean.
     const pruned = {};
     for (const t of APPEAR_THEMES)
@@ -305,6 +312,182 @@ function applyTermScale(pct) {
   if (val) val.textContent = p + "%";
   _appearStore();
 }
+// Topbar visibility: pinned keeps the bar in the dashboard flex row. Auto-hide
+// takes it out of flow and reveals it from the top edge, so the dashboard gets
+// the row back. Bounds sync keeps a native child from covering the bar or the
+// reveal strip.
+let _topbarHideTimer = null;
+let _topbarIdleTimer = null;
+let _topbarCursorPoll = null;
+function _topbarDash() {
+  return $("dashboard");
+}
+function _topbarAutoHidden() {
+  const dash = _topbarDash();
+  return !!dash && dash.classList.contains("topbar-autohide");
+}
+function _syncTopbarBounds() {
+  try {
+    window.w2gp?.bvSyncBounds?.();
+  } catch {}
+  try {
+    window.syncNativeBoundsAdjusted?.();
+  } catch {}
+}
+function _stopTopbarCursorPoll() {
+  if (_topbarCursorPoll) {
+    clearInterval(_topbarCursorPoll);
+    _topbarCursorPoll = null;
+  }
+}
+// The native child is a separate OS webview, so the parent can miss the
+// pointer leaving the bar. Ask the OS for the cursor instead of guessing with
+// a timer: the bar hides as soon as the pointer is below it.
+function _startTopbarCursorPoll() {
+  if (_topbarCursorPoll) return;
+  if (!window.w2gp || !window.w2gp.cursorInfo) return;
+  _topbarCursorPoll = setInterval(async () => {
+    const dash = _topbarDash();
+    if (
+      !dash ||
+      !dash.classList.contains("topbar-autohide") ||
+      !dash.classList.contains("topbar-revealed")
+    ) {
+      _stopTopbarCursorPoll();
+      return;
+    }
+    const tb = document.querySelector("#dashboard .topbar");
+    if (!tb) return;
+    const ae = document.activeElement;
+    if (
+      ae &&
+      tb.contains(ae) &&
+      /^(SELECT|INPUT|TEXTAREA)$/.test(ae.tagName)
+    )
+      return;
+    let info;
+    try {
+      info = await window.w2gp.cursorInfo();
+    } catch {
+      return;
+    }
+    if (
+      !info ||
+      info.error ||
+      typeof info.y !== "number" ||
+      typeof info.innerY !== "number"
+    )
+      return;
+    const scale = info.scale || 1;
+    const localY = (info.y - info.innerY) / scale;
+    if (localY > tb.getBoundingClientRect().bottom + 1) hideTopbar();
+  }, 120);
+}
+function revealTopbar() {
+  const dash = _topbarDash();
+  if (!dash || !dash.classList.contains("topbar-autohide")) return;
+  clearTimeout(_topbarHideTimer);
+  if (dash.classList.contains("topbar-revealed")) return;
+  dash.classList.add("topbar-revealed");
+  _syncTopbarBounds();
+  _startTopbarCursorPoll();
+}
+// The native child is a separate OS webview: the parent may never receive
+// mouseleave when the pointer crosses from the bar into it. Arm an idle
+// watchdog for pointer-driven reveals; moving over the bar resets it, so a
+// pointer parked inside the embedded view still hides the bar.
+function _armTopbarIdle(ms = 1800) {
+  clearTimeout(_topbarIdleTimer);
+  if (!_topbarAutoHidden()) return;
+  _topbarIdleTimer = setTimeout(() => {
+    const tb = document.querySelector("#dashboard .topbar");
+    const ae = document.activeElement;
+    const editing =
+      tb &&
+      ae &&
+      tb.contains(ae) &&
+      /^(SELECT|INPUT|TEXTAREA)$/.test(ae.tagName);
+    if (editing) {
+      _armTopbarIdle(800);
+      return;
+    }
+    hideTopbar();
+  }, ms);
+}
+function revealTopbarFromPointer() {
+  revealTopbar();
+  _armTopbarIdle();
+}
+function hideTopbar() {
+  const dash = _topbarDash();
+  if (!dash || !dash.classList.contains("topbar-autohide")) return;
+  clearTimeout(_topbarHideTimer);
+  clearTimeout(_topbarIdleTimer);
+  _stopTopbarCursorPoll();
+  if (!dash.classList.contains("topbar-revealed")) return;
+  dash.classList.remove("topbar-revealed");
+  // A button keeps focus after a click; leaving it focused inside a bar that
+  // just slid away makes Enter re-trigger it invisibly. Drop that focus, but
+  // keep SELECT/INPUT focus so an open dropdown is not torn down.
+  const tb = document.querySelector("#dashboard .topbar");
+  const ae = document.activeElement;
+  if (
+    tb &&
+    ae &&
+    tb.contains(ae) &&
+    !/^(SELECT|INPUT|TEXTAREA)$/.test(ae.tagName)
+  ) {
+    try {
+      ae.blur();
+    } catch {}
+  }
+  _syncTopbarBounds();
+}
+function scheduleTopbarHide() {
+  clearTimeout(_topbarHideTimer);
+  if (!_topbarAutoHidden()) return;
+  _topbarHideTimer = setTimeout(() => {
+    const tb = document.querySelector("#dashboard .topbar");
+    const ae = document.activeElement;
+    // Keep the bar while the pointer is on it or a select/input owns focus
+    // (an open native dropdown must survive). A focused button does not pin
+    // it: mouse-out still hides, which is what auto-hide promises.
+    const editing =
+      tb &&
+      ae &&
+      tb.contains(ae) &&
+      /^(SELECT|INPUT|TEXTAREA)$/.test(ae.tagName);
+    if (tb && (tb.matches(":hover") || editing)) return;
+    hideTopbar();
+  }, 320);
+}
+function _syncTopbarPin() {
+  const btn = $("topbarPinBtn");
+  if (!btn) return;
+  const pinned = _appearMem.topbar !== "hover";
+  btn.classList.toggle("is-pinned", pinned);
+  btn.setAttribute("aria-pressed", pinned ? "true" : "false");
+  btn.title = pinned
+    ? "Topbar pinned — click to auto-hide it"
+    : "Topbar auto-hides — click to pin it";
+}
+function applyTopbarMode(mode) {
+  const m = mode === "hover" ? "hover" : "pinned";
+  _appearMem.topbar = m;
+  const dash = _topbarDash();
+  if (dash) {
+    dash.classList.toggle("topbar-autohide", m === "hover");
+    dash.classList.remove("topbar-revealed");
+  }
+  clearTimeout(_topbarHideTimer);
+  clearTimeout(_topbarIdleTimer);
+  _stopTopbarCursorPoll();
+  const sel = $("topbarModeSelect");
+  if (sel) sel.value = m;
+  _syncTopbarPin();
+  _syncTopbarBounds();
+  _appearStore();
+}
 async function persistAppear() {
   try {
     // Prune retired slots before saving so desktop-config.json self-cleans.
@@ -318,6 +501,7 @@ async function persistAppear() {
     cfg.customThemes = pruned;
     cfg.uiScale = _appearMem.ui;
     cfg.termScale = _appearMem.term;
+    cfg.topbarMode = _appearMem.topbar;
     await window.w2gp.configSave(cfg).catch(() => {});
   } catch {}
 }
@@ -329,6 +513,7 @@ function loadAppear(cfg) {
       accent: localStorage.getItem("w2gp.accent"),
       ui: parseInt(localStorage.getItem("w2gp.uiScale") || "", 10),
       term: parseInt(localStorage.getItem("w2gp.termScale") || "", 10),
+      topbar: localStorage.getItem("w2gp.topbarMode"),
       custom: JSON.parse(localStorage.getItem("w2gp.customThemes") || "null"),
     };
   } catch {
@@ -353,6 +538,9 @@ function loadAppear(cfg) {
   applyAccent(acc);
   applyUiScale(c.uiScale || (mem && mem.ui) || 100);
   applyTermScale(c.termScale || (mem && mem.term) || 100);
+  let topbar = c.topbarMode || (mem && mem.topbar) || "pinned";
+  if (topbar !== "hover") topbar = "pinned";
+  applyTopbarMode(topbar);
 }
 // --- theme editor: click = apply, double-click = edit ---
 let _customEditSlot = "mono";
@@ -480,6 +668,57 @@ function initAppearControls() {
     persistAppear();
     showToast("Theme: " + _displayName(_appearMem.accent));
   });
+  $("topbarModeSelect")?.addEventListener("change", (e) => {
+    applyTopbarMode(e.target.value);
+    persistAppear();
+  });
+  $("topbarPinBtn")?.addEventListener("click", () => {
+    const next = _appearMem.topbar === "hover" ? "pinned" : "hover";
+    applyTopbarMode(next);
+    if (next === "hover") {
+      // Unpinning from the bar should not make it vanish under the pointer.
+      // Keep it up now; the normal mouse-out/idle timers hide it.
+      revealTopbarFromPointer();
+      scheduleTopbarHide();
+    }
+    persistAppear();
+    showToast(
+      next === "hover"
+        ? "Topbar auto-hides — move to the top edge to reveal"
+        : "Topbar pinned",
+    );
+  });
+  // The strip is a real DOM element above the iframe/native child, so the
+  // pointer can reach it even when the embedded view fills the dashboard.
+  $("topbarRevealZone")?.addEventListener("mouseenter", revealTopbarFromPointer);
+  const topbar = document.querySelector("#dashboard .topbar");
+  topbar?.addEventListener("mouseenter", revealTopbarFromPointer);
+  topbar?.addEventListener("mousemove", () => {
+    if (_topbarAutoHidden()) _armTopbarIdle();
+  });
+  topbar?.addEventListener("pointerdown", () => _armTopbarIdle());
+  topbar?.addEventListener("mouseleave", scheduleTopbarHide);
+  topbar?.addEventListener("focusin", revealTopbar);
+  topbar?.addEventListener("focusout", scheduleTopbarHide);
+  // Safety net for a missed mouseleave: any parent-webview move below the bar
+  // schedules the hide. The native child may swallow those events entirely,
+  // which is what the idle watchdog above covers.
+  document.addEventListener("mousemove", (e) => {
+    const dash = _topbarDash();
+    if (
+      !dash ||
+      !dash.classList.contains("topbar-autohide") ||
+      !dash.classList.contains("topbar-revealed")
+    )
+      return;
+    const tb = document.querySelector("#dashboard .topbar");
+    if (tb && e.clientY > tb.getBoundingClientRect().bottom) {
+      scheduleTopbarHide();
+    }
+  });
+  // Clicking into the native child focuses it and blurs the launcher window;
+  // treat that as leaving the bar (the mouseleave may never arrive).
+  window.addEventListener("blur", scheduleTopbarHide);
 }
 
 let prevPhaseId = null;

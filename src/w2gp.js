@@ -109,6 +109,21 @@ if (!window.__TAURI__) {
     // tricks (floating terminal over the view) don't apply — callers must hide
     // or shrink it via bvSyncBounds instead.
     let nativeEmbed = false;
+    // Auto-hide keeps an 8px DOM strip above the native child so the pointer
+    // can still reach the reveal zone. When the bar is out, the child starts at
+    // that strip instead of y=0; when revealed, the bar owns its full height.
+    const TOPBAR_REVEAL_PX = 8;
+    function topbarClampY() {
+        const tb = document.querySelector(".topbar");
+        if (!tb) return 0;
+        const dash = document.getElementById("dashboard");
+        if (dash && dash.classList.contains("topbar-autohide")) {
+            return dash.classList.contains("topbar-revealed")
+                ? tb.offsetHeight
+                : TOPBAR_REVEAL_PX;
+        }
+        return tb.getBoundingClientRect().bottom;
+    }
     window.__syncNativeBounds = (logIt) => {
         try {
             if (!nativeEmbed) return;
@@ -124,13 +139,10 @@ if (!window.__TAURI__) {
                 w = r.width,
                 h = r.height;
             try {
-                const tb = document.querySelector(".topbar");
-                if (tb) {
-                    const minY = tb.getBoundingClientRect().bottom;
-                    if (y < minY) {
-                        h -= minY - y;
-                        y = minY;
-                    }
+                const minY = topbarClampY();
+                if (y < minY) {
+                    h -= minY - y;
+                    y = minY;
                 }
             } catch {}
             x = Math.max(0, x);
@@ -278,6 +290,9 @@ if (!window.__TAURI__) {
             call("save_downloaded_file", { name, dir: dir ?? null }),
         // One-shot WebView2/RAM footprint ({webviewMb, webviewProcs, launcherMb, top[]}).
         webviewMemory: () => call("webview_memory"),
+        // Screen cursor + client origin/scale; auto-hide uses it because a
+        // native child webview swallows the parent's mouseleave.
+        cursorInfo: () => call("cursor_info").catch(() => null),
         bvSyncBounds: () => {
             try {
                 window.__syncNativeBounds();
