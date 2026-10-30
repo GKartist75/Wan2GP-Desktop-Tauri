@@ -30,7 +30,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   against the recursive output scan, and a gallery-only hit still counts as a
   successful scan. The permanent fix remains upstream: `resolve_source()` must
   coerce an unknown value instead of raising, and per-file metadata failures
-  should not abort startup; reported on WanGP#2517.
+  should not abort startup; reported on WanGP#2517, with the coercion opened
+  as WanGP#2564.
 - **Deepy's performance and context settings are in the card, and Apply no
   longer resets them.** Local Deepy (Zero, or Prime + local Qwen3.8) now
   exposes upstream's Configuration → Deepy values — VRAM loading mode, context

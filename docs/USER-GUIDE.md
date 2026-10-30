@@ -508,7 +508,8 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   source — nothing is deleted, and moving them back restores the gallery. The
   launcher also runs this scan automatically when a startup crash carries that
   signature, because the *temporary settings folder* retry cannot help: the bad
-  value is in the media, not in `wgp_config.json`.
+  value is in the media, not in `wgp_config.json`. Upstream PR
+  deepbeepmeep/WanGP#2564 proposes the permanent coercion.
 - **Preview decoders** — one line above *Copy debug info* showing whether this
   window can decode H.264 / HEVC / AV1 / VP9 plus the launcher GPU mode. HEVC
   "no" with *Launcher GPU: disabled* explains a gallery that plays sound over
