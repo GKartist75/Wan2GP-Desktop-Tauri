@@ -12,6 +12,8 @@ One-click **Wan2GP (WanGP)** — generative video, image, audio and TTS on your 
 
 **6 GB VRAM** is enough to start; the big models want 16–24 GB. Wan2GP itself is [deepbeepmeep/WanGP](https://github.com/deepbeepmeep/Wan2GP) — this repository installs it, picks the right GPU kernels and keeps it updated.
 
+> **Antivirus false positives:** the installers are unsigned, so Norton/Defender can flag the NSIS header heuristically (e.g. `NSIS:MalwareX-gen [Misc]`). Verify your download against the release's `SHA256SUMS.txt`; the launcher only installs Wan2GP and launches `python wgp.py`. Report the detection to the vendor with that file — code signing is not configured yet.
+
 **Linux and macOS are new** — they work, but they need testers: [how to help](#linux--macos--testers-wanted).
 
 ## Contents

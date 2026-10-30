@@ -264,6 +264,53 @@ window.w2gp.onWangpExit(async (c) => {
       ];
       for (const k of wheelCrashes) {
         if (!k.re.test(tail)) continue;
+        // The traceback alone does not prove the wheel is present: torch can
+        // emit the same "no kernel image" error when its own wheel lacks SASS
+        // for this card (launcher #85). Probe before offering an uninstall.
+        let installed = true;
+        try {
+          const probe = await window.w2gp.checkPackage?.(k.pkg);
+          if (probe && probe.installed === false) installed = false;
+        } catch {}
+        if (!installed) {
+          if (k.pkg !== "wgpkernels") {
+            appendLog(
+              "[i] " +
+                k.pkg +
+                " is not installed — skipping the kernel-wheel triage.",
+            );
+            continue;
+          }
+          let cuda = null;
+          try {
+            cuda = await window.w2gp.tsCudaCheck?.();
+          } catch {}
+          const arch =
+            cuda && Array.isArray(cuda.arch) ? cuda.arch.join(" ") : "";
+          const cc =
+            cuda && Array.isArray(cuda.cc) ? "sm_" + cuda.cc.join("") : "";
+          const detail =
+            (lastErr ? "Last error lines:\n" + lastErr + "\n\n" : "") +
+            "wgpkernels is not installed, so removing it cannot help. " +
+            (arch
+              ? "torch " +
+                (cuda.torch || "?") +
+                " reports arch=[" +
+                arch +
+                "]" +
+                (cc ? " for " + cc : "") +
+                ". "
+              : "") +
+            "The active torch build has no SASS for this GPU. Open Manage → System → Troubleshooting → Verify GPU compute (or Repair environment) and install a torch build that includes this card.";
+          await window.w2gp.confirmDialog({
+            title: "torch has no CUDA kernels for this GPU",
+            message:
+              "Wan2GP died at startup with a CUDA 'no kernel image' error, but wgpkernels is not installed. The active torch build likely lacks SASS for this GPU.",
+            detail,
+          });
+          appendLog("[!] " + detail.replace(/\n\n/g, " "));
+          return;
+        }
         const choice = await window.w2gp.confirmDialog({
           title: "Installed kernel wheel does not match this GPU",
           message:

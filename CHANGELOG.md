@@ -19,6 +19,14 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
   `desktop-config.json`; native-view bounds keep the reveal strip reachable and
   shrink the child while the bar is shown.
 
+- **A `no kernel image` crash no longer blames WGPKernels when it is absent.**
+  The startup triage used the traceback alone and offered to uninstall a wheel
+  that was not installed (launcher #85, GTX 1080 + torch 2.7.1+cu128). It now
+  probes the active environment first; when the wheel is missing it reports
+  torch's own `arch` list and compute capability, and points at *Troubleshooting
+  → Verify GPU compute* / *Repair environment* instead of a pip uninstall that
+  cannot help. The CUDA probe now returns `cc` for that diagnosis.
+
 - **Gradio's loopback probe no longer aborts startup on large UIs.** WanGP
   can exit with `ValueError: When localhost is not accessible, a shareable
   link must be created` even though the server is listening: Gradio's

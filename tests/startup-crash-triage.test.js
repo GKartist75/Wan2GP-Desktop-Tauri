@@ -29,6 +29,13 @@ function load({
   yue2 = null,
   platform = "win32",
   uninstallOk = true,
+  installed = true,
+  cuda = {
+    ok: true,
+    torch: "2.7.1+cu128",
+    arch: ["sm_61"],
+    cc: [6, 1],
+  },
 } = {}) {
   const log = [];
   const dialogs = [];
@@ -55,6 +62,13 @@ function load({
         handlers.exit = cb;
       },
       destroyBrowserView: () => Promise.resolve(),
+      checkPackage: async (pkg) => ({
+        name: pkg,
+        installed:
+          typeof installed === "function" ? installed(pkg) : installed,
+        version: "1.0.0",
+      }),
+      tsCudaCheck: async () => cuda,
       uninstallPackage: async (pkg) => {
         removed.push(pkg);
         // The Rust command rejects on a failed pip run (Err), so both shapes
@@ -270,6 +284,36 @@ test("a no-kernel-image crash offers to remove WGPKernels and relaunch", async (
   assert.ok(log.some((l) => /Removed wgpkernels/.test(l)));
   // The empty-settings retry is the wrong tool: it must stay unarmed.
   assert.notEqual(ctx.window.__safeConfigNextLaunch, true);
+});
+
+test("a no-kernel-image crash without WGPKernels reports torch's arch list", async () => {
+  const { ctx, dialogs, exit, removed, clicks, log } = load({
+    choice: "ok",
+    tail: NO_KERNEL_TAIL,
+    installed: false,
+  });
+  await crash(ctx, exit);
+  assert.equal(removed.length, 0, "never uninstall a wheel that is absent");
+  assert.equal(clicks.browser, 0, "no blind relaunch");
+  assert.equal(dialogs.length, 1);
+  assert.match(dialogs[0].title, /torch has no CUDA kernels/i);
+  assert.match(dialogs[0].detail, /wgpkernels is not installed/);
+  assert.match(dialogs[0].detail, /arch=\[sm_61\]/);
+  assert.match(dialogs[0].detail, /sm_61/);
+  assert.equal(ctx.window.__safeConfigNextLaunch, undefined);
+  assert.ok(log.some((l) => /arch=\[sm_61\]/.test(l)));
+});
+
+test("a stale SpargeAttn traceback with no package falls back to the generic triage", async () => {
+  const { ctx, dialogs, exit, removed } = load({
+    tail:
+      "importlib.metadata.PackageNotFoundError: No package metadata was found for sageattention",
+    installed: (pkg) => pkg !== "spas_sage_attn",
+  });
+  await crash(ctx, exit);
+  assert.equal(removed.length, 0);
+  assert.equal(dialogs.length, 1);
+  assert.match(dialogs[0].title, /crashed on startup/i);
 });
 
 test("a stale SpargeAttn import offers to remove spas_sage_attn", async () => {
