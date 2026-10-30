@@ -4,6 +4,16 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+## [0.10.36] — 2026-10-31
+
+- **YuE2 triage now reads `settings/yue2_settings.json`, not just media.**
+  Upstream's `get_default_settings()` runs the same `migrate_source()` on the
+  saved per-model settings before the UI paints, so a stale
+  `audio_prompt_type` there aborts startup with no bad output file — the case
+  in launcher #82 where the metadata scan found nothing. The scan and
+  quarantine now cover that file (and a legacy root copy), label it as saved
+  settings, and the startup triage still skips the useless `--config` retry.
+
 ## [0.10.35] — 2026-10-31
 
 - **The topbar can be pinned or auto-hidden.** *Manage → Appearance → Topbar*
