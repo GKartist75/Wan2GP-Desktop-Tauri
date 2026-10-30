@@ -295,6 +295,17 @@ function hideNativeHiddenNote() {
     document.getElementById("nativeHiddenNote")?.remove();
   } catch {}
 }
+// Auto-hide keeps an 8px DOM strip above the native child so the pointer can
+// still reach the reveal zone; when revealed, the bar owns its full height.
+function _termTopbarClampY() {
+  const tb = document.querySelector(".topbar");
+  if (!tb) return 0;
+  const dash = $("dashboard");
+  if (dash && dash.classList.contains("topbar-autohide")) {
+    return dash.classList.contains("topbar-revealed") ? tb.offsetHeight : 8;
+  }
+  return tb.getBoundingClientRect().bottom;
+}
 // Native-child twin of syncTermEmbedPadding: the child ignores CSS padding
 // (it composites above the DOM), so subtract the open docked console's strip
 // from the measured container rect and push real bounds to Rust. Floating /
@@ -332,15 +343,13 @@ function syncNativeBoundsAdjusted() {
     try {
       w = Math.max(0, w - sidePanelWidth());
     } catch (e) {}
-    // Same topbar clamp as __syncNativeBounds: the child must never cover metrics.
+    // Same topbar clamp as __syncNativeBounds: the child must never cover
+    // metrics, and auto-hide keeps the reveal strip reachable.
     try {
-      const tb = document.querySelector(".topbar");
-      if (tb) {
-        const minY = tb.getBoundingClientRect().bottom;
-        if (y < minY) {
-          h -= minY - y;
-          y = minY;
-        }
+      const minY = _termTopbarClampY();
+      if (y < minY) {
+        h -= minY - y;
+        y = minY;
       }
     } catch {}
     hideNativeHiddenNote();
@@ -691,6 +700,8 @@ function openSettings() {
       $("termScaleInput").value = String(_appearMem.term);
     if ($("termScaleVal"))
       $("termScaleVal").textContent = _appearMem.term + "%";
+    if ($("topbarModeSelect"))
+      $("topbarModeSelect").value = _appearMem.topbar;
     // GGUF CUDA kernel controls
     const g = cfg.ggufEnv || {
       enabled: true,

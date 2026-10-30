@@ -2673,6 +2673,32 @@ pub(crate) fn apply_window_mode(window: &tauri::WebviewWindow, mode: &str) {
     }
 }
 
+/// Screen cursor position plus the window's client origin/scale. The topbar
+/// auto-hide uses this while revealed: a native child webview swallows the
+/// parent's mouseleave, but the OS still knows where the pointer is.
+#[tauri::command]
+pub fn cursor_info(window: tauri::WebviewWindow) -> serde_json::Value {
+    let cursor = match window.cursor_position() {
+        Ok(p) => p,
+        Err(e) => return serde_json::json!({"error": e.to_string()}),
+    };
+    let inner = match window.inner_position() {
+        Ok(p) => p,
+        Err(e) => return serde_json::json!({"error": e.to_string()}),
+    };
+    let scale = match window.scale_factor() {
+        Ok(s) => s,
+        Err(e) => return serde_json::json!({"error": e.to_string()}),
+    };
+    serde_json::json!({
+        "x": cursor.x,
+        "y": cursor.y,
+        "innerX": inner.x,
+        "innerY": inner.y,
+        "scale": scale,
+    })
+}
+
 #[tauri::command]
 pub fn set_window_mode(window: tauri::WebviewWindow, mode: String) -> serde_json::Value {
     let mode = window_mode_normalize(&mode);

@@ -153,6 +153,14 @@
             </select>
             <span class="appear-val" id="queueColorsStatus"></span>
           </div>
+          <div class="appear-slider">
+            <label class="token-hint" for="topbarModeSelect" style="min-width:88px">Topbar</label>
+            <select id="topbarModeSelect" class="input" style="max-width:230px" title="Pinned keeps the topbar in the layout. Auto-hide frees the row and reveals the bar when the pointer reaches the top edge.">
+              <option value="pinned">Pinned (always visible)</option>
+              <option value="hover">Auto-hide (reveal at top edge)</option>
+            </select>
+          </div>
+          <p class="token-hint">Auto-hide keeps the dashboard's top row for content; move the pointer to the very top edge to bring the bar back. Pin it if you need the metrics or window drag handle permanently.</p>
         </div>
         <div class="settings-section">
           <h3>Desktop</h3>
@@ -1045,6 +1053,7 @@
 
   <!-- Dashboard -->
   <div id="dashboard" class="screen">
+    <div id="topbarRevealZone" class="topbar-reveal-zone" aria-hidden="true"></div>
     <div class="topbar">
       <div class="topbar-left"></div>
       <div class="topbar-center">
@@ -1098,6 +1107,9 @@
         </button>
         <button class="btn btn-ghost small" id="taskMgrBtn" data-requires="taskManager" title="Open the Windows Task Manager">
           <svg viewBox="0 0 24 24" width="14" height="14"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="9" x2="16" y2="9" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="13" x2="14" y2="13" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="17" x2="12" y2="17" stroke="currentColor" stroke-width="1.5"/></svg>
+        </button>
+        <button class="btn-icon" id="topbarPinBtn" aria-pressed="false" title="Pin the topbar (turn off auto-hide)">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M12 17v5"/><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
         </button>
         <button class="btn-icon theme-toggle" id="themeToggleBtn" title="Toggle dark/light mode">
           <svg viewBox="0 0 24 24" class="sun-icon"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>

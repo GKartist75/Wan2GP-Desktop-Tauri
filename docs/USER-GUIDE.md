@@ -415,7 +415,11 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 - **Appearance** — 5 themes (Mono default, Blue Sky, Orca, Cyber, Matrix):
   click to apply, double-click to edit 3 colors (accent/background/text) with
   live preview, Save theme / Set as default / Reset to shipped colors. Text size
-  (85–130%) + Terminal size (85–150%) sliders; console window follows.
+  (85–130%) + Terminal size (85–150%) sliders; console window follows. **Topbar**
+  is *Pinned* (always visible, default) or *Auto-hide* (frees the row; move the
+  pointer to the 8px strip at the very top to reveal it). The pin button on the
+  bar toggles the same mode without opening Manage; auto-hide drops again when
+  the pointer leaves, even if a clicked button still has focus.
 - **Desktop** — desktop shortcut + start options.
 - **Custom Resolutions** — adds your own sizes to Wan2GP's resolution picker.
   The table writes `<repo>/resolutions.json` next to `wgp.py` as
