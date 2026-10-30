@@ -4,6 +4,19 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- **Gradio's loopback probe no longer aborts startup on large UIs.** WanGP
+  can exit with `ValueError: When localhost is not accessible, a shareable
+  link must be created` even though the server is listening: Gradio's
+  `launch()` probes `HEAD /` with a 3-second timeout, and the first render of
+  a UI with many plugin tabs can outlast it (a system HTTP proxy intercepting
+  the loopback request produces the same message). The launcher's generated
+  bootstrap now keeps Gradio's stock probe, then retries **loopback URLs only**
+  once with a 60-second timeout and `trust_env=False`. It wraps upstream's own
+  retry shim, so load order is irrelevant, and a genuinely dead loopback still
+  fails fast. Applies to hidden and external-terminal launches; running
+  `python wgp.py` by hand is unchanged. Upstream: deepbeepmeep/WanGP#1426,
+  PR #2110.
+
 ## [0.10.34] — 2026-10-30
 
 - **Startup no longer reports `loadBrowserList is not defined`.** The Default

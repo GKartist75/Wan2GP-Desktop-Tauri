@@ -440,7 +440,9 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
 
 ## Manage → Launch
 
-- **Share Link** — Gradio public tunnel (only if localhost isn't reachable; your server becomes internet-visible).
+- **Share Link** — Gradio public tunnel. The launcher already retries a slow
+  loopback probe (large UIs, proxy interception); use this only if the UI still
+  is not reachable locally — it makes your server internet-visible.
 - **Presets & flag builder** — Balanced / Low VRAM / Max perf / Emergency preset buttons stage a known-good arg string; attention/profile dropdowns + compile/fp16 toggles patch single flags (step skipping such as TeaCache is a WanGP generation setting, not a launch flag). The Extra Launch Args field below updates — press **Save**.
 - **Agent API (MCP server)** — transport/host/port/version picker shows the exact launch command + client URL, with copy. stdio = local spawn; HTTP needs `--mcp-auth` + HTTPS off-localhost.
 - **Headless batch** — queue `.zip`/settings `.json` path + optional output dir + dry-run → runs `wgp.py --process` with console streaming; exit 0 = done, 1 = error.
@@ -464,7 +466,7 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   auto-detect via `clinfo`/the GPU name, or set e.g. `gfx1100`. The launcher now
   refuses to install an AMD stack whose ROCm device target cannot be resolved
   (some APUs report only "AMD Radeon(TM) Graphics") instead of guessing.
-- **Bind Address** — `localhost` (matches Gradio's self-check) vs strict `127.0.0.1` for proxy/VPN setups.
+- **Bind Address** — `localhost` (matches Gradio's self-check) vs strict `127.0.0.1` for proxy/VPN setups. If "When localhost is not accessible…" appears, the launcher's loopback retry already covers a slow first render; disabling plugin tabs from Troubleshooting is the next step.
 
 ## Manage → System
 

@@ -243,7 +243,7 @@
         <div class="settings-section">
           <h3>Share Link</h3>
           <label class="toggle-row"><input type="checkbox" id="shareToggle"> <span>Enable public share link (<code>--share</code>)</span></label>
-          <p class="token-hint">If you see the error "<em>When localhost is not accessible, a shareable link must be created</em>" when launching, that is Gradio's IPv4/IPv6 self-check failing — fix it first with <strong>Bind Address &rarr; localhost</strong> (below) or by adding <code>--server-name localhost</code> to Extra Launch Args. Only if that does not help, enable this to create a public Gradio tunnel (your server becomes reachable from the internet).</p>
+          <p class="token-hint">If you see the error "<em>When localhost is not accessible, a shareable link must be created</em>" when launching, Gradio's 3-second loopback probe did not get a response. Large UIs with many plugin tabs are the usual cause (the first page can take longer than the probe), and a system HTTP proxy can intercept the loopback request. The launcher now retries loopback once with a 60-second, proxy-free request; if it still appears, use <strong>Manage &rarr; System &rarr; Troubleshooting &rarr; Disable third-party plugins</strong> or switch <strong>Bind Address</strong> to <strong>127.0.0.1</strong> (below). Only then enable this to create a public Gradio tunnel (your server becomes reachable from the internet).</p>
         </div>
         <div class="settings-section">
           <h3>Presets &amp; flag builder</h3>
@@ -387,7 +387,7 @@
               </select>
               <button class="btn btn-primary small" id="serverNameSaveBtn" title="Save bind address (applies on next launch)">Save</button>
             </div>
-            <p class="token-hint">Address Wan2GP binds and connects to. <code>localhost</code> resolves to whatever your PC uses (IPv4 or IPv6) and matches Gradio's own startup check — use it if you saw "When localhost is not accessible…". <code>127.0.0.1</code> is a strict-IPv4 fallback for proxy/VPN setups. Changes apply on next launch.</p>
+            <p class="token-hint">Address Wan2GP binds and connects to. <code>localhost</code> resolves to whatever your PC uses (IPv4 or IPv6) and matches Gradio's own startup check; <code>127.0.0.1</code> is a strict-IPv4 fallback for proxy/VPN setups. If "When localhost is not accessible…" still appears, disable plugin tabs from Troubleshooting first — large UIs can outlast Gradio's probe. Changes apply on next launch.</p>
           </div>
           <div class="settings-section" style="margin-top:12px">
             <h3>Agent API (MCP server)</h3>

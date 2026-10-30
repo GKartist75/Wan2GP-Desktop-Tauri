@@ -767,7 +767,7 @@ pub async fn launch(
     };
     let _ = std::fs::write(
         &boot,
-        r#"import os, sys, runpy
+        r#"import importlib.abc, importlib.machinery, os, sys, runpy, warnings
 os.environ['PYTHONUNBUFFERED'] = '1'
 os.environ['TQDM_MININTERVAL'] = '0'
 os.environ['TQDM_MINITERS'] = '1'
@@ -793,6 +793,82 @@ sys.path = [p for p in sys.path if os.path.abspath(p or '.') != _boot_dir]
 sys.argv = sys.argv[1:]
 d = os.path.dirname(os.path.abspath(sys.argv[0]))
 if d not in sys.path: sys.path.insert(0, d)
+# Gradio's launch() probes http://localhost:<port>/ with a 3 s HEAD and five
+# attempts. A large WanGP UI (plugin tabs) can spend longer than that serving
+# the first page, and a system HTTP proxy can intercept the loopback request.
+# Either one aborts startup with "When localhost is not accessible" even
+# though the server is up. Keep the stock probe first, then retry only
+# loopback URLs with a patient, proxy-free request. Upstream's own retry shim
+# is wrapped too (sentinel), so load order does not matter.
+def _wangp_loopback_host(url):
+    try:
+        from urllib.parse import urlparse
+        return (urlparse(url).hostname or '').lower() in ('localhost', '127.0.0.1', '::1')
+    except Exception:
+        return False
+
+def _wangp_patch_gradio_networking():
+    try:
+        import gradio.networking as networking
+    except Exception:
+        return
+    orig = getattr(networking, 'url_ok', None)
+    if orig is None or getattr(orig, '_wangp_launcher_loopback_patch', False):
+        return
+    def url_ok(url):
+        try:
+            if orig(url):
+                return True
+        except Exception:
+            pass
+        if not _wangp_loopback_host(url):
+            return False
+        try:
+            import httpx
+            print('[launcher] Gradio loopback probe timed out; retrying once with a 60 s proxy-free request...', flush=True)
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore')
+                r = httpx.head(url, timeout=60, verify=False, trust_env=False)
+            return r.status_code in (200, 401, 302, 303, 307)
+        except Exception:
+            return False
+    url_ok._wangp_launcher_loopback_patch = True
+    networking.url_ok = url_ok
+
+def _wangp_patch_gradio_blocks(blocks):
+    cls = getattr(blocks, 'Blocks', None)
+    orig_launch = getattr(cls, 'launch', None) if cls is not None else None
+    if orig_launch is None or getattr(orig_launch, '_wangp_launcher_loopback_patch', False):
+        return
+    def launch(self, *args, **kwargs):
+        _wangp_patch_gradio_networking()
+        return orig_launch(self, *args, **kwargs)
+    launch._wangp_launcher_loopback_patch = True
+    cls.launch = launch
+
+class _WangpPatchLoader(importlib.abc.Loader):
+    def __init__(self, loader): self.loader = loader
+    def create_module(self, spec):
+        fn = getattr(self.loader, 'create_module', None)
+        return fn(spec) if fn else None
+    def exec_module(self, module):
+        self.loader.exec_module(module)
+        if module.__name__ == 'gradio.blocks':
+            try: _wangp_patch_gradio_blocks(module)
+            except Exception: pass
+
+class _WangpPatchFinder(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname != 'gradio.blocks':
+            return None
+        spec = importlib.machinery.PathFinder.find_spec(fullname, path)
+        if spec is not None and spec.loader is not None:
+            spec.loader = _WangpPatchLoader(spec.loader)
+        return spec
+
+sys.meta_path.insert(0, _WangpPatchFinder())
+if 'gradio.blocks' in sys.modules:
+    _wangp_patch_gradio_blocks(sys.modules['gradio.blocks'])
 runpy.run_path(sys.argv[0], run_name='__main__')
 "#,
     );
