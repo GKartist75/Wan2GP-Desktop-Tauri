@@ -935,8 +935,9 @@ Still stuck: export launcher diagnostics (GPU/VRAM, torch/CUDA, triton, versions
 `boot.log`, redacted config) + exact command + full error -> Discord
 `discord.gg/g7efUW9jGV`. Minimal repro beats screenshots.
 
-Upstream docs (all 26 files in `deepbeepmeep/WanGP/docs`, read at `2e16ef7d`
-and re-checked at `d951836`, WanGP 18.888):
+Upstream docs (all 26 files in `deepbeepmeep/WanGP/docs`, read at `2e16ef7d`,
+re-checked at `d951836` with WanGP 18.888, then at `9cb2bcda` where only
+runtime fixes landed):
 `AMD-INSTALLATION`, `API`, `APPS`, `AUDIO_PROCESSORS`, `AUTHENTICATION`, `CHANGELOG`, `CLI`,
 `DEEPY`, `DLSS5`, `FINETUNES`, `GETTING_STARTED`, `INSTALLATION`, `LORAS`, `MODELS`,
 `OVERVIEW`, `PLUGINS`, `PREVIEWS`, `PROCESSING`, `PROMPTS`, `REMOTE_LLMS`, `SETTINGS`,

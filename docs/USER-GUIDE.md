@@ -501,12 +501,14 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   file* and migrates them at startup, so one stale `audio_prompt_type` (anything
   but `0`, `1`, `12`, `A`, `A2`) kills the UI with *"Choose one of the five YuE2
   composition sources"* before it paints (upstream #2517). The scan reads
-  WAV/MP3/FLAC metadata only and lists the offending files; *Quarantine
-  offenders* moves them into `yue2-quarantine/` beside your outputs — nothing is
-  deleted, and moving them back restores the gallery. The launcher also runs this
-  scan automatically when a startup crash carries that signature, because the
-  *temporary settings folder* retry cannot help: the bad value is in the media,
-  not in `wgp_config.json`.
+  WAV/MP3/FLAC metadata in the configured output folders *and* every audio path
+  saved in workspace galleries (dedicated folders, imports outside the output
+  roots, and virtual `path|start_frame=…` entries); it lists the offending
+  files. *Quarantine offenders* moves them into `yue2-quarantine/` beside the
+  source — nothing is deleted, and moving them back restores the gallery. The
+  launcher also runs this scan automatically when a startup crash carries that
+  signature, because the *temporary settings folder* retry cannot help: the bad
+  value is in the media, not in `wgp_config.json`.
 - **Preview decoders** — one line above *Copy debug info* showing whether this
   window can decode H.264 / HEVC / AV1 / VP9 plus the launcher GPU mode. HEVC
   "no" with *Launcher GPU: disabled* explains a gallery that plays sound over

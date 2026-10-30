@@ -29,17 +29,12 @@ pub struct KnownBad {
 }
 
 /// Curated stop-gap list. See the module docs for the add/remove rules.
-pub const KNOWN_BAD: &[KnownBad] = &[KnownBad {
-    // SeedVC's CAMPPlus model is the only towerless one in that pipeline, so
-    // `towers_total / total_size` is 0/0 inside the "Async loading plan" print
-    // in mmgp/offload.py's tune_preloading(). Introduced by 2c67e50 (VRAM
-    // estimation fix); the one-line guard is PR #2548, unmerged as of
-    // 2026-10-27 and re-confirmed on a Wan2GP Desktop install.
-    sha: "2c67e50",
-    title: "SeedVC crashes with ZeroDivisionError in mmgp offload",
-    issue: 2543,
-    advice: "Stay on the current commit until upstream merges PR #2548 (one-line guard).",
-}];
+///
+/// Empty since 2026-10-30: upstream 86671f15 added the `total_size` guard in
+/// mmgp/offload.py, so the SeedVC ZeroDivisionError (#2543, reported against
+/// 2c67e50) no longer reproduces from `main`. PR #2548 is still open, but the
+/// fix itself is in the tree; the entry was removed under the "merged" rule.
+pub const KNOWN_BAD: &[KnownBad] = &[];
 
 /// Known-bad entries present in `commits` (full hashes).
 ///
@@ -47,7 +42,13 @@ pub const KNOWN_BAD: &[KnownBad] = &[KnownBad {
 /// table stores, so a commit is "present" when its full hash starts with the
 /// table's short sha. Order follows the table, so the UI is stable.
 pub fn known_bad_in(commits: &[String]) -> Vec<&'static KnownBad> {
-    KNOWN_BAD
+    hits(KNOWN_BAD, commits)
+}
+
+/// Table-generic matcher so the matching rules stay covered while
+/// [`KNOWN_BAD`] is empty.
+fn hits<'a>(table: &'a [KnownBad], commits: &[String]) -> Vec<&'a KnownBad> {
+    table
         .iter()
         .filter(|bad| {
             commits
@@ -65,10 +66,17 @@ mod tests {
         format!("{short}{}", "0".repeat(40 - short.len()))
     }
 
+    const SAMPLE: &[KnownBad] = &[KnownBad {
+        sha: "2c67e50",
+        title: "sample entry",
+        issue: 2543,
+        advice: "sample advice",
+    }];
+
     #[test]
     fn matches_the_bad_commit_inside_the_incoming_range() {
         let commits = vec![full("1111111"), full("2c67e50")];
-        let hits = known_bad_in(&commits);
+        let hits = hits(SAMPLE, &commits);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].sha, "2c67e50");
         assert_eq!(hits[0].issue, 2543);
@@ -76,8 +84,9 @@ mod tests {
 
     #[test]
     fn ignores_unrelated_commits() {
+        assert!(hits(SAMPLE, &[full("97845dc"), full("9905f0d")]).is_empty());
+        assert!(hits(SAMPLE, &[]).is_empty());
         assert!(known_bad_in(&[full("97845dc"), full("9905f0d")]).is_empty());
-        assert!(known_bad_in(&[]).is_empty());
     }
 
     #[test]
@@ -85,14 +94,21 @@ mod tests {
         // A hash that merely contains the short sha is not the commit.
         let mut other = String::from("fffffff");
         other.push_str("2c67e50");
-        assert!(known_bad_in(&[other]).is_empty());
+        assert!(hits(SAMPLE, &[other]).is_empty());
         // Shorter than the table entry can never match.
-        assert!(known_bad_in(&["2c67e".to_string()]).is_empty());
+        assert!(hits(SAMPLE, &["2c67e".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn retired_seedvc_commit_no_longer_blocks() {
+        // 86671f15 guards total_size in mmgp/offload.py, so an incoming range
+        // that still contains 2c67e50 must not stop the update.
+        assert!(known_bad_in(&[full("2c67e50")]).is_empty());
     }
 
     #[test]
     fn table_entries_are_well_formed() {
-        for bad in KNOWN_BAD {
+        for bad in KNOWN_BAD.iter().chain(SAMPLE) {
             assert!(
                 (7..=40).contains(&bad.sha.len()),
                 "{}: sha should be a 7-40 char git prefix",

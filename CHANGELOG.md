@@ -4,15 +4,33 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
-- **Guide refreshed for WanGP 18.888 (no launcher code change needed).** The
-  upstream commits after `2e16ef7d` only add model assets, profiles and kernel
-  internals — no `setup_config.json`, wheel pin, requirement, CLI or config-key
+- **Guide refreshed for WanGP 18.888.** The upstream commits through
+  `9cb2bcda` add the Pika/Singularity assets from 18.888 and then only runtime
+  fixes — no `setup_config.json`, wheel pin, requirement, CLI or config-key
   changes, so *Update WanGP* / *Sync Kernels* need nothing new. The Guide now
   points H3 FL2VA users at the new **Pika H3 Flex FL2VA 6 Steps** profile
   (6 steps, guidance 1, `pika_renoise`; Pika LoRA downloads on first use),
   lists the **Singularity V2** Ref2VA defaults (33B + pruned 20B), and notes
   the new Pika Deepy templates. The seeded Deepy defaults stay the PDD 8-step
   templates because upstream still defaults to them.
+- **The SeedVC update stop-gap is retired now that upstream fixed it.**
+  `86671f15` added the `total_size` guard in `mmgp/offload.py`, so the
+  `ZeroDivisionError` reported against `2c67e50` (#2543) no longer reproduces
+  from `main`; PR #2548 stays open, but the guard is in the tree.
+  `upstream_health::KNOWN_BAD` is empty again, so updating from `2c67e50` or
+  earlier no longer stops with a warning for a bug that same update fixes. The
+  gate and its *Update anyway* path remain for future entries, and the
+  matching rules are now exercised through a table-generic helper.
+- **The YuE2 scan now follows saved galleries, not just output folders.** A
+  second launcher report (#82) had no offender in the configured outputs and
+  only a manual `resolve_source()` patch let WanGP start, so the scan also reads
+  the audio paths in workspace manifests (`workspaces_dir`, including
+  `archives/`, dedicated folders and imports outside the output roots) and
+  strips virtual `path|start_frame=…` suffixes. Referenced files are deduped
+  against the recursive output scan, and a gallery-only hit still counts as a
+  successful scan. The permanent fix remains upstream: `resolve_source()` must
+  coerce an unknown value instead of raising, and per-file metadata failures
+  should not abort startup; reported on WanGP#2517.
 - **Deepy's performance and context settings are in the card, and Apply no
   longer resets them.** Local Deepy (Zero, or Prime + local Qwen3.8) now
   exposes upstream's Configuration → Deepy values — VRAM loading mode, context

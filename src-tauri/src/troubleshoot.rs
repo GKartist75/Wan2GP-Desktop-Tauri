@@ -1777,21 +1777,158 @@ fn yue2_output_roots(repo: &std::path::Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Workspace manifest root: `workspaces_dir` from `wgp_config.json`, relative
+/// to the checkout when not absolute, else `./workspaces`.
+fn yue2_workspace_dir(repo: &std::path::Path) -> PathBuf {
+    let cfg: serde_json::Value = std::fs::read_to_string(repo.join("wgp_config.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(serde_json::Value::Null);
+    match cfg
+        .get("workspaces_dir")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.trim().is_empty())
+    {
+        Some(raw) => {
+            let p = std::path::Path::new(raw.trim());
+            if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                repo.join(p)
+            }
+        }
+        None => repo.join("workspaces"),
+    }
+}
+
+/// Audio files the saved galleries point at. Workspaces store absolute paths
+/// (dedicated folders, imports outside the output roots), so scanning only
+/// the output folders can miss the file that aborts startup. Virtual media
+/// paths (`file.wav|start_frame=…`) are reduced to their source file.
+fn yue2_gallery_paths(repo: &std::path::Path) -> Vec<PathBuf> {
+    let root = yue2_workspace_dir(repo);
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for dir in [root.clone(), root.join("archives")] {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(record) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            let Some(gallery) = record.get("gallery").and_then(|g| g.as_object()) else {
+                continue;
+            };
+            for (key, value) in gallery {
+                if !key.ends_with("_file_list") {
+                    continue;
+                }
+                let Some(items) = value.as_array() else {
+                    continue;
+                };
+                for item in items {
+                    let raw = item
+                        .as_str()
+                        .or_else(|| item.get("path").and_then(|p| p.as_str()));
+                    let Some(raw) = raw else {
+                        continue;
+                    };
+                    let source = raw.split('|').next().unwrap_or(raw).trim();
+                    if source.is_empty() || !is_audio_file(source) {
+                        continue;
+                    }
+                    let p = PathBuf::from(source);
+                    if seen.insert(p.clone()) {
+                        out.push(p);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Read one audio file and append a report entry when upstream would reject it.
+fn inspect_yue2_audio(
+    path: &std::path::Path,
+    name: &str,
+    size: u64,
+    bad: &mut Vec<serde_json::Value>,
+) {
+    let Some(text) = embedded_settings_text(path, name) else {
+        return;
+    };
+    let Some(value) = audio_prompt_type_in(&text) else {
+        return;
+    };
+    if !yue2_source_invalid(&value) {
+        return;
+    }
+    if bad.len() < MAX_BAD {
+        bad.push(serde_json::json!({
+            "path": path.to_string_lossy(),
+            "name": name,
+            "value": value,
+            "size": size,
+        }));
+    }
+}
+
+const MAX_ENTRIES: usize = 20000;
+const MAX_BAD: usize = 50;
+const MAX_DEPTH: usize = 6;
+const MAX_SECS: u64 = 20;
+
 /// One entry per output whose embedded `audio_prompt_type` upstream's YuE2
 /// migration would reject. Capped like the model scanner.
-fn scan_yue2_metadata(roots: &[PathBuf]) -> (usize, Vec<serde_json::Value>, bool) {
-    const MAX_ENTRIES: usize = 20000;
-    const MAX_BAD: usize = 50;
-    const MAX_DEPTH: usize = 6;
-    const MAX_SECS: u64 = 20;
+fn scan_yue2_metadata(
+    roots: &[PathBuf],
+    referenced: &[PathBuf],
+) -> (usize, Vec<serde_json::Value>, bool) {
     let started = std::time::Instant::now();
+    let mut scanned = 0usize;
+    let mut bad: Vec<serde_json::Value> = Vec::new();
+    let mut seen_files: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+
+    // Saved-gallery references first: they may live outside every output root.
+    for path in referenced {
+        if started.elapsed().as_secs() > MAX_SECS {
+            return (scanned, bad, true);
+        }
+        let Ok(meta) = std::fs::metadata(path) else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if !is_audio_file(&name) {
+            continue;
+        }
+        if !seen_files.insert(path.clone()) {
+            continue;
+        }
+        scanned += 1;
+        inspect_yue2_audio(path, &name, meta.len(), &mut bad);
+    }
+
     let mut queue: Vec<(PathBuf, usize)> = roots
         .iter()
         .filter(|p| p.exists())
         .map(|p| (p.clone(), 0))
         .collect();
-    let mut scanned = 0usize;
-    let mut bad: Vec<serde_json::Value> = Vec::new();
     let mut seen = 0usize;
     while let Some((dir, depth)) = queue.pop() {
         if seen >= MAX_ENTRIES || started.elapsed().as_secs() > MAX_SECS {
@@ -1821,24 +1958,11 @@ fn scan_yue2_metadata(roots: &[PathBuf]) -> (usize, Vec<serde_json::Value>, bool
             if !is_audio_file(&name) {
                 continue;
             }
+            if !seen_files.insert(path.clone()) {
+                continue;
+            }
             scanned += 1;
-            let Some(text) = embedded_settings_text(&path, &name) else {
-                continue;
-            };
-            let Some(value) = audio_prompt_type_in(&text) else {
-                continue;
-            };
-            if !yue2_source_invalid(&value) {
-                continue;
-            }
-            if bad.len() < MAX_BAD {
-                bad.push(serde_json::json!({
-                    "path": path.to_string_lossy(),
-                    "name": name,
-                    "value": value,
-                    "size": meta.len(),
-                }));
-            }
+            inspect_yue2_audio(&path, &name, meta.len(), &mut bad);
         }
     }
     (scanned, bad, false)
@@ -1847,11 +1971,13 @@ fn scan_yue2_metadata(roots: &[PathBuf]) -> (usize, Vec<serde_json::Value>, bool
 /// Diagnostics body, with the checkout passed in so the tests can drive it.
 pub(crate) fn yue2_report(repo: &std::path::Path) -> serde_json::Value {
     let roots = yue2_output_roots(repo);
+    let referenced = yue2_gallery_paths(repo);
     let started = std::time::Instant::now();
-    let (scanned, bad, truncated) = scan_yue2_metadata(&roots);
+    let (scanned, bad, truncated) = scan_yue2_metadata(&roots, &referenced);
     serde_json::json!({
-        "ok": !roots.iter().all(|p| !p.exists()),
+        "ok": !roots.iter().all(|p| !p.exists()) || !referenced.is_empty(),
         "roots": roots.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "referenced": referenced.len(),
         "scanned": scanned,
         "bad": bad,
         "truncated": truncated,
@@ -1862,7 +1988,8 @@ pub(crate) fn yue2_report(repo: &std::path::Path) -> serde_json::Value {
 /// Quarantine body: rescan, then move what the scan found.
 pub(crate) fn yue2_quarantine(repo: &std::path::Path) -> serde_json::Value {
     let roots = yue2_output_roots(repo);
-    let (_, bad, _) = scan_yue2_metadata(&roots);
+    let referenced = yue2_gallery_paths(repo);
+    let (_, bad, _) = scan_yue2_metadata(&roots, &referenced);
     let (dirs, moved, failed) = quarantine_bad(&bad);
     serde_json::json!({
         "ok": failed.is_empty() && !moved.is_empty(),
@@ -2423,7 +2550,7 @@ options:\n\
         .unwrap();
         // Not audio → never opened.
         std::fs::write(root.join("preview.png"), b"\x89PNG").unwrap();
-        let (scanned, bad, truncated) = scan_yue2_metadata(std::slice::from_ref(&root));
+        let (scanned, bad, truncated) = scan_yue2_metadata(std::slice::from_ref(&root), &[]);
         assert_eq!(scanned, 2, "only audio files are read");
         assert!(!truncated);
         assert_eq!(bad.len(), 1, "{bad:?}");
@@ -2448,13 +2575,55 @@ options:\n\
             wav_with_json(br#"{"audio_prompt_type":"AV"}"#),
         )
         .unwrap();
-        let (_, bad2, _) = scan_yue2_metadata(std::slice::from_ref(&root));
+        let (_, bad2, _) = scan_yue2_metadata(std::slice::from_ref(&root), &[]);
         assert_eq!(bad2.len(), 1, "the quarantined copy is out of the scan");
         let (_, moved2, failed2) = quarantine_bad(&bad2);
         assert!(failed2.is_empty(), "{failed2:?}");
         assert_eq!(moved2.len(), 1);
         assert!(dir.join("bad-1.wav").exists(), "{moved2:?}");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn yue2_report_follows_workspace_gallery_references() {
+        let repo = temp_dir("yue2-workspace");
+        // The offender is outside every configured output root: only the saved
+        // gallery points at it. This is the case the output-only scan missed.
+        let media = repo.join("elsewhere");
+        std::fs::create_dir_all(&media).unwrap();
+        let bad = media.join("song.wav");
+        std::fs::write(&bad, wav_with_json(br#"{"audio_prompt_type":"AV"}"#)).unwrap();
+        std::fs::write(
+            repo.join("wgp_config.json"),
+            r#"{"workspaces_dir":"ws-custom"}"#,
+        )
+        .unwrap();
+        let workspaces = repo.join("ws-custom");
+        std::fs::create_dir_all(&workspaces).unwrap();
+        std::fs::write(
+            workspaces.join("Default.json"),
+            serde_json::json!({
+                "gallery": {
+                    // Virtual media paths carry a `|start_frame=…` suffix.
+                    "audio_file_list": [format!("{}|start_frame=0", bad.to_string_lossy())],
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let r = yue2_report(&repo);
+        assert_eq!(r["referenced"], 1, "{r}");
+        assert_eq!(r["scanned"], 1, "{r}");
+        assert_eq!(r["bad"][0]["name"], "song.wav", "{r}");
+        assert_eq!(r["bad"][0]["value"], "AV");
+        assert!(r["bad"][0]["path"].as_str().unwrap().ends_with("song.wav"));
+
+        let q = yue2_quarantine(&repo);
+        assert_eq!(q["ok"], true, "{q}");
+        assert!(!bad.exists());
+        assert!(media.join("yue2-quarantine").join("song.wav").exists());
+        let _ = std::fs::remove_dir_all(&repo);
     }
 
     #[test]

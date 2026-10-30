@@ -765,7 +765,7 @@ async function yue2Scan() {
 $("tsYue2CheckBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   this.disabled = true;
-  tsStatus("tsYue2Status", "Reading output metadata…");
+  tsStatus("tsYue2Status", "Reading output and gallery metadata…");
   try {
     const r = await yue2Scan();
     if (!r) {
