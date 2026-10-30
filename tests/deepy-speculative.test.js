@@ -43,7 +43,6 @@ vm.runInContext(
     extractConst('SPEC_METHOD_LABELS'),
     extractConst('SPEC_MAX_TOKENS'),
     extractConst('SPEC_DEFAULT_TOKENS'),
-    extractConst('SPEC_VRAM_COSTS'),
     extractFn('specSplit'),
     extractFn('specJoin'),
     extractFn('specMethods'),

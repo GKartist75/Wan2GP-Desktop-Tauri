@@ -16,7 +16,7 @@ One-click **Wan2GP (WanGP)** — generative video, image, audio and TTS on your 
 
 ## Contents
 
-**Is this for me?** → [What you get](#what-you-get) · **Already installed?** → [User Guide](docs/USER-GUIDE.md) · **Picking a model?** → [WanGP Guidance](docs/WAN2GP-GUIDE.md)
+**Is this for me?** → [What you get](#what-you-get) · **Already installed?** → [User Guide](docs/USER-GUIDE.md) · **Where are the controls?** → [WanGP Guidance](docs/WAN2GP-GUIDE.md)
 
 - [Download & Install](#download--install)
 - [🔥 What's New](#-whats-new)
@@ -409,7 +409,7 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 ## 🧭 Guide & 📚 Library
 
-**Guide** (topbar tab, next to Manage) answers *what to make and with what*: goal picker with curated model picks + starter settings (copy the full model name into WanGP's toolbar search), 6 prompt templates with the line mode each needs, offline `[/...]` window-command checker, VACE pre-flight checklist, post-processing at a glance. Read-only — nothing changes until you pick inside WanGP. Full walkthroughs: [docs/WAN2GP-GUIDE.md](docs/WAN2GP-GUIDE.md) — all 272 models and 116 settings.
+**Guide** (topbar tab, next to Manage) holds the prompt helpers: 6 prompt templates with the line mode each needs, offline `[/...]` window-command checker, VACE pre-flight checklist, post-processing at a glance. Model choices live in WanGP's own selector and toolbar search — the launcher does not keep a second catalog. Read-only — nothing changes until you pick inside WanGP. Upstream docs: [docs/WAN2GP-GUIDE.md](docs/WAN2GP-GUIDE.md).
 
 **Manage → Library** inventories what's on disk: downloaded checkpoints with **DeepBeepMeep / Pack / Yours** provenance, sizes and kind tags; LoRA families split into **Pack** and **Yours** counts/sizes with known URLs; finetunes labelled **Pack**, **Pack · CivitAI**, **Overrides DeepBeepMeep** or **Yours**, with validated JSON import/export and delete; workspaces (real sizes, missing-file flags, archive lock, definitions backup). The checkpoint table gives Checkpoint/Origin/Kind/Size real widths, so long filenames wrap normally.
 
@@ -496,7 +496,7 @@ the winget / Homebrew Cask lanes: [**docs/UPDATING.md**](docs/UPDATING.md).
 | Doc | For |
 | --- | --- |
 | [**User Guide**](docs/USER-GUIDE.md) | Every screen, tab and button — where things are and what they do |
-| [**WanGP Guidance**](docs/WAN2GP-GUIDE.md) | Which model and settings to pick for your goal |
+| [**WanGP Guidance**](docs/WAN2GP-GUIDE.md) | Where launcher controls map to upstream WanGP docs |
 | [**System Overview**](docs/OVERVIEW.md) | How the launcher, upstream WanGP and your machine fit together — for contributors |
 | [**Platform Support**](docs/PLATFORMS.md) | Windows / Linux / macOS feature matrix, install steps, capability gating, known gaps |
 | [**CHANGELOG**](CHANGELOG.md) | Every fix, per release |

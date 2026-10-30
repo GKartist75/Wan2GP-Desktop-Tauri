@@ -1,7 +1,7 @@
 /**
- * guide-tab.js — wiring for Manage → Guide (F1 model recommender).
+ * guide-tab.js — wiring for the Guide panel's prompt tools and checklists.
  *
- * Pure DOM: renders goal picker results from GUIDE_GOALS (services/guide-catalog.js).
+ * Pure DOM; model recommendations live in WanGP's own selector, not here.
  * Copy uses navigator.clipboard with a legacy fallback; no backend calls.
  * Loaded after app.js; safe to run standalone (all lookups guarded).
  */
@@ -31,60 +31,7 @@
     } catch (e) { done(false) }
   }
 
-  function renderGoal(goalId) {
-    const box = $('guideResults')
-    const status = $('guideStatus')
-    if (!box) return
-    const goals = (typeof GUIDE_GOALS !== 'undefined') ? GUIDE_GOALS : []
-    const goal = goals.find((g) => g.id === goalId)
-    if (!goal) {
-      box.innerHTML = '<p class="token-hint">Pick a goal above to get model picks.</p>'
-      return
-    }
-    box.innerHTML = goal.picks.map((p, i) => {
-      const name = (typeof pickName === 'function') ? pickName(p) : p.model
-      // v18 3D picks carry no steps/guidance (not denoising runs) — only
-      // render the starters that exist.
-      const starters = []
-      if (p.frames) starters.push(esc(p.frames) + ' frames')
-      if (p.steps != null) starters.push(esc(p.steps) + ' steps')
-      if (p.guidance != null) starters.push('guidance ' + esc(p.guidance))
-      return (
-        '<div class="settings-section" style="margin-top:8px">' +
-        '<h3>' + esc(name) + '</h3>' +
-        '<p class="token-hint">Model id: <code>' + esc(p.model) + '</code></p>' +
-        '<p class="token-hint">' + esc(p.why) + '</p>' +
-        (starters.length ? '<p class="token-hint">Starters: ' + starters.join(' · ') + '</p>' : '') +
-        '<p class="token-hint">' + esc(p.tip) + '</p>' +
-        '<div class="token-field" style="margin-top:6px">' +
-          '<button class="btn btn-ghost small" data-guide-copy="' + i + '" title="Copy the full model name for WanGP toolbar search">Copy model name</button>' +
-        '</div>' +
-      '</div>'
-      )
-    }).join('')
-    box.querySelectorAll('[data-guide-copy]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const pick = goal.picks[parseInt(btn.getAttribute('data-guide-copy'), 10)]
-        if (!pick) return
-        const name = (typeof pickName === 'function') ? pickName(pick) : pick.model
-        copyText(name, status, 'Model name copied — paste it in WanGP toolbar search')
-      })
-    })
-    if (status) status.textContent = ''
-  }
-
   function init() {
-    const sel = $('guideGoalSelect')
-    if (!sel) return
-    const goals = (typeof GUIDE_GOALS !== 'undefined') ? GUIDE_GOALS : []
-    goals.forEach((g) => {
-      const opt = document.createElement('option')
-      opt.value = g.id
-      opt.textContent = g.label
-      sel.appendChild(opt)
-    })
-    sel.addEventListener('change', () => renderGoal(sel.value))
-    renderGoal(sel.value)
     initPromptTools()
   }
 

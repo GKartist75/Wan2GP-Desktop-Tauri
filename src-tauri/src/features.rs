@@ -2031,12 +2031,6 @@ pub fn deepy_set(
     };
     if let Some(q) = normalize_qwen_quant(quant.as_deref(), quant_enhancer) {
         v["prompt_enhancer_quantization"] = serde_json::json!(q);
-        if q == "gguf_ptq1" {
-            // Bonsai companion: INT8 KV cache halves cache VRAM — what makes
-            // Prime viable at ~10GB (GGUF 1.0.25+ carries the kernels).
-            // (Prompt enhancement mode is handled below from the panel choice.)
-            v["deepy_kv_cache_quantization"] = serde_json::json!("int8");
-        }
     }
     // Prompt enhancement UI (upstream `enhancer_mode`: 0 = Manual Button +
     // Automatic on Generation, 1 = Manual Button Only; the button stays in
@@ -2092,10 +2086,10 @@ pub fn deepy_set(
     if m == "prime" {
         let eid = engine.clone().unwrap_or_else(|| "opencode".into());
         if eid == "local-qwen38" {
-            // Local Prime: Qwen3.8 VL 27B (id 5) or 9B Heretic (id 6, ~6.5GB
-            // Q4 / ~11GB Q8) — upstream supports both since v13.1315.
-            // Either needs context >= 32000 and Summarize compaction, and the
-            // Configuration UI auto-raises both, so mirror that here.
+            // Local Prime: pick the Qwen3.8 variant. Context, compaction,
+            // repetition penalty and KV cache stay on upstream defaults until
+            // the user changes them in WanGP (its Configuration UI raises
+            // context/compaction as needed for the local engine).
             let variant = prime_local_variant.unwrap_or(5);
             let profile = if variant == 6 {
                 "qwen38_9b"
@@ -2105,17 +2099,6 @@ pub fn deepy_set(
             v["enhancer_enabled"] = serde_json::json!(variant);
             v["llm_engines"]["deepy"] = serde_json::json!(profile);
             v["llm_engines"]["prompt_enhancer"] = serde_json::json!("same_as_deepy");
-            if v.get("deepy_context_tokens")
-                .and_then(serde_json::Value::as_i64)
-                .unwrap_or(0)
-                < 32000
-            {
-                v["deepy_context_tokens"] = serde_json::json!(32000);
-            }
-            v["deepy_compaction_type"] = serde_json::json!("summarize");
-            if v.get("deepy_repetition_penalty").is_none() {
-                v["deepy_repetition_penalty"] = serde_json::json!(true);
-            }
         } else {
             let profile = eng_map(&eid);
             let exe = exe_map(&eid);
@@ -2133,28 +2116,10 @@ pub fn deepy_set(
                     serde_json::json!("http://127.0.0.1:4096");
             }
         }
-        // Full Prime preset (mirrors shared/deepy/config.py defaults + guidance).
-        // Setdefault semantics: a value the user tuned in WanGP (guidance,
-        // filesystem grants, MCP servers, speed/size) must survive an Apply.
-        if let Some(o) = v.as_object_mut() {
-            for (k, val) in [
-                // Upstream replaced the old "prefer the highest-quality base"
-                // guidance with the Speed / Model Size pair below; seeding the
-                // retired string would just be normalized back on load.
-                ("deepy_prime_custom_system_prompt", serde_json::json!("Use the current Speed and Model Size preferences for choices left unspecified by the user when selecting beyond configured templates.")),
-                ("deepy_model_speed", serde_json::json!("fast")),
-                ("deepy_model_size", serde_json::json!("smaller")),
-                ("deepy_prime_mcp_servers", serde_json::json!({})),
-                ("deepy_mcp_auto_discover_paths", serde_json::json!(false)),
-                ("deepy_allow_read_file_system", serde_json::json!(false)),
-                ("deepy_file_system_paths", serde_json::json!([])),
-                ("deepy_read_everywhere", serde_json::json!(false)),
-                ("deepy_auto_cancel_queue_tasks", serde_json::json!(true)),
-                ("deepy_separate_requests_with_empty_line", serde_json::json!(true)),
-            ] {
-                o.entry(k.to_string()).or_insert(val);
-            }
-        }
+        // Prime-owned choices only: engine/profile above and sessions below.
+        // Deepy defaults (system prompt, speed/size, MCP grants, filesystem
+        // access, queue behavior) stay on upstream's side until the user edits
+        // them in WanGP; the launcher no longer seeds a copy that ages.
         // v12.72 sessions feature — resolved above (explicit choice >
         // existing config > launcher default) so pre-existing configs
         // can't skew-missing when wgp.py expects the keys.
@@ -2167,75 +2132,11 @@ pub fn deepy_set(
         v["llm_engines"]["deepy"] = serde_json::json!(eng_str);
         v["llm_engines"]["prompt_enhancer"] = serde_json::json!("same_as_deepy");
         if m == "zero" {
-            // Full Zero preset (mirrors shared/deepy/config.py defaults +
-            // tool picks). Context: upstream default since 6f1ebc85
-            // (2026-10-20), which also clamps DEEPY_CONTEXT_TOKENS_MIN =
-            // 20480 ("Zero's system prompt and tools alone take about 12k
-            // tokens") — older seeds clamp up at runtime.
-            // Tool templates follow current upstream defaults (Qwen Image 2.1
-            // for stills, MiniMax H3 for video, TRELLIS.2 + SUPRA-Tex for 3D).
-            // The old Krea 2 Turbo / Flux Klein 9B / LTX-2 2.5 files still
-            // exist upstream; they simply are no longer the defaults.
-            // Setdefault semantics: context, VRAM mode, KV cache, compaction
-            // and templates the user tuned (here or in WanGP) survive Apply.
-            if let Some(o) = v.as_object_mut() {
-                for (k, val) in [
-                    ("deepy_vram_mode", serde_json::json!("unload")),
-                    ("deepy_context_tokens", serde_json::json!(20480)),
-                    ("deepy_kv_cache_quantization", serde_json::json!("auto")),
-                    ("deepy_repetition_penalty", serde_json::json!(true)),
-                    ("deepy_compaction_type", serde_json::json!("discard")),
-                    (
-                        "deepy_tool_gen_image",
-                        serde_json::json!("Qwen Image 2.1 Turbo 8 Steps"),
-                    ),
-                    (
-                        "deepy_tool_edit_image",
-                        serde_json::json!("Qwen Image 2.1 Turbo 8 Steps"),
-                    ),
-                    (
-                        "deepy_tool_gen_video",
-                        serde_json::json!("MiniMax H3 FL2VA Pruned PDD 8 Steps"),
-                    ),
-                    (
-                        "deepy_tool_gen_video_with_speech",
-                        serde_json::json!("MiniMax H3 FL2VA Pruned PDD 8 Steps With Sound"),
-                    ),
-                    (
-                        "deepy_tool_gen_video_with_refs",
-                        serde_json::json!("MiniMax H3 Ref2VA Pruned PDD 8 Steps"),
-                    ),
-                    (
-                        "deepy_tool_gen_song",
-                        serde_json::json!("ACE-Step 1.5 Turbo LM 1.7B"),
-                    ),
-                    (
-                        "deepy_tool_gen_speech_from_description",
-                        serde_json::json!("Qwen3 1.7B"),
-                    ),
-                    (
-                        "deepy_tool_gen_speech_from_sample",
-                        serde_json::json!("Index TTS 2"),
-                    ),
-                    (
-                        "deepy_tool_gen_world",
-                        serde_json::json!("Hy-Nomas World Model 8B"),
-                    ),
-                    (
-                        "deepy_tool_gen_3d",
-                        serde_json::json!("TRELLIS.2 + SUPRA-Tex PBR 4B + 2.1B"),
-                    ),
-                    ("deepy_tool_texture_3d", serde_json::json!("SUPRA-Tex")),
-                    ("deepy_zero_custom_system_prompt", serde_json::json!("")),
-                    ("deepy_auto_cancel_queue_tasks", serde_json::json!(true)),
-                    (
-                        "deepy_separate_requests_with_empty_line",
-                        serde_json::json!(true),
-                    ),
-                ] {
-                    o.entry(k.to_string()).or_insert(val);
-                }
-            }
+            // Zero-owned choices only: local engine/profile above and sessions
+            // below. Tool templates, context, compaction, KV cache, VRAM mode,
+            // repetition penalty and queue behavior stay on upstream defaults
+            // until the user edits them (launcher panel or WanGP's UI); every
+            // upstream model release used to invalidate our copy of them.
             // v12.72 sessions feature — same resolution as Prime preset.
             v["deepy_session_reset_mode"] = serde_json::json!(reset);
             v["deepy_session_gallery_media_mode"] = serde_json::json!(gallery);
@@ -2270,74 +2171,10 @@ pub fn set_auto_start(enabled: bool) -> serde_json::Value {
         .unwrap_or_default();
     crate::platform::current().set_auto_start(enabled, &exe)
 }
-#[tauri::command]
-/// Fail-closed gate for the new upstream string enums (upstream raises
-/// ValueError on unknown selections, so garbage must never reach
-/// wgp_config.json). Other memory keys are validated by their own panels
-/// or are numeric upstream choices — this gate covers only the string
-/// enums it names. Pure + unit-tested.
-pub(crate) fn valid_memory_override(key: &str, val: &serde_json::Value) -> bool {
-    let s = val.as_str().unwrap_or("");
-    match key {
-        // shared/kernels/int8_backend.py CHOICES
-        // (v18.11 adds "wgpkernels": the WGPKernels INT8 fast path, manual-install
-        // only upstream — the "auto" ranking is wgpkernels > kitchen > triton > pytorch).
-        "int8_kernels" => ["auto", "disabled", "wgpkernels", "triton", "kitchen"].contains(&s),
-        // shared/kernels/fp8_backend.py CHOICES (v18.11): FP8 math kernels for
-        // Quanto qfloat8 / scaled_fp8 weights. "cuda" needs RTX 40xx+.
-        "fp8_kernels" => ["auto", "pytorch", "triton", "cuda"].contains(&s),
-        // Configuration → Text Encoder Quantization (plugins/configuration/plugin.py):
-        // bf16 = 16-bit (more RAM, better quality), int8 = 8-bit (less RAM).
-        "text_encoder_quantization" => ["bf16", "int8"].contains(&s),
-        // shared/kernels/kernel_policy.py CHOICES ("strict"/"fast")
-        "kernel_precision" => ["fast", "strict"].contains(&s),
-        // shared/cuda_memory.py VRAM_ALLOCATOR_CHOICES
-        "vram_allocator" => ["default", "vmm", "vmm_spill"].contains(&s),
-        // shared/cuda_memory.py RAM_ALLOCATOR_CHOICES (v17.17)
-        "ram_allocator" => ["default", "mmgp"].contains(&s),
-        // shared/attention_kit.py HEAD_SPLIT_CHOICES: int 0..3
-        "attention_head_split" => matches!(val.as_u64(), Some(0..=3)),
-        // bool knobs added with the MMGP v4 runtime
-        "smart_memory_pinning" => val.is_boolean(),
-        // v18 WanGP Compute Cache (shared/cuda_memory.py COMPUTE_CACHE_KEY):
-        // driver keeps its Blackwell-optimized kernels in WanGP's own folder.
-        "compute_cache" => val.is_boolean(),
-        // shared/cuda_memory.py COMPUTE_CACHE_PATH_KEY (default "ComputeCache",
-        // relative to the WanGP folder or absolute). Fail-closed: non-empty,
-        // bounded length, no NUL.
-        "compute_cache_path" => val
-            .as_str()
-            .is_some_and(|s| !s.is_empty() && s.len() <= 260 && !s.contains('\0')),
-        // wgp.py preload_mode() — "default" | "dynamic" | "manual"
-        "video_preload_mode" | "image_preload_mode" | "audio_preload_mode" => {
-            ["default", "dynamic", "manual"].contains(&s)
-        }
-        // v18.20 Configuration > Performance > Language Models CPU Compute
-        // (wgp.py:4183, "auto" by default): while Deepy or the prompt enhancer
-        // streams layers from RAM, "auto" lets the CPU process them when it
-        // measured faster, "on" forces it, "off" keeps transfers only.
-        "llm_cpu_compute" => ["auto", "on", "off"].contains(&s),
-        "video_preload_in_VRAM" | "image_preload_in_VRAM" | "audio_preload_in_VRAM" => {
-            matches!(val.as_i64(), Some(n) if (0..=200_000).contains(&n))
-        }
-        // wgp.py: perc_reserved_mem_max is a PERCENT as of v17 (0 = automatic)
-        "perc_reserved_mem_max" => matches!(val.as_f64(), Some(n) if (0.0..=100.0).contains(&n)),
-        // wgp.py attention_modes_installed + check_attn
-        "attention_mode" => ["sdpa", "flash", "sage", "sage2", "sage3", "radial"].contains(&s),
-        // v18 wgp.py compile_choices: disabled / cudagraph / transformer.
-        // Legacy booleans match no engine upstream (silently off) and are
-        // rejected here — the recipe and panel only ever write strings.
-        "compile" => matches!(val.as_str(), Some("disabled" | "cudagraph" | "transformer")),
-        // wgp.py queue table: "pastel" renders per-row hues, anything else
-        // renders the theme-following alternating grey rows. Fail-closed to
-        // the two known names so garbage never reaches wgp_config.json.
-        "queue_color_scheme" => ["pastel", "grey"].contains(&s),
-        _ => true,
-    }
-}
 /// Keys the Performance Settings panel owns in `wgp_config.json`. Single
 /// source of truth for the Apply allowlist (a key missing here is silently
-/// dropped, not validated) and for install-time seeding.
+/// dropped) and for install-time seeding. Values are passed through:
+/// upstream validates its own enums on load.
 pub(crate) const MEMORY_OVERRIDE_KEYS: &[&str] = &[
     "video_profile",
     "image_profile",
@@ -2389,7 +2226,7 @@ pub(crate) const MEMORY_OVERRIDE_KEYS: &[&str] = &[
 /// disk belongs to the user or to WanGP and is never touched, which is what
 /// keeps "the launcher auto-recommends" from becoming "the launcher
 /// overwrites". Keys the recommendation does not carry (every CUDA-only lever
-/// on AMD/Intel/CPU) and keys that fail `valid_memory_override` are skipped.
+/// on AMD/Intel/CPU) are skipped.
 pub(crate) fn seed_memory_defaults(
     cfg: &mut serde_json::Value,
     rec: &serde_json::Value,
@@ -2400,7 +2237,7 @@ pub(crate) fn seed_memory_defaults(
     let mut seeded = Vec::new();
     for key in MEMORY_OVERRIDE_KEYS {
         let Some(v) = rec.get(*key) else { continue };
-        if !valid_memory_override(key, v) || map.contains_key(*key) {
+        if map.contains_key(*key) {
             continue;
         }
         map.insert((*key).to_string(), v.clone());
@@ -2437,9 +2274,6 @@ pub fn memory_profile_apply(settings: serde_json::Value) -> serde_json::Value {
     let mut applied: Vec<String> = Vec::new();
     for key in MEMORY_OVERRIDE_KEYS {
         if let Some(val) = settings.get(*key) {
-            if !valid_memory_override(key, val) {
-                return serde_json::json!({"ok": false, "success": false, "error": format!("{key}: invalid value")});
-            }
             cfg[key] = val.clone();
             applied.push(key.to_string());
         }
@@ -2971,13 +2805,14 @@ mod deepy_roundtrip_tests {
         assert_eq!(c["deepy_type"], "zero");
         assert_eq!(c["enhancer_enabled"], 4);
         assert_eq!(c["llm_engines"]["deepy"], "qwen35_9b");
-        assert_eq!(c["deepy_vram_mode"], "unload");
-        assert_eq!(c["deepy_context_tokens"], 20480);
-        assert_eq!(c["deepy_tool_gen_image"], "Qwen Image 2.1 Turbo 8 Steps");
-        assert_eq!(
-            c["deepy_tool_gen_video_with_refs"],
-            "MiniMax H3 Ref2VA Pruned PDD 8 Steps"
-        );
+        // No upstream defaults copied into the config: these keys stay absent
+        // until the user changes them here or in WanGP.
+        assert!(c.get("deepy_vram_mode").is_none());
+        assert!(c.get("deepy_context_tokens").is_none());
+        assert!(c.get("deepy_compaction_type").is_none());
+        assert!(c.get("deepy_kv_cache_quantization").is_none());
+        assert!(c.get("deepy_tool_gen_image").is_none());
+        assert!(c.get("deepy_tool_gen_video_with_refs").is_none());
         // Seed had no enhancer_mode and none was passed, so the documented
         // button-only default (1) applies.
         assert_eq!(c["enhancer_mode"], 1);
@@ -3039,13 +2874,11 @@ mod deepy_roundtrip_tests {
         assert_eq!(c["deepy_type"], "prime");
         assert_eq!(c["llm_engines"]["deepy"], "codex");
         assert_eq!(c["llm_engines"]["profiles"]["codex"]["executable"], "codex");
-        assert!(c.get("deepy_prime_mcp_servers").is_some());
-        assert_eq!(
-            c["deepy_prime_custom_system_prompt"],
-            "Use the current Speed and Model Size preferences for choices left unspecified by the user when selecting beyond configured templates."
-        );
-        assert_eq!(c["deepy_model_speed"], "fast");
-        assert_eq!(c["deepy_model_size"], "smaller");
+        // Prime preset no longer copies upstream Deepy defaults either.
+        assert!(c.get("deepy_prime_mcp_servers").is_none());
+        assert!(c.get("deepy_prime_custom_system_prompt").is_none());
+        assert!(c.get("deepy_model_speed").is_none());
+        assert!(c.get("deepy_model_size").is_none());
         // sessions=None preserves the existing session prefs
         assert_eq!(c["deepy_session_reset_mode"], "reset_session");
         assert_eq!(c["deepy_session_gallery_media_mode"], "copy");
@@ -3064,9 +2897,11 @@ mod deepy_roundtrip_tests {
         assert_eq!(c["enhancer_enabled"], 5);
         assert_eq!(c["llm_engines"]["deepy"], "qwen38_27b");
         assert_eq!(c["prompt_enhancer_quantization"], "gguf_ptq1");
-        // Bonsai companions ride along: button kept + INT8 KV cache.
+        // Bonsai companions are upstream-owned now: only the explicit button
+        // choice is written; KV cache stays untouched.
         assert_eq!(c["enhancer_mode"], 1);
-        assert_eq!(c["deepy_kv_cache_quantization"], "int8");
+        assert!(c.get("deepy_kv_cache_quantization").is_none());
+        assert!(c.get("deepy_context_tokens").is_none());
         // prime + local Qwen3.8 9B (explicit variant pick + Q8 quant sticks)
         let r = deepy_set(
             "prime".into(),
@@ -3381,7 +3216,7 @@ mod autotune_matrix_tests {
     }
 
     #[test]
-    fn seed_memory_defaults_skips_absent_and_invalid() {
+    fn seed_memory_defaults_skips_absent_keys() {
         let mut cfg = serde_json::json!({});
         // AMD/CPU recommendation carries none of the CUDA-only levers.
         let amd = auto_tune_recommend(
@@ -3395,13 +3230,6 @@ mod autotune_matrix_tests {
         assert!(cfg.get("vram_allocator").is_none());
         assert!(cfg.get("attention_head_split").is_none());
         assert!(seeded.contains(&"video_profile".to_string()));
-
-        // Fail-closed: a bad value never reaches the file even if a
-        // recommendation somehow carried it.
-        let mut cfg2 = serde_json::json!({});
-        let bad = serde_json::json!({"vram_allocator": "turbo"});
-        assert!(seed_memory_defaults(&mut cfg2, &bad).is_empty());
-        assert!(cfg2.get("vram_allocator").is_none());
     }
 
     /// The Apply allowlist must carry every v17 key — a key missing from
@@ -3434,33 +3262,6 @@ mod autotune_matrix_tests {
             "llm_cpu_compute",
         ] {
             assert!(MEMORY_OVERRIDE_KEYS.contains(&key), "{key} not appliable");
-        }
-        for (key, good, bad) in [
-            (
-                "image_preload_in_VRAM",
-                serde_json::json!(8000),
-                serde_json::json!(-1),
-            ),
-            // The MB fields are integers only: wgp.py reads them with int().
-            (
-                "video_preload_in_VRAM",
-                serde_json::json!(0),
-                serde_json::json!(1.5),
-            ),
-            (
-                "llm_cpu_compute",
-                serde_json::json!("auto"),
-                serde_json::json!("sometimes"),
-            ),
-        ] {
-            assert!(valid_memory_override(key, &good), "{key} rejects {good}");
-            assert!(!valid_memory_override(key, &bad), "{key} accepts {bad}");
-        }
-        for good in ["on", "off"] {
-            assert!(valid_memory_override(
-                "llm_cpu_compute",
-                &serde_json::json!(good)
-            ));
         }
     }
 
@@ -3596,7 +3397,7 @@ mod deepy_kv_cache_tests {
 
 #[cfg(test)]
 mod kernel_setting_tests {
-    use super::{normalize_qwen_quant, valid_memory_override};
+    use super::normalize_qwen_quant;
     #[test]
     fn qwen_quant_normalizes_per_engine() {
         // Qwen3.8 27B (id 5): four GGUF backends incl. Bonsai PTQ1.
@@ -3626,106 +3427,5 @@ mod kernel_setting_tests {
         assert_eq!(normalize_qwen_quant(Some("gguf_ptq1"), None), None);
         assert_eq!(normalize_qwen_quant(None, Some(5)), None);
         assert_eq!(normalize_qwen_quant(Some(""), Some(5)), None);
-    }
-    #[test]
-    fn int8_backends_match_upstream_choices() {
-        // shared/kernels/int8_backend.py CHOICES (v18.11 adds "wgpkernels").
-        for good in ["auto", "disabled", "wgpkernels", "triton", "kitchen"] {
-            assert!(
-                valid_memory_override("int8_kernels", &serde_json::json!(good)),
-                "{good}"
-            );
-        }
-        for bad in ["", "enabled", "1", "pytorch", "AUTO", "WGPKernels"] {
-            assert!(
-                !valid_memory_override("int8_kernels", &serde_json::json!(bad)),
-                "{bad}"
-            );
-        }
-        // Legacy numeric key must not validate as the new enum.
-        assert!(!valid_memory_override(
-            "int8_kernels",
-            &serde_json::json!(1)
-        ));
-    }
-    #[test]
-    fn fp8_kernels_match_upstream_choices() {
-        // shared/kernels/fp8_backend.py CHOICES (v18.11).
-        for good in ["auto", "pytorch", "triton", "cuda"] {
-            assert!(
-                valid_memory_override("fp8_kernels", &serde_json::json!(good)),
-                "{good}"
-            );
-        }
-        for bad in ["", "disabled", "enabled", "AUTO", "fp8", "Cuda"] {
-            assert!(
-                !valid_memory_override("fp8_kernels", &serde_json::json!(bad)),
-                "{bad}"
-            );
-        }
-        assert!(!valid_memory_override("fp8_kernels", &serde_json::json!(1)));
-    }
-    #[test]
-    fn text_encoder_quantization_match_upstream_choices() {
-        // plugins/configuration/plugin.py: bf16 ("16-bit") / int8 ("8-bit").
-        for good in ["bf16", "int8"] {
-            assert!(
-                valid_memory_override("text_encoder_quantization", &serde_json::json!(good)),
-                "{good}"
-            );
-        }
-        for bad in ["", "fp8", "none", "nvfp4", "16-bit", "BF16", "Int8", "auto"] {
-            assert!(
-                !valid_memory_override("text_encoder_quantization", &serde_json::json!(bad)),
-                "{bad}"
-            );
-        }
-        assert!(!valid_memory_override(
-            "text_encoder_quantization",
-            &serde_json::json!(1)
-        ));
-    }
-    #[test]
-    fn kernel_precision_match_upstream_choices() {
-        // shared/kernels/kernel_policy.py CHOICES ("strict"/"fast").
-        assert!(valid_memory_override(
-            "kernel_precision",
-            &serde_json::json!("fast")
-        ));
-        assert!(valid_memory_override(
-            "kernel_precision",
-            &serde_json::json!("strict")
-        ));
-        assert!(!valid_memory_override(
-            "kernel_precision",
-            &serde_json::json!("preserve")
-        ));
-        assert!(!valid_memory_override(
-            "kernel_precision",
-            &serde_json::json!("")
-        ));
-    }
-    #[test]
-    fn queue_color_scheme_allows_only_known_names() {
-        // wgp.py: "pastel" renders per-row hues, anything else the
-        // theme-following grey rows. Fail-closed to the two known names.
-        assert!(valid_memory_override(
-            "queue_color_scheme",
-            &serde_json::json!("pastel")
-        ));
-        assert!(valid_memory_override(
-            "queue_color_scheme",
-            &serde_json::json!("grey")
-        ));
-        for bad in ["", "rainbow", "dark", "GREY"] {
-            assert!(
-                !valid_memory_override("queue_color_scheme", &serde_json::json!(bad)),
-                "{bad:?}"
-            );
-        }
-        assert!(!valid_memory_override(
-            "queue_color_scheme",
-            &serde_json::json!(1)
-        ));
     }
 }

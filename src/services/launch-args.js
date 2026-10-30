@@ -63,7 +63,7 @@ function applyPatch(argStr, patch) {
   return toks.join(' ')
 }
 
-/** Named presets (F2). Values mirror docs/WAN2GP-GUIDE.md + upstream TROUBLESHOOTING. */
+/** Named presets (F2). Launcher-owned starting points; upstream validates the flags. */
 // Current WanGP (shared/cli_args.py) no longer defines --teacache. Step
 // skipping is a generation setting (Advanced Mode -> Steps Skipping:
 // skip_steps_cache_type + skip_steps_multiplier), not a launch flag. Passing

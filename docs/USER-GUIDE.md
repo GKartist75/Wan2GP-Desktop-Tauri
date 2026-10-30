@@ -2,8 +2,8 @@
 
 Every screen, tab and button, and what it does. The launcher has three screens
 (**Splash → Dashboard → Installer**) plus the **Manage** panel and the embedded
-**Viewer**. Companion: [WanGP Guidance](WAN2GP-GUIDE.md) — which model and
-settings to pick for your goal.
+**Viewer**. Companion: [WanGP Guidance](WAN2GP-GUIDE.md) — where launcher
+controls map to upstream WanGP docs.
 
 > **Which platform?** Windows, Linux and macOS builds share this UI. What differs
 > per OS — which controls exist at all, which installer paths exist, AppImage vs
@@ -711,9 +711,10 @@ known-good release. It is **opt-in**: it is not installed automatically.
 ## Guide (topbar)
 
 🧭 **Guide button (topbar, next to Manage)** — opens its own side panel, not a
-Manage tab: pick a goal, get curated WanGP model picks with starter settings
-and a copy-model-id button. Read-only: nothing changes until you pick the
-model inside WanGP. Full walkthroughs: `docs/WAN2GP-GUIDE.md`.
+Manage tab: prompt tools, VACE checklist and post-processing reminders.
+Read-only: nothing changes until you pick the model inside WanGP. Model
+choices live in WanGP's selector and toolbar search, not in a launcher
+catalog. Upstream docs and the launcher map: `docs/WAN2GP-GUIDE.md`.
 
 ✍️ **Prompt tools** — 6 starter templates (scene/motion/edit/dialogue/lyrics/
 window beats) with the WanGP line-mode each needs, copy button, and an offline

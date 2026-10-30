@@ -35,17 +35,17 @@ function renderDeepyQuant(enhancerId, savedQuant, primeBackend) {
     if (beHint)
       beHint.textContent =
         primeBackend === "5:gguf_ptq1"
-          ? "Bonsai PTQ1 runs Prime on ~10 GB VRAM. Weights download on first WanGP launch. Apply also sets INT8 KV cache."
+          ? "Bonsai PTQ1 is the smallest 27B backend. Weights download on first WanGP launch."
           : primeBackend === "5:gguf"
-            ? "GGUF Q4 is the highest-quality 27B and usually wants a 24 GB GPU. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
+            ? "GGUF Q4 is the highest-quality 27B backend. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
             : primeBackend === "5:gguf_q3"
-              ? "IQ3_S is the balanced 27B choice and usually fits a 16 GB GPU. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
+              ? "IQ3_S is the balanced 27B backend. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
               : primeBackend === "5:gguf_q2"
-                ? "Q2 is the leanest 27B — 16 GB is enough and leaves room to grow the context window, at the largest quality loss. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
+                ? "Q2 is the leanest 27B backend, with the largest quality loss. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
                 : primeBackend === "6:gguf"
-                  ? "Heretic Q4 runs Prime on ~6.5 GB VRAM — the fit for 8–12 GB GPUs. Weights download on first WanGP launch."
+                  ? "Heretic Q4 is the smaller 9B backend. Weights download on first WanGP launch."
                   : primeBackend === "6:gguf_q8"
-                    ? "Heretic Q8 (~11 GB VRAM) stays closest to full precision. Weights download on first WanGP launch."
+                    ? "Heretic Q8 stays closest to full precision. Weights download on first WanGP launch."
                     : "Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels).";
     return;
   }
@@ -77,17 +77,17 @@ function renderDeepyQuant(enhancerId, savedQuant, primeBackend) {
     updateDeepyQuantHint(sel.value, enhancerId);
   sel.onchange = () => updateDeepyQuantHint(sel.value, enhancerId);
 }
-// Hint under the quant selector; Bonsai notes its companion defaults.
+// Hint under the quant selector; keep it qualitative — upstream owns VRAM fits.
 function updateDeepyQuantHint(value, enhancerId) {
   const hint = $("deepyQuantHint");
   if (!hint) return;
   hint.textContent =
     value === "gguf_ptq1"
-      ? "Bonsai PTQ1 runs Prime on ~10 GB VRAM (Sync Kernels for 1.0.29+). Weights download on first WanGP launch. Apply also sets INT8 KV cache."
+      ? "Bonsai PTQ1 is the smallest backend (Sync Kernels for 1.0.29+). Weights download on first WanGP launch."
       : Number(enhancerId) === 6
-        ? "Heretic Q4 runs Prime on ~6.5 GB VRAM, Q8 (~11 GB) stays closest to full precision. Weights download on first WanGP launch."
+        ? "Heretic Q4 uses less memory; Q8 stays closest to full precision. Weights download on first WanGP launch."
         : Number(enhancerId) === 5
-        ? "GGUF Q4 is highest quality; Q3/Q2 trade quality for VRAM. Weights download on first WanGP launch."
+        ? "GGUF Q4 is highest quality; Q3/Q2 trade quality for memory. Weights download on first WanGP launch."
         : "Quanto Int8 preserves quality; GGUF Q4 uses less memory when kernels are installed.";
 }
 
@@ -133,8 +133,7 @@ function renderDeepySpec(backendPick, savedSpec) {
   for (const m of methods) {
     const o = document.createElement("option");
     o.value = m;
-    o.textContent =
-      SPEC_METHOD_LABELS[m] + " [+" + SPEC_VRAM_COSTS[m] + " VRAM]";
+    o.textContent = SPEC_METHOD_LABELS[m];
     sel.append(o);
   }
   sel.value = method;
@@ -164,12 +163,12 @@ function updateDeepySpecHint() {
   if (!sel || !hint) return;
   hint.textContent =
     sel.value === "auto"
-      ? "Auto turns MTP on only when it pays: the model still fits in VRAM beside the drafts, or part of the model already streams from RAM (MTP then predicts several tokens per pass). It stays off when MTP would push a fitting model partly out, and on GPUs with 8 GB or less. For non-GGUF Qwen3.5 9B it needs 12 GB+. The console reports the choice."
+      ? "Auto turns MTP on only when the model still fits in VRAM beside the drafts, or already streams from RAM. Otherwise it stays off; the console reports the choice."
       : sel.value === "disabled"
-        ? "No draft model — plain autoregressive decoding (0 GiB extra)."
+        ? "No draft model — plain autoregressive decoding."
         : sel.value === "mtp"
-          ? "MTP drafts tokens ahead; start at 2 (the upstream default). About +0.5-1 GiB VRAM near 32k context."
-          : "Needs the 27B on a GGUF quantization and Triton with FlashAttention 2 in the env (Sync Kernels). About +4-5 GiB VRAM near 32k context.";
+          ? "MTP drafts tokens ahead; start at 2 (the upstream default). Uses extra memory at long context."
+          : "Requires a GGUF 27B backend plus Triton with FlashAttention 2 (Sync Kernels). Uses extra memory at long context.";
 }
 async function deepySpecWrite() {
   const sel = $("deepySpecSelect");
@@ -254,15 +253,6 @@ const SPEC_METHOD_LABELS = {
 };
 const SPEC_MAX_TOKENS = { mtp: 8, dspark: 7, dflash2: 7 };
 const SPEC_DEFAULT_TOKENS = { mtp: 2, dspark: 7, dflash2: 5 };
-// Approximate extra residency next to ~32k context (upstream UI costs).
-const SPEC_VRAM_COSTS = {
-  auto: "0 to ~1 GiB",
-  disabled: "0 GiB",
-  mtp: "~0.5-1 GiB",
-  dspark: "~4-5 GiB",
-  dflash2: "~4-5 GiB",
-};
-
 // Normalize any stored shape to {method, tokens} like upstream's normalize +
 // split: dicts pass through with tokens clamped to the method's 1..max (a
 // non-throwing stand-in for upstream's ValueError), auto/disabled drop their
@@ -706,7 +696,7 @@ async function refreshDeepy() {
     if (hint)
       hint.textContent =
         mode === "prime"
-          ? "Local Prime requires Summarize compaction and at least 32K context — the launcher raises both when needed. Always loaded is fastest; Unload ASAP frees VRAM for media models."
+          ? "Local Prime requires Summarize compaction and at least 32K context — upstream raises both when needed. Always loaded is fastest; Unload ASAP frees VRAM for media models."
           : "Unload ASAP frees VRAM for media models; Always loaded is fastest when you switch to Deepy often. Use 20K context for short chats and Summarize (32K+) for long sessions.";
   }
 

@@ -736,7 +736,7 @@
       <div class="settings-tab-content" data-tab="library">
         <div class="settings-section">
           <h3>📚 LoRA &amp; Finetune Library</h3>
-          <p class="token-hint">What lives in your LoRA families and <code>finetunes/</code> — read-only except import/delete below. Full how-to: <code>docs/WAN2GP-GUIDE.md</code> (LoRAs + finetunes).</p>
+          <p class="token-hint">What lives in your LoRA families and <code>finetunes/</code> — read-only except import/delete below. How-to: upstream <code>docs/LORAS.md</code> and <code>docs/FINETUNES.md</code>.</p>
           <div class="token-field" style="margin-top:8px">
             <button class="btn btn-ghost small" id="libRefreshBtn" title="Reload LoRA and finetune lists">↻ Refresh library</button>
           </div>
@@ -1085,7 +1085,7 @@
   </div>
   </div>
 
-  <!-- Guide Panel (topbar tab — model picks, prompt tools, checklists) -->
+  <!-- Guide Panel (topbar tab — prompt tools, checklists) -->
   <div id="guidePanel" class="settings-panel">
     <div class="settings-topbar">
       <button class="btn-icon" id="guideBackBtn" aria-label="Close guide" title="Close guide">
@@ -1095,19 +1095,9 @@
     </div>
     <div class="settings-scroll">
       <div class="settings-section">
-        <h3>What do you want to make?</h3>
-        <p class="token-hint">Pick a goal — the launcher suggests which WanGP model to load, with starter settings. Full walkthroughs live in <code>docs/WAN2GP-GUIDE.md</code>. Suggestions never change anything; you still pick the model inside WanGP.</p>
-        <div class="token-field" style="margin-top:8px">
-          <select id="guideGoalSelect" class="input" style="max-width:360px">
-            <option value="">— Choose a goal —</option>
-          </select>
-          <span class="token-hint" id="guideStatus" style="margin-left:8px"></span>
-        </div>
-      </div>
-      <div id="guideResults"><p class="token-hint">Pick a goal above to get model picks.</p></div>
-      <div class="settings-section" style="margin-top:12px">
         <h3>Profiles first</h3>
         <p class="token-hint">Before generating: run <strong>⚡ Auto-Tune</strong> (Manage panel) so video/image/audio profiles match your VRAM. Accelerator LoRAs always want guidance <code>1</code> — forgetting this is the #1 bad-quality cause.</p>
+        <p class="token-hint">Model choices live in WanGP’s own selector and toolbar search — the launcher no longer keeps a copy of that catalog.</p>
       </div>
       <div class="settings-section" style="margin-top:12px">
         <h3>✍️ Prompt tools</h3>
@@ -1481,7 +1471,7 @@
             <div class="deepy-cost-note">
               <span class="dot-ok">●</span> <strong>OpenCode</strong> — free, local models, no account.
               <span class="dot-bad">●</span> <strong>Claude Code / Codex</strong> — paid (subscription or API credits).
-              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 9B/27B (local)</strong> — runs on your GPU (needs GGUF kernels 1.0.29 via Sync Kernels); pick model + quantization below. Auto-sets 32k context + Summarize.
+              <br><span class="dot-ok">●</span> <strong>Qwen3.8 VL 9B/27B (local)</strong> — runs on your GPU (needs GGUF kernels 1.0.29 via Sync Kernels); pick model + quantization below.
               <br>Prime plans advanced multi-step work and is required for every external LLM (it exposes WanGP's MCP tools). Zero is lightweight and local-only.
             </div>
             <!-- Prime model preferences (upstream deepy_model_speed /
@@ -1516,12 +1506,12 @@
             <div id="deepyPrimeBackendWrap" style="display:none;margin:10px 0 8px">
               <div class="deepy-sub-label">Local Prime model + quantization</div>
               <select id="deepyPrimeBackendSelect" class="input" style="margin-top:4px;min-width:260px">
-                <option value="5:gguf">27B — GGUF Q4 (highest quality, usually 24 GB VRAM)</option>
-                <option value="5:gguf_q3">27B — GGUF IQ3_S (middle, ~16 GB VRAM)</option>
+                <option value="5:gguf">27B — GGUF Q4 (highest quality)</option>
+                <option value="5:gguf_q3">27B — GGUF IQ3_S (middle)</option>
                 <option value="5:gguf_q2">27B — GGUF Q2 (lowest memory)</option>
-                <option value="5:gguf_ptq1">27B — Bonsai PTQ1 (~10 GB VRAM, sets INT8 KV cache)</option>
-                <option value="6:gguf">9B Heretic — GGUF Q4 (~6.5 GB VRAM)</option>
-                <option value="6:gguf_q8">9B Heretic — GGUF Q8 (~11 GB, closest to full precision)</option>
+                <option value="5:gguf_ptq1">27B — Bonsai PTQ1 (smallest)</option>
+                <option value="6:gguf">9B Heretic — GGUF Q4 (smaller)</option>
+                <option value="6:gguf_q8">9B Heretic — GGUF Q8 (closest to full precision)</option>
               </select>
               <p class="path-hint" id="deepyPrimeBackendHint" style="margin-top:6px"></p>
               <!-- Speculative decoding for Deepy's own LLM (upstream
@@ -2407,7 +2397,6 @@
   <script src="qrcodegen.js" defer></script>
   <script src="services/escape.js" defer></script>
   <script src="services/pip-spec.js" defer></script>
-  <script src="services/guide-catalog.js" defer></script>
   <script src="services/launch-args.js" defer></script>
   <script src="services/mcp-command.js" defer></script>
   <script src="services/prompt-tools.js" defer></script>
