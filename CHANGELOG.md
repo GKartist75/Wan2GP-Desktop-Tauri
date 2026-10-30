@@ -4,6 +4,8 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+## [0.10.36] — 2026-10-31
+
 - **YuE2 triage now reads `settings/yue2_settings.json`, not just media.**
   Upstream's `get_default_settings()` runs the same `migrate_source()` on the
   saved per-model settings before the UI paints, so a stale
