@@ -33,7 +33,7 @@ One-click **Wan2GP (WanGP)** — generative video, image, audio and TTS on your 
 - [📱 Phone & remote access](#-phone--remote-access)
 - [🧩 Plugin Manager](#-plugin-manager)
 - [✨ DLSS5 installer](#-dlss5-installer--optional-nvidia-upsamplers)
-- [🧭 Guide & 📚 Library](#-guide---library)
+- [📚 Library](#-library)
 - [Documentation](#documentation)
 - [🛠 Build from source](#-build-from-source)
 - [⭐ Star History](#-star-history)
@@ -407,11 +407,9 @@ Dashboard card runs WanGP's own `scripts/install_dlss5.ps1` (workers v1.1.3, ReS
 
 ---
 
-## 🧭 Guide & 📚 Library
+## 📚 Library
 
-**Guide** (topbar tab, next to Manage) holds the prompt helpers: 6 prompt templates with the line mode each needs, offline `[/...]` window-command checker, VACE pre-flight checklist, post-processing at a glance. Model choices live in WanGP's own selector and toolbar search — the launcher does not keep a second catalog. Read-only — nothing changes until you pick inside WanGP. Upstream docs: [docs/WAN2GP-GUIDE.md](docs/WAN2GP-GUIDE.md).
-
-**Manage → Library** inventories what's on disk: downloaded checkpoints with **DeepBeepMeep / Pack / Yours** provenance, sizes and kind tags; LoRA families split into **Pack** and **Yours** counts/sizes with known URLs; finetunes labelled **Pack**, **Pack · CivitAI**, **Overrides DeepBeepMeep** or **Yours**, with validated JSON import/export and delete; workspaces (real sizes, missing-file flags, archive lock, definitions backup). The checkpoint table gives Checkpoint/Origin/Kind/Size real widths, so long filenames wrap normally.
+**Manage → Library** inventories what's on disk: downloaded checkpoints with **DeepBeepMeep / Pack / Yours** provenance, sizes and kind tags; LoRA families split into **Pack** and **Yours** counts/sizes with known URLs; finetunes labelled **Pack**, **Pack · CivitAI**, **Overrides DeepBeepMeep** or **Yours**, with validated JSON import/export and delete; workspaces (real sizes, missing-file flags, archive lock, definitions backup). The checkpoint table gives Checkpoint/Origin/Kind/Size real widths, so long filenames wrap normally. Prompt starters, window commands and the VACE/post-processing checks live in the [User Guide](docs/USER-GUIDE.md#prompt--workflow-reference); model choice stays in WanGP's selector.
 
 ### Gallery viewer
 

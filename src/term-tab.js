@@ -325,8 +325,8 @@ function syncNativeBoundsAdjusted() {
         w = Math.max(0, w - l);
       } else if (dock === "right") w = Math.max(0, w - ft.offsetWidth);
     }
-    // Side panels (Manage/Guide) dock right: shrink the native child beside
-    // them instead of detaching it, so Wan2GP stays visible instead of black.
+    // The Manage side panel docks right: shrink the native child beside it
+    // instead of detaching it, so Wan2GP stays visible instead of black.
     // offsetWidth is layout width (unaffected by the slide transform), and 0
     // when closed — every caller (terminal, reshow, resize) inherits this.
     try {
@@ -362,14 +362,12 @@ function syncNativeBoundsAdjusted() {
     }
   } catch {}
 }
-// Width of the currently open right-docked side panel (Manage/Guide), else 0.
+// Width of the currently open right-docked Manage panel, else 0.
 function sidePanelWidth() {
   var w = 0;
   try {
     var sp = $("settingsPanel");
     if (sp && sp.classList.contains("open")) w = Math.max(w, sp.offsetWidth || 0);
-    var gp = $("guidePanel");
-    if (gp && gp.classList.contains("open")) w = Math.max(w, gp.offsetWidth || 0);
   } catch (e) {}
   return w;
 }
@@ -641,10 +639,6 @@ function initSettingsToggles() {
 }
 
 function openSettings() {
-  // Mutual exclusion with the Guide panel — only one side panel at a time.
-  if ($("guidePanel") && $("guidePanel").classList.contains("open")) {
-    $("guidePanel").classList.remove("open");
-  }
   initSettingsToggles();
   $("settingsPanel").classList.add("open");
   $("settingsOverlay").classList.add("visible");
@@ -736,7 +730,7 @@ function openSettings() {
     const db = $("debugBoundsChk");
     if (db) db.checked = cfg.debugBounds === true;
   });
-  // Heavy probes deferred past paint: the panel opens instantly (like Guide),
+  // Heavy probes deferred past paint: the panel opens instantly,
   // then fills in without janking the slide transition. The plugins list
   // additionally loads lazily on its tab (30s stale guard).
   setTimeout(() => {

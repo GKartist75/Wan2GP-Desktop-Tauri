@@ -4,11 +4,12 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
-- **Launcher stops mirroring upstream catalogs and defaults.** The Guide's
-  goal picker, model picks, display-name map and starter settings are gone;
-  model choice stays in WanGP's selector/toolbar search. `WAN2GP-GUIDE.md` is
-  now a short launcher map linking upstream `docs/MODELS.md`, `DEEPY.md`,
-  `SETTINGS.md` and the rest instead of a 956-line inventory. Deepy Apply now
+- **Launcher stops mirroring upstream catalogs and defaults.** The Guide tab
+  and its model recommender are gone; prompt starters, window-command notes
+  and the VACE/post-processing checklists moved to `docs/USER-GUIDE.md`. Model
+  choice stays in WanGP's selector/toolbar search. `WAN2GP-GUIDE.md` is now a
+  short launcher map linking upstream `docs/MODELS.md`, `DEEPY.md`,
+  `SETTINGS.md` and the rest instead of a model inventory. Deepy Apply now
   writes only the launcher-owned choices (enable/disable, Zero/Prime, engine,
   local Qwen variant, sessions) and no longer seeds tool templates, context,
   compaction, KV cache, VRAM mode, Speed/Size, MCP/filesystem grants or queue

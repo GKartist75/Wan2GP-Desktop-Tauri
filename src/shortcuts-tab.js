@@ -7,19 +7,10 @@
 // ── Keyboard shortcuts ──
 document.addEventListener("keydown", (e) => {
   if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
-  // Escape closes the Manage or Guide panel first — either can be open in
-  // webview mode too, where the webview Escape branch below would otherwise fire instead.
+  // Escape closes Manage first — it can be open in webview mode too, where the
+  // webview Escape branch below would otherwise fire instead.
   if (e.key === "Escape" && $("settingsPanel").classList.contains("open")) {
     closeSettings();
-    return;
-  }
-  if (
-    e.key === "Escape" &&
-    $("guidePanel") &&
-    $("guidePanel").classList.contains("open") &&
-    typeof closeGuide === "function"
-  ) {
-    closeGuide();
     return;
   }
   // Ctrl+` toggles floating terminal

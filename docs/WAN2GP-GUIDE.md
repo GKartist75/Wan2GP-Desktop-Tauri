@@ -56,12 +56,12 @@ Upstream references:
 |---|---|
 | Dashboard | Start/stop, update, Deepy Web, live metrics, backend chips |
 | Manage | Installer, packages, kernels, settings, logs, backups, tools |
-| Guide | Prompt starters, `[/...]` window-command checker, VACE checklist, post-processing reminder |
 | Deepy / Deepy Web | Enable Deepy, pick engine/model variant, web UI and phone URL |
 | Launch | Extra `wgp.py` arguments and named presets |
 
-Every button is documented in [USER-GUIDE.md](USER-GUIDE.md). The Guide tab
-does not recommend models; use WanGP's selector for that.
+Every button is documented in [USER-GUIDE.md](USER-GUIDE.md). Prompt starters
+and pre-flight notes are in the [prompt reference](USER-GUIDE.md#prompt--workflow-reference);
+model choice stays in WanGP's selector.
 
 ## Upstream documentation index
 

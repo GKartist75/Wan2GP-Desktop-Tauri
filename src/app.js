@@ -322,44 +322,6 @@ function isFilePickedAsFolder(dir) {
   );
 }
 
-
-// ── Guide panel (topbar tab — same overlay/BrowserView rules as Manage) ──
-function openGuide() {
-  closeSettings();
-  if (!$("guidePanel")) return;
-  $("guidePanel").classList.add("open");
-  $("settingsOverlay").classList.add("visible");
-  // Side-by-side like Manage: keep Wan2GP visible beside the panel instead of
-  // detaching it to black. Translucent overlay stays click-to-close.
-  if ($("dashBody").style.display === "none") {
-    try {
-      reshowNativeView();
-    } catch (e) {}
-  }
-}
-function closeGuide() {
-  if ($("guidePanel")) $("guidePanel").classList.remove("open");
-  var manageOpen =
-    $("settingsPanel") && $("settingsPanel").classList.contains("open");
-  // Only hide the overlay when the Manage panel isn't open either.
-  if (!manageOpen) {
-    $("settingsOverlay").classList.remove("visible");
-  }
-  if ($("dashBody").style.display === "none" && !manageOpen) {
-    $("settingsOverlay").classList.remove("opaque");
-    if (_ftVisible) showTerminal();
-    else {
-      try {
-        reshowNativeView();
-      } catch (e) {}
-    }
-  }
-}
-$("guideBtn")?.addEventListener("click", () => {
-  if ($("guidePanel") && $("guidePanel").classList.contains("open")) closeGuide();
-  else openGuide();
-});
-$("guideBackBtn")?.addEventListener("click", closeGuide);
 // Window resize while a side panel is open: the native child keeps absolute
 // bounds, so re-trim it to the new viewport (debounced, panel-open only).
 var __sideResizeT = null;

@@ -17,7 +17,6 @@ flowchart TD
   D --> I["Installer: GPU plan, preflight, progress"]
   D --> V["Viewer: WanGP embedded with console and gallery"]
   D --> M["Manage: tokens, launch args, system, plugins, library"]
-  D --> G["Guide (topbar): model picks, prompt tools, checklists"]
 ```
 
 ## Contents
@@ -34,7 +33,7 @@ flowchart TD
 - [Manage → Plugins](#manage--plugins)
 - [Manage → Library](#manage--library)
 - [Finetune Manager (companion plugin)](#finetune-manager-companion-plugin)
-- [Guide (topbar)](#guide-topbar)
+- [Prompt + workflow reference](#prompt--workflow-reference)
 - [Console & logs](#console--logs)
 - [Typical workflows](#typical-workflows)
 
@@ -708,21 +707,70 @@ known-good release. It is **opt-in**: it is not installed automatically.
 > Adult content remains opt-in. Installing Wan2GP or the companion never
 > downloads adult weights or makes an adult-content decision for you.
 
-## Guide (topbar)
+## Prompt + workflow reference
 
-🧭 **Guide button (topbar, next to Manage)** — opens its own side panel, not a
-Manage tab: prompt tools, VACE checklist and post-processing reminders.
-Read-only: nothing changes until you pick the model inside WanGP. Model
-choices live in WanGP's selector and toolbar search, not in a launcher
-catalog. Upstream docs and the launcher map: `docs/WAN2GP-GUIDE.md`.
+There is no separate Guide tab or launcher model catalog. Use WanGP's
+selector and toolbar search for models; use
+[PROMPTS.md](https://github.com/deepbeepmeep/WanGP/blob/main/docs/PROMPTS.md)
+for the full prompt syntax. This section keeps the starter templates and
+pre-flight notes that used to live in that tab.
 
-✍️ **Prompt tools** — 6 starter templates (scene/motion/edit/dialogue/lyrics/
-window beats) with the WanGP line-mode each needs, copy button, and an offline
-`[/duration /overlap /new_shot /loras_mult]` checker.
+**Line modes** (WanGP's *How to Process each Line of the Text Prompt*):
 
-✅ **VACE pre-flight + post at a glance** — static checklists: control/mask/
-reference setup, Skip-Layer-Guidance rule, reference roles, upsampler/audio
-method syntax with hardware requirements.
+| Mode | WanGP does this |
+| --- | --- |
+| `G` | Each new line becomes a new queued request |
+| `PG` | Each paragraph (blank-line separated) becomes a new queued request |
+| `W` | Each line becomes a new sliding window of the same video |
+| `PW` | Each paragraph becomes a new sliding window of the same video |
+| `FG` | Every line is one prompt |
+
+**Starter templates** — paste into WanGP's prompt box and pick the mode:
+
+| Template | Mode | Text |
+| --- | --- | --- |
+| Text → video scene | `G` | A red sports car driving through a mountain road at sunset, cinematic, high quality |
+| Image → video motion | `G` | the woman smiles, turns toward the window, and the camera slowly pushes in |
+| Instruction edit (Qwen Edit / Kontext / Chrono) | `FG` | Add a red wool hat to the woman, keep her face, hairstyle, and the rainy street unchanged. |
+| Two-speaker dialogue (TTS / InfiniteTalk) | `FG` | `Speaker 1: We should leave before the rain gets heavier.`<br>`Speaker 2: Give me one minute, I still need my jacket.` |
+| Song lyrics (ACE-Step / HeartMuLa) | `FG` | `[Verse]`<br>`Morning light through the window pane`<br>`[Chorus]`<br>`Stay with me through every mile` |
+| Long video beats | `W` | `[/duration=25%] A wide dawn shot of a mountain train station.`<br>`[/duration=5s,/overlap=17] The violinist steps onto the train.`<br>`[/new_shot,/duration=4s] A sharp cut to inside the dining car at night.` |
+
+**`[/...]` window commands** (sliding-window modes):
+
+| Command | Effect |
+| --- | --- |
+| `[/duration=121]` / `[/duration=5s]` / `[/duration=20%]` | Frames, seconds or percent contributed by this window |
+| `[/overlap]` / `[/overlap=9]` / `[/overlap=0]` | Model default overlap, explicit frames, or no overlap |
+| `[/new_shot]` | Hard cut — alias for `[/overlap=0]` |
+| `[/no_end_image]` | Skip this window's End Image without consuming it |
+| `[/loras_mult=1;3]` | Override active LoRA multipliers for this window |
+| `[/store_mem=…]` / `[/load_mem=…]` / `[/drop_mem=…]` | JoyAI-Echo named memory only |
+
+Combine commands in one bracket, e.g. `[/duration=5s,/overlap=9]`. WanGP
+validates them inside WanGP; model-specific commands may add more.
+
+**VACE pre-flight** — before a replace/inpaint/outpaint run:
+
+| Check | Check |
+| --- | --- |
+| Control Video is the **original** clip (not pre-annotated) | Process picked: pose / depth / inpaint / keep-unchanged |
+| Area matches intent: whole / masked / non-masked | Video Mask built in Matanyone, exported to both inputs |
+| Reference image is who/what to inject, **named in the prompt** | Grey 127 = replace · pose wireframe = animate a person |
+| Skip Layer Guidance ON for CFG VACE (off for Fusionix/CausVid) | 15 steps minimum, 30+ for best; preview thumbs checked |
+
+**Reference roles** — a start image fixes the opening frame; a reference guides
+identity without fixing the frame; injected frames land at positions (`1` =
+first, `L` = window end, `X` = skip).
+
+**Post-processing at a glance** — don't regenerate a good scene; late-process
+it. Originals stay untouched.
+
+| Method | Effect |
+| --- | --- |
+| `lanczos*2` / `vae*2` / `dlss5*1…*3` | Spatial upscale + refine (DLSS5 needs Win11 + RTX 30/40 + HAGS) |
+| `rife*2…*4` / `dlssg*2…*6` | Temporal interpolation (x5/x6 RTX 50 only) |
+| `mmaudio` / `prismaudio` / `seedvc_*` | Soundtrack / voice swap after generation |
 
 ---
 

@@ -602,14 +602,9 @@ $("removeElectronBtn")?.addEventListener("click", async function () {
 });
 function closeSettings() {
   $("settingsPanel").classList.remove("open");
-  var guideOpen = $("guidePanel") && $("guidePanel").classList.contains("open");
-  // Only hide the overlay when the Guide panel isn't open either.
-  if (!guideOpen) {
-    $("settingsOverlay").classList.remove("visible");
-  }
-  // Restore full viewer bounds when leaving Manage in webview mode
-  // (skipped while the Guide panel stays open — it keeps its trim).
-  if ($("dashBody").style.display === "none" && !guideOpen) {
+  $("settingsOverlay").classList.remove("visible");
+  // Restore full viewer bounds when leaving Manage in webview mode.
+  if ($("dashBody").style.display === "none") {
     $("settingsOverlay").classList.remove("opaque");
     // Don't reattach over an open terminal — restore the correct view state instead.
     if (_ftVisible) showTerminal();

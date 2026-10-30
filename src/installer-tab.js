@@ -1619,6 +1619,4 @@ $("manageRunSetupBtn")?.addEventListener("click", async () => {
 
 $("settingsOverlay").addEventListener("click", () => {
   closeSettings();
-  // closeGuide is defined below the overlay wiring — guard for load order.
-  if (typeof closeGuide === "function") closeGuide();
 });

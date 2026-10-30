@@ -58,7 +58,6 @@ function boot({ dashDisplay = 'flex' } = {}) {
     window: { w2gp: { checkUpdate: async () => ({}) } },
     $: (id) => (id === 'dashBody' ? dashBody : el(id)),
     closeSettings: () => calls.push('closeSettings'),
-    closeGuide: () => calls.push('closeGuide'),
     closeWebview: () => calls.push('closeWebview'),
     toggleFloatingTerm: () => calls.push('toggleFloatingTerm'),
     reloadWan2gpView: () => calls.push('reload'),
