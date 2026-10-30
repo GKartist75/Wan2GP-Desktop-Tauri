@@ -49,6 +49,30 @@ $("tsFailsafeBtn")?.addEventListener("click", async function () {
   }
   this.disabled = false;
 });
+$("tsPluginsDisableBtn")?.addEventListener("click", async function () {
+  const ok = await askConfirm(
+    "Disable third-party plugins? Their folders stay on disk; re-enable them in WanGP → Plugins after it starts.",
+    "Disable third-party plugins",
+  );
+  if (!ok) return;
+  this.disabled = true;
+  tsStatus("tsPluginsStatus", "Disabling…");
+  try {
+    const r = await window.w2gp.pluginsDisableThirdParty();
+    const n = Number(r.disabled_count || 0);
+    const plural = n === 1 ? "" : "s";
+    const msg = n
+      ? `✓ Disabled ${n} plugin${plural} — relaunch Wan2GP.`
+      : "No third-party plugins were enabled.";
+    tsStatus("tsPluginsStatus", msg);
+    showToast(msg);
+    appendLog("[✓] " + msg);
+  } catch (e) {
+    tsStatus("tsPluginsStatus", "✗ " + errText(e));
+    showToast("✗ " + errText(e));
+  }
+  this.disabled = false;
+});
 $("tsCudaBtn")?.addEventListener("click", async function () {
   this.disabled = true;
   tsStatus("tsFailsafeStatus", "Probing torch…");

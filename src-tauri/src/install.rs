@@ -3950,11 +3950,6 @@ pub async fn install(
         &home_dir().join(".wan2gp-tauri-installed"),
         repo.to_string_lossy().as_ref(),
     );
-    // favourite plugins (Manage → Plugins ★): auto-clone after fresh setup
-    crate::plugins::ensure_favorite_plugins(app.clone()).await;
-    // Default companion: Finetune Manager owns the pack/recipe UI. Best-effort,
-    // pinned tag, and respects the explicit opt-out in desktop-config.json.
-    crate::plugins::ensure_companion_plugin(app.clone(), false).await;
     mutating_done();
     Ok(serde_json::json!({"ok": true, "success": true}))
 }
@@ -6619,7 +6614,6 @@ pub async fn repair_wangp_files(app: tauri::AppHandle) -> Result<serde_json::Val
     if record_wangp_pin(&repo) {
         emit("[*] Recorded this upstream commit as the rollback point.\n");
     }
-    crate::plugins::ensure_companion_plugin(app.clone(), false).await;
     mutating_done();
     Ok(serde_json::json!({"ok": true, "repaired": true, "stashed": had_edits}))
 }

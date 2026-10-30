@@ -2247,7 +2247,7 @@ mod troubleshoot_tests {
         for key in ["GTX_10", "RTX_20", "RTX_30", "RTX_40", "RTX_50"] {
             let r = known_good_recipe(key).unwrap();
             let s = r["settings"].as_object().unwrap();
-            for (k, v) in s {
+            for k in s.keys() {
                 assert!(
                     crate::features::MEMORY_OVERRIDE_KEYS.contains(&k.as_str()),
                     "{key}: {k} is not in the Apply allowlist"
@@ -2265,7 +2265,7 @@ mod troubleshoot_tests {
             "lower_reserved_ram",
         ] {
             let s = oom_remedy_settings(action).unwrap();
-            for (k, v) in s.as_object().unwrap() {
+            for k in s.as_object().unwrap().keys() {
                 assert!(
                     crate::features::MEMORY_OVERRIDE_KEYS.contains(&k.as_str()),
                     "{action}: {k} not appliable"

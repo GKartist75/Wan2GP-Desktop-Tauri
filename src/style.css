@@ -3426,36 +3426,6 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
 .browser-row {
  font-size: 0.75rem;
 }
-/* plugin rows carry action buttons — divider between entries for scannability */
-#pluginList .browser-row {
- border-bottom: 1px solid var(--border);
- padding: 7px 0;
- display: flex;
- align-items: center;
- gap: 6px;
-}
-#pluginList .browser-row .browser-opt {
- flex: 1;
- min-width: 0;
-}
-#pluginList .browser-row .btn {
- flex-shrink: 0;
- margin-left: 0;
-}
-#pluginList .browser-row:last-child {
- border-bottom: none;
-}
-.plugin-group {
- font-size: 0.68rem;
- font-weight: 600;
- color: var(--text-tertiary);
- text-transform: uppercase;
- letter-spacing: 0.06em;
- margin: 10px 0 2px;
-}
-.plugin-group:first-child {
- margin-top: 0;
-}
 .browser-opt {
   display: flex;
   align-items: center;
@@ -3474,30 +3444,7 @@ input:where([type="text"], [type="number"], [type="password"], :not([type])) {
  accent-color: var(--accent);
 }
 .browser-opt input:disabled + * {
- color: var(--text-tertiary);
-}
-/* plugin rows with available updates — amber wash + left accent + bold badge */
-#pluginList .browser-row.plugin-has-update {
- background: color-mix(in srgb, var(--signal-amber) 9%, transparent);
- box-shadow: inset 3px 0 0 var(--signal-amber);
- border-radius: 0 8px 8px 0;
- padding-left: 8px;
-}
-#pluginList .browser-row.plugin-has-update .browser-opt {
- color: var(--text-primary);
-}
-.plugin-update-badge {
- color: var(--signal-amber);
- font-weight: 700;
-}
-/* the launcher author's own plugins — pinned above their group's alphabetical run */
-.plugin-own-badge {
- margin-left: 5px;
- font-size: 0.7rem;
- opacity: 0.85;
-}
-#pluginList .browser-row.plugin-has-update .btn {
- border-color: color-mix(in srgb, var(--signal-amber) 55%, transparent);
+  color: var(--text-tertiary);
 }
 /* installer live downloads — per-file rows with sizes + animated bar */
 .install-progress {

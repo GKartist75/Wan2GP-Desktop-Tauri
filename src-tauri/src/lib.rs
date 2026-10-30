@@ -173,13 +173,6 @@ pub fn run() {
                 let _ = w.show();
                 let _ = w.set_focus();
             }
-            // Existing installs predate the companion: seed it once in the
-            // background. It is a no-op when Wan2GP is absent, opted out, or
-            // already installed; failures only go to the setup log.
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                crate::plugins::ensure_companion_plugin(handle, false).await;
-            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -244,7 +237,7 @@ pub fn run() {
         // unless it is `async`, so anything heavy and user-initiated is declared
         // `#[tauri::command(async)]` at its definition (repair_settings,
         // report_issue, troubleshoot_debug_bundle, detect_electron, the library
-        // scans, plugins_list). The frequently-polled ones (get_status,
+        // scans). The frequently-polled ones (get_status,
         // get_system_metrics) stay sync on purpose: they are cache-throttled,
         // and keeping their timing unchanged matters more than the move.
         .invoke_handler(tauri::generate_handler![
@@ -365,16 +358,7 @@ pub fn run() {
             notifier_native::notifier_native_load,
             notifier_native::notifier_native_save,
             notifier_native::notifier_native_test,
-            plugins::plugins_list,
-            plugins::plugin_install,
-            plugins::plugin_check_update,
-            plugins::plugin_check_updates,
-            plugins::plugin_update,
-            plugins::plugin_uninstall,
-            plugins::plugin_refresh_catalog,
-            plugins::companion_plugin_status,
-            plugins::companion_plugin_install,
-            plugins::companion_plugin_set_opt_out,
+            plugins::plugins_disable_third_party,
             features::set_theme_follow_system,
             features::set_notifications_enabled,
             features::set_window_mode,

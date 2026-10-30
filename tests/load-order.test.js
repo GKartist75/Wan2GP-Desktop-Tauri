@@ -142,6 +142,24 @@ test('no script passes a later script symbol by value at top level', () => {
   assert.deepEqual(hazards, [], 'load-time bare references to a later script:\n' + hazards.join('\n'))
 })
 
+test('the browser-list renderer is defined before its callers', () => {
+  // loadBrowserList used to live in plugins-tab.js. Removing that file left
+  // `addEventListener("click", loadBrowserList)` in settings-tab.js reading an
+  // undefined symbol at startup, so the General panel threw before it rendered.
+  const order = loadedScripts()
+  const defines = definitionIndex(order)
+  assert.ok(
+    defines.has('loadBrowserList'),
+    'loadBrowserList must be declared by a script index.html actually loads',
+  )
+  const owner = defines.get('loadBrowserList')
+  for (const caller of ['settings-tab.js', 'term-tab.js']) {
+    const at = order.indexOf(caller)
+    assert.ok(at !== -1, `${caller} must be loaded`)
+    assert.ok(owner <= at, `${caller} uses loadBrowserList before its definition in ${order[owner]}`)
+  }
+})
+
 test('every script referenced by index.html exists on disk', () => {
   // A stale <script src> 404s in a Tauri build, the script silently never runs,
   // and the feature it owned just disappears with an empty console.

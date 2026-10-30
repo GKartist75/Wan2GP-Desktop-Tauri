@@ -4,6 +4,26 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+## [0.10.34] — 2026-10-30
+
+- **Startup no longer reports `loadBrowserList is not defined`.** The Default
+  Browser renderer lived in the deleted plugin tab, so `settings-tab.js` read
+  an undefined symbol while wiring its Refresh button and the General panel
+  failed to initialize. The renderer now lives in `settings-tab.js`; a
+  load-order test keeps it defined before its settings and terminal callers.
+
+- **The launcher's Plugin Manager is gone; WanGP owns plugins again.** The
+  *Manage → Plugins* tab, its catalog list, install/update/uninstall actions,
+  favourites, the pinned Finetune Manager companion and its startup/Repair
+  seeding, and the plugin backend/tests are deleted. Install, enable and update
+  plugins inside WanGP's own **Plugins** tab. One recovery control remains:
+  *Manage → System → Troubleshooting → **Disable third-party plugins*** removes
+  community ids from `enabled_plugins` in `wgp_config.json` when a plugin stops
+  Wan2GP from starting. It derives community ids from
+  `installed_remote_plugins`, `plugins.json` and `plugins/*/.git`, so system and
+  bundled plugins stay enabled; plugin folders and the remote-install record are
+  untouched, and malformed JSON is refused rather than overwritten.
+
 - **Launcher stops mirroring upstream catalogs and defaults.** The Guide tab
   and its model recommender are gone; prompt starters, window-command notes
   and the VACE/post-processing checklists moved to `docs/USER-GUIDE.md`. Model

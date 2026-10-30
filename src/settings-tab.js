@@ -4,6 +4,50 @@
 // defined by app.js, and top-level statements here only register listeners,
 // so loading this file after app.js is safe.
 
+// Populate the General "Default Browser" list from the backend. Lives here
+// rather than in the removed plugins tab; term-tab also calls it after its
+// deferred probes.
+async function loadBrowserList() {
+  const list = $("browserList");
+  if (!list) return;
+  list.innerHTML =
+    '<div class="browser-row"><label class="browser-opt"><input type="radio" name="defaultBrowser" value="system" checked> System default</label></div>';
+  try {
+    const { browsers, defaultBrowser } = await window.w2gp.detectBrowsers();
+    for (const b of browsers) {
+      const row = document.createElement("div");
+      row.className = "browser-row";
+      const label = document.createElement("label");
+      label.className = "browser-opt";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "defaultBrowser";
+      radio.value = b.id;
+      radio.disabled = !b.installed;
+      if (b.id === defaultBrowser) radio.checked = true;
+      label.appendChild(radio);
+      label.appendChild(
+        document.createTextNode(
+          " " + b.name + (b.installed ? "" : " (not installed)"),
+        ),
+      );
+      row.appendChild(label);
+      list.appendChild(row);
+    }
+    list.querySelectorAll('input[name="defaultBrowser"]').forEach((r) => {
+      r.addEventListener("change", async () => {
+        if (!r.checked) return;
+        const cfg = await window.w2gp.configLoad();
+        cfg.defaultBrowser = r.value;
+        await window.w2gp.configSave(cfg);
+        appendLog(`[*] Default browser set to: ${r.value}`);
+      });
+    });
+  } catch (e) {
+    appendLog(`[!] Browser detection failed: ${errText(e)}`);
+  }
+}
+
 // ── Settings ──
 $("settingsBackBtn").addEventListener("click", closeSettings);
 $("browserRefreshBtn")?.addEventListener("click", loadBrowserList);

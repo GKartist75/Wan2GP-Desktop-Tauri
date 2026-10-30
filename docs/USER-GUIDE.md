@@ -16,7 +16,7 @@ flowchart TD
   S["Splash: install check"] --> D["Dashboard: health, launch, updates"]
   D --> I["Installer: GPU plan, preflight, progress"]
   D --> V["Viewer: WanGP embedded with console and gallery"]
-  D --> M["Manage: tokens, launch args, system, plugins, library"]
+  D --> M["Manage: tokens, launch args, system, library"]
 ```
 
 ## Contents
@@ -30,9 +30,7 @@ flowchart TD
 - [Manage → System](#manage--system)
 - [GPU kernel wheels](#gpu-kernel-wheels--what-gets-installed-per-gpu)
 - [Manage → Auto-Tune](#manage--auto-tune)
-- [Manage → Plugins](#manage--plugins)
 - [Manage → Library](#manage--library)
-- [Finetune Manager (companion plugin)](#finetune-manager-companion-plugin)
 - [Prompt + workflow reference](#prompt--workflow-reference)
 - [Console & logs](#console--logs)
 - [Typical workflows](#typical-workflows)
@@ -485,6 +483,10 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   actually *import*, naming the broken dist — run after AV restores, driver
   updates, or env surgery), GPU report, emergency fallback torch probe.
   Links out to upstream `TROUBLESHOOTING.md` (plus `INSTALLATION.md`).
+  **Disable third-party plugins** is the startup-crash recovery: it removes
+  community plugins from `enabled_plugins` in `wgp_config.json` but keeps
+  system and bundled plugins enabled and leaves every `plugins/` folder on
+  disk. WanGP's own Plugin Manager can re-enable them once the UI starts.
 - **Check model files** — reads the header of every `.gguf` / `.safetensors` in
   your model folders and lists the ones WanGP cannot load: truncated
   downloads, an HTML error page saved under a model name, 0-byte files and
@@ -648,16 +650,6 @@ Two caveats if you override video to `dynamic`: it **only engages with the MMGP 
 The panel also carries settings Auto-Tune never recommends, only writes when you set them: `video/image/audio_preload_in_VRAM` (the megabytes a **Manual** VRAM Preload keeps — upstream measured ~6000 MB taking Flux dev 1024² P4 steps within ~20% of P1, 8000 MB or more bringing it close to P1) and `llm_cpu_compute` (*Language Models CPU Compute*: **Auto** by default, **On** to force the CPU to help Deepy and the prompt enhancer while their layers stream from RAM, **Off** for GPU transfers only).
 
 
-## Manage → Plugins
-
-- **Installed & Available** — plugin list with enable/disable/install/remove.
-  Plugins by the launcher's author (GKartist75) are pinned to the top of their
-  group, marked 📌, whichever sort is active.
-- **Install from URL** — sideload a plugin from a link.
-- **★ Favourites** — starred plugins auto-install on fresh setup (stored in
-  `desktop-config.json`). Nothing auto-installs otherwise: plugins come only
-  from your favourites.
-
 ## Manage → Library
 
 📚 **LoRA & Finetune Library** — per-family LoRA file counts split into
@@ -677,35 +669,6 @@ else. Refresh Model List in WanGP afterwards.
 **Workspaces** — per-project media counts, real on-disk sizes, moved/missing
 file flags, archive-lock toggle, definitions backup ZIP (back up outputs too
 for a portable archive).
-
-## Finetune Manager (companion plugin)
-
-The launcher contains no model-pack manager: no catalog, no registry, no search,
-no download code. Pack recipes, the community registry, CivitAI search, local
-imports/exports and missing-file downloads are owned entirely by the
-**Finetune Manager** plugin, which the launcher can install from a pinned,
-known-good release. It is **opt-in**: it is not installed automatically.
-
-- **Manage -> Plugins -> Finetune Manager (recommended)** shows whether the
-  companion is installed, offers **Install / repair**, **Uninstall**, and a
-  toggle for the automatic install (off by default).
-- On a fresh install, after Repair, and on startup for existing installs, the
-  launcher ensures the companion is present — but only when you enabled that
-  behaviour. It never defaults to `master`.
-- If the plugin is missing or you never enabled it, the launcher simply has no
-  pack UI:
-  nothing is installed silently and there is no hidden tab or fallback.
-- Open Wan2GP after installing and use the Finetune Manager tab for recipes,
-  registry, CivitAI and file downloads. The plugin resolves assets with Wan2GP's
-  own locator rules, including `|subfolder`, `|%lora_dir`, second-phase URLs and
-  pack aliases.
-
-> The Library tab still lists files already on disk under `adult-pack/` folders
-> from earlier launcher versions, so nothing you downloaded disappears from the
-> inventory. It only reads and reports those files.
-
-> Adult content remains opt-in. Installing Wan2GP or the companion never
-> downloads adult weights or makes an adult-content decision for you.
 
 ## Prompt + workflow reference
 

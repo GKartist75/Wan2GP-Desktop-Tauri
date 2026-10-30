@@ -86,7 +86,7 @@ flowchart TD
     SM -->|"fail"| FAIL
     SM -->|"pass"| AMD{"AMD?"}
     AMD -- "yes" --> PR["Compute probe, both HSA modes\nrecord winner / reseat"]
-    AMD -- "no" --> DN["Write marker\nfavourite plugins\nInstallation complete"]
+    AMD -- "no" --> DN["Write marker\nInstallation complete"]
     PR --> DN
 ```
 

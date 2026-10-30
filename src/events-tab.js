@@ -179,16 +179,6 @@ function switchSettingsTab(tabName) {
   );
   if (tabContent) tabContent.classList.add("active");
 
-  // Plugins tab: fill on demand (openSettings no longer preloads the walk).
-  if (tabName === "plugins") {
-    setTimeout(() => {
-      try {
-        refreshPluginsLazy();
-        refreshCompanionPlugin();
-      } catch (e) {}
-    }, 30);
-  }
-
   // Appearance tab: queue row colors live here (visual pref, not auto-tuned).
   if (tabName === "general") {
     setTimeout(() => {

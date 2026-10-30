@@ -34,8 +34,7 @@
       <button class="settings-tab active" data-tab="general" title="General settings: tokens, browser, notifications">General</button>
       <button class="settings-tab" data-tab="launch" title="Launch settings: args, port, GPU, embed mode">Launch</button>
       <button class="settings-tab" data-tab="system" title="System: updates, troubleshooting, cache, uninstall">System</button>
-      <button class="settings-tab" data-tab="autotune" title="Auto-Tune: hardware-calibrated performance settings">⚡ Auto-Tune</button>
-      <button class="settings-tab" data-tab="plugins" title="Plugins: enable and install Wan2GP plugins">🧩 Plugins</button>
+      <button class="settings-tab" data-tab="autotune" title="Auto-Tune: hardware-calibrated performance settings">📈 Auto-Tune</button>
       <button class="settings-tab" data-tab="library" title="Library: LoRA families and finetune definitions">📚 Library</button>
     </div>
     <div class="settings-scroll">
@@ -517,6 +516,12 @@
             <span class="token-hint" id="tsFailsafeStatus" style="margin-left:8px"></span>
           </div>
         </div>
+        <div class="settings-section">
+          <h3>Third-party Plugins</h3>
+          <p class="token-hint">If a community plugin stops Wan2GP from starting, disable them without deleting anything. System and bundled plugins stay enabled; plugin folders stay in <code>plugins/</code>, and WanGP&rsquo;s Plugin Manager can re-enable them after it starts.</p>
+          <button class="btn btn-primary small" id="tsPluginsDisableBtn" style="margin-top:8px" title="Remove community plugins from enabled_plugins in wgp_config.json (folders stay on disk)">Disable third-party plugins</button>
+          <span class="token-hint" id="tsPluginsStatus" style="margin-left:8px"></span>
+        </div>
         <div class="settings-section" id="macosMpsCard" style="display:none">
           <h3>Apple Silicon (MPS) — known upstream bugs</h3>
           <p class="token-hint">macOS runs through WanGP's MPS shim, which still has open upstream blockers. These are <strong>not</strong> launcher or environment problems — a settings reset, repair or reinstall changes none of them. If generation fails or the output is black/noisy, check which line matches your console:</p>
@@ -682,53 +687,6 @@
           <h3 style="color:var(--signal-red)">Uninstall Wan2GP</h3>
           <p class="token-hint">Removes the Wan2GP app, its Python environment, and all installed packages. Downloaded models can be kept. The Desktop launcher itself stays installed.</p>
           <button class="btn btn-ghost small" id="uninstallBtn" style="margin-top:8px;color:var(--signal-red);border-color:var(--signal-red)" title="Remove the Wan2GP app and its environment (models can be kept)">Uninstall Wan2GP…</button>
-        </div>
-      </div>
-
-      <!-- ═══════ Plugins Tab ═══════ -->
-      <div class="settings-tab-content" data-tab="plugins">
-        <div class="settings-section">
-          <h3>🧩 Wan2GP Plugins</h3>
-          <p class="token-hint">Enable your favourite plugins (e.g. Status Pro) or install new ones from a git URL. Changes apply on next Wan2GP launch.</p>
-        </div>
-        <div class="settings-section" id="companionPluginSection">
-          <h3>Finetune Manager (recommended)</h3>
-          <p class="token-hint">Pack recipes, the registry, CivitAI search, imports/exports and missing-file downloads are owned by the Finetune Manager plugin. The launcher can install a pinned, known-good version, but it is not installed automatically. Install / repair restores a missing or disabled companion without downgrading a newer one.</p>
-          <div class="token-field" style="margin-top:8px">
-            <span class="token-hint" id="companionPluginStatus">Checking...</span>
-            <button class="btn btn-primary small" id="companionPluginInstallBtn" title="Install or repair the pinned Finetune Manager companion">Install / repair</button>
-            <button class="btn btn-ghost small" id="companionPluginRefreshBtn" title="Re-check the companion plugin">Recheck</button>
-            <button class="btn btn-ghost small" id="companionPluginUninstallBtn" title="Remove the plugin and turn off its automatic install">Uninstall</button>
-          </div>
-          <label class="browser-opt" style="margin-top:8px;display:flex;align-items:center;gap:8px">
-            <input type="checkbox" id="companionPluginOptOut">
-            Don't install Finetune Manager automatically (you can still install it here)
-          </label>
-        </div>
-        <div class="settings-section">
-          <h3>Installed & Available</h3>
-          <div class="token-field" style="margin-bottom:6px">
-            <button class="btn btn-ghost small" id="pluginRefreshBtn" title="Reload the plugin library list">↻ Refresh library</button>
-            <button class="btn btn-ghost small" id="pluginCheckUpdatesBtn" title="Check for plugin updates">Check updates</button>
-            <span class="token-hint" id="pluginRefreshStatus" style="margin-left:8px"></span>
-          </div>
-          <div class="token-field" style="margin-bottom:6px">
-            <input type="text" id="pluginSearchInput" class="input" placeholder="Search plugins…" style="max-width:220px">
-            <button class="btn btn-ghost small plugin-sort" data-sort="name" title="Sort plugins by name">Name</button>
-            <button class="btn btn-ghost small plugin-sort" data-sort="date" title="Sort plugins by latest">Latest</button>
-            <button class="btn btn-ghost small plugin-sort" data-sort="author" title="Sort plugins by author">Created by</button>
-          </div>
-          <div id="pluginList"><p class="token-hint">Loading…</p></div>
-          <button class="btn btn-primary small" id="pluginSaveBtn" style="margin-top:8px" title="Save which plugins are enabled (applies on next launch)">Save enabled plugins</button>
-          <p class="token-hint" id="pluginSaveStatus" style="margin-top:6px"></p>
-        </div>
-        <div class="settings-section">
-          <h3>Install from URL</h3>
-          <div class="token-field">
-            <input type="text" id="pluginUrlInput" class="input" placeholder="https://github.com/…/…" style="max-width:420px">
-            <button class="btn btn-primary small" id="pluginInstallBtn" title="Clone and install the plugin from the URL above">Install</button>
-          </div>
-          <p class="token-hint">Clones into <code>plugins/</code>, installs any <code>requirements.txt</code>, and enables it. Progress shows in the console.</p>
         </div>
       </div>
 
@@ -1150,7 +1108,7 @@
             <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="10" r="1.4" fill="currentColor"/><circle cx="12" cy="7.5" r="1.4" fill="currentColor"/><circle cx="15.5" cy="10" r="1.4" fill="currentColor"/><path d="M12 21c-1 0-1-1-1-2 0-1.5 1-2 1-3.5 0-1-1-1.5-1-1.5S9 14.5 7 14c-1-.3-1.5-1-1-1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
           </button>
         </span>
-<button class="btn btn-ghost small" id="settingsBtn" title="Open settings: tokens, launch, system, auto-tune, plugins">
+<button class="btn btn-ghost small" id="settingsBtn" title="Open settings: tokens, launch, system, auto-tune, library">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
           Manage
         </button>
@@ -2351,7 +2309,6 @@
   <!-- Same rule: installer-tab.js registers a listener over $, defined by app.js. -->
   <script src="installer-tab.js" defer></script>
   <!-- Extracted sections, same rule: each reads globals ($/showToast/window.w2gp) defined by app.js. -->
-  <script src="plugins-tab.js" defer></script>
   <script src="theme-tab.js" defer></script>
   <script src="init-tab.js" defer></script>
   <script src="dashboard-tab.js" defer></script>

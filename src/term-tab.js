@@ -731,8 +731,7 @@ function openSettings() {
     if (db) db.checked = cfg.debugBounds === true;
   });
   // Heavy probes deferred past paint: the panel opens instantly,
-  // then fills in without janking the slide transition. The plugins list
-  // additionally loads lazily on its tab (30s stale guard).
+  // then fills in without janking the slide transition.
   setTimeout(() => {
     try {
       loadBrowserList();
@@ -750,7 +749,6 @@ function openSettings() {
       loadCustomResolutions();
     } catch (e) {}
   }, 60);
-  refreshPluginsLazy();
 }
 
 // Terminal show/close buttons — moved here from app.js: toggleFloatingTerm and

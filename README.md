@@ -31,7 +31,6 @@ One-click **Wan2GP (WanGP)** — generative video, image, audio and TTS on your 
 - [📊 Monitoring & control](#-monitoring--control)
 - [Deepy — your offline agent](#deepy--your-offline-agent)
 - [📱 Phone & remote access](#-phone--remote-access)
-- [🧩 Plugin Manager](#-plugin-manager)
 - [✨ DLSS5 installer](#-dlss5-installer--optional-nvidia-upsamplers)
 - [📚 Library](#-library)
 - [Documentation](#documentation)
@@ -131,6 +130,7 @@ C:\Wan2GP-Models\               ← models library
 
 | Version | Headline |
 | --- | --- |
+| [**v0.10.34**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.34) | **Plugins move back to WanGP — and the launcher stops shadowing upstream.** *Manage → Plugins* is gone (catalog, install/update/uninstall, favourites and the Finetune Manager companion); WanGP's own **Plugins** tab owns them. Troubleshooting keeps one recovery button, **Disable third-party plugins**, which edits only `enabled_plugins` and leaves folders on disk. The Guide tab/model recommender and hard-coded upstream catalog/default mirrors are also gone, replaced by links to upstream docs; Deepy Apply now writes only the choices you actually change. Fixes the startup `loadBrowserList is not defined` error in General. |
 | [**v0.10.33**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.33) | **Conda envs: *Update GPU Wheels* works again.** A conda env keeps `python.exe` at its root, but the wheel commands (WGPKernels, HIP GGUF, post-install override sync, *Update GPU Wheels*) and the env preflight guessed `Scripts\python.exe` only — a healthy `env_conda` aborted with *python not found for active env* before pip ran (launcher #83). All of them now resolve the interpreter through the same helper launches use; a genuinely broken env keeps the identical error. |
 | [**v0.10.32**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.32) | **Apple Silicon failures now name the upstream bug — and a kernel wheel with no code for your GPU is caught before it kills startup.** Both GPU probes were CUDA-only, so a working Mac read as a broken install: *Test torch* now reports `mps_available` + the arch list, the diagnostics report says `MPS (…)` or `CPU only`, *Verify GPU compute* passes on a real Metal GEMM, and the startup triage recognises upstream's five MPS signatures (#2545 `L2_cache_size`, #2552/#2554 `cuda.cudart()`/`/proc/self/smaps`, #2496 no-op CUDA events, #2014 Metal abort) with a new *Apple Silicon (MPS) — known upstream bugs* card. On Windows/Linux a stray `wgpkernels` built for another architecture now fails early with the arch list and one-click **Remove** instead of `no kernel image is available for execution on the device`. The dashboard's error note was invisible by construction (`display:none` vs `style.display=""`) — fixed. The Guide is reconciled with **WanGP 18.88**: 3D shape/texture stage models, 30 profile folders, settings 2.82, and the new `--max-vram`/`--max-ram`/`--ram-stress` flags. |
 | [**v0.10.31**](https://github.com/GKartist75/Wan2GP-Desktop-Tauri/releases/tag/v0.10.31) | **One bad file can no longer stop Wan2GP — and a broken upstream commit no longer reaches you.** WanGP migrates the settings stored *inside* every output at startup, so a single stale `audio_prompt_type` (`"AV"`, written by an older version) killed the UI with *"Choose one of the five YuE2 composition sources"* before it ever painted, and no settings-folder retry could help (upstream #2517, launcher #82). Manage → System → **Troubleshooting → Check YuE2 metadata** now reads WAV/MP3/FLAC metadata, names the exact file, and **Quarantine offenders** moves it into `yue2-quarantine/` (nothing deleted, moving it back restores the gallery) before relaunching — the startup-crash triage runs that scan by itself when the crash carries the signature, and otherwise says "startup failure" instead of a bare `process exited (code 1)`. The same tab checks model-file headers (truncated safetensors, an HTML page saved as `.gguf`) and your Extra Launch Args against the option list the installed commit actually accepts. Updates now stop before a known-broken upstream commit (`2c67e50`, SeedVC `ZeroDivisionError`, upstream #2543) instead of installing it, naming the issue and keeping "Update anyway" one dialog away. |
@@ -183,8 +183,7 @@ C:\Wan2GP-Models\               ← models library
     <td><a href="screenshots/env-kernel-wheels.png"><img src="screenshots/env-kernel-wheels.png" alt="Active Environment" height="320"></a><br><sub>Active Environment — installed packages and GPU kernel wheels</sub></td>
   </tr>
   <tr>
-    <td><a href="screenshots/deepy-prime-engines.png"><img src="screenshots/deepy-prime-engines.png" alt="Deepy Prime" height="320"></a><br><sub>Deepy Prime — local Qwen3.8 + remote LLM engines</sub></td>
-    <td><a href="screenshots/plugins-manager.png"><img src="screenshots/plugins-manager.png" alt="Plugin Manager" height="320"></a><br><sub>Plugin Manager — community catalog, install, update, favourites</sub></td>
+    <td colspan="2"><a href="screenshots/deepy-prime-engines.png"><img src="screenshots/deepy-prime-engines.png" alt="Deepy Prime" height="320"></a><br><sub>Deepy Prime — local Qwen3.8 + remote LLM engines</sub></td>
   </tr>
   <tr>
     <td colspan="2"><a href="screenshots/dlss5-checklist.png"><img src="screenshots/dlss5-checklist.png" alt="DLSS5 installer" height="320"></a><br><sub>DLSS5 installer — live per-component checklist with SHA-256 verification</sub></td>
@@ -268,6 +267,7 @@ Same launcher, same Wan2GP, same features — lightweight native shell. It uses 
 | **Known-good settings for this GPU** | Upstream's per-class recipe, shown before anything is written |
 | **Out-of-memory remedies** | One click for Head Split → Medium or Lower Reserved RAM with pinning on |
 | **Windows VRAM** | *Who is using VRAM* (per-process) and *Trim idle VRAM* |
+| **Third-party plugins** | If a community plugin stops startup, removes only those from `enabled_plugins` in `wgp_config.json` — folders stay, system/bundled stay enabled |
 | **Verbose logging** | Launches WanGP with `--verbose 2` so the console captures upstream's own diagnostics |
 | **Debug bundle** | One click copies a report for Discord or GitHub |
 
@@ -379,16 +379,6 @@ Flipping LAN while running offers a restart in place. Topbar keeps a Deepy Web L
 
 
 ---
-
-## 🧩 Plugin Manager
-
-**Manage → Plugins** lists WanGP's catalog merged with your installed `plugins/` folder (system vs community grouping), with search, Name/Latest/Author sort, and per-plugin enable checkboxes. From a git URL you can install (clone + `requirements.txt` + enable), per-plugin ↻ check/update, 🗑 uninstall, library refresh, and check-all-updates — all with console progress.
-
-- **Status Pro** is uninstalled by default (temporarily incompatible with the current Deepy update): no longer auto-installed or force-enabled, and removed from existing installs — reinstall/enable it manually once fixed.
-- **★ Favourites** auto-install on fresh setup (stored in `desktop-config.json` → `favoritePlugins`).
-- Changes apply on next Wan2GP launch.
-
-<a href="screenshots/plugins-manager.png"><img src="screenshots/plugins-manager.png" alt="Plugin Manager — community catalog with install, update, and favourites" height="500"></a>
 
 ## ✨ DLSS5 installer — optional NVIDIA upsamplers
 
