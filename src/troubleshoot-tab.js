@@ -746,9 +746,10 @@ $("tsModelCheckBtn")?.addEventListener("click", async function () {
 });
 
 // ── YuE2 startup crash (launcher #82 = upstream #2517): one stale
-// `audio_prompt_type` embedded in an output file makes WanGP raise
+// `audio_prompt_type` embedded in an output file or saved in
+// `settings/yue2_settings.json` makes WanGP raise
 // `ValueError: Choose one of the five YuE2 composition sources.` while it
-// migrates the gallery, before the UI paints. The scan is read-only; the fix
+// migrates settings, before the UI paints. The scan is read-only; the fix
 // moves the offender into `yue2-quarantine/` so nothing is destroyed.
 function yue2Render(r) {
   const box = $("tsYue2Box");
@@ -763,8 +764,10 @@ function yue2Render(r) {
           ' — audio_prompt_type "' +
           b.value +
           '" (' +
-          Math.round((b.size || 0) / 1024) +
-          " KB)\n  " +
+          (b.kind === "settings"
+            ? "saved settings"
+            : Math.round((b.size || 0) / 1024) + " KB") +
+          ")\n  " +
           b.path,
       )
       .join("\n");
@@ -780,8 +783,8 @@ async function yue2Scan() {
   tsStatus(
     "tsYue2Status",
     bad.length
-      ? "⚠ " + bad.length + " file(s) carry a source WanGP rejects, of " + (r.scanned || 0) + " audio file(s) read"
-      : "✓ " + (r.scanned || 0) + " audio file(s) read in " + (r.tookMs || 0) + " ms — no bad YuE2 source" + (r.truncated ? " (scan capped: very large folder)" : ""),
+      ? "⚠ " + bad.length + " file(s) carry a source WanGP rejects, of " + (r.scanned || 0) + " file(s) read"
+      : "✓ " + (r.scanned || 0) + " file(s) read in " + (r.tookMs || 0) + " ms — no bad YuE2 source" + (r.truncated ? " (scan capped: very large folder)" : ""),
   );
   return { ...r, bad };
 }
@@ -878,14 +881,14 @@ window.w2gpYue2Triage = async function (relaunch) {
   const names = r.bad.slice(0, 5).map((b) => "• " + b.name + ' ("' + b.value + '")');
   if (r.bad.length > 5) names.push("… and " + (r.bad.length - 5) + " more");
   const choice = await window.w2gp.confirmDialog({
-    title: "WanGP cannot start: a YuE2 source in your output files",
+    title: "WanGP cannot start: a YuE2 source in your saved settings",
     message:
-      "WanGP exited while migrating the settings stored inside your generated audio, and " +
+      "WanGP exited while migrating a YuE2 audio_prompt_type, and " +
       r.bad.length +
-      " file(s) in your output folder carry an audio_prompt_type this version rejects. That is upstream bug #2517, not a launcher or install problem.",
+      " saved file(s) carry a value this version rejects. That is upstream bug #2517, not a launcher or install problem.",
     detail:
       names.join("\n") +
-      "\n\nQuarantine moves them into yue2-quarantine/ next to your outputs (nothing is deleted) and restarts Wan2GP. Move the files back any time.",
+      "\n\nQuarantine moves them into yue2-quarantine/ next to the file (nothing is deleted) and restarts Wan2GP. Move them back any time.",
   });
   if (choice !== "ok" && choice !== 0) {
     appendLog("[i] YuE2 triage dismissed — the files are still in your output folder.");

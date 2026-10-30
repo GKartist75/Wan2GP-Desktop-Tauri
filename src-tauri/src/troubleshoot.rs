@@ -1805,6 +1805,48 @@ fn yue2_workspace_dir(repo: &std::path::Path) -> PathBuf {
     }
 }
 
+/// Saved per-model settings. `get_default_settings()` calls the YuE2
+/// `fix_settings`/`migrate_source` on `settings/yue2_settings.json` before the
+/// UI paints, so a stale `audio_prompt_type` there aborts startup just like a
+/// media file — and the media-only scan used to miss it (launcher #82).
+fn yue2_settings_paths(repo: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for dir in [repo.join("settings"), repo.to_path_buf()] {
+        let path = dir.join("yue2_settings.json");
+        if path.is_file() {
+            out.push(path);
+        }
+    }
+    out
+}
+
+fn inspect_yue2_settings(path: &std::path::Path, name: &str, bad: &mut Vec<serde_json::Value>) {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return;
+    };
+    if meta.len() > 16 * 1024 * 1024 {
+        return;
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Some(value) = audio_prompt_type_in(&text) else {
+        return;
+    };
+    if !yue2_source_invalid(&value) {
+        return;
+    }
+    if bad.len() < MAX_BAD {
+        bad.push(serde_json::json!({
+            "path": path.to_string_lossy(),
+            "name": name,
+            "value": value,
+            "size": meta.len(),
+            "kind": "settings",
+        }));
+    }
+}
+
 /// Audio files the saved galleries point at. Workspaces store absolute paths
 /// (dedicated folders, imports outside the output roots), so scanning only
 /// the output folders can miss the file that aborts startup. Virtual media
@@ -1897,11 +1939,29 @@ const MAX_SECS: u64 = 20;
 fn scan_yue2_metadata(
     roots: &[PathBuf],
     referenced: &[PathBuf],
+    settings: &[PathBuf],
 ) -> (usize, Vec<serde_json::Value>, bool) {
     let started = std::time::Instant::now();
     let mut scanned = 0usize;
     let mut bad: Vec<serde_json::Value> = Vec::new();
     let mut seen_files: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+
+    // Saved model settings first: this is the file `get_default_settings()`
+    // migrates before the UI paints, and it is not media.
+    for path in settings {
+        if started.elapsed().as_secs() > MAX_SECS {
+            return (scanned, bad, true);
+        }
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if !seen_files.insert(path.clone()) {
+            continue;
+        }
+        scanned += 1;
+        inspect_yue2_settings(path, &name, &mut bad);
+    }
 
     // Saved-gallery references first: they may live outside every output root.
     for path in referenced {
@@ -1976,11 +2036,13 @@ fn scan_yue2_metadata(
 pub(crate) fn yue2_report(repo: &std::path::Path) -> serde_json::Value {
     let roots = yue2_output_roots(repo);
     let referenced = yue2_gallery_paths(repo);
+    let settings = yue2_settings_paths(repo);
     let started = std::time::Instant::now();
-    let (scanned, bad, truncated) = scan_yue2_metadata(&roots, &referenced);
+    let (scanned, bad, truncated) = scan_yue2_metadata(&roots, &referenced, &settings);
     serde_json::json!({
-        "ok": !roots.iter().all(|p| !p.exists()) || !referenced.is_empty(),
+        "ok": !roots.iter().all(|p| !p.exists()) || !referenced.is_empty() || !settings.is_empty(),
         "roots": roots.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "settings": settings.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
         "referenced": referenced.len(),
         "scanned": scanned,
         "bad": bad,
@@ -1993,7 +2055,8 @@ pub(crate) fn yue2_report(repo: &std::path::Path) -> serde_json::Value {
 pub(crate) fn yue2_quarantine(repo: &std::path::Path) -> serde_json::Value {
     let roots = yue2_output_roots(repo);
     let referenced = yue2_gallery_paths(repo);
-    let (_, bad, _) = scan_yue2_metadata(&roots, &referenced);
+    let settings = yue2_settings_paths(repo);
+    let (_, bad, _) = scan_yue2_metadata(&roots, &referenced, &settings);
     let (dirs, moved, failed) = quarantine_bad(&bad);
     serde_json::json!({
         "ok": failed.is_empty() && !moved.is_empty(),
@@ -2546,7 +2609,7 @@ options:\n\
         .unwrap();
         // Not audio → never opened.
         std::fs::write(root.join("preview.png"), b"\x89PNG").unwrap();
-        let (scanned, bad, truncated) = scan_yue2_metadata(std::slice::from_ref(&root), &[]);
+        let (scanned, bad, truncated) = scan_yue2_metadata(std::slice::from_ref(&root), &[], &[]);
         assert_eq!(scanned, 2, "only audio files are read");
         assert!(!truncated);
         assert_eq!(bad.len(), 1, "{bad:?}");
@@ -2571,7 +2634,7 @@ options:\n\
             wav_with_json(br#"{"audio_prompt_type":"AV"}"#),
         )
         .unwrap();
-        let (_, bad2, _) = scan_yue2_metadata(std::slice::from_ref(&root), &[]);
+        let (_, bad2, _) = scan_yue2_metadata(std::slice::from_ref(&root), &[], &[]);
         assert_eq!(bad2.len(), 1, "the quarantined copy is out of the scan");
         let (_, moved2, failed2) = quarantine_bad(&bad2);
         assert!(failed2.is_empty(), "{failed2:?}");
@@ -2619,6 +2682,34 @@ options:\n\
         assert_eq!(q["ok"], true, "{q}");
         assert!(!bad.exists());
         assert!(media.join("yue2-quarantine").join("song.wav").exists());
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn yue2_report_reads_saved_model_settings() {
+        let repo = temp_dir("yue2-settings");
+        // `get_default_settings()` migrates settings/yue2_settings.json before
+        // the UI paints, so this file can abort startup with no bad media.
+        std::fs::create_dir_all(repo.join("settings")).unwrap();
+        let settings = repo.join("settings").join("yue2_settings.json");
+        std::fs::write(&settings, r#"{"audio_prompt_type":"AV","seed":42}"#).unwrap();
+
+        let r = yue2_report(&repo);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(r["scanned"], 1, "{r}");
+        assert_eq!(r["bad"][0]["name"], "yue2_settings.json");
+        assert_eq!(r["bad"][0]["kind"], "settings");
+        assert_eq!(r["bad"][0]["value"], "AV");
+
+        let q = yue2_quarantine(&repo);
+        assert_eq!(q["ok"], true, "{q}");
+        assert!(!settings.exists());
+        assert!(repo
+            .join("settings")
+            .join("yue2-quarantine")
+            .join("yue2_settings.json")
+            .exists());
+        assert_eq!(yue2_report(&repo)["bad"].as_array().unwrap().len(), 0);
         let _ = std::fs::remove_dir_all(&repo);
     }
 

@@ -218,9 +218,9 @@ window.w2gp.onWangpExit(async (c) => {
     };
     try {
       // One cause is identifiable without guesswork: upstream's YuE2 migration
-      // rejects an `audio_prompt_type` embedded in a generated file, and a
-      // temporary settings folder cannot hide it (the value is inside the
-      // media). Scan and, if found, offer the real remedy instead of a retry
+      // rejects an `audio_prompt_type` embedded in a generated file or saved
+      // in settings/yue2_settings.json, and a temporary settings folder cannot
+      // hide it. Scan and, if found, offer the real remedy instead of a retry
       // that is guaranteed to fail the same way (launcher #82).
       const yue2Signature =
         /Choose one of the five YuE2 composition sources/i.test(tail) ||
@@ -237,7 +237,7 @@ window.w2gp.onWangpExit(async (c) => {
           return;
         }
         appendLog(
-          "[i] YuE2 crash signature seen, but no output file carries a bad source — continuing with the generic triage.",
+          "[i] YuE2 crash signature seen, but no saved file carries a bad source — continuing with the generic triage.",
         );
       }
     } catch (e) {

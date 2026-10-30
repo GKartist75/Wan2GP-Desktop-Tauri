@@ -151,6 +151,31 @@ test("no output folder found is not reported as a clean folder", async () => {
   assert.equal(dialogs.length, 0);
 });
 
+test("a saved settings file is labeled, not shown as an audio output", async () => {
+  const { els } = load({
+    meta: [
+      {
+        ok: true,
+        scanned: 1,
+        tookMs: 4,
+        bad: [
+          {
+            name: "yue2_settings.json",
+            path: "C:\\Wan2GP\\settings\\yue2_settings.json",
+            value: "AV",
+            size: 1234,
+            kind: "settings",
+          },
+        ],
+      },
+    ],
+  });
+  await els.tsYue2CheckBtn.listeners.click.call(els.tsYue2CheckBtn);
+  assert.match(els.tsYue2Box.textContent, /yue2_settings\.json/);
+  assert.match(els.tsYue2Box.textContent, /saved settings/);
+  assert.doesNotMatch(els.tsYue2Box.textContent, /1 KB/);
+});
+
 test("the panel button lists the offenders and offers the quarantine", async () => {
   const { els, calls } = load({ meta: [BAD] });
   await els.tsYue2CheckBtn.listeners.click.call(els.tsYue2CheckBtn);
