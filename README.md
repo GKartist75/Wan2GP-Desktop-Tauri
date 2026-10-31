@@ -1,3 +1,18 @@
+> ## Thank You from Wan2GP Desktop Launcher! 🚀
+>
+> A massive thank you to everyone who has downloaded, tested, and supported the Wan2GP Desktop Launcher! It has been an incredible journey building a tool to help everyone run Wan2GP locally.
+>
+> However, I no longer have the time to maintain it. Since DeepBeepBeep is the creator and owner of Wan2GP, I’ve asked them to take over or create something even better!
+>
+> Moving forward, please transition over to the official and upgraded tool:
+>
+> 👉 **[Download Official WanGP Manager](https://github.com/deepbeepmeep/WanGP/releases/latest/download/WanGPManager.exe)**
+>
+> Thank you all again for being such an awesome community and for all the support along the way!
+
+> [!IMPORTANT]
+> **This Desktop Launcher Tauri will stop with updates, please use the official wangpmanager from deepbeepmeep himself.**
+
 # Wan2GP Desktop Launcher
 
 One-click **Wan2GP (WanGP)** — generative video, image, audio and TTS on your own GPU. No Python, no CUDA setup.
