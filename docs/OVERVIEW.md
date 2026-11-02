@@ -33,11 +33,14 @@ flowchart TB
 Trust rule: **upstream owns** the profile→package mapping (`setup.py`,
 `setup_config.json`) and all model/runtime code. **The launcher owns**
 detection, provisioning, honesty (exit codes, smoke tests), and lifecycle
-(start/stop/update). The launcher mirrors upstream data, never overrides it —
-except where upstream lags its own docs (GGUF floor), declares data nothing
-consumes (HSA override), or ships a template that breaks its own installs
-(conda `conda run` re-quoting corrupts wheel URLs → direct-pip patch); all
-are documented at the call site, drift-refusing, and auto-follow upstream flips.
+(start/stop/update). Upstream leads: the launcher reads `setup_config.json`,
+`requirements.txt` and `defaults/*.json` at runtime and mirrors their values,
+following a newer upstream pin automatically. The documented exceptions are
+the GGUF floor (raises a stale checkout to the known-good 1.0.29 wheel when
+upstream's own pin lags its docs), data nothing consumes (HSA override), and a
+template that breaks its own installs (conda `conda run` re-quoting corrupts
+wheel URLs → direct-pip patch); all are documented at the call site and
+auto-follow upstream flips.
 
 Platform rule: **one trait, three adapters.** `src-tauri/src/platform/` holds
 `windows.rs`, `linux.rs`, `macos.rs` and the shared `unix.rs` (ss/lsof/ps); each

@@ -4,6 +4,72 @@ All notable changes. Dates are release dates; `Unreleased` tracks `master`.
 
 ## [Unreleased]
 
+- **Deepy Prime can switch on WanGP v19's local advanced transcription.**
+  The Prime group gains *Transcription*: Whisper Only (default), Nemotron INT8
+  Experts or the recommended Nemotron Q4 Experts, plus the names-and-jargon
+  context list. It writes upstream's new `deepy_advanced_transcription` /
+  `deepy_transcription_terms` keys and preselects values saved in WanGP; the
+  terms field hides under Whisper Only but keeps its text. Nemotron runs
+  offline on this PC as a normal WanGP generation — the launcher uploads no
+  audio.
+- **Recovery copy points at WanGP v19's renamed menu.** Disabling third-party
+  plugins now says to re-enable them in WanGP's **Apps & PlugIn Manager**
+  instead of the retired *Plugins* tab.
+- **Upstream leads the remaining Deepy defaults.** Deepy Apply now writes only
+  fields the user actually changed: unchanged session choices
+  (`deepy_multi_session`, reset/gallery) and `enhancer_mode` stay absent, so
+  WanGP's own defaults apply on load. The old launcher default
+  (`deepy_multi_session: selectable`) and the forced `enhancer_mode: 1` write
+  are gone. Kernel versions still follow upstream's `setup_config.json` when it
+  pins a newer build; the documented 1.0.29 GGUF floor remains the exception
+  for stale checkouts whose pin lags upstream's own docs.
+- **Deepy advice now mirrors upstream's DEEPY.md.** Model labels call 9B the
+  best general Zero pick, 4B the least Qwen memory, and 27B the strongest local
+  Prime. Quantization hints list the 24 GB / 16 GB / 8–12 GB fits, Auto is
+  marked recommended for the KV cache, and the performance hint names the
+  balanced VRAM mode instead of only the two extremes. Switching Deepy mode now
+  rebinds the local-model radios, so the quantization list and Apply follow the
+  newly picked model instead of staying on the previous one.
+- **WanGP 19's hidden development switches no longer read as removed flags.**
+  `shared/cli_args.py` now registers `--ram-stress`, `--vram-stress`,
+  `--vram-debug` and `--ram-debug` with `help=argparse.SUPPRESS`, so they work
+  but never appear in `wgp.py --help` — and the launch-arg audit, which learned
+  its list from that help text, called a saved `--ram-stress 32` *"upstream
+  renamed or removed them"* on every launch and in **Check launch args**. The
+  audit now reads the option list from two sources: the help text (proof the
+  parser runs under this interpreter) and the `add(` calls in
+  `shared/cli_args.py` (every option the checkout accepts, hidden ones
+  included). The cache format is unchanged, so an existing per-commit entry is
+  simply relearned once.
+- **`--vram-stress` exists, and pairing it with `--max-vram` is caught.** WanGP
+  19 added the GPU twin of `--ram-stress` (both now take `GB[:OTHERS]`), and
+  `shared/cuda_memory.py` raises *"--vram-stress emulates its own GPU: use it
+  without --max-vram"* at startup — before the UI, with no argparse error to
+  explain it. The launch log and **Check launch args** now name that pair, and
+  the Extra Launch Args examples list both stress flags as hidden developer
+  switches instead of ordinary features.
+- **A folder owned by upstream's WanGP Manager is named, not fought over.**
+  WanGP 19's Manager records its install in `.manager/installation.json` (plus
+  `active_operation.json` while it works) beside or above the checkout; its
+  `run.bat`/`run.sh` then delegate to `python -m installation launch` and the
+  legacy `setup.py install/update/upgrade` entry points refuse to run. Starting
+  such a folder from the launcher — and its diagnostics report — now says so
+  instead of letting two managers disagree about the environment and the pinned
+  revision in silence. The launcher's own installer drives `setup.py` through
+  its hook module, so installs and repairs keep working either way.
+- **WanGP 19.02 audited: nothing else on the launcher's surface moved.**
+  `setup_config.json` keeps every wheel tag (WGPKernels 1.4.2, GGUF 1.0.29,
+  Triton/torch/Sage/Flash pins), `requirements.txt` and `setup.py`'s
+  `load_config` / `do_install_auto` / `get_system_specs` / `ENV_TEMPLATES`
+  contract are unchanged, and `settings_version` stays 2.82 — no install,
+  kernel or settings migration is needed. The new `platforms` key per GPU
+  profile (`MPS` = macOS only) already matches the launcher's own profile
+  detection, and upstream's new `recommend_settings` audio default (Profile 3)
+  is what Auto-Tune already recommends. Upstream-side only, no launcher action:
+  the `installation/` manager package, the Showrunner / Media Flow / Models
+  Manager plugin work, the H3 and Pika template renames Deepy migrates by
+  itself, and the Nemotron transcription model family.
+
 ## [0.10.36] — 2026-10-31
 
 - **YuE2 triage now reads `settings/yue2_settings.json`, not just media.**

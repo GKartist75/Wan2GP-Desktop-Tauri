@@ -139,12 +139,24 @@ const DEEPY_PANEL_ENHANCERS = [
   { id: 2, label: "Florence 2 + Llama Joy 8B (local)", modes: ["disabled", "zero"] },
   {
     id: 3,
-    label: "Qwen3.5 VL Abliterated 4B (local, recommended)",
+    label: "Qwen3.5 VL Abliterated 4B (local, least Qwen memory)",
     modes: ["disabled", "zero"],
   },
-  { id: 4, label: "Qwen3.5 VL Abliterated 9B (local)", modes: ["disabled", "zero"] },
-  { id: 5, label: "Qwen3.8 VL Uncensored 27B (local)", modes: ["disabled", "zero"] },
-  { id: 6, label: "Qwen3.8 VL Uncensored 9B (local, Prime-ready ~6.5GB)", modes: ["disabled", "zero"] },
+  {
+    id: 4,
+    label: "Qwen3.5 VL Abliterated 9B (local, best general Zero)",
+    modes: ["disabled", "zero"],
+  },
+  {
+    id: 5,
+    label: "Qwen3.8 VL Uncensored 27B (local, strongest, heavy)",
+    modes: ["disabled", "zero"],
+  },
+  {
+    id: 6,
+    label: "Qwen3.8 VL Uncensored 9B (local, best fit for 8–12 GB)",
+    modes: ["disabled", "zero"],
+  },
 ];
 
 // Qwen LLM Quantization choices per local engine id — mirrors upstream's
@@ -153,13 +165,13 @@ const DEEPY_PANEL_ENHANCERS = [
 // checkpoint; 9B Heretic offers GGUF Q4 / Q8; Qwen3.5 offers Quanto Int8 or GGUF Q4.
 const DEEPY_QUANT_CHOICES = {
   5: [
-    { id: "gguf", label: "GGUF Q4 (default, highest quality)" },
-    { id: "gguf_q3", label: "GGUF IQ3_S (middle, 16 GB VRAM)" },
-    { id: "gguf_q2", label: "GGUF Q2 (lowest memory)" },
-    { id: "gguf_ptq1", label: "Bonsai PTQ1 (~10 GB VRAM, needs kernels 1.0.29+)" },
+    { id: "gguf", label: "GGUF Q4 (highest quality, usually 24 GB VRAM)" },
+    { id: "gguf_q3", label: "GGUF IQ3_S (middle, fits 16 GB VRAM)" },
+    { id: "gguf_q2", label: "GGUF Q2 (lowest memory, more context room)" },
+    { id: "gguf_ptq1", label: "Bonsai PTQ1 (~10 GB VRAM, smallest; needs kernels 1.0.29+)" },
   ],
   6: [
-    { id: "gguf", label: "GGUF Q4 (~6.5 GB VRAM, default)" },
+    { id: "gguf", label: "GGUF Q4 (~6.5 GB VRAM, local Prime on 8–12 GB)" },
     { id: "gguf_q8", label: "GGUF Q8 (~11 GB VRAM, closest to full precision)" },
   ],
   4: [

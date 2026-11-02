@@ -162,7 +162,7 @@
           packages: ['torch', 'triton', 'sageattention'], kernels: ['nunchaku', 'gguf'],
         }
       }
-    if (name === 'deepy_status') return { ok: true, available: true, mode: 'prime', deepyEnabled: true, deepyType: 'prime', currentEngine: 'opencode', promptEnhancer: true, enhancerEnabled: 4, promptEnhancerQuantization: 'gguf', sessionMode: 'selectable', sessionResetMode: 'reset_session', sessionGalleryMediaMode: 'copy', enhancerMode: 1, engines: [], profiles: {} }
+    if (name === 'deepy_status') return { ok: true, available: true, mode: 'prime', deepyEnabled: true, deepyType: 'prime', currentEngine: 'opencode', promptEnhancer: true, enhancerEnabled: 4, promptEnhancerQuantization: 'gguf', sessionMode: 'selectable', sessionResetMode: 'reset_session', sessionGalleryMediaMode: 'copy', enhancerMode: 1, advancedTranscription: 'nemotron_transcribe_q4', transcriptionTerms: 'Dr. Amara Okafor, etcd', engines: [], profiles: {} }
     if (name === 'plugins_disable_third_party') return { ok: true, disabled: [], disabled_count: 0, kept_count: 0 }
     if (name === 'config_backups_list') return { ok: true, backups: [] }
     if (name === 'upstream_changelog') return { ok: true, commits: [] }

@@ -137,19 +137,22 @@ RDNA 1–3.5 cards have **no** WGPKernels/HIP wheel. Upstream's own HIP validati
  / Deepy Prime (remote LLM or local Qwen3.8 9B/27B). *Local model (Prompt Enhancer)*
  offers all six local models — Florence 2 + Llama variants and Qwen3.5 4B/9B +
  Qwen3.8 9B/27B — in both Disabled and Zero (the enhancer runs standalone without
- Deepy); Qwen engines show a *Quantization* picker (GGUF Q4 / IQ3_S / Q2 /
- Bonsai PTQ1 for 27B, GGUF Q4 / Q8 for 9B, Quanto Int8 / GGUF Q4 for 3.5;
- Bonsai also sets INT8 KV
- cache). *LLM Engines* lists backends (Claude Code CLI,
+ Deepy). 9B is the best general Zero pick when it fits; 4B uses the least Qwen
+ memory for simple requests; 27B is strongest for local Prime. Qwen engines show a
+ *Quantization* picker (GGUF Q4 / IQ3_S / Q2 / Bonsai PTQ1 for 27B, GGUF Q4 /
+ Q8 for 9B, Quanto Int8 / GGUF Q4 for 3.5; Q4 usually needs 24 GB VRAM on 27B,
+ IQ3_S and Q2 fit 16 GB, Bonsai PTQ1 is the smallest 27B backend). *LLM Engines*
+ lists backends (Claude Code CLI,
 OpenCode, …) with *↻ Refresh* to re-check status; pick one and press *Apply*.
 *Sessions* below it mirrors Ask Deepy → Settings → Sessions: multisessions mode
-(Disabled / selectable Workspace / dedicated Workspace — selectable is the
-launcher default, one shared outputs folder), reset behavior, gallery media
-(keep links vs copy into session). Per-session workspace choice stays inside WanGP.
+(Disabled / selectable Workspace / dedicated Workspace — WanGP's own default is
+Disabled), reset behavior, gallery media (keep links vs copy into session).
+Only changed fields are written; untouched keys stay absent so WanGP owns the
+defaults. Per-session workspace choice stays inside WanGP.
 
 **Deepy KV Cache Quantization** — the dropdown in the Deepy card writes
 `deepy_kv_cache_quantization` directly. The values are WanGP's own eight: *Auto*
-(INT8 once GGUF kernels 1.0.13+ are installed, BF16 without), *Disabled (BF16)*
+(recommended; INT8 once GGUF kernels 1.0.13+ are installed, BF16 without), *Disabled (BF16)*
 (the empty string — explicit, where Auto may still turn INT8 on), *INT8* (about
 half the KV-cache VRAM), and the five mixed bodies *INT8 keys, Q4 values*
 (−24% vs INT8), *Q6 keys and values* (−24%), *Q6 keys, Q4 values* (−35%),
@@ -171,8 +174,19 @@ raises the window to at least 32K, Summarize with Thinking to at least 48K —
 and local Prime can't pick Discard (upstream requires Summarize). Prime also
 shows *Speed* and *Model size* (`deepy_model_speed` / `deepy_model_size`), the
 preferences Prime uses when choosing models you left unspecified. Pressing
-*Apply* seeds missing keys only, so values you tuned here or inside WanGP are
-not reset.
+*Apply* writes only the fields you changed; absent keys stay absent so WanGP
+applies its own defaults, and values you tuned inside WanGP are not reset.
+
+**Deepy transcription (Prime)** — inside the Prime group, *Transcription model*
+chooses WanGP's advanced transcription: *Use Whisper Only* (default, quick
+transcripts), *Nemotron INT8 Experts* (~33 GB download, 64 GB RAM recommended)
+or *Nemotron Q4 Experts* (recommended, ~19 GB, 32 GB RAM). Nemotron runs
+offline on this PC as a normal WanGP generation and adds speaker labels (up to
+eight), word timings, subtitles and translation; *Names and jargon* is the
+comma- or line-separated context list those runs use. Written immediately as
+`deepy_advanced_transcription` / `deepy_transcription_terms`; the terms field
+hides under Whisper Only but its text is preserved. The launcher never sends
+this audio anywhere.
 
 **Deepy Speculative Decoding** — inside the Prime-local backend picker (local
 Qwen3.8 9B/27B), a dropdown writes `prompt_enhancer_speculative_decoding` to
@@ -499,11 +513,18 @@ Wan2GP itself, embedded as a tab. Behaves like the browser version:
   leftover `.part` downloads, each with its path and size. Read-only; nothing
   is deleted or moved. If WanGP dies with a deep model error, start here.
 - **Check launch args** — compares your *Extra Launch Args* with the option
-  list `wgp.py --help` prints for the installed commit (learned once per
-  commit, cached; the first check after an update takes ~40 s). A renamed flag
-  makes argparse exit before the UI appears, so the launcher also prints the
-  same warning in the console before starting WanGP. Unambiguous prefixes
-  (`--prof` for `--profile`) count as valid, exactly as argparse treats them.
+  list the installed commit actually accepts: `wgp.py --help` plus
+  `shared/cli_args.py`, the file the parser is built from (learned once per
+  commit, cached; the first check after an update takes ~40 s). The second
+  source matters since WanGP 19, which hides its developer switches from help
+  with `argparse.SUPPRESS` (`--ram-stress`, `--vram-stress`, `--vram-debug`,
+  `--ram-debug`, the legacy `--t2v*` aliases) while still accepting them — a
+  help-only list read those as removed. It also reports pairs WanGP refuses at
+  startup, such as `--vram-stress` with `--max-vram`, which argparse cannot
+  catch. A renamed flag makes argparse exit before the UI appears, so the
+  launcher also prints the same warning in the console before starting WanGP.
+  Unambiguous prefixes (`--prof` for `--profile`) count as valid, exactly as
+  argparse treats them.
 - **Check YuE2 metadata** — WanGP stores every output's settings *inside the
   file* and migrates them at startup, so one stale `audio_prompt_type` (anything
   but `0`, `1`, `12`, `A`, `A2`) kills the UI with *"Choose one of the five YuE2

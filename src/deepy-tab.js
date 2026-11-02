@@ -7,6 +7,15 @@
 // Last-rendered "enhancerId|savedQuant" key — options rebuild only when the
 // engine context changes so syncApply validation never resets a choice.
 let _deepyQuantCtx = "";
+// Last values read from upstream config. Apply sends only the fields the
+// user actually changed; unchanged/absent keys stay absent so WanGP's own
+// defaults apply on load.
+let _savedSessions = {
+  multi_session: "disabled",
+  reset_mode: "new_session",
+  gallery_media_mode: "link",
+};
+let _savedEnhancerMode = null;
 // Render the quant selector for a local Qwen engine id (3/4/5/6), or hide it
 // (quant untouched) for remote engines / Florence / Disabled. primeBackend
 // ("id:quant") swaps the whole block for ONE combined Prime-local list, so
@@ -35,17 +44,17 @@ function renderDeepyQuant(enhancerId, savedQuant, primeBackend) {
     if (beHint)
       beHint.textContent =
         primeBackend === "5:gguf_ptq1"
-          ? "Bonsai PTQ1 is the smallest 27B backend. Weights download on first WanGP launch."
+          ? "Bonsai PTQ1 is the smallest 27B backend (~10 GB VRAM). Weights download on first WanGP launch."
           : primeBackend === "5:gguf"
-            ? "GGUF Q4 is the highest-quality 27B backend. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
+            ? "GGUF Q4 is the highest-quality 27B backend, usually needing 24 GB VRAM. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
             : primeBackend === "5:gguf_q3"
-              ? "IQ3_S is the balanced 27B backend. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
+              ? "IQ3_S is the balanced 27B backend and fits 16 GB VRAM. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
               : primeBackend === "5:gguf_q2"
-                ? "Q2 is the leanest 27B backend, with the largest quality loss. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
+                ? "Q2 is the leanest 27B backend; it fits 16 GB VRAM and leaves room for a larger context at the largest quality loss. Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels)."
                 : primeBackend === "6:gguf"
-                  ? "Heretic Q4 is the smaller 9B backend. Weights download on first WanGP launch."
+                  ? "Heretic Q4 runs local Prime on 8–12 GB GPUs (~6.5 GB VRAM). Weights download on first WanGP launch."
                   : primeBackend === "6:gguf_q8"
-                    ? "Heretic Q8 stays closest to full precision. Weights download on first WanGP launch."
+                    ? "Heretic Q8 stays closest to full precision (~11 GB VRAM). Weights download on first WanGP launch."
                     : "Weights download on first WanGP launch. Needs GGUF kernels 1.0.29 (Sync Kernels).";
     return;
   }
@@ -87,8 +96,8 @@ function updateDeepyQuantHint(value, enhancerId) {
       : Number(enhancerId) === 6
         ? "Heretic Q4 uses less memory; Q8 stays closest to full precision. Weights download on first WanGP launch."
         : Number(enhancerId) === 5
-        ? "GGUF Q4 is highest quality; Q3/Q2 trade quality for memory. Weights download on first WanGP launch."
-        : "Quanto Int8 preserves quality; GGUF Q4 uses less memory when kernels are installed.";
+        ? "GGUF Q4 is highest quality (usually 24 GB VRAM); IQ3_S fits 16 GB; Q2 leaves more context room. Weights download on first WanGP launch."
+        : "Quanto Int8 preserves quality (recommended when it fits); GGUF Q4 uses less memory when kernels are installed.";
 }
 
 // Current speculative value for this session: the row is re-rendered on
@@ -210,6 +219,19 @@ function kvSplit(raw) {
 function kvJoin(body, exact) {
   if (!KV_MIXED.includes(body)) return body;
   return body + ":" + (exact || "s1r1024");
+}
+
+// Upstream `deepy_advanced_transcription` (shared/deepy/config.py): the two
+// Nemotron model types, or `disabled` for "Use Whisper Only". Any other
+// stored value is ignored upstream, so the panel shows the default instead.
+const DEEPY_TRANSCRIPTION_MODELS = [
+  "disabled",
+  "nemotron_transcribe",
+  "nemotron_transcribe_q4",
+];
+function deepyTranscriptionValue(raw) {
+  const v = String(raw == null ? "" : raw).trim();
+  return DEEPY_TRANSCRIPTION_MODELS.includes(v) ? v : "disabled";
 }
 
 // Upstream `deepy_context_tokens` / `deepy_compaction_type` /
@@ -382,25 +404,54 @@ async function refreshDeepy() {
   // — raw, dict or legacy int; the renderer normalizes like upstream.
   _specSaved = status.promptEnhancerSpeculativeDecoding ?? null;
   // Sessions section — pre-select from config (backend normalizes; missing
-  // keys fall back to upstream defaults). Launcher default for a fresh
-  // config is the selectable shared workspace.
+  // keys fall back to upstream defaults).
   const validSessionMode = ["disabled", "selectable", "dedicated"];
   const curSessionMode = validSessionMode.includes(status.sessionMode)
     ? status.sessionMode
-    : "selectable";
+    : "disabled";
   const curResetMode =
     status.sessionResetMode === "reset_session"
       ? "reset_session"
       : "new_session";
   const curGalleryMode =
     status.sessionGalleryMediaMode === "copy" ? "copy" : "link";
+  _savedSessions = {
+    multi_session: curSessionMode,
+    reset_mode: curResetMode,
+    gallery_media_mode: curGalleryMode,
+  };
   if ($("deepySessionMode")) $("deepySessionMode").value = curSessionMode;
   if ($("deepySessionReset")) $("deepySessionReset").value = curResetMode;
   if ($("deepySessionGallery")) $("deepySessionGallery").value = curGalleryMode;
   // Prompt-enhancement UI — pre-select from config; missing key defaults to
-  // Manual Button Only (1).
+  // Manual Button Only (1), but the key itself stays absent so upstream owns
+  // the default.
+  _savedEnhancerMode =
+    status.enhancerMode === 0 || status.enhancerMode === 1
+      ? status.enhancerMode
+      : null;
   if ($("deepyEnhancerMode"))
-    $("deepyEnhancerMode").value = status.enhancerMode === 0 ? "0" : "1";
+    $("deepyEnhancerMode").value = _savedEnhancerMode === 0 ? "0" : "1";
+  // Prime's advanced transcription: pre-select the saved model and terms.
+  // Whisper Only keeps the terms hidden but preserves them (upstream saves the
+  // key regardless); switching back to a Nemotron model restores them.
+  const txSel = $("deepyAdvancedTranscriptionSelect");
+  const txTerms = $("deepyTranscriptionTermsInput");
+  const txTermsWrap = $("deepyTranscriptionTermsWrap");
+  const txSync = () => {
+    if (txTermsWrap)
+      txTermsWrap.style.display =
+        txSel && txSel.value !== "disabled" ? "block" : "none";
+  };
+  if (txSel) {
+    txSel.value = deepyTranscriptionValue(status.advancedTranscription);
+    txSync();
+  }
+  if (txTerms)
+    txTerms.value =
+      typeof status.transcriptionTerms === "string"
+        ? status.transcriptionTerms
+        : "";
   // Default engine for Prime is OpenCode (universal providers / external, free).
   // Preserve an already-configured engine; otherwise fall back to OpenCode.
   const selectedEngine = currentUi || "opencode";
@@ -429,8 +480,8 @@ async function refreshDeepy() {
       validForMode[0];
     const sub =
       mode === "zero"
-        ? "Deepy Zero runs locally — pick the Qwen model Wan2GP will use."
-        : "Prompt enhancement runs without Deepy too — pick any local model.";
+        ? "Deepy Zero runs locally — 9B is the best general pick when it fits; 4B uses the least Qwen memory for simple requests."
+        : "Prompt enhancement runs without Deepy too — pick any local model; 9B handles complex prompts better than 4B.";
     if (enhancerHint) enhancerHint.textContent = sub;
     enhancerOpts.textContent = "";
     for (const o of DEEPY_PANEL_ENHANCERS) {
@@ -603,6 +654,13 @@ async function refreshDeepy() {
       b.title = title || "Set Deepy to " + mode;
     }
   };
+  // Re-rendering the local-model selector replaces its radios, so bind the
+  // change handlers after every render — a stale set would leave Apply and the
+  // quant selector stuck on the previous model.
+  const bindEnhancerRadios = () =>
+    enhancerOpts
+      .querySelectorAll("input[name=deepyEnhancer]")
+      .forEach((r) => r.addEventListener("change", syncApply));
   modeRadios.forEach((r) =>
     r.addEventListener("change", () => {
       // Switching the mode immediately re-renders the local-model selector for
@@ -611,15 +669,14 @@ async function refreshDeepy() {
         (document.querySelector("input[name=deepyMode]:checked") || {}).value ||
         "disabled";
       renderEnhancer(m);
+      bindEnhancerRadios();
       syncApply();
     }),
   );
   opts
     .querySelectorAll("input[name=deepyEngine]")
     .forEach((r) => r.addEventListener("change", syncApply));
-  enhancerOpts
-    .querySelectorAll("input[name=deepyEnhancer]")
-    .forEach((r) => r.addEventListener("change", syncApply));
+  bindEnhancerRadios();
   // Dropdowns have no validation of their own, but changing one is a pending
   // change — enable both Apply buttons.
   for (const id of [
@@ -650,6 +707,31 @@ async function refreshDeepy() {
     specBind.dataset.specBound = "1";
     specBind.addEventListener("change", deepySpecWrite);
     $("deepySpecTokensSelect")?.addEventListener("change", deepySpecWrite);
+  }
+
+  // Advanced transcription writes immediately (like the KV-cache row): both
+  // keys stay local to wgp_config.json and the next launch applies them.
+  if (txSel && !txSel.dataset.transcriptionBound) {
+    txSel.dataset.transcriptionBound = "1";
+    const txWrite = async () => {
+      txSync();
+      const patch = { deepy_advanced_transcription: txSel.value };
+      if (txTerms) patch.deepy_transcription_terms = txTerms.value.trim();
+      try {
+        await window.w2gp.writeWgpConfig(patch);
+        const label =
+          txSel.value === "nemotron_transcribe_q4"
+            ? "Nemotron Q4 Experts (local)"
+            : txSel.value === "nemotron_transcribe"
+              ? "Nemotron INT8 Experts (local)"
+              : "Whisper only";
+        showToast("✓ Deepy transcription: " + label);
+      } catch (err) {
+        showToast("✗ " + (err?.message || err));
+      }
+    };
+    txSel.addEventListener("change", txWrite);
+    if (txTerms) txTerms.addEventListener("change", txWrite);
   }
 
   // Performance & context + Prime model preferences. Both write immediately
@@ -696,8 +778,8 @@ async function refreshDeepy() {
     if (hint)
       hint.textContent =
         mode === "prime"
-          ? "Local Prime requires Summarize compaction and at least 32K context — upstream raises both when needed. Always loaded is fastest; Unload ASAP frees VRAM for media models."
-          : "Unload ASAP frees VRAM for media models; Always loaded is fastest when you switch to Deepy often. Use 20K context for short chats and Summarize (32K+) for long sessions.";
+          ? "Local Prime requires Summarize compaction and at least 32K context — upstream raises both when needed. Start at 32K, or 48K+ for Summarize with Thinking. Always loaded is fastest; Unload when VRAM is needed balances speed and media-model memory."
+          : "Start around 20K context for short Zero chats, Summarize (32K+) for long ones. Unload ASAP is safest; Unload when VRAM is needed keeps Deepy responsive between requests; Always loaded is fastest when you switch often.";
   }
 
   const perfVram = $("deepyVramModeSelect");
@@ -792,11 +874,18 @@ async function refreshDeepy() {
     ).value;
     btn.disabled = true;
     btn.textContent = "applying...";
-    const sessions = {
-      multi_session: ($("deepySessionMode") || {}).value || "selectable",
-      reset_mode: ($("deepySessionReset") || {}).value || "new_session",
-      gallery_media_mode: ($("deepySessionGallery") || {}).value || "link",
+    // Send only fields the user changed. Unchanged keys stay absent so the
+    // backend leaves upstream's own defaults in place.
+    const sessionValues = {
+      multi_session: ($("deepySessionMode") || {}).value,
+      reset_mode: ($("deepySessionReset") || {}).value,
+      gallery_media_mode: ($("deepySessionGallery") || {}).value,
     };
+    const sessions = {};
+    for (const key of ["multi_session", "reset_mode", "gallery_media_mode"]) {
+      if (sessionValues[key] && sessionValues[key] !== _savedSessions[key])
+        sessions[key] = sessionValues[key];
+    }
     // Quant + variant: Prime + local Qwen3.8 reads the single combined
     // backend picker ("id:quant"); Zero/Disabled read the local-model radios
     // + quant selector. Hidden controls mean preserve whatever WanGP has.
@@ -827,8 +916,16 @@ async function refreshDeepy() {
           ? parseInt(enh, 10)
           : null;
     // Prompt-enhancement UI: "1" = Manual Button Only, "0" = Manual Button +
-    // Automatic on Generation (the button stays in both modes).
-    const enhancerMode = ($("deepyEnhancerMode") || {}).value || "1";
+    // Automatic on Generation (the button stays in both modes). Send null
+    // when the choice still matches upstream's saved/default value — the key
+    // stays absent and WanGP owns the default.
+    const enhancerModeValue = ($("deepyEnhancerMode") || {}).value;
+    const effectiveEnhancerMode = _savedEnhancerMode ?? 1;
+    const enhancerMode =
+      (enhancerModeValue === "0" || enhancerModeValue === "1") &&
+      Number(enhancerModeValue) !== effectiveEnhancerMode
+        ? enhancerModeValue
+        : null;
     const r = await window.w2gp.deepySet(
       mode,
       eng,
@@ -887,18 +984,22 @@ if (kvSel && !kvSel.dataset.kvBound) {
       msgEl.textContent = "";
       msgEl.append(s);
       showToast("✓ " + (r.message || "Deepy updated"));
+      const loggedSessions = { ..._savedSessions, ...sessions };
+      const loggedEnhancerMode = enhancerMode ?? String(effectiveEnhancerMode);
+      _savedSessions = loggedSessions;
+      if (enhancerMode !== null) _savedEnhancerMode = Number(enhancerMode);
       appendLog(
         "[Deepy] ✓ " +
           (r.message || "Deepy mode: " + mode) +
           " (sessions: " +
-          sessions.multi_session +
+          loggedSessions.multi_session +
           "/" +
-          sessions.reset_mode +
+          loggedSessions.reset_mode +
           "/" +
-          sessions.gallery_media_mode +
+          loggedSessions.gallery_media_mode +
           (quant ? "; quant: " + quant : "") +
           "; prompt: " +
-          (enhancerMode === "0" ? "automatic" : "button") +
+          (loggedEnhancerMode === "0" ? "automatic" : "button") +
           ")",
       );
     } else {

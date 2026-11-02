@@ -51,7 +51,7 @@ $("tsFailsafeBtn")?.addEventListener("click", async function () {
 });
 $("tsPluginsDisableBtn")?.addEventListener("click", async function () {
   const ok = await askConfirm(
-    "Disable third-party plugins? Their folders stay on disk; re-enable them in WanGP → Plugins after it starts.",
+    "Disable third-party plugins? Their folders stay on disk; re-enable them in WanGP → Apps & PlugIn Manager after it starts.",
     "Disable third-party plugins",
   );
   if (!ok) return;
@@ -903,11 +903,11 @@ window.w2gpYue2Triage = async function (relaunch) {
   return true;
 };
 
-// ── Extra Launch Args vs `wgp.py --help` for the installed commit ──
+// ── Extra Launch Args vs this commit's option list (--help + cli_args.py) ──
 $("tsFlagAuditBtn")?.addEventListener("click", async function () {
   if (this.disabled) return;
   this.disabled = true;
-  tsStatus("tsFlagAuditStatus", "Comparing with wgp.py --help (first run per commit takes ~40 s)…");
+  tsStatus("tsFlagAuditStatus", "Reading this commit's option list (first run per commit takes ~40 s)…");
   try {
     const r = await window.w2gp.tsFlagAudit(false);
     if (!r || !r.ok) {
@@ -915,7 +915,16 @@ $("tsFlagAuditBtn")?.addEventListener("click", async function () {
       return;
     }
     const unknown = Array.isArray(r.unknown) ? r.unknown : [];
+    // Pairs WanGP refuses before its UI appears (argparse accepts both flags on
+    // their own, then shared/cuda_memory.py raises): --vram-stress + --max-vram.
+    const conflicts = Array.isArray(r.warnings) ? r.warnings : [];
+    for (const w of conflicts) appendLog(String(w).trim());
     if (unknown.length === 0) {
+      if (conflicts.length) {
+        tsStatus("tsFlagAuditStatus", "⚠ Conflicting launch args — see console");
+        showToast("⚠ Conflicting launch args — see Troubleshooting");
+        return;
+      }
       tsStatus(
         "tsFlagAuditStatus",
         "✓ " +
@@ -926,7 +935,7 @@ $("tsFlagAuditBtn")?.addEventListener("click", async function () {
           (r.known || 0) +
           " options listed)",
       );
-      appendLog("[✓] Launch args match WanGP " + (r.head || "") + " (wgp.py --help)");
+      appendLog("[✓] Launch args match WanGP " + (r.head || "") + " (--help + shared/cli_args.py)");
     } else {
       tsStatus(
         "tsFlagAuditStatus",

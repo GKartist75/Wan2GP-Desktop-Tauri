@@ -675,10 +675,16 @@ pub fn troubleshoot_debug_bundle() -> serde_json::Value {
     // the vendored mmgp (pip cannot tell you), and the launcher UI's own GPU
     // mode — three questions every SeedVC/HEVC/codec report currently needs.
     let upstream_line = format!(
-        "\n**Upstream** {} | mmgp {} | launcher UI {}",
+        "\n**Upstream** {} | mmgp {} | launcher UI {}{}",
         crate::install::short_rev(&repo, "HEAD"),
         crate::status::vendored_mmgp_label(&repo).unwrap_or_else(|| "(none vendored)".into()),
         crate::launcher_gpu_summary(),
+        // Upstream WanGP Manager records its install beside the checkout; a
+        // report that names it saves a round trip when env and revision
+        // expectations disagree (WanGP 19 `managed_record`).
+        crate::install::managed_install_record(&repo)
+            .map(|p| format!("\n**Manager** WanGP Manager record present: {}", p.display()))
+            .unwrap_or_default(),
     );
     let md = format!(
         "**Launcher** v{ver} ({os}/{arch}){upstream}\n**GPU** {gpu} ({vendor}, {vram} MB VRAM){gpu_pin_line}\n**Python** {py}\n**Torch** {torch} + {accel}{amd}\n**Launch** port={port} server={server} share={share} gpu={gpudev} verbose={verbose} args=`{args}`\n**Profiles** video={vp} image={ip} audio={ap} quant={q}{v17}\n**Log tail**\n```\n{tail}\n```",
@@ -1294,6 +1300,38 @@ static FLAG_PROBE_RUNNING: std::sync::atomic::AtomicBool =
 
 const FLAG_CACHE_FILE: &str = "upstream-flags.json";
 
+/// Long options WanGP's own `shared/cli_args.py` registers: every `add("--x"`
+/// call, whatever its `help=`. Since WanGP 19 the parser hides its development
+/// switches from `--help` with `help=argparse.SUPPRESS` (`--ram-stress`,
+/// `--vram-stress`, `--vram-debug`, `--ram-debug`, the legacy `--t2v*`/`--i2v*`
+/// aliases), so a help-only list makes an accepted flag look removed and turns
+/// a working launch into a scary warning. This source file *is* the parser, so
+/// it names every option the installed commit accepts. Pure.
+pub(crate) fn flags_from_cli_source(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (idx, _) in text.match_indices("add(") {
+        let rest = text[idx + 4..].trim_start();
+        let Some(rest) = rest.strip_prefix('"').or_else(|| rest.strip_prefix('\'')) else {
+            continue;
+        };
+        let Some(end) = rest.find(['"', '\'']) else {
+            continue;
+        };
+        let name = &rest[..end];
+        if name.len() > 2
+            && name.starts_with("--")
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            out.push(name.to_string());
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// Long options in argparse's help text: lines that begin with an option
 /// (`--gpu DEVICE`, `-h, --help`) contribute their long form; values and
 /// wrapped description lines do not. Pure.
@@ -1352,9 +1390,11 @@ fn write_flag_cache(head: &str, flags: &[String]) {
     }
 }
 
-/// Run `wgp.py --help` and parse the option list. `None` when the probe fails
-/// or returns something that is clearly not argparse's help.
-fn probe_help_flags(py: &std::path::Path, repo: &std::path::Path) -> Option<Vec<String>> {
+/// Learn this checkout's option list: `wgp.py --help` (proves the parser runs
+/// under this interpreter) merged with `shared/cli_args.py` (names the options
+/// argparse hides with `SUPPRESS`). `None` when the probe fails or prints
+/// something that is clearly not argparse's help.
+fn probe_upstream_flags(py: &std::path::Path, repo: &std::path::Path) -> Option<Vec<String>> {
     let out = silent_command(py.as_os_str())
         .args(["-s", "wgp.py", "--help"])
         .current_dir(repo)
@@ -1365,10 +1405,21 @@ fn probe_help_flags(py: &std::path::Path, repo: &std::path::Path) -> Option<Vec<
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let flags = flags_from_help(&text);
+    let mut flags = flags_from_help(&text);
     // A real WanGP help lists dozens of options; a short list means the
     // interpreter printed a traceback instead (bad env, broken checkout).
-    (flags.len() >= 10).then_some(flags)
+    if flags.len() < 10 {
+        return None;
+    }
+    // Hidden switches (`--ram-stress`, `--vram-stress`, `--vram-debug`, …) are
+    // registered but never printed. A checkout without the file (very old
+    // upstream) simply keeps the help list.
+    if let Ok(src) = std::fs::read_to_string(repo.join("shared").join("cli_args.py")) {
+        flags.extend(flags_from_cli_source(&src));
+        flags.sort();
+        flags.dedup();
+    }
+    Some(flags)
 }
 
 /// Resolve Python + HEAD and learn the flag set in a detached thread. Cheap to
@@ -1384,7 +1435,7 @@ pub(crate) fn learn_upstream_flags_async(repo: PathBuf) {
             FLAG_PROBE_RUNNING.store(false, Ordering::SeqCst);
             return;
         }
-        if let Some(flags) = active_python().and_then(|py| probe_help_flags(&py, &repo)) {
+        if let Some(flags) = active_python().and_then(|py| probe_upstream_flags(&py, &repo)) {
             write_flag_cache(&head, &flags);
         }
         FLAG_PROBE_RUNNING.store(false, Ordering::SeqCst);
@@ -1407,22 +1458,46 @@ pub(crate) fn launch_flags(args: &[String]) -> Vec<String> {
     out
 }
 
+/// Option pairs this checkout refuses at startup. argparse cannot catch these
+/// (both flags are valid on their own), so an unknown combination kills every
+/// launch with a bare exit code. Upstream `shared/cuda_memory.py` raises
+/// `--vram-stress emulates its own GPU: use it without --max-vram` (WanGP 19).
+/// Pure.
+const CONFLICTING_PAIRS: &[(&str, &str, &str)] = &[(
+    "--vram-stress",
+    "--max-vram",
+    "[!] --vram-stress and --max-vram are both in Extra Launch Args: WanGP refuses that pair (\"--vram-stress emulates its own GPU: use it without --max-vram\") and exits before its UI appears. Remove one in Manage → Launch → Extra Launch Args.\n",
+)];
+
+/// Conflict warnings for a launch argv, already formatted as log lines. Pure.
+pub(crate) fn launch_arg_conflicts(args: &[String]) -> Vec<String> {
+    let present = launch_flags(args);
+    CONFLICTING_PAIRS
+        .iter()
+        .filter(|(a, b, _)| present.iter().any(|f| f == a) && present.iter().any(|f| f == b))
+        .map(|(_, _, msg)| (*msg).to_string())
+        .collect()
+}
+
 /// Warning lines for launch args this checkout's argparse does not list.
 /// Empty when everything is known or the flag set has not been learned yet
 /// (a stale cache starts the background probe). Never blocks a launch.
 pub fn audit_launch_args(repo: &std::path::Path, args: &[String]) -> Vec<String> {
+    // Conflicts are decided here, not from the learned list: they hold for
+    // every upstream version and must not wait for a background probe.
+    let mut out = launch_arg_conflicts(args);
     let want = launch_flags(args);
     if want.is_empty() {
-        return Vec::new();
+        return out;
     }
     let head = crate::install::short_rev(repo, "HEAD");
     let Some((cached_head, flags)) = read_flag_cache() else {
         learn_upstream_flags_async(repo.to_path_buf());
-        return Vec::new();
+        return out;
     };
     if cached_head != head {
         learn_upstream_flags_async(repo.to_path_buf());
-        return Vec::new();
+        return out;
     }
     let unknown: Vec<&String> = want
         .iter()
@@ -1430,14 +1505,13 @@ pub fn audit_launch_args(repo: &std::path::Path, args: &[String]) -> Vec<String>
         // real flag is not a false claim about this version.
         .filter(|f| !flags.contains(f) && !flags.iter().any(|known| known.starts_with(f.as_str())))
         .collect();
-    if unknown.is_empty() {
-        Vec::new()
-    } else {
-        vec![format!(
+    if !unknown.is_empty() {
+        out.push(format!(
             "[!] Launch arg(s) this Wan2GP version ({head}) does not list: {} — upstream renamed or removed them, so Wan2GP may refuse to start. Check Manage → Launch → Extra Launch Args.\n",
             unknown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" ")
-        )]
+        ));
     }
+    out
 }
 
 /// Diagnostics: force/read the flag audit for the saved Extra Launch Args.
@@ -1454,7 +1528,7 @@ pub fn troubleshoot_flag_audit(force: Option<bool>) -> serde_json::Value {
         let Some(py) = active_python() else {
             return serde_json::json!({"ok": false, "error": "no Python environment installed — run Install first"});
         };
-        let Some(flags) = probe_help_flags(&py, &repo) else {
+        let Some(flags) = probe_upstream_flags(&py, &repo) else {
             return serde_json::json!({"ok": false, "error": "wgp.py --help printed no option list (broken checkout or Python env?)"});
         };
         write_flag_cache(&head, &flags);
@@ -1468,7 +1542,8 @@ pub fn troubleshoot_flag_audit(force: Option<bool>) -> serde_json::Value {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let want = launch_flags(&split_args(&saved));
+    let saved_args = split_args(&saved);
+    let want = launch_flags(&saved_args);
     let unknown: Vec<String> = want
         .iter()
         .filter(|f| !flags.contains(f) && !flags.iter().any(|known| known.starts_with(f.as_str())))
@@ -1481,6 +1556,7 @@ pub fn troubleshoot_flag_audit(force: Option<bool>) -> serde_json::Value {
         "known": flags.len(),
         "checked": want,
         "unknown": unknown,
+        "warnings": launch_arg_conflicts(&saved_args),
     })
 }
 
@@ -2391,6 +2467,61 @@ options:\n\
         );
         // A traceback (no options) must not look like a learned flag set.
         assert!(flags_from_help("Traceback (most recent call last):\nValueError").is_empty());
+    }
+
+    /// WanGP 19 hides its development switches from `--help` with
+    /// `help=argparse.SUPPRESS` but still accepts them, so the learned list has
+    /// to come from the parser's own source as well. Missing this made a saved
+    /// `--ram-stress 32` read as "upstream removed it".
+    #[test]
+    fn flags_from_cli_source_finds_suppressed_options() {
+        let cli = "def parse_wgp_args(config_filename, argv=None):\n\
+    def add(*args, **kwargs):\n\
+        p.add_argument(*args, **kwargs)\n\
+    add(\"--server-port\", type=str, default=0, help=\"Server port\")\n\
+    add(\"--vram-debug\", type=float, default=0, metavar=\"MIN_MB\", help=argparse.SUPPRESS)\n\
+    add(\"--ram-stress\", type=str, default=None, metavar=\"GB[:OTHERS]\", help=argparse.SUPPRESS)\n\
+    add(\"--vram-stress\", type=str, default=None, metavar=\"GB[:OTHERS]\", help=argparse.SUPPRESS)\n\
+    add(  '--single-quoted', action=\"store_true\")\n\
+    helper(\"--not-an-argument\")\n\
+    value = \"--also-not-an-option\"\n";
+        let flags = flags_from_cli_source(cli);
+        for want in [
+            "--ram-stress",
+            "--server-port",
+            "--single-quoted",
+            "--vram-debug",
+            "--vram-stress",
+        ] {
+            assert!(flags.contains(&want.to_string()), "{want} missing");
+        }
+        // Only `add(` calls count: a quoted option elsewhere is not registered.
+        assert!(!flags.iter().any(|f| f == "--not-an-argument"));
+        assert!(!flags.iter().any(|f| f == "--also-not-an-option"));
+        // `p.add_argument(` and the `add(*args, …)` shim register nothing.
+        assert_eq!(flags.len(), 5, "{flags:?}");
+    }
+
+    /// `shared/cuda_memory.py` raises on this pair before the UI exists, so the
+    /// launch log has to say what argparse cannot.
+    #[test]
+    fn vram_stress_with_max_vram_is_reported_as_a_conflict() {
+        let args = |s: &[&str]| s.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+        let conflict = launch_arg_conflicts(&args(&["--vram-stress", "8", "--max-vram", "8"]));
+        assert_eq!(conflict.len(), 1);
+        assert!(conflict[0].contains("--vram-stress"));
+        assert!(conflict[0].contains("--max-vram"));
+        // `--flag=value` spellings count too, and the spaceship pair alone does
+        // not (one flag or the other is a normal launch).
+        assert_eq!(
+            launch_arg_conflicts(&args(&["--vram-stress=8", "--max-vram=10"])).len(),
+            1
+        );
+        assert!(launch_arg_conflicts(&args(&["--vram-stress", "8"])).is_empty());
+        assert!(launch_arg_conflicts(&args(&["--max-vram", "8"])).is_empty());
+        assert!(launch_arg_conflicts(&[]).is_empty());
+        // A flag value that merely looks like a flag is not an argument.
+        assert!(launch_arg_conflicts(&args(&["--vram-stress", "--max-vram"])).len() == 1);
     }
 
     #[test]

@@ -1736,6 +1736,16 @@ pub fn deepy_status() -> serde_json::Value {
     let spec_raw = v.get("prompt_enhancer_speculative_decoding").cloned();
     let enhancer_mode = v.get("enhancer_mode").and_then(serde_json::Value::as_i64);
     let kv_cache = kv_cache_value(&v);
+    // Prime's advanced transcription (upstream `deepy_advanced_transcription`
+    // / `deepy_transcription_terms`). Missing and unknown values mean
+    // upstream's "Use Whisper Only"; the panel pre-selects that.
+    let advanced_transcription = advanced_transcription_value(&v);
+    let transcription_terms = v
+        .get("deepy_transcription_terms")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
     // Performance/context keys (upstream shared/deepy/config.py). Normalized
     // with upstream defaults so the panel pre-selects a valid combination:
     // `summarize_thinking` is a legacy compaction_type value that upstream
@@ -1779,7 +1789,7 @@ pub fn deepy_status() -> serde_json::Value {
         Some("any") => "any",
         _ => "smaller",
     };
-    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "promptEnhancerQuantization": quant, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode, "enhancerMode": enhancer_mode, "kvCacheQuantization": kv_cache, "promptEnhancerSpeculativeDecoding": spec_raw, "vramMode": vram_mode, "contextTokens": context_tokens, "compactionType": compaction_type, "compactionThinking": compaction_thinking, "repetitionPenalty": repetition_penalty, "modelSpeed": model_speed, "modelSize": model_size})
+    serde_json::json!({"ok": true, "available": true, "mode": mode, "deepyEnabled": enabled!=0, "deepyType": dtype, "currentEngine": if cur_engine.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(cur_engine) }, "promptEnhancer": prompt_enh, "enhancerEnabled": enh, "engines": engines, "promptEnhancerQuantization": quant, "sessionMode": session_mode, "sessionResetMode": reset_mode, "sessionGalleryMediaMode": gallery_mode, "enhancerMode": enhancer_mode, "kvCacheQuantization": kv_cache, "promptEnhancerSpeculativeDecoding": spec_raw, "vramMode": vram_mode, "contextTokens": context_tokens, "compactionType": compaction_type, "compactionThinking": compaction_thinking, "repetitionPenalty": repetition_penalty, "modelSpeed": model_speed, "modelSize": model_size, "advancedTranscription": advanced_transcription, "transcriptionTerms": transcription_terms})
 }
 /// Deepy KV cache quantization as the panel needs it, straight from the config
 /// (upstream `shared/deepy/config.py`): `""` is BF16 and stays empty — the
@@ -1792,6 +1802,22 @@ pub(crate) fn kv_cache_value(cfg: &serde_json::Value) -> String {
         .and_then(|x| x.as_str())
         .map(|s| s.trim().to_lowercase())
         .unwrap_or_else(|| "auto".into())
+}
+/// Prime's advanced transcription model as the panel needs it, straight from
+/// the config: upstream's two Nemotron model types, else `disabled` (which
+/// means "Use Whisper Only" and is also the default for a missing key).
+/// `normalize_deepy_advanced_transcription` upstream is exact-match only.
+/// Pure + unit-tested.
+pub(crate) fn advanced_transcription_value(cfg: &serde_json::Value) -> String {
+    let raw = cfg
+        .get("deepy_advanced_transcription")
+        .and_then(|x| x.as_str())
+        .unwrap_or("");
+    if matches!(raw, "nemotron_transcribe" | "nemotron_transcribe_q4") {
+        raw.to_string()
+    } else {
+        "disabled".into()
+    }
 }
 /// Upstream `normalize_deepy_session_mode` (shared/deepy/config.py):
 /// disabled/selectable/dedicated, anything else falls back to disabled.
@@ -1819,32 +1845,19 @@ fn normalize_session_gallery_mode(value: &str) -> String {
         "link".into()
     }
 }
-/// Resolve a session pref: an explicitly provided valid value wins, then the
-/// existing config value, then the launcher default. `None` (field absent)
-/// always preserves existing config so an engine-only Apply never clobbers
-/// the Sessions section.
-fn resolve_session_pref(
-    provided: Option<&str>,
-    existing: Option<&str>,
-    normalize: fn(&str) -> String,
-    upstream_default: &str,
-    launcher_default: Option<&str>,
-) -> String {
-    if let Some(p) = provided {
-        let n = normalize(p);
-        // A provided value that normalizes away from itself is invalid —
-        // fall through to existing/default instead of writing garbage.
-        if p.trim().to_lowercase() == n || (n == upstream_default && p.trim().is_empty()) {
-            return n;
-        }
+/// Resolve a session pref from an explicit panel choice. Upstream owns the
+/// defaults, so an absent or invalid choice writes nothing and leaves the key
+/// untouched (WanGP applies its own default on load).
+fn resolve_session_pref(provided: Option<&str>, normalize: fn(&str) -> String) -> Option<String> {
+    let p = provided?;
+    let n = normalize(p);
+    // A provided value that normalizes away from itself is invalid — leave
+    // the key untouched instead of writing garbage.
+    if p.trim().to_lowercase() == n {
+        Some(n)
+    } else {
+        None
     }
-    if let Some(e) = existing {
-        let n = normalize(e);
-        if e.trim().to_lowercase() == n {
-            return n;
-        }
-    }
-    launcher_default.unwrap_or(upstream_default).into()
 }
 /// Stored Prime profile id (`llm_engines.deepy`: opencode / claude / codex /
 /// qwen38_27b / qwen38_9b / qwen35_*) → `deepy_set` UI engine id (opencode / claude-code /
@@ -1935,32 +1948,17 @@ pub fn deepy_set(
     };
     v["deepy_enabled"] = serde_json::json!(enabled);
     v["deepy_type"] = serde_json::json!(dtype);
-    // Sessions section: explicit choice wins, otherwise keep the existing
-    // config value, otherwise the launcher default (selectable workspace —
-    // one shared outputs folder; upstream default is disabled).
+    // Sessions section: only an explicit panel choice is written; absent keys
+    // stay absent so upstream's own defaults apply on load.
     let sess = sessions.as_ref();
     let sess_str = |key: &str| sess.and_then(|s| s.get(key)).and_then(|x| x.as_str());
-    let cfg_str = |key: &str| v.get(key).and_then(|x| x.as_str());
-    let multi = resolve_session_pref(
-        sess_str("multi_session"),
-        cfg_str("deepy_multi_session"),
-        |s| normalize_session_mode(Some(s)),
-        "disabled",
-        Some("selectable"),
-    );
-    let reset = resolve_session_pref(
-        sess_str("reset_mode"),
-        cfg_str("deepy_session_reset_mode"),
-        normalize_session_reset_mode,
-        "new_session",
-        None,
-    );
+    let multi = resolve_session_pref(sess_str("multi_session"), |s| {
+        normalize_session_mode(Some(s))
+    });
+    let reset = resolve_session_pref(sess_str("reset_mode"), normalize_session_reset_mode);
     let gallery = resolve_session_pref(
         sess_str("gallery_media_mode"),
-        cfg_str("deepy_session_gallery_media_mode"),
         normalize_session_gallery_mode,
-        "link",
-        None,
     );
     // enhancer id — JS sends number (3) or null, handle both string/number.
     // Enforce valid mode↔id pairs like Electron's resolveEnhancerId: Zero only
@@ -2035,11 +2033,10 @@ pub fn deepy_set(
     // Prompt enhancement UI (upstream `enhancer_mode`: 0 = Manual Button +
     // Automatic on Generation, 1 = Manual Button Only; the button stays in
     // both modes).
-    // Explicit 0/1 wins; otherwise the existing config value sticks; a missing
-    // key defaults to 1 (button). Deepy tool templates carry no flags of their
-    // own, so they follow it; per-model/template prompt_enhancer flags stay ""
-    // as shipped. Applies in every mode — the enhancer (and its button) runs
-    // standalone when Deepy is disabled.
+    // Upstream owns the default (1). Only an explicit 0/1 choice is written;
+    // an absent key stays absent so upstream's default applies on load.
+    // Applies in every mode — the enhancer (and its button) runs standalone
+    // when Deepy is disabled.
     let raw_emode: Option<i64> = enhancer_mode.as_ref().and_then(|v| {
         if let Some(n) = v.as_i64() {
             Some(n)
@@ -2049,15 +2046,9 @@ pub fn deepy_set(
             None
         }
     });
-    let emode = match raw_emode {
-        Some(0) | Some(1) => raw_emode.unwrap(),
-        _ => v
-            .get("enhancer_mode")
-            .and_then(serde_json::Value::as_i64)
-            .filter(|n| *n == 0 || *n == 1)
-            .unwrap_or(1),
-    };
-    v["enhancer_mode"] = serde_json::json!(emode);
+    if let Some(emode) = raw_emode.filter(|n| *n == 0 || *n == 1) {
+        v["enhancer_mode"] = serde_json::json!(emode);
+    }
     // llm_engines deepy
     let eng_map = |id: &str| match id {
         "opencode" => "opencode",
@@ -2116,32 +2107,32 @@ pub fn deepy_set(
                     serde_json::json!("http://127.0.0.1:4096");
             }
         }
-        // Prime-owned choices only: engine/profile above and sessions below.
-        // Deepy defaults (system prompt, speed/size, MCP grants, filesystem
-        // access, queue behavior) stay on upstream's side until the user edits
-        // them in WanGP; the launcher no longer seeds a copy that ages.
-        // v12.72 sessions feature — resolved above (explicit choice >
-        // existing config > launcher default) so pre-existing configs
-        // can't skew-missing when wgp.py expects the keys.
-        v["deepy_session_reset_mode"] = serde_json::json!(reset);
-        v["deepy_session_gallery_media_mode"] = serde_json::json!(gallery);
-        v["deepy_multi_session"] = serde_json::json!(multi);
+        // Prime-owned choices only: engine/profile above and explicit
+        // sessions below. Deepy defaults (system prompt, speed/size, MCP
+        // grants, filesystem access, queue behavior) stay on upstream's side
+        // until the user edits them in WanGP; the launcher no longer seeds a
+        // copy that ages.
     } else {
         let eid = enh_id.unwrap_or(1);
         let eng_str = enh_to_engine(eid);
         v["llm_engines"]["deepy"] = serde_json::json!(eng_str);
         v["llm_engines"]["prompt_enhancer"] = serde_json::json!("same_as_deepy");
-        if m == "zero" {
-            // Zero-owned choices only: local engine/profile above and sessions
-            // below. Tool templates, context, compaction, KV cache, VRAM mode,
-            // repetition penalty and queue behavior stay on upstream defaults
-            // until the user edits them (launcher panel or WanGP's UI); every
-            // upstream model release used to invalidate our copy of them.
-            // v12.72 sessions feature — same resolution as Prime preset.
-            v["deepy_session_reset_mode"] = serde_json::json!(reset);
-            v["deepy_session_gallery_media_mode"] = serde_json::json!(gallery);
-            v["deepy_multi_session"] = serde_json::json!(multi);
-        }
+        // Zero-owned choices only: local engine/profile above. Tool templates,
+        // context, compaction, KV cache, VRAM mode, repetition penalty and
+        // queue behavior stay on upstream defaults until the user edits them
+        // (launcher panel or WanGP's UI); every upstream model release used to
+        // invalidate our copy of them.
+    }
+    // v12.72 sessions: only an explicit panel choice is written. An absent key
+    // stays absent so upstream's own defaults apply on load.
+    if let Some(multi) = multi {
+        v["deepy_multi_session"] = serde_json::json!(multi);
+    }
+    if let Some(reset) = reset {
+        v["deepy_session_reset_mode"] = serde_json::json!(reset);
+    }
+    if let Some(gallery) = gallery {
+        v["deepy_session_gallery_media_mode"] = serde_json::json!(gallery);
     }
     if atomic_write(&p, &serde_json::to_string_pretty(&v).unwrap_or_default()).is_err() {
         return serde_json::json!({"ok": false, "error": "failed to write wgp_config.json"});
@@ -2732,6 +2723,21 @@ mod deepy_roundtrip_tests {
     }
 
     #[test]
+    fn deepy_status_surfaces_advanced_transcription() {
+        let td = TestDataDir::new();
+        td.seed_wgp_config(
+            r#"{"deepy_enabled":1,"deepy_advanced_transcription":"nemotron_transcribe_q4","deepy_transcription_terms":"  Dr. Amara Okafor, etcd\n"}"#,
+        );
+        let s = deepy_status();
+        assert_eq!(s["advancedTranscription"], "nemotron_transcribe_q4");
+        assert_eq!(s["transcriptionTerms"], "Dr. Amara Okafor, etcd");
+        td.seed_wgp_config(r#"{"deepy_enabled":1,"deepy_advanced_transcription":"bogus"}"#);
+        let s = deepy_status();
+        assert_eq!(s["advancedTranscription"], "disabled");
+        assert_eq!(s["transcriptionTerms"], "");
+    }
+
+    #[test]
     fn deepy_status_speculative_absent_is_null() {
         let td = TestDataDir::new();
         td.seed_wgp_config(r#"{"deepy_enabled":1}"#);
@@ -2839,9 +2845,9 @@ mod deepy_roundtrip_tests {
         assert!(c.get("deepy_kv_cache_quantization").is_none());
         assert!(c.get("deepy_tool_gen_image").is_none());
         assert!(c.get("deepy_tool_gen_video_with_refs").is_none());
-        // Seed had no enhancer_mode and none was passed, so the documented
-        // button-only default (1) applies.
-        assert_eq!(c["enhancer_mode"], 1);
+        // Seed had no enhancer_mode and none was passed: upstream owns the
+        // default, so no key is written.
+        assert!(c.get("enhancer_mode").is_none());
         // explicit session prefs stick
         assert_eq!(c["deepy_session_reset_mode"], "reset_session");
         assert_eq!(c["deepy_session_gallery_media_mode"], "copy");
@@ -3001,7 +3007,7 @@ mod deepy_roundtrip_tests {
     }
 
     #[test]
-    fn an_out_of_range_stored_enhancer_mode_falls_back_to_the_default() {
+    fn an_out_of_range_stored_enhancer_mode_is_left_for_upstream() {
         let td = TestDataDir::new();
         td.seed_wgp_config(&SEED_CFG.replace("{}", "{},\"enhancer_mode\":7"));
         let r = deepy_set(
@@ -3013,7 +3019,31 @@ mod deepy_roundtrip_tests {
             None,
         );
         assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap(), "{r}");
-        assert_eq!(td.read_wgp_config()["enhancer_mode"], 1);
+        // No explicit choice: the launcher does not overwrite the stored
+        // value — upstream validates its own enum on load.
+        assert_eq!(td.read_wgp_config()["enhancer_mode"], 7);
+    }
+
+    #[test]
+    fn deepy_set_leaves_upstream_defaults_absent() {
+        let td = TestDataDir::new();
+        td.seed_wgp_config(r#"{"llm_engines":{}}"#);
+        let r = deepy_set(
+            "zero".into(),
+            None,
+            Some(serde_json::json!(4)),
+            None,
+            None,
+            None,
+        );
+        assert!(r.get("ok").and_then(|v| v.as_bool()).unwrap(), "{r}");
+        let c = td.read_wgp_config();
+        assert!(c.get("enhancer_mode").is_none());
+        assert!(c.get("deepy_multi_session").is_none());
+        assert!(c.get("deepy_session_reset_mode").is_none());
+        assert!(c.get("deepy_session_gallery_media_mode").is_none());
+        assert!(c.get("deepy_context_tokens").is_none());
+        assert!(c.get("deepy_kv_cache_quantization").is_none());
     }
 
     /// `deepy_set` refuses unknown modes and writes nothing.
@@ -3417,6 +3447,37 @@ mod deepy_kv_cache_tests {
             kv_cache_value(&json!({"deepy_kv_cache_quantization": 3})),
             "auto",
             "a non-string falls back to upstream's default, not to garbage"
+        );
+    }
+}
+
+#[cfg(test)]
+mod deepy_transcription_tests {
+    use super::advanced_transcription_value;
+    use serde_json::json;
+    /// Upstream `normalize_deepy_advanced_transcription` accepts exactly the
+    /// two Nemotron model types; everything else means "Use Whisper Only".
+    /// The panel pre-selects this value, so a stale or unknown key must not
+    /// leave the dropdown on a model upstream will ignore.
+    #[test]
+    fn only_upstream_models_survive_else_whisper_only() {
+        for model in ["nemotron_transcribe", "nemotron_transcribe_q4"] {
+            assert_eq!(
+                advanced_transcription_value(&json!({"deepy_advanced_transcription": model})),
+                model
+            );
+        }
+        for bad in ["", "Nemotron Q4 Experts", "whisper", "auto"] {
+            assert_eq!(
+                advanced_transcription_value(&json!({"deepy_advanced_transcription": bad})),
+                "disabled",
+                "{bad:?} is not an upstream choice"
+            );
+        }
+        assert_eq!(advanced_transcription_value(&json!({})), "disabled");
+        assert_eq!(
+            advanced_transcription_value(&json!({"deepy_advanced_transcription": 1})),
+            "disabled"
         );
     }
 }

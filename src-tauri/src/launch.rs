@@ -722,6 +722,16 @@ pub async fn launch(
     for warning in crate::troubleshoot::audit_launch_args(&repo, &args) {
         emit(&warning);
     }
+    // WanGP Manager (upstream's own app) keeps `.manager/installation.json`
+    // beside the checkout and runs its own validated environment from it; its
+    // run scripts and `setup.py` mutations defer to that record. Name it rather
+    // than letting two managers disagree about env and revision in silence.
+    if let Some(record) = crate::install::managed_install_record(&repo) {
+        emit(&format!(
+            "[!] WanGP Manager owns this folder ({}) — it launches its own environment and pins its own source revision there. Launcher installs, updates and kernel changes are not coordinated with it; use one manager per folder, or delete that .manager folder to hand the install back to this launcher.\n",
+            record.display()
+        ));
+    }
     // HF_TOKEN / config env (mirrors Electron launchCfg)
     let launch_cfg = load_config_value();
     let hf_token = launch_cfg

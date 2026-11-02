@@ -6147,6 +6147,35 @@ pub(crate) fn short_rev(repo: &std::path::Path, rev: &str) -> String {
         .unwrap_or_else(|| "?".into())
 }
 
+/// WanGP Manager (upstream's own app) records an installation in
+/// `.manager/installation.json`, plus `.manager/active_operation.json` while it
+/// works, beside the checkout or in its parent. This mirrors upstream
+/// `installation/environments.py::managed_record` (added with WanGP 19).
+///
+/// A folder carrying that record is driven by Manager: upstream's `run.bat` /
+/// `run.sh` delegate to `python -m installation launch`, and the legacy
+/// `setup.py install/update/upgrade` entry points refuse to run. The launcher
+/// still owns nothing there, so the honest thing is to name it — in the launch
+/// log and the diagnostics report — instead of letting two managers silently
+/// disagree about the environment and the checked-out revision.
+///
+/// Pure (filesystem read only) + unit-tested.
+pub(crate) fn managed_install_record(repo: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut dirs = vec![repo.to_path_buf()];
+    if let Some(parent) = repo.parent() {
+        dirs.push(parent.to_path_buf());
+    }
+    for dir in dirs {
+        for name in ["installation.json", "active_operation.json"] {
+            let candidate = dir.join(".manager").join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 #[tauri::command]
 pub async fn update(
     app: tauri::AppHandle,
@@ -10833,6 +10862,51 @@ mod amd_therock_tests {
         }
     }
 }
+#[cfg(test)]
+mod managed_install_tests {
+    use super::managed_install_record;
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("wgp-managed-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+    /// Upstream `managed_record` looks in the folder and its parent, for both
+    /// `installation.json` and an in-flight `active_operation.json`.
+    #[test]
+    fn record_is_found_beside_or_above_the_checkout() {
+        let root = scratch("record");
+        let repo = root.join("WanGP");
+        std::fs::create_dir_all(repo.join("shared")).unwrap();
+        assert_eq!(managed_install_record(&repo), None, "no record yet");
+        // Beside the checkout (the shape WanGP Manager writes from the parent
+        // folder it launched from).
+        let beside = root.join(".manager");
+        std::fs::create_dir_all(&beside).unwrap();
+        std::fs::write(beside.join("active_operation.json"), b"{}").unwrap();
+        assert_eq!(
+            managed_install_record(&repo),
+            Some(beside.join("active_operation.json"))
+        );
+        // Inside the checkout, and `installation.json` wins over an operation.
+        std::fs::write(beside.join("installation.json"), b"{}").unwrap();
+        let inside = repo.join(".manager");
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::write(inside.join("installation.json"), b"{}").unwrap();
+        assert_eq!(
+            managed_install_record(&repo),
+            Some(inside.join("installation.json"))
+        );
+        // A directory named like the record is not a record (upstream's
+        // `.exists()` check would accept it; a file is what Manager writes).
+        let empty = scratch("dir");
+        std::fs::create_dir_all(empty.join(".manager").join("installation.json")).unwrap();
+        assert_eq!(managed_install_record(&empty), None);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+}
+
 #[cfg(test)]
 mod exit_106_tests {
     use super::{amd_therock_torch_cmds, env_missing_pyvenv, setup_exit_106_hint};

@@ -453,7 +453,8 @@
               <tr><td><code>--perc-reserved-mem-max 0.3</code></td><td>% RAM for model swap cache (0-0.5)</td></tr>
               <tr><td><code>--max-vram 8</code></td><td>Behave as on an 8 GB card (try a workflow on a smaller GPU; Auto-Tune still recommends for your real card)</td></tr>
               <tr><td><code>--max-ram 24</code></td><td>RAM budget for WanGP's planning (a budget, not a hard limit)</td></tr>
-              <tr><td><code>--ram-stress 32</code></td><td>Simulate a 32 GB PC under pressure: locks the rest of RAM (slow start). Stress test only — remove it before saving</td></tr>
+              <tr><td><code>--ram-stress 32</code></td><td>Developer stress test (hidden from <code>wgp.py --help</code> since WanGP 19, still accepted): behave as on a 32 GB PC under real memory pressure; <code>32:6</code> also sets what other programs use. Remove it before saving</td></tr>
+              <tr><td><code>--vram-stress 8</code></td><td>The same for the GPU (an 8 GB card under pressure). Never combine it with <code>--max-vram</code> — WanGP exits before its UI appears</td></tr>
               <tr><td><code>--preload 2000</code></td><td>MB of model to keep in VRAM</td></tr>
               <tr><td><code>--listen</code></td><td>Accessible on local network</td></tr>
               <tr><td><code>--share</code></td><td>HuggingFace share URL</td></tr>
@@ -526,7 +527,7 @@
         </div>
         <div class="settings-section">
           <h3>Third-party Plugins</h3>
-          <p class="token-hint">If a community plugin stops Wan2GP from starting, disable them without deleting anything. System and bundled plugins stay enabled; plugin folders stay in <code>plugins/</code>, and WanGP&rsquo;s Plugin Manager can re-enable them after it starts.</p>
+          <p class="token-hint">If a community plugin stops Wan2GP from starting, disable them without deleting anything. System and bundled plugins stay enabled; plugin folders stay in <code>plugins/</code>, and WanGP&rsquo;s <strong>Apps &amp; PlugIn Manager</strong> can re-enable them after it starts.</p>
           <button class="btn btn-primary small" id="tsPluginsDisableBtn" style="margin-top:8px" title="Remove community plugins from enabled_plugins in wgp_config.json (folders stay on disk)">Disable third-party plugins</button>
           <span class="token-hint" id="tsPluginsStatus" style="margin-left:8px"></span>
         </div>
@@ -590,9 +591,9 @@
         </div>
         <div class="settings-section" style="margin-top:12px">
           <h3>Launch args vs this Wan2GP</h3>
-          <p class="token-hint">Upstream renames flags between versions (bare <code>--teacache</code> disappeared in 18.x), and an unknown flag makes Wan2GP exit before its UI appears. This compares your Extra Launch Args with the option list <code>wgp.py --help</code> prints for the installed commit. Learning a version takes ~40 s once; the answer is cached until the commit changes.</p>
+          <p class="token-hint">Upstream renames flags between versions (bare <code>--teacache</code> disappeared in 18.x), and an unknown flag makes Wan2GP exit before its UI appears. This compares your Extra Launch Args with this commit's option list: <code>wgp.py --help</code> plus <code>shared/cli_args.py</code>, which also names the development switches WanGP 19 hides from help (<code>--ram-stress</code>, <code>--vram-stress</code>, debug modes) but still accepts. It also flags pairs WanGP refuses at startup, such as <code>--vram-stress</code> with <code>--max-vram</code>. Learning a version takes ~40 s once; the answer is cached until the commit changes.</p>
           <div class="token-field" style="margin-top:8px">
-            <button class="btn btn-ghost small" id="tsFlagAuditBtn" title="Compare Extra Launch Args with wgp.py --help (cached per upstream commit)">Check launch args</button>
+            <button class="btn btn-ghost small" id="tsFlagAuditBtn" title="Compare Extra Launch Args with this commit's option list (--help + shared/cli_args.py; cached per upstream commit)">Check launch args</button>
             <span class="token-hint" id="tsFlagAuditStatus" style="margin-left:8px"></span>
           </div>
         </div>
@@ -1264,7 +1265,7 @@
           <div class="card-header">
             <span class="card-title">Prompt enhancement</span>
           </div>
-          <p class="path-hint">How Wan2GP enhances prompts on generation forms — applies on next Wan2GP launch, with or without Deepy. The manual button is available in both modes.</p>
+          <p class="path-hint">How Wan2GP enhances prompts on generation forms — applies on next Wan2GP launch, with or without Deepy. The manual button is available in both modes. Use Manual Button Only when prompt fidelity matters; use Automatic when you routinely start from short ideas.</p>
           <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px">
             <label class="path-hint">Prompt Enhancer Usage<br>
               <select id="deepyEnhancerMode" class="input" data-keep-visible title="Prompt enhancement mode" style="margin-top:4px;min-width:260px">
@@ -1342,7 +1343,7 @@
                 <option value="s0r0">no exact tokens (smallest cache)</option>
               </select>
             </div>
-            <p class="path-hint" style="margin-top:6px">Quantized KV cache for Deepy. Auto lets WanGP decide: INT8 with GGUF kernels 1.0.13+, BF16 without. The second dropdown is the exact-precision overlay the mixed layouts keep. Written as <code>deepy_kv_cache_quantization</code>.</p>
+            <p class="path-hint" style="margin-top:6px">Quantized KV cache for Deepy. Auto is recommended: INT8 with GGUF kernels 1.0.13+, BF16 without. Pick INT8 for long sessions or tight VRAM, and a below-INT8 layout only when the cache itself no longer fits. The second dropdown is the exact-precision overlay the mixed layouts keep. Written as <code>deepy_kv_cache_quantization</code>.</p>
           </div>
           <!-- Performance & context (local Deepy only: Zero or Prime + local
                Qwen3.8). Upstream's Configuration → Deepy values, written
@@ -1407,6 +1408,27 @@
                 </label>
               </div>
               <p class="path-hint" style="margin-top:6px">Used when Prime chooses models the user left unspecified. Written as <code>deepy_model_speed</code> / <code>deepy_model_size</code>.</p>
+            </div>
+            <!-- Advanced transcription (upstream DEEPY_ADVANCED_TRANSCRIPTION_KEY,
+                 Prime only): Whisper stays the quick default; a Nemotron model
+                 runs offline as a normal WanGP generation. Written immediately
+                 so the next launch applies it. -->
+            <div id="deepyTranscriptionWrap" style="margin-top:10px">
+              <div class="deepy-sub-label">Transcription</div>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px">
+                <label class="path-hint">Transcription model<br>
+                  <select id="deepyAdvancedTranscriptionSelect" class="input" style="min-width:290px;margin-top:4px">
+                    <option value="disabled">Use Whisper Only (default, quick)</option>
+                    <option value="nemotron_transcribe">Nemotron INT8 Experts (64 GB RAM recommended)</option>
+                    <option value="nemotron_transcribe_q4">Nemotron Q4 Experts (recommended, 32 GB RAM)</option>
+                  </select>
+                </label>
+              </div>
+              <div id="deepyTranscriptionTermsWrap" style="display:none;margin-top:8px">
+                <label class="path-hint" for="deepyTranscriptionTermsInput" style="display:block">Names and jargon (optional)</label>
+                <textarea id="deepyTranscriptionTermsInput" class="input" rows="3" placeholder="Dr. Amara Okafor, Kubernetes, etcd" style="width:100%;max-width:640px;margin-top:4px;resize:vertical"></textarea>
+              </div>
+              <p class="path-hint" style="margin-top:6px">Offline, local Nemotron transcription adds speaker labels (up to eight), word timings, subtitles and translation. Each run is a normal WanGP generation; the model downloads on first use (about 19 GB for Q4, 33 GB for INT8) and stays on this PC. Names, places and jargon are spelled the way you enter them here, comma- or line-separated. Written as <code>deepy_advanced_transcription</code> / <code>deepy_transcription_terms</code>.</p>
             </div>
             <div class="deepy-sub-label">Local engine</div>
             <div id="deepyEngineLocal" class="deepy-engine-options"></div>
